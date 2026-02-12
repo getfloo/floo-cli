@@ -30,8 +30,13 @@ class FlooClient:
         if response.status_code >= 400:
             try:
                 body = response.json()
-                code = body.get("code", "API_ERROR")
-                message = body.get("message", response.text)
+                detail = body.get("detail", body)
+                if isinstance(detail, dict):
+                    code = detail.get("code", "API_ERROR")
+                    message = detail.get("message", response.text)
+                else:
+                    code = "API_ERROR"
+                    message = str(detail)
             except Exception:
                 code = "API_ERROR"
                 message = response.text
