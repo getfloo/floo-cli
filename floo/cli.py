@@ -8,6 +8,7 @@ import typer
 
 from floo import __version__, output
 from floo.commands.auth import login, logout, whoami
+from floo.commands.deploy import deploy
 
 app = typer.Typer(
     name="floo",
@@ -38,7 +39,8 @@ def main(
         output.set_json_mode()
 
 
-# Register top-level auth commands
+# Register top-level commands
+app.command()(deploy)
 app.command()(login)
 app.command()(logout)
 app.command()(whoami)

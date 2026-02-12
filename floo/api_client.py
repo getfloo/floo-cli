@@ -63,9 +63,12 @@ class FlooClient:
         )
         return self._handle_response(resp)
 
-    def create_app(self, name: str) -> dict[str, Any]:
+    def create_app(self, name: str, runtime: str | None = None) -> dict[str, Any]:
         """Create a new app."""
-        resp = self._client.post("/v1/apps", json={"name": name})
+        body: dict[str, str] = {"name": name}
+        if runtime is not None:
+            body["runtime"] = runtime
+        resp = self._client.post("/v1/apps", json=body)
         return self._handle_response(resp)
 
     def list_apps(self) -> dict[str, Any]:
@@ -102,6 +105,11 @@ class FlooClient:
     def list_deploys(self, app_id: str) -> dict[str, Any]:
         """List all deploys for an app."""
         resp = self._client.get(f"/v1/apps/{app_id}/deploys")
+        return self._handle_response(resp)
+
+    def get_deploy(self, app_id: str, deploy_id: str) -> dict[str, Any]:
+        """Get deploy status and details."""
+        resp = self._client.get(f"/v1/apps/{app_id}/deploys/{deploy_id}")
         return self._handle_response(resp)
 
     def close(self) -> None:
