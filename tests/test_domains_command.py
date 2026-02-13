@@ -23,7 +23,7 @@ _APP_RESPONSE = {
     "name": "test-app",
     "user_id": str(uuid.uuid4()),
     "status": "live",
-    "url": "https://test-app.fly.dev",
+    "url": "https://test-app.on.getfloo.com",
     "runtime": "nodejs",
     "created_at": "2025-01-01T00:00:00Z",
     "updated_at": "2025-01-01T00:00:00Z",
@@ -43,7 +43,7 @@ _DOMAIN_RESPONSE = {
     "status": "pending",
     "created_at": "2025-01-01T00:00:00Z",
     "updated_at": "2025-01-01T00:00:00Z",
-    "dns_instructions": "Add a CNAME record: app.example.com -> test-app.fly.dev",
+    "dns_instructions": "Add a CNAME record: app.example.com -> test-app.on.getfloo.com",
 }
 
 _DOMAIN_LIST_RESPONSE = {

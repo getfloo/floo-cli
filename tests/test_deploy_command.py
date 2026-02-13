@@ -41,7 +41,7 @@ _DEPLOY_RESPONSE = {
     "runtime": "nodejs",
     "framework": "Express",
     "build_logs": None,
-    "url": "https://test-app.fly.dev",
+    "url": "https://test-app.on.getfloo.com",
     "created_at": "2025-01-01T00:00:00Z",
     "updated_at": "2025-01-01T00:00:00Z",
 }
@@ -93,7 +93,7 @@ def test_deploy_success(mock_archive, mock_config, tmp_path):
 
     result = runner.invoke(app, ["deploy", str(tmp_path)])
     assert result.exit_code == 0
-    assert "https://test-app.fly.dev" in result.output
+    assert "https://test-app.on.getfloo.com" in result.output
 
 
 @respx.mock
@@ -116,7 +116,7 @@ def test_deploy_success_json(mock_archive, mock_config, tmp_path):
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert data["success"] is True
-    assert data["data"]["deploy"]["url"] == "https://test-app.fly.dev"
+    assert data["data"]["deploy"]["url"] == "https://test-app.on.getfloo.com"
     assert data["data"]["detection"]["runtime"] == "nodejs"
     output.set_json_mode(False)
 
@@ -160,7 +160,7 @@ def test_deploy_existing_app(mock_archive, mock_config, tmp_path):
 
     result = runner.invoke(app, ["deploy", str(tmp_path), "--app", _APP_ID])
     assert result.exit_code == 0
-    assert "https://test-app.fly.dev" in result.output
+    assert "https://test-app.on.getfloo.com" in result.output
 
 
 @respx.mock
@@ -181,4 +181,4 @@ def test_deploy_with_name(mock_archive, mock_config, tmp_path):
 
     result = runner.invoke(app, ["deploy", str(tmp_path), "--name", "my-custom-app"])
     assert result.exit_code == 0
-    assert "https://test-app.fly.dev" in result.output
+    assert "https://test-app.on.getfloo.com" in result.output
