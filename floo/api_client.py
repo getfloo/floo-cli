@@ -71,9 +71,9 @@ class FlooClient:
         resp = self._client.post("/v1/apps", json=body)
         return self._handle_response(resp)
 
-    def list_apps(self) -> dict[str, Any]:
+    def list_apps(self, page: int = 1, per_page: int = 20) -> dict[str, Any]:
         """List all apps for the current user."""
-        resp = self._client.get("/v1/apps")
+        resp = self._client.get("/v1/apps", params={"page": page, "per_page": per_page})
         return self._handle_response(resp)
 
     def get_app(self, app_id: str) -> dict[str, Any]:
@@ -81,10 +81,17 @@ class FlooClient:
         resp = self._client.get(f"/v1/apps/{app_id}")
         return self._handle_response(resp)
 
-    def delete_app(self, app_id: str) -> dict[str, Any]:
-        """Delete an app (soft delete)."""
-        resp = self._client.delete(f"/v1/apps/{app_id}")
+    def update_app(self, app_id: str, **fields: Any) -> dict[str, Any]:
+        """Update an app (PATCH)."""
+        resp = self._client.patch(f"/v1/apps/{app_id}", json=fields)
         return self._handle_response(resp)
+
+    def delete_app(self, app_id: str) -> None:
+        """Delete an app."""
+        resp = self._client.delete(f"/v1/apps/{app_id}")
+        if resp.status_code == 204:
+            return
+        self._handle_response(resp)
 
     def create_deploy(
         self,
@@ -111,6 +118,50 @@ class FlooClient:
         """Get deploy status and details."""
         resp = self._client.get(f"/v1/apps/{app_id}/deploys/{deploy_id}")
         return self._handle_response(resp)
+
+    # --- Env vars ---
+
+    def set_env_var(self, app_id: str, key: str, value: str) -> dict[str, Any]:
+        """Set an environment variable on an app."""
+        resp = self._client.post(
+            f"/v1/apps/{app_id}/env",
+            json={"key": key, "value": value},
+        )
+        return self._handle_response(resp)
+
+    def list_env_vars(self, app_id: str) -> dict[str, Any]:
+        """List environment variables for an app."""
+        resp = self._client.get(f"/v1/apps/{app_id}/env")
+        return self._handle_response(resp)
+
+    def delete_env_var(self, app_id: str, key: str) -> None:
+        """Delete an environment variable."""
+        resp = self._client.delete(f"/v1/apps/{app_id}/env/{key}")
+        if resp.status_code == 204:
+            return
+        self._handle_response(resp)
+
+    # --- Domains ---
+
+    def add_domain(self, app_id: str, hostname: str) -> dict[str, Any]:
+        """Add a custom domain to an app."""
+        resp = self._client.post(
+            f"/v1/apps/{app_id}/domains",
+            json={"hostname": hostname},
+        )
+        return self._handle_response(resp)
+
+    def list_domains(self, app_id: str) -> dict[str, Any]:
+        """List custom domains for an app."""
+        resp = self._client.get(f"/v1/apps/{app_id}/domains")
+        return self._handle_response(resp)
+
+    def delete_domain(self, app_id: str, hostname: str) -> None:
+        """Delete a custom domain."""
+        resp = self._client.delete(f"/v1/apps/{app_id}/domains/{hostname}")
+        if resp.status_code == 204:
+            return
+        self._handle_response(resp)
 
     def close(self) -> None:
         """Close the underlying HTTP client."""

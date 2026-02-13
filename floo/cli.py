@@ -7,8 +7,11 @@ from typing import Annotated
 import typer
 
 from floo import __version__, output
+from floo.commands.apps import apps_app
 from floo.commands.auth import login, logout, whoami
 from floo.commands.deploy import deploy
+from floo.commands.domains import domains_app
+from floo.commands.env import env_app
 
 app = typer.Typer(
     name="floo",
@@ -44,3 +47,8 @@ app.command()(deploy)
 app.command()(login)
 app.command()(logout)
 app.command()(whoami)
+
+# Register subcommand groups
+app.add_typer(apps_app)
+app.add_typer(env_app)
+app.add_typer(domains_app)
