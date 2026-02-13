@@ -182,3 +182,126 @@ def test_deploy_with_name(mock_archive, mock_config, tmp_path):
     result = runner.invoke(app, ["deploy", str(tmp_path), "--name", "my-custom-app"])
     assert result.exit_code == 0
     assert "https://test-app.on.getfloo.com" in result.output
+
+
+# --- Polling loop ---
+
+
+_DEPLOY_BUILDING = {
+    "id": _DEPLOY_ID,
+    "app_id": _APP_ID,
+    "status": "building",
+    "runtime": "nodejs",
+    "framework": "Express",
+    "build_logs": "Step 1/3: installing deps\n",
+    "url": None,
+    "created_at": "2025-01-01T00:00:00Z",
+    "updated_at": "2025-01-01T00:00:00Z",
+}
+
+_DEPLOY_DEPLOYING = {
+    **_DEPLOY_BUILDING,
+    "status": "deploying",
+    "build_logs": "Step 1/3: installing deps\nStep 2/3: building\n",
+}
+
+_DEPLOY_LIVE_FINAL = {
+    **_DEPLOY_RESPONSE,
+    "build_logs": "Step 1/3: installing deps\nStep 2/3: building\nStep 3/3: done\n",
+}
+
+_DEPLOY_FAILED_FINAL = {
+    "id": _DEPLOY_ID,
+    "app_id": _APP_ID,
+    "status": "failed",
+    "runtime": "nodejs",
+    "framework": "Express",
+    "build_logs": "Build error: out of memory\n",
+    "url": None,
+    "created_at": "2025-01-01T00:00:00Z",
+    "updated_at": "2025-01-01T00:00:00Z",
+}
+
+
+@respx.mock
+@patch("floo.commands.deploy.time.sleep")
+@patch("floo.commands.deploy.load_config")
+@patch("floo.commands.deploy.create_archive")
+def test_deploy_polling_loop(mock_archive, mock_config, mock_sleep, tmp_path):
+    output.set_json_mode(False)
+    mock_config.return_value = _config_with_key()
+    mock_archive.return_value = _make_tarball(tmp_path)
+    _setup_project(tmp_path)
+
+    respx.post(f"{_API_URL}/v1/apps").mock(
+        return_value=Response(201, json=_APP_RESPONSE)
+    )
+    # create_deploy returns building status
+    respx.post(f"{_API_URL}/v1/apps/{_APP_ID}/deploys").mock(
+        return_value=Response(201, json=_DEPLOY_BUILDING)
+    )
+    # get_deploy polls: deploying, then live
+    get_route = respx.get(f"{_API_URL}/v1/apps/{_APP_ID}/deploys/{_DEPLOY_ID}")
+    get_route.side_effect = [
+        Response(200, json=_DEPLOY_DEPLOYING),
+        Response(200, json=_DEPLOY_LIVE_FINAL),
+    ]
+
+    result = runner.invoke(app, ["deploy", str(tmp_path)])
+    assert result.exit_code == 0
+    assert "https://test-app.on.getfloo.com" in result.output
+    assert mock_sleep.call_count == 2
+
+
+@respx.mock
+@patch("floo.commands.deploy.time.sleep")
+@patch("floo.commands.deploy.load_config")
+@patch("floo.commands.deploy.create_archive")
+def test_deploy_polling_failure(mock_archive, mock_config, mock_sleep, tmp_path):
+    output.set_json_mode(False)
+    mock_config.return_value = _config_with_key()
+    mock_archive.return_value = _make_tarball(tmp_path)
+    _setup_project(tmp_path)
+
+    respx.post(f"{_API_URL}/v1/apps").mock(
+        return_value=Response(201, json=_APP_RESPONSE)
+    )
+    respx.post(f"{_API_URL}/v1/apps/{_APP_ID}/deploys").mock(
+        return_value=Response(201, json=_DEPLOY_BUILDING)
+    )
+    respx.get(f"{_API_URL}/v1/apps/{_APP_ID}/deploys/{_DEPLOY_ID}").mock(
+        return_value=Response(200, json=_DEPLOY_FAILED_FINAL)
+    )
+
+    result = runner.invoke(app, ["deploy", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "Deploy failed" in result.output
+    assert mock_sleep.call_count == 1
+
+
+@respx.mock
+@patch("floo.commands.deploy.time.sleep")
+@patch("floo.commands.deploy.load_config")
+@patch("floo.commands.deploy.create_archive")
+def test_deploy_polling_json_mode(mock_archive, mock_config, mock_sleep, tmp_path):
+    output.set_json_mode(False)
+    mock_config.return_value = _config_with_key()
+    mock_archive.return_value = _make_tarball(tmp_path)
+    _setup_project(tmp_path)
+
+    respx.post(f"{_API_URL}/v1/apps").mock(
+        return_value=Response(201, json=_APP_RESPONSE)
+    )
+    respx.post(f"{_API_URL}/v1/apps/{_APP_ID}/deploys").mock(
+        return_value=Response(201, json=_DEPLOY_BUILDING)
+    )
+    respx.get(f"{_API_URL}/v1/apps/{_APP_ID}/deploys/{_DEPLOY_ID}").mock(
+        return_value=Response(200, json=_DEPLOY_LIVE_FINAL)
+    )
+
+    result = runner.invoke(app, ["--json", "deploy", str(tmp_path)])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["success"] is True
+    assert data["data"]["deploy"]["url"] == "https://test-app.on.getfloo.com"
+    output.set_json_mode(False)

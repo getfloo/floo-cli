@@ -106,6 +106,7 @@ class FlooClient:
                 f"/v1/apps/{app_id}/deploys",
                 files={"file": (tarball_path.name, f, "application/gzip")},
                 data={"runtime": runtime, "framework": framework or ""},
+                timeout=300.0,
             )
         return self._handle_response(resp)
 

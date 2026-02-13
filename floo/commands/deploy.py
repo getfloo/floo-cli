@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Annotated
 
 import typer
+from rich.console import Console
 
 from floo import output
 from floo.api_client import FlooClient
@@ -14,6 +16,17 @@ from floo.config import load_config
 from floo.detection import detect
 from floo.errors import FlooAPIError, FlooError
 from floo.names import generate_name
+
+_console = Console(stderr=True)
+
+_STATUS_LABELS = {
+    "pending": "Queued...",
+    "building": "Building...",
+    "deploying": "Deploying...",
+}
+
+_TERMINAL_STATUSES = {"live", "failed"}
+_POLL_INTERVAL = 2
 
 
 def deploy(
@@ -111,7 +124,7 @@ def deploy(
                     raise typer.Exit(1) from None
 
         # Deploy
-        with output.spinner("Deploying..."):
+        with output.spinner("Uploading..."):
             try:
                 deploy_data = client.create_deploy(
                     app_id=app_data["id"],
@@ -123,10 +136,36 @@ def deploy(
                 output.error(e.message, code=e.code)
                 raise typer.Exit(1) from None
 
+        # Poll until terminal status if the API returned a non-terminal status
+        last_log_len = 0
+        while deploy_data["status"] not in _TERMINAL_STATUSES:
+            if not output.is_json_mode():
+                build_logs = deploy_data.get("build_logs") or ""
+                new_logs = build_logs[last_log_len:]
+                if new_logs:
+                    for line in new_logs.strip().splitlines():
+                        _console.print(f"  {line}", style="dim")
+                    last_log_len = len(build_logs)
+
+                label = _STATUS_LABELS.get(deploy_data["status"], "Deploying...")
+                _console.print(f"  {label}", style="bold")
+
+            time.sleep(_POLL_INTERVAL)
+            deploy_data = client.get_deploy(
+                app_id=app_data["id"], deploy_id=deploy_data["id"]
+            )
+
         if deploy_data["status"] == "failed":
-            output.error("Deploy failed.", code="DEPLOY_FAILED")
-            if deploy_data.get("build_logs"):
-                output.info(deploy_data["build_logs"])
+            if not output.is_json_mode() and deploy_data.get("build_logs"):
+                build_logs = deploy_data["build_logs"]
+                new_logs = build_logs[last_log_len:]
+                if new_logs:
+                    for line in new_logs.strip().splitlines():
+                        _console.print(f"  {line}", style="dim")
+            output.error(
+                "Deploy failed.",
+                code="DEPLOY_FAILED",
+            )
             raise typer.Exit(1) from None
 
         output.success(
