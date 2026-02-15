@@ -13,9 +13,14 @@ OS="$(uname -s)"
 case "$OS" in
     Darwin) OS="apple-darwin" ;;
     Linux)  OS="unknown-linux-musl" ;;
+    MINGW*|MSYS*|CYGWIN*)
+        echo "Error: This install script does not support Windows."
+        echo "Download floo.exe from https://github.com/${REPO}/releases"
+        exit 1
+        ;;
     *)
         echo "Error: Unsupported operating system: $OS"
-        echo "Floo supports macOS and Linux."
+        echo "Floo supports macOS, Linux, and Windows."
         exit 1
         ;;
 esac

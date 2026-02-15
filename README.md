@@ -18,6 +18,9 @@ Or download a binary directly from [Releases](https://github.com/getfloo/floo-cl
 | macOS | Apple Silicon (arm64) | `floo-aarch64-apple-darwin` |
 | Linux | x86_64 | `floo-x86_64-unknown-linux-musl` |
 | Linux | arm64 | `floo-aarch64-unknown-linux-musl` |
+| Windows | x86_64 | `floo-x86_64-pc-windows-msvc.exe` |
+
+**Windows:** Download `floo-x86_64-pc-windows-msvc.exe` from [Releases](https://github.com/getfloo/floo-cli/releases) and add it to your PATH.
 
 ## Quick start
 
