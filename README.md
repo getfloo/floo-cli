@@ -58,6 +58,32 @@ floo deploy --json 2>/dev/null | jq '.data.deploy.url'
 # Error:   {"success": false, "error": {"code": "...", "message": "...", "suggestion": "..."}}
 ```
 
+## Building from source
+
+Requires [Rust](https://rustup.rs/) (1.70+).
+
+```bash
+git clone https://github.com/getfloo/floo-cli.git
+cd floo-cli
+cargo build --release
+# Binary at target/release/floo
+```
+
+## Contributing
+
+Contributions are welcome! Please:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feat/my-feature`)
+3. Run tests and lint before committing:
+   ```bash
+   cargo test
+   cargo clippy -- -D warnings
+   cargo fmt --check
+   ```
+4. Use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, etc.)
+5. Open a pull request
+
 ## Documentation
 
 - [Getting Started](https://docs.getfloo.com)
@@ -66,4 +92,4 @@ floo deploy --json 2>/dev/null | jq '.data.deploy.url'
 
 ## License
 
-Proprietary. See [LICENSE](LICENSE) for details.
+MIT. See [LICENSE](LICENSE) for details.

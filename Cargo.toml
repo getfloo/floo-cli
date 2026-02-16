@@ -1,0 +1,44 @@
+[package]
+name = "floo"
+version = "0.1.0"
+edition = "2021"
+description = "CLI for Floo — deploy, manage, and observe web apps"
+license = "MIT"
+repository = "https://github.com/getfloo/floo-cli"
+homepage = "https://getfloo.com"
+keywords = ["deploy", "cli", "cloud", "serverless"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "floo"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+colored = "2"
+comfy-table = "7"
+dialoguer = "0.11"
+flate2 = "1"
+glob = "0.3"
+ignore = "0.4"
+indicatif = "0.17"
+rand = "0.8"
+reqwest = { version = "0.12", features = ["blocking", "multipart", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tar = "0.4"
+thiserror = "2"
+anyhow = "1"
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
+mockito = "1"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+opt-level = "z"
+panic = "abort"
