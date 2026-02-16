@@ -245,6 +245,68 @@ fn test_env_set_invalid_format_json() {
         .stdout(predicate::str::contains(r#""code":"INVALID_FORMAT"#));
 }
 
+// --- Rollbacks ---
+
+#[test]
+fn test_rollbacks_help() {
+    floo()
+        .args(["rollbacks", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("View deploy history"));
+}
+
+#[test]
+fn test_rollbacks_list_not_authenticated() {
+    floo()
+        .args(["rollbacks", "list", "my-app"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Not logged in."));
+}
+
+#[test]
+fn test_rollbacks_list_json_not_authenticated() {
+    floo()
+        .args(["--json", "rollbacks", "list", "my-app"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"NOT_AUTHENTICATED"#));
+}
+
+// --- Rollback ---
+
+#[test]
+fn test_rollback_help() {
+    floo()
+        .args(["rollback", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Rollback to a previous deploy"));
+}
+
+#[test]
+fn test_rollback_not_authenticated() {
+    floo()
+        .args(["rollback", "my-app", "some-deploy-id"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Not logged in."));
+}
+
+#[test]
+fn test_rollback_json_not_authenticated() {
+    floo()
+        .args(["--json", "rollback", "my-app", "some-deploy-id"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"NOT_AUTHENTICATED"#));
+}
+
 // --- Logs ---
 
 #[test]

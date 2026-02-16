@@ -272,6 +272,24 @@ impl FlooClient {
         Ok(())
     }
 
+    // --- Rollbacks ---
+
+    pub fn rollback_deploy(&self, app_id: &str, deploy_id: &str) -> Result<Value, FlooApiError> {
+        let body = serde_json::json!({"deploy_id": deploy_id});
+        let mut req = self
+            .client
+            .post(self.url(&format!("/v1/apps/{app_id}/rollback")))
+            .json(&body)
+            .timeout(Duration::from_secs(120));
+        if let Some(auth) = self.auth_header() {
+            req = req.header("Authorization", auth);
+        }
+        let resp = req
+            .send()
+            .map_err(|e| FlooApiError::new(0, "CONNECTION_ERROR", e.to_string()))?;
+        self.handle_response(resp)
+    }
+
     // --- Logs ---
 
     pub fn get_logs(
