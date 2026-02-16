@@ -67,6 +67,23 @@ pub enum Commands {
     #[command(subcommand)]
     Domains(DomainsCommands),
 
+    /// View deploy history for rollback.
+    #[command(subcommand)]
+    Rollbacks(RollbacksCommands),
+
+    /// Rollback to a previous deploy.
+    Rollback {
+        /// App name or ID.
+        app: String,
+
+        /// Deploy ID to rollback to.
+        deploy_id: String,
+
+        /// Skip confirmation prompt.
+        #[arg(short, long)]
+        force: bool,
+    },
+
     /// View runtime logs for an app.
     Logs {
         /// App name or ID.
@@ -176,6 +193,15 @@ pub enum DomainsCommands {
     },
 }
 
+#[derive(Subcommand)]
+pub enum RollbacksCommands {
+    /// List deploys available for rollback.
+    List {
+        /// App name or ID.
+        app: String,
+    },
+}
+
 pub fn run() {
     let cli = Cli::parse();
 
@@ -206,6 +232,16 @@ pub fn run() {
             DomainsCommands::List { app } => commands::domains::list(&app),
             DomainsCommands::Remove { hostname, app } => commands::domains::remove(&hostname, &app),
         },
+
+        Commands::Rollbacks(sub) => match sub {
+            RollbacksCommands::List { app } => commands::rollbacks::list(&app),
+        },
+
+        Commands::Rollback {
+            app,
+            deploy_id,
+            force,
+        } => commands::rollbacks::rollback(&app, &deploy_id, force),
 
         Commands::Logs {
             app,
