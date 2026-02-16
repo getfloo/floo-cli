@@ -244,3 +244,34 @@ fn test_env_set_invalid_format_json() {
         .failure()
         .stdout(predicate::str::contains(r#""code":"INVALID_FORMAT"#));
 }
+
+// --- Logs ---
+
+#[test]
+fn test_logs_help() {
+    floo()
+        .args(["logs", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("View runtime logs"));
+}
+
+#[test]
+fn test_logs_not_authenticated() {
+    floo()
+        .args(["logs", "my-app"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Not logged in."));
+}
+
+#[test]
+fn test_logs_json_not_authenticated() {
+    floo()
+        .args(["--json", "logs", "my-app"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"NOT_AUTHENTICATED"#));
+}

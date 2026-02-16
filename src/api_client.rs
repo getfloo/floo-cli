@@ -271,4 +271,24 @@ impl FlooClient {
         self.handle_response(resp)?;
         Ok(())
     }
+
+    // --- Logs ---
+
+    pub fn get_logs(
+        &self,
+        app_id: &str,
+        limit: u32,
+        since: Option<&str>,
+        severity: Option<&str>,
+    ) -> Result<Value, FlooApiError> {
+        let mut path = format!("/v1/apps/{app_id}/logs?limit={limit}");
+        if let Some(s) = since {
+            path.push_str(&format!("&since={s}"));
+        }
+        if let Some(sev) = severity {
+            path.push_str(&format!("&severity={sev}"));
+        }
+        let resp = self.get(&path)?;
+        self.handle_response(resp)
+    }
 }
