@@ -271,4 +271,31 @@ impl FlooClient {
         self.handle_response(resp)?;
         Ok(())
     }
+
+    // --- Logs ---
+
+    pub fn get_logs(
+        &self,
+        app_id: &str,
+        limit: u32,
+        since: Option<&str>,
+        severity: Option<&str>,
+    ) -> Result<Value, FlooApiError> {
+        let mut params: Vec<(&str, String)> = vec![("limit", limit.to_string())];
+        if let Some(s) = since {
+            params.push(("since", s.to_string()));
+        }
+        if let Some(sev) = severity {
+            params.push(("severity", sev.to_string()));
+        }
+        let url = format!("{}/v1/apps/{app_id}/logs", self.base_url);
+        let mut req = self.client.get(&url).query(&params);
+        if let Some(auth) = self.auth_header() {
+            req = req.header("Authorization", auth);
+        }
+        let resp = req.send().map_err(|e| {
+            FlooApiError::new(0, "CONNECTION_ERROR", format!("Request failed: {e}"))
+        })?;
+        self.handle_response(resp)
+    }
 }

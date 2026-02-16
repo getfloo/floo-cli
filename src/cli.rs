@@ -66,6 +66,32 @@ pub enum Commands {
     /// Manage custom domains.
     #[command(subcommand)]
     Domains(DomainsCommands),
+
+    /// View runtime logs for an app.
+    Logs {
+        /// App name or ID.
+        app: String,
+
+        /// Number of log lines to show.
+        #[arg(short, long, default_value = "100")]
+        tail: u32,
+
+        /// Show logs since a time (e.g., 1h, 30m, 2d, or ISO timestamp).
+        #[arg(short, long)]
+        since: Option<String>,
+
+        /// Filter to errors only (shorthand for --severity ERROR).
+        #[arg(short, long)]
+        error: bool,
+
+        /// Minimum severity level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
+        #[arg(long)]
+        severity: Option<String>,
+
+        /// Write logs to a file (JSON or plain text based on --json flag).
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -180,5 +206,21 @@ pub fn run() {
             DomainsCommands::List { app } => commands::domains::list(&app),
             DomainsCommands::Remove { hostname, app } => commands::domains::remove(&hostname, &app),
         },
+
+        Commands::Logs {
+            app,
+            tail,
+            since,
+            error,
+            severity,
+            output,
+        } => {
+            let sev = if error {
+                Some("ERROR")
+            } else {
+                severity.as_deref()
+            };
+            commands::logs::logs(&app, tail, since.as_deref(), sev, output.as_deref());
+        }
     }
 }
