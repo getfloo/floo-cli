@@ -20,14 +20,24 @@ fn require_auth() {
     }
 }
 
-fn colorize_severity(severity: &str) -> String {
-    match severity {
-        "ERROR" | "CRITICAL" => severity.red().bold().to_string(),
-        "WARNING" => severity.yellow().to_string(),
-        "INFO" => severity.cyan().to_string(),
-        "DEBUG" => severity.dimmed().to_string(),
-        _ => severity.to_string(),
-    }
+fn format_log_line(entry: &serde_json::Value) -> String {
+    let ts = entry
+        .get("timestamp")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let sev = entry
+        .get("severity")
+        .and_then(|v| v.as_str())
+        .unwrap_or("DEFAULT");
+    let msg = entry.get("message").and_then(|v| v.as_str()).unwrap_or("");
+    let colored_sev = match sev {
+        "ERROR" | "CRITICAL" => sev.red().bold().to_string(),
+        "WARNING" => sev.yellow().to_string(),
+        "INFO" => sev.cyan().to_string(),
+        "DEBUG" => sev.dimmed().to_string(),
+        _ => sev.to_string(),
+    };
+    format!("{ts} [{colored_sev}] {msg}")
 }
 
 pub fn logs(
@@ -52,7 +62,17 @@ pub fn logs(
         }
     };
 
-    let app_id = app_data.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    let app_id = match app_data.get("id").and_then(|v| v.as_str()) {
+        Some(id) if !id.is_empty() => id,
+        _ => {
+            output::error(
+                "Failed to read app ID from API response.",
+                "PARSE_ERROR",
+                Some("This may indicate a CLI/API version mismatch. Try updating the CLI."),
+            );
+            process::exit(1);
+        }
+    };
 
     let result = match client.get_logs(app_id, tail, since, severity) {
         Ok(r) => r,
@@ -62,11 +82,17 @@ pub fn logs(
         }
     };
 
-    let logs = result
-        .get("logs")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
+    let logs = match result.get("logs").and_then(|v| v.as_array()) {
+        Some(arr) => arr.clone(),
+        None => {
+            output::error(
+                "Unexpected response format from the API.",
+                "PARSE_ERROR",
+                Some("Try updating the CLI: curl -fsSL https://getfloo.com/install.sh | sh"),
+            );
+            process::exit(1);
+        }
+    };
 
     if logs.is_empty() {
         if output::is_json_mode() {
@@ -82,7 +108,17 @@ pub fn logs(
 
     if let Some(path) = output_path {
         let content = if output::is_json_mode() {
-            serde_json::to_string_pretty(&result).unwrap_or_default()
+            match serde_json::to_string_pretty(&result) {
+                Ok(s) => s,
+                Err(e) => {
+                    output::error(
+                        &format!("Failed to serialize logs to JSON: {e}"),
+                        "PARSE_ERROR",
+                        None,
+                    );
+                    process::exit(1);
+                }
+            }
         } else {
             logs.iter()
                 .map(|entry| {
@@ -137,15 +173,6 @@ pub fn logs(
     output::info(&format!("Logs for {app_display}:"), None);
 
     for entry in &logs {
-        let ts = entry
-            .get("timestamp")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let sev = entry
-            .get("severity")
-            .and_then(|v| v.as_str())
-            .unwrap_or("DEFAULT");
-        let msg = entry.get("message").and_then(|v| v.as_str()).unwrap_or("");
-        eprintln!("  {ts} [{}] {msg}", colorize_severity(sev));
+        output::dim_line(&format_log_line(entry));
     }
 }
