@@ -25,6 +25,15 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Check installer syntax
+        run: bash -n install.sh
+
+      - name: Run installer script tests
+        run: bash tests/install_script_test.sh
+
+      - name: Run installer script e2e
+        run: bash tests/install_script_e2e.sh
+
       - name: Run tests
         run: cargo test
 

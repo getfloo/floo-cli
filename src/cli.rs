@@ -109,6 +109,16 @@ pub enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+
+    /// Print installed CLI version.
+    Version,
+
+    /// Update the CLI binary in-place.
+    Update {
+        /// Specific release tag to install (e.g. v0.2.0).
+        #[arg(long)]
+        version: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -258,5 +268,7 @@ pub fn run() {
             };
             commands::logs::logs(&app, tail, since.as_deref(), sev, output.as_deref());
         }
+        Commands::Version => commands::update::version(),
+        Commands::Update { version } => commands::update::update(version.as_deref()),
     }
 }

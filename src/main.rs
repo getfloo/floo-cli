@@ -9,6 +9,7 @@ mod errors;
 mod names;
 mod output;
 mod resolve;
+mod updater;
 
 fn main() {
     cli::run();

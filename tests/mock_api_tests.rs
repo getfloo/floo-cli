@@ -1,6 +1,7 @@
 use assert_cmd::Command;
 use mockito::{Matcher, Mock, Server};
 use predicates::prelude::*;
+use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
 const TEST_APP_ID: &str = "app-uuid-1234";
@@ -31,6 +32,24 @@ fn app_json() -> String {
     format!(
         r#"{{"id":"{TEST_APP_ID}","name":"{TEST_APP_NAME}","status":"live","url":"https://test.floo.app","runtime":"nodejs","created_at":"2024-01-01T00:00:00Z"}}"#
     )
+}
+
+fn update_asset_name() -> Option<String> {
+    let target = match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "x86_64") => "x86_64-apple-darwin",
+        ("macos", "aarch64") => "aarch64-apple-darwin",
+        ("linux", "x86_64") => "x86_64-unknown-linux-musl",
+        ("linux", "aarch64") => "aarch64-unknown-linux-musl",
+        ("windows", "x86_64") => "x86_64-pc-windows-msvc.exe",
+        _ => return None,
+    };
+    Some(format!("floo-{target}"))
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
 }
 
 /// Mock resolve_app (name-based): UUID lookup -> 404, list -> found.
@@ -542,4 +561,91 @@ fn test_app_not_found_json() {
         .assert()
         .failure()
         .stdout(predicate::str::contains("APP_NOT_FOUND"));
+}
+
+// ───────────────────────── Update ─────────────────────────
+
+#[test]
+fn test_update_json_release_lookup_failure() {
+    let mut server = Server::new();
+    let _m_release = server
+        .mock("GET", "/releases/latest")
+        .with_status(404)
+        .with_body("not found")
+        .create();
+
+    let install_dir = TempDir::new().unwrap();
+    let install_path = install_dir.path().join("floo");
+
+    floo()
+        .args(["--json", "update"])
+        .env("FLOO_UPDATE_API_BASE", format!("{}/releases", server.url()))
+        .env("FLOO_UPDATE_TARGET_PATH", install_path.as_os_str())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            r#""code":"RELEASE_LOOKUP_FAILED""#,
+        ));
+}
+
+#[test]
+fn test_update_json_success() {
+    let Some(asset_name) = update_asset_name() else {
+        return;
+    };
+
+    let binary_bytes = b"#!/usr/bin/env bash\necho floo v0.2.0\n";
+    let checksum = sha256_hex(binary_bytes);
+
+    let mut server = Server::new();
+    let _m_release = server
+        .mock("GET", "/releases/latest")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            serde_json::json!({
+                "tag_name": "v0.2.0",
+                "assets": [
+                    {
+                        "name": asset_name,
+                        "browser_download_url": format!("{}/downloads/{}", server.url(), asset_name),
+                    },
+                    {
+                        "name": format!("{asset_name}.sha256"),
+                        "browser_download_url": format!("{}/downloads/{}.sha256", server.url(), asset_name),
+                    }
+                ],
+            })
+            .to_string(),
+        )
+        .create();
+
+    let _m_binary = server
+        .mock("GET", format!("/downloads/{asset_name}").as_str())
+        .with_status(200)
+        .with_body(binary_bytes.as_slice())
+        .create();
+
+    let _m_checksum = server
+        .mock("GET", format!("/downloads/{asset_name}.sha256").as_str())
+        .with_status(200)
+        .with_body(format!("{checksum}  {asset_name}"))
+        .create();
+
+    let install_dir = TempDir::new().unwrap();
+    let install_path = install_dir.path().join("floo");
+
+    floo()
+        .args(["--json", "update"])
+        .env("FLOO_UPDATE_API_BASE", format!("{}/releases", server.url()))
+        .env("FLOO_UPDATE_TARGET_PATH", install_path.as_os_str())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(r#""version":"v0.2.0""#));
+
+    assert_eq!(
+        std::fs::read(install_path).unwrap(),
+        binary_bytes.as_slice()
+    );
 }
