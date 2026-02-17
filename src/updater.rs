@@ -1,6 +1,7 @@
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use reqwest::blocking::Client;
 use reqwest::header::{ACCEPT, USER_AGENT};
@@ -59,7 +60,11 @@ fn build_release_url(api_base: &str, version: Option<&str>) -> String {
 }
 
 fn build_http_client() -> Result<Client, FlooError> {
-    Client::builder().build().map_err(|e| {
+    Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| {
         FlooError::with_suggestion(
             "UPDATE_HTTP_CLIENT_ERROR",
             format!("Failed to initialize update client: {e}"),
@@ -242,6 +247,20 @@ fn install_path_override() -> Option<PathBuf> {
     env::var("FLOO_UPDATE_TARGET_PATH").ok().map(PathBuf::from)
 }
 
+fn resolve_install_path() -> Result<PathBuf, FlooError> {
+    if let Some(path) = install_path_override() {
+        return Ok(path);
+    }
+
+    env::current_exe().map_err(|e| {
+        FlooError::with_suggestion(
+            "UPDATE_INSTALL_PATH_UNRESOLVED",
+            format!("Failed to determine installed CLI path: {e}"),
+            "Set FLOO_UPDATE_TARGET_PATH to the floo binary path or reinstall via curl -fsSL https://getfloo.com/install.sh | bash",
+        )
+    })
+}
+
 fn install_binary(binary_bytes: &[u8], destination: &Path) -> Result<(), FlooError> {
     let destination_dir = destination.parent().ok_or_else(|| {
         FlooError::new(
@@ -329,15 +348,7 @@ fn run_update_with(
 pub fn run_update(version: Option<&str>) -> Result<UpdateResult, FlooError> {
     let client = build_http_client()?;
     let api_base = releases_api_base();
-    let install_path = install_path_override().unwrap_or_else(|| {
-        env::current_exe().unwrap_or_else(|_| {
-            if cfg!(windows) {
-                PathBuf::from("floo.exe")
-            } else {
-                PathBuf::from("floo")
-            }
-        })
-    });
+    let install_path = resolve_install_path()?;
 
     run_update_with(&client, version, &api_base, &install_path)
 }
@@ -346,6 +357,9 @@ pub fn run_update(version: Option<&str>) -> Result<UpdateResult, FlooError> {
 mod tests {
     use super::*;
     use mockito::{Matcher, Server};
+    use std::sync::{Mutex, OnceLock};
+
+    static ENV_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
 
     fn sample_release_json(asset_name: &str, base_url: &str) -> Value {
         serde_json::json!({
@@ -495,5 +509,35 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().code, "RELEASE_LOOKUP_FAILED");
+    }
+
+    #[test]
+    fn test_resolve_install_path_override() {
+        let _guard = ENV_MUTEX.get_or_init(|| Mutex::new(())).lock().unwrap();
+        let old_value = env::var("FLOO_UPDATE_TARGET_PATH").ok();
+        env::set_var("FLOO_UPDATE_TARGET_PATH", "/tmp/floo-test-path");
+
+        let resolved = resolve_install_path().unwrap();
+        assert_eq!(resolved, PathBuf::from("/tmp/floo-test-path"));
+
+        if let Some(value) = old_value {
+            env::set_var("FLOO_UPDATE_TARGET_PATH", value);
+        } else {
+            env::remove_var("FLOO_UPDATE_TARGET_PATH");
+        }
+    }
+
+    #[test]
+    fn test_resolve_install_path_uses_current_exe_path() {
+        let _guard = ENV_MUTEX.get_or_init(|| Mutex::new(())).lock().unwrap();
+        let old_value = env::var("FLOO_UPDATE_TARGET_PATH").ok();
+        env::remove_var("FLOO_UPDATE_TARGET_PATH");
+
+        let resolved = resolve_install_path().unwrap();
+        assert!(resolved.is_absolute());
+
+        if let Some(value) = old_value {
+            env::set_var("FLOO_UPDATE_TARGET_PATH", value);
+        }
     }
 }

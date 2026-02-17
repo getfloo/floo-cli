@@ -115,6 +115,7 @@ install_binary() {
         fail "Write permission denied for ${INSTALL_DIR}. Re-run with a writable FLOO_INSTALL_DIR."
     fi
 
+    sudo mkdir -p "$INSTALL_DIR" || fail "Failed to create install directory ${INSTALL_DIR} with sudo."
     sudo mv "$source_path" "$destination_path"
     sudo chmod 755 "$destination_path"
 }
