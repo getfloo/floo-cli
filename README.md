@@ -5,10 +5,20 @@ The command-line interface for [Floo](https://getfloo.com) — deploy, manage, a
 ## Install
 
 ```bash
-curl -fsSL https://getfloo.com/install.sh | sh
+curl -fsSL https://getfloo.com/install.sh | bash
 ```
 
 Or download a binary directly from [Releases](https://github.com/getfloo/floo-cli/releases).
+
+### Installer options
+
+```bash
+# Install a specific release tag
+curl -fsSL https://getfloo.com/install.sh | FLOO_INSTALL_VERSION=v0.1.0 bash
+
+# Install to a custom directory
+curl -fsSL https://getfloo.com/install.sh | FLOO_INSTALL_DIR="$HOME/.local/bin" bash
+```
 
 ### Supported platforms
 
@@ -21,6 +31,19 @@ Or download a binary directly from [Releases](https://github.com/getfloo/floo-cl
 | Windows | x86_64 | `floo-x86_64-pc-windows-msvc.exe` |
 
 **Windows:** Download `floo-x86_64-pc-windows-msvc.exe` from [Releases](https://github.com/getfloo/floo-cli/releases) and add it to your PATH.
+
+## Updating
+
+```bash
+# Show installed version
+floo version
+
+# Update to latest release
+floo update
+
+# Update to a specific release tag
+floo update --version v0.1.0
+```
 
 ## Quick start
 
@@ -46,6 +69,8 @@ floo domains add app.example.com --app my-app
 floo domains list --app my-app
 ```
 
+All commands are invoked with the production alias: `floo`.
+
 ## Agent / programmatic use
 
 Every command supports `--json` for structured output:
@@ -68,6 +93,18 @@ cd floo-cli
 cargo build --release
 # Binary at target/release/floo
 ```
+
+## Local development vs installed CLI
+
+Keep your installed production CLI on `floo`, and use the dev wrapper for local builds:
+
+```bash
+cd floo-cli
+cargo build
+./scripts/floo-dev --help
+```
+
+`scripts/floo-dev` runs `target/debug/floo` (or `FLOO_DEV_BIN` if set) so local development does not replace your installed `floo` binary.
 
 ## Contributing
 

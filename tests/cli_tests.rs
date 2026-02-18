@@ -29,6 +29,25 @@ fn test_version() {
 }
 
 #[test]
+fn test_version_command_human() {
+    floo()
+        .arg("version")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("floo 0.1.0"));
+}
+
+#[test]
+fn test_version_command_json() {
+    floo()
+        .args(["--json", "version"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(r#""version":"0.1.0""#));
+}
+
+#[test]
 fn test_no_args_shows_help() {
     floo()
         .assert()
@@ -136,6 +155,15 @@ fn test_deploy_help() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Deploy a project to Floo"));
+}
+
+#[test]
+fn test_update_help() {
+    floo()
+        .args(["update", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Update the CLI binary in-place"));
 }
 
 // --- Deploy (unauthenticated) ---

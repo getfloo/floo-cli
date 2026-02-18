@@ -88,7 +88,7 @@ pub fn logs(
             output::error(
                 "Unexpected response format from the API.",
                 "PARSE_ERROR",
-                Some("Try updating the CLI: curl -fsSL https://getfloo.com/install.sh | sh"),
+                Some("Try updating the CLI: curl -fsSL https://getfloo.com/install.sh | bash"),
             );
             process::exit(1);
         }

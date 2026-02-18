@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+DEFAULT_BIN="${REPO_ROOT}/target/debug/floo"
+DEV_BIN="${FLOO_DEV_BIN:-$DEFAULT_BIN}"
+
+if [[ ! -x "$DEV_BIN" ]]; then
+    echo "floo-dev: binary not found at $DEV_BIN" >&2
+    echo "Build it first: cd ${REPO_ROOT} && cargo build" >&2
+    exit 1
+fi
+
+exec "$DEV_BIN" "$@"
