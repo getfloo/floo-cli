@@ -250,6 +250,33 @@ impl FlooClient {
         Ok(())
     }
 
+    // --- Databases ---
+
+    pub fn create_database(&self, app_id: &str, name: &str) -> Result<Value, FlooApiError> {
+        let body = serde_json::json!({"name": name});
+        let resp = self.post_json(&format!("/v1/apps/{app_id}/databases"), &body)?;
+        self.handle_response(resp)
+    }
+
+    pub fn list_databases(&self, app_id: &str) -> Result<Value, FlooApiError> {
+        let resp = self.get(&format!("/v1/apps/{app_id}/databases"))?;
+        self.handle_response(resp)
+    }
+
+    pub fn get_database(&self, app_id: &str, db_id: &str) -> Result<Value, FlooApiError> {
+        let resp = self.get(&format!("/v1/apps/{app_id}/databases/{db_id}"))?;
+        self.handle_response(resp)
+    }
+
+    pub fn delete_database(&self, app_id: &str, db_id: &str) -> Result<(), FlooApiError> {
+        let resp = self.delete(&format!("/v1/apps/{app_id}/databases/{db_id}"))?;
+        if resp.status().as_u16() == 204 {
+            return Ok(());
+        }
+        self.handle_response(resp)?;
+        Ok(())
+    }
+
     // --- Domains ---
 
     pub fn add_domain(&self, app_id: &str, hostname: &str) -> Result<Value, FlooApiError> {

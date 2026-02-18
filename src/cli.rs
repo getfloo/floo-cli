@@ -63,6 +63,10 @@ pub enum Commands {
     #[command(subcommand)]
     Env(EnvCommands),
 
+    /// Manage app databases.
+    #[command(subcommand)]
+    Db(DbCommands),
+
     /// Manage custom domains.
     #[command(subcommand)]
     Domains(DomainsCommands),
@@ -204,6 +208,42 @@ pub enum DomainsCommands {
 }
 
 #[derive(Subcommand)]
+pub enum DbCommands {
+    /// Provision a database for an app.
+    Create {
+        /// App name or ID.
+        #[arg(short, long)]
+        app: String,
+
+        /// Database name (default: "default").
+        #[arg(short, long, default_value = "default")]
+        name: String,
+    },
+
+    /// Show database connection details for an app.
+    Info {
+        /// App name or ID.
+        #[arg(short, long)]
+        app: String,
+    },
+
+    /// Delete a provisioned database.
+    Delete {
+        /// App name or ID.
+        #[arg(short, long)]
+        app: String,
+
+        /// Database name (default: "default").
+        #[arg(long, default_value = "default")]
+        name: String,
+
+        /// Skip confirmation prompt.
+        #[arg(short, long)]
+        force: bool,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum RollbacksCommands {
     /// List deploys available for rollback.
     List {
@@ -229,6 +269,12 @@ pub fn run() {
             AppsCommands::List => commands::apps::list(),
             AppsCommands::Status { app_name } => commands::apps::status(&app_name),
             AppsCommands::Delete { app_name, force } => commands::apps::delete(&app_name, force),
+        },
+
+        Commands::Db(sub) => match sub {
+            DbCommands::Create { app, name } => commands::db::create(&app, &name),
+            DbCommands::Info { app } => commands::db::info(&app),
+            DbCommands::Delete { app, name, force } => commands::db::delete(&app, &name, force),
         },
 
         Commands::Env(sub) => match sub {
