@@ -14,18 +14,24 @@ pub struct FlooClient {
 }
 
 impl FlooClient {
-    pub fn new(config: Option<FlooConfig>) -> Self {
+    pub fn new(config: Option<FlooConfig>) -> Result<Self, FlooApiError> {
         let config = config.unwrap_or_else(load_config);
         let client = Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
-            .expect("failed to build HTTP client");
+            .map_err(|e| {
+                FlooApiError::new(
+                    0,
+                    "CLIENT_INIT_FAILED",
+                    format!("Failed to initialize HTTP client: {e}"),
+                )
+            })?;
 
-        Self {
+        Ok(Self {
             client,
             base_url: config.api_url.clone(),
             api_key: config.api_key.clone(),
-        }
+        })
     }
 
     fn url(&self, path: &str) -> String {

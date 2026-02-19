@@ -22,20 +22,24 @@ const DEFAULT_IGNORE_PATTERNS: &[&str] = &[
     ".next",  // Next.js build cache
 ];
 
-fn load_flooignore(path: &Path) -> Vec<String> {
+fn load_flooignore(path: &Path) -> Result<Vec<String>, FlooError> {
     let ignore_file = path.join(".flooignore");
     if !ignore_file.exists() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    match fs::read_to_string(&ignore_file) {
-        Ok(content) => content
-            .lines()
-            .map(|l| l.trim())
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-            .map(|l| l.to_string())
-            .collect(),
-        Err(_) => Vec::new(),
-    }
+    let content = fs::read_to_string(&ignore_file).map_err(|e| {
+        FlooError::with_suggestion(
+            "FLOOIGNORE_READ_FAILED",
+            format!("Failed to read {}: {e}", ignore_file.display()),
+            "Fix .flooignore permissions or symlink target and try again.",
+        )
+    })?;
+    Ok(content
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(|l| l.to_string())
+        .collect())
 }
 
 fn matches_pattern(name: &str, pattern: &str) -> bool {
@@ -85,7 +89,7 @@ pub fn create_archive(path: &Path) -> Result<PathBuf, FlooError> {
         .iter()
         .map(|s| s.to_string())
         .collect();
-    patterns.extend(load_flooignore(path));
+    patterns.extend(load_flooignore(path)?);
 
     let tmp = std::env::temp_dir().join(format!(
         "floo-{}-{}.tar.gz",
@@ -162,6 +166,8 @@ fn add_dir_to_tar<W: std::io::Write>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
 
     #[test]
@@ -258,6 +264,25 @@ mod tests {
         assert!(!names.iter().any(|n| n.contains("build")));
 
         let _ = fs::remove_file(&archive);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_unreadable_flooignore_fails() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("app.js"), "").unwrap();
+        let ignore_path = dir.path().join(".flooignore");
+        fs::write(&ignore_path, "*.log\n").unwrap();
+
+        let original_mode = fs::metadata(&ignore_path).unwrap().permissions().mode();
+        fs::set_permissions(&ignore_path, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let result = create_archive(dir.path());
+
+        fs::set_permissions(&ignore_path, fs::Permissions::from_mode(original_mode)).unwrap();
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "FLOOIGNORE_READ_FAILED");
+        assert!(error.message.contains(".flooignore"));
     }
 
     #[test]

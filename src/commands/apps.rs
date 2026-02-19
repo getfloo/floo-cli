@@ -1,6 +1,5 @@
 use std::process;
 
-use crate::api_client::FlooClient;
 use crate::config::load_config;
 use crate::output;
 use crate::resolve::resolve_app;
@@ -19,7 +18,7 @@ fn require_auth() {
 
 pub fn list() {
     require_auth();
-    let client = FlooClient::new(None);
+    let client = super::init_client(None);
     let result = match client.list_apps(1, 20) {
         Ok(r) => r,
         Err(e) => {
@@ -80,7 +79,7 @@ pub fn list() {
 
 pub fn status(app_name: &str) {
     require_auth();
-    let client = FlooClient::new(None);
+    let client = super::init_client(None);
     let app_data = match resolve_app(&client, app_name) {
         Ok(a) => a,
         Err(e) => {
@@ -134,7 +133,7 @@ pub fn status(app_name: &str) {
 
 pub fn delete(app_name: &str, force: bool) {
     require_auth();
-    let client = FlooClient::new(None);
+    let client = super::init_client(None);
     let app_data = match resolve_app(&client, app_name) {
         Ok(a) => a,
         Err(e) => {
