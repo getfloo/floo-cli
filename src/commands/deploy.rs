@@ -222,10 +222,21 @@ pub fn deploy(path: PathBuf, name: Option<String>, app: Option<String>) {
         thread::sleep(POLL_INTERVAL);
 
         if poll_start.elapsed() >= POLL_TIMEOUT {
+            let app_id = app_data
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let deploy_id = deploy_data
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
             output::error(
                 "Deploy timed out after 10 minutes",
                 "DEPLOY_TIMEOUT",
-                Some("The deploy may still complete — check status with `floo apps status`"),
+                Some(&format!(
+                    "The deploy may still complete — check status with \
+                     `floo apps status {app_id}` (deploy ID: {deploy_id})"
+                )),
             );
             process::exit(1);
         }
