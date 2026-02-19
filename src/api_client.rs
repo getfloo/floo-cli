@@ -250,6 +250,69 @@ impl FlooClient {
         Ok(())
     }
 
+    // --- Databases ---
+
+    fn parse_database_response(&self, response: &Value) -> Result<Value, FlooApiError> {
+        if response.get("host").is_some()
+            && response.get("port").is_some()
+            && response.get("database").is_some()
+        {
+            return Ok(response.clone());
+        }
+
+        if let Some(database) = response.get("database") {
+            if database.is_object() {
+                return Ok(database.clone());
+            }
+        }
+
+        Err(FlooApiError::new(
+            500,
+            "PARSE_ERROR",
+            "Failed to parse database info response from API.",
+        ))
+    }
+
+    fn parse_database_from_list_response(&self, response: &Value) -> Result<Value, FlooApiError> {
+        let databases = response
+            .get("databases")
+            .and_then(|value| value.as_array())
+            .ok_or_else(|| {
+                FlooApiError::new(
+                    500,
+                    "PARSE_ERROR",
+                    "Failed to parse database list response from API.",
+                )
+            })?;
+
+        let database = databases
+            .iter()
+            .find(|value| value.get("name").and_then(|v| v.as_str()) == Some("default"))
+            .or_else(|| databases.first())
+            .ok_or_else(|| {
+                FlooApiError::new(
+                    404,
+                    "DATABASE_NOT_FOUND",
+                    "Database not found for this app.",
+                )
+            })?;
+
+        Ok(database.clone())
+    }
+
+    pub fn get_database_info(&self, app_id: &str) -> Result<Value, FlooApiError> {
+        let db_info_response = self.get(&format!("/v1/apps/{app_id}/db"))?;
+        match self.handle_response(db_info_response) {
+            Ok(response) => self.parse_database_response(&response),
+            Err(error) if error.status_code == 404 => {
+                let list_response = self.get(&format!("/v1/apps/{app_id}/databases"))?;
+                let list_body = self.handle_response(list_response)?;
+                self.parse_database_from_list_response(&list_body)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     // --- Domains ---
 
     pub fn add_domain(&self, app_id: &str, hostname: &str) -> Result<Value, FlooApiError> {

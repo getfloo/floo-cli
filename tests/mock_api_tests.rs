@@ -476,6 +476,131 @@ fn test_logs_human() {
         .stderr(predicate::str::contains("Server started"));
 }
 
+// ───────────────────────── Databases ─────────────────────────
+
+#[test]
+fn test_db_info_json_uses_db_endpoint() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _m_db = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/db").as_str())
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"host":"db.example.internal","port":5432,"database":"floo_apps","status":"READY","username":"floo_user","schema_name":"app_1234"}"#,
+        )
+        .create();
+
+    floo()
+        .args(["--json", "db", "info", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains("db.example.internal"))
+        .stdout(predicate::str::contains(r#""database":"floo_apps""#));
+}
+
+#[test]
+fn test_db_info_json_falls_back_to_databases_endpoint() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _m_db_not_found = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/db").as_str())
+        .with_status(404)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":{"code":"NOT_FOUND","message":"Not found"}}"#)
+        .create();
+
+    let _m_databases = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/databases").as_str())
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"databases":[{"id":"db-1","name":"default","host":"fallback-db.internal","port":5432,"database":"floo_apps","status":"READY","username":"floo_user","schema_name":"app_5678"}],"total":1}"#,
+        )
+        .create();
+
+    floo()
+        .args(["--json", "db", "info", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("fallback-db.internal"))
+        .stdout(predicate::str::contains(r#""name":"default""#));
+}
+
+#[test]
+fn test_db_info_json_app_not_found() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+
+    let _m_list = server
+        .mock("GET", "/v1/apps")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"apps":[]}"#)
+        .create();
+
+    floo()
+        .args(["--json", "db", "info", "missing-app"])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("APP_NOT_FOUND"));
+}
+
+#[test]
+fn test_db_info_json_surfaces_api_errors() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _m_db = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/db").as_str())
+        .with_status(500)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":{"code":"INTERNAL_ERROR","message":"Server error"}}"#)
+        .create();
+
+    floo()
+        .args(["--json", "db", "info", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("INTERNAL_ERROR"))
+        .stdout(predicate::str::contains("APP_NOT_FOUND").not());
+}
+
+#[test]
+fn test_db_info_json_returns_parse_error_for_malformed_payload() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _m_db = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/db").as_str())
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"host":"db.example.internal","port":"bad","database":"floo_apps","status":"READY"}"#)
+        .create();
+
+    floo()
+        .args(["--json", "db", "info", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("PARSE_ERROR"));
+}
+
 // ───────────────────────── Deploy ─────────────────────────
 
 #[test]
