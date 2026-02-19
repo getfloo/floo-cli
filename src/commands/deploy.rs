@@ -3,7 +3,6 @@ use std::process;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::api_client::FlooClient;
 use crate::archive::create_archive;
 use crate::config::load_config;
 use crate::detection::detect;
@@ -21,6 +20,20 @@ fn status_label(status: &str) -> &str {
         "building" => "Building...",
         "deploying" => "Deploying...",
         _ => "Deploying...",
+    }
+}
+
+fn required_response_id<'a>(value: &'a serde_json::Value, object_name: &str) -> &'a str {
+    match value.get("id").and_then(|v| v.as_str()) {
+        Some(id) if !id.is_empty() => id,
+        _ => {
+            output::error(
+                &format!("Unexpected API response: {object_name} is missing required 'id'."),
+                "INVALID_RESPONSE",
+                Some("This may indicate a CLI/API mismatch. Check for updates with `floo update`."),
+            );
+            process::exit(1);
+        }
     }
 }
 
@@ -100,7 +113,7 @@ pub fn deploy(path: PathBuf, name: Option<String>, app: Option<String>) {
         }
     };
 
-    let client = FlooClient::new(Some(config));
+    let client = super::init_client(Some(config));
 
     // Resolve or create app
     let app_data = if let Some(ref app_ident) = app {
@@ -140,11 +153,12 @@ pub fn deploy(path: PathBuf, name: Option<String>, app: Option<String>) {
             }
         }
     };
+    let app_id = required_response_id(&app_data, "app").to_string();
 
     // Deploy
     let spinner = output::Spinner::new("Uploading...");
     let mut deploy_data = match client.create_deploy(
-        app_data.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+        &app_id,
         &archive_path,
         &detection.runtime,
         detection.framework.as_deref(),
@@ -196,14 +210,7 @@ pub fn deploy(path: PathBuf, name: Option<String>, app: Option<String>) {
         thread::sleep(POLL_INTERVAL);
 
         if poll_start.elapsed() >= POLL_TIMEOUT {
-            let app_id = app_data
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            let deploy_id = deploy_data
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
+            let deploy_id = required_response_id(&deploy_data, "deploy");
             output::error(
                 "Deploy timed out after 10 minutes",
                 "DEPLOY_TIMEOUT",
@@ -215,9 +222,8 @@ pub fn deploy(path: PathBuf, name: Option<String>, app: Option<String>) {
             process::exit(1);
         }
 
-        let app_id = app_data.get("id").and_then(|v| v.as_str()).unwrap_or("");
-        let deploy_id = deploy_data.get("id").and_then(|v| v.as_str()).unwrap_or("");
-        deploy_data = match client.get_deploy(app_id, deploy_id) {
+        let deploy_id = required_response_id(&deploy_data, "deploy").to_string();
+        deploy_data = match client.get_deploy(&app_id, &deploy_id) {
             Ok(d) => d,
             Err(e) => {
                 output::error(&e.message, &e.code, None);
@@ -244,7 +250,20 @@ pub fn deploy(path: PathBuf, name: Option<String>, app: Option<String>) {
                 }
             }
         }
-        output::error("Deploy failed.", "DEPLOY_FAILED", None);
+        let build_logs = deploy_data
+            .get("build_logs")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        output::error_with_data(
+            "Deploy failed.",
+            "DEPLOY_FAILED",
+            Some("Check build output above, or run `floo logs` for details."),
+            Some(serde_json::json!({
+                "app": app_data,
+                "deploy": deploy_data,
+                "build_logs": build_logs,
+            })),
+        );
         process::exit(1);
     }
 
@@ -265,6 +284,13 @@ pub fn deploy(path: PathBuf, name: Option<String>, app: Option<String>) {
 
 fn cleanup(path: &PathBuf) {
     if path.exists() {
-        let _ = std::fs::remove_file(path);
+        if let Err(error) = std::fs::remove_file(path) {
+            if !output::is_json_mode() {
+                eprintln!(
+                    "Warning: failed to remove temporary archive {}: {error}",
+                    path.display()
+                );
+            }
+        }
     }
 }

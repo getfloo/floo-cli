@@ -2,7 +2,6 @@ use std::process;
 
 use dialoguer::{Input, Password};
 
-use crate::api_client::FlooClient;
 use crate::config::{clear_config, load_config, save_config};
 use crate::output;
 
@@ -22,7 +21,7 @@ pub fn login(email: Option<String>, password: Option<String>) {
     });
 
     let spinner = output::Spinner::new("Logging in...");
-    let client = FlooClient::new(None);
+    let client = super::init_client(None);
     match client.login(&email, &password) {
         Ok(result) => {
             spinner.finish();

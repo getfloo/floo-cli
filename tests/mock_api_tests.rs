@@ -702,6 +702,95 @@ fn test_deploy_existing_app_by_name_json() {
         .stdout(predicate::str::contains(r#""deploy""#));
 }
 
+#[test]
+fn test_deploy_fails_with_invalid_response_when_app_id_missing() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+
+    let project = TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("package.json"),
+        r#"{"name":"test-project","version":"1.0.0"}"#,
+    )
+    .unwrap();
+
+    let _m_create_app = server
+        .mock("POST", "/v1/apps")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"name":"test-deploy","status":"created","runtime":"nodejs"}"#)
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "deploy",
+            project.path().to_str().unwrap(),
+            "--name",
+            "test-deploy",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"INVALID_RESPONSE""#))
+        .stdout(predicate::str::contains("missing required 'id'"));
+}
+
+#[test]
+fn test_deploy_failed_json_includes_logs_and_suggestion() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+
+    let project = TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("package.json"),
+        r#"{"name":"test-project","version":"1.0.0"}"#,
+    )
+    .unwrap();
+
+    let _m_list = server
+        .mock("GET", "/v1/apps")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(r#"{{"apps":[{app}]}}"#, app = app_json()))
+        .create();
+
+    let _m_deploy = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/deploys").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"id":"deploy-001","status":"failed","url":"https://my-app.floo.app","build_logs":"build failed: npm ci exited 1"}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "deploy",
+            project.path().to_str().unwrap(),
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"DEPLOY_FAILED""#))
+        .stdout(predicate::str::contains(
+            r#""suggestion":"Check build output above, or run `floo logs` for details.""#,
+        ))
+        .stdout(predicate::str::contains(
+            r#""build_logs":"build failed: npm ci exited 1""#,
+        ));
+}
+
 // ───────────────────────── App Not Found ─────────────────────────
 
 #[test]

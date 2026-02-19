@@ -3,7 +3,6 @@ use std::process;
 
 use colored::Colorize;
 
-use crate::api_client::FlooClient;
 use crate::config::load_config;
 use crate::output;
 use crate::resolve::resolve_app;
@@ -48,7 +47,7 @@ pub fn logs(
     output_path: Option<&Path>,
 ) {
     require_auth();
-    let client = FlooClient::new(None);
+    let client = super::init_client(None);
 
     let app_data = match resolve_app(&client, app_name) {
         Ok(a) => a,

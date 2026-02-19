@@ -46,6 +46,23 @@ pub fn error(message: &str, code: &str, suggestion: Option<&str>) {
     }
 }
 
+pub fn error_with_data(message: &str, code: &str, suggestion: Option<&str>, data: Option<Value>) {
+    if is_json_mode() {
+        let mut err = serde_json::json!({"code": code, "message": message});
+        if let Some(sug) = suggestion {
+            err.as_object_mut()
+                .unwrap()
+                .insert("suggestion".to_string(), Value::String(sug.to_string()));
+        }
+        print_json(&serde_json::json!({"success": false, "error": err, "data": data}));
+    } else {
+        eprintln!("{} {message}", "Error:".red());
+        if let Some(sug) = suggestion {
+            eprintln!("  \u{2192} {sug}");
+        }
+    }
+}
+
 pub fn info(message: &str, data: Option<Value>) {
     if is_json_mode() {
         print_json(&serde_json::json!({"success": true, "data": data}));

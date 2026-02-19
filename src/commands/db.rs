@@ -2,7 +2,6 @@ use std::process;
 
 use serde_json::Value;
 
-use crate::api_client::FlooClient;
 use crate::config::load_config;
 use crate::errors::FlooApiError;
 use crate::output;
@@ -82,7 +81,7 @@ fn parse_database_info(value: &Value) -> Result<DatabaseInfo, FlooApiError> {
 pub fn info(app_identifier: &str) {
     require_auth();
 
-    let client = FlooClient::new(None);
+    let client = super::init_client(None);
     let app_data = match resolve_app(&client, app_identifier) {
         Ok(app) => app,
         Err(error) => {
