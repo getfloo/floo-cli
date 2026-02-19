@@ -34,13 +34,17 @@ pub fn set(key_value: &str, app_name: &str) {
 
     let client = FlooClient::new(None);
     let app_data = match resolve_app(&client, app_name) {
-        Some(a) => a,
-        None => {
-            output::error(
-                &format!("App '{app_name}' not found."),
-                "APP_NOT_FOUND",
-                Some("Check the app name or ID and try again."),
-            );
+        Ok(a) => a,
+        Err(e) => {
+            if e.code == "APP_NOT_FOUND" {
+                output::error(
+                    &format!("App '{app_name}' not found."),
+                    "APP_NOT_FOUND",
+                    Some("Check the app name or ID and try again."),
+                );
+            } else {
+                output::error(&e.message, &e.code, None);
+            }
             process::exit(1);
         }
     };
@@ -66,13 +70,17 @@ pub fn list(app_name: &str) {
     require_auth();
     let client = FlooClient::new(None);
     let app_data = match resolve_app(&client, app_name) {
-        Some(a) => a,
-        None => {
-            output::error(
-                &format!("App '{app_name}' not found."),
-                "APP_NOT_FOUND",
-                Some("Check the app name or ID and try again."),
-            );
+        Ok(a) => a,
+        Err(e) => {
+            if e.code == "APP_NOT_FOUND" {
+                output::error(
+                    &format!("App '{app_name}' not found."),
+                    "APP_NOT_FOUND",
+                    Some("Check the app name or ID and try again."),
+                );
+            } else {
+                output::error(&e.message, &e.code, None);
+            }
             process::exit(1);
         }
     };
@@ -140,13 +148,17 @@ pub fn remove(key: &str, app_name: &str) {
 
     let client = FlooClient::new(None);
     let app_data = match resolve_app(&client, app_name) {
-        Some(a) => a,
-        None => {
-            output::error(
-                &format!("App '{app_name}' not found."),
-                "APP_NOT_FOUND",
-                Some("Check the app name or ID and try again."),
-            );
+        Ok(a) => a,
+        Err(e) => {
+            if e.code == "APP_NOT_FOUND" {
+                output::error(
+                    &format!("App '{app_name}' not found."),
+                    "APP_NOT_FOUND",
+                    Some("Check the app name or ID and try again."),
+                );
+            } else {
+                output::error(&e.message, &e.code, None);
+            }
             process::exit(1);
         }
     };
