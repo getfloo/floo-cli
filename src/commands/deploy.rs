@@ -106,8 +106,8 @@ pub fn deploy(path: PathBuf, name: Option<String>, app: Option<String>) {
         let spinner = output::Spinner::new("Looking up app...");
         let result = match client.get_app(app_ident) {
             Ok(a) => a,
-            Err(_) => {
-                // Try name match
+            Err(e) if e.status_code == 404 || e.status_code == 0 => {
+                // ID lookup failed (not found or invalid UUID format) — try name match
                 match client.list_apps(1, 20) {
                     Ok(resp) => {
                         let found = resp
@@ -140,6 +140,12 @@ pub fn deploy(path: PathBuf, name: Option<String>, app: Option<String>) {
                         process::exit(1);
                     }
                 }
+            }
+            Err(e) => {
+                spinner.finish();
+                cleanup(&archive_path);
+                output::error(&e.message, &e.code, None);
+                process::exit(1);
             }
         };
         spinner.finish();
