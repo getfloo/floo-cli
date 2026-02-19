@@ -9,6 +9,7 @@ use crate::config::load_config;
 use crate::detection::detect;
 use crate::names::generate_name;
 use crate::output;
+use crate::resolve::resolve_app;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 const POLL_TIMEOUT: Duration = Duration::from_secs(600); // 10 minutes
@@ -104,47 +105,20 @@ pub fn deploy(path: PathBuf, name: Option<String>, app: Option<String>) {
     // Resolve or create app
     let app_data = if let Some(ref app_ident) = app {
         let spinner = output::Spinner::new("Looking up app...");
-        let result = match client.get_app(app_ident) {
-            Ok(a) => a,
-            Err(e) if e.status_code == 404 || e.status_code == 0 => {
-                // ID lookup failed (not found or invalid UUID format) — try name match
-                match client.list_apps(1, 20) {
-                    Ok(resp) => {
-                        let found = resp
-                            .get("apps")
-                            .and_then(|v| v.as_array())
-                            .and_then(|apps| {
-                                apps.iter().find(|a| {
-                                    a.get("name").and_then(|v| v.as_str()) == Some(app_ident)
-                                })
-                            })
-                            .cloned();
-                        match found {
-                            Some(a) => a,
-                            None => {
-                                spinner.finish();
-                                cleanup(&archive_path);
-                                output::error(
-                                    &format!("App '{app_ident}' not found."),
-                                    "APP_NOT_FOUND",
-                                    Some("Check the app ID or name and try again."),
-                                );
-                                process::exit(1);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        spinner.finish();
-                        cleanup(&archive_path);
-                        output::error(&e.message, &e.code, None);
-                        process::exit(1);
-                    }
-                }
-            }
-            Err(e) => {
+        let result = match resolve_app(&client, app_ident) {
+            Ok(app_data) => app_data,
+            Err(error) => {
                 spinner.finish();
                 cleanup(&archive_path);
-                output::error(&e.message, &e.code, None);
+                if error.code == "APP_NOT_FOUND" {
+                    output::error(
+                        &format!("App '{app_ident}' not found."),
+                        "APP_NOT_FOUND",
+                        Some("Check the app name or ID and try again."),
+                    );
+                } else {
+                    output::error(&error.message, &error.code, None);
+                }
                 process::exit(1);
             }
         };
