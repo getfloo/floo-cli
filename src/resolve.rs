@@ -71,14 +71,10 @@ fn resolve_app_with_client<C: AppResolverClient>(
 ) -> Result<Value, FlooApiError> {
     // Only hit the /apps/{id} endpoint for UUID identifiers.
     if is_uuid_identifier(identifier) {
-        match client.get_app(identifier) {
-            Ok(app) => return Ok(app),
-            Err(error) if error.status_code == 404 => {}
-            Err(error) => return Err(error),
-        }
+        return client.get_app(identifier);
     }
 
-    // Fall back to name match via list.
+    // Name lookup via list for non-UUID identifiers.
     let response = client.list_apps(1, 100)?;
     match_app_from_list_response(&response, identifier)
 }
@@ -191,21 +187,22 @@ mod tests {
     }
 
     #[test]
-    fn uuid_identifier_falls_back_to_name_lookup_when_id_lookup_fails() {
+    fn uuid_identifier_does_not_fall_back_when_id_lookup_fails() {
         let identifier = "22222222-2222-2222-2222-222222222222";
         let client = FakeClient::new(
             FakeClient::err(404, "APP_NOT_FOUND", "App not found."),
             FakeClient::ok_app(json!({"apps":[{"id":identifier,"name":identifier}]})),
         );
 
-        let resolved = resolve_app_with_client(&client, identifier);
+        let error = resolve_app_with_client(&client, identifier).unwrap_err();
 
-        assert!(resolved.is_ok());
+        assert_eq!(error.status_code, 404);
+        assert_eq!(error.code, "APP_NOT_FOUND");
         assert_eq!(
             client.app_lookup_calls.borrow().as_slice(),
             &[identifier.to_string()]
         );
-        assert_eq!(client.list_lookup_calls.get(), 1);
+        assert_eq!(client.list_lookup_calls.get(), 0);
     }
 
     #[test]
@@ -220,6 +217,21 @@ mod tests {
 
         assert_eq!(error.status_code, 500);
         assert_eq!(error.code, "INTERNAL_ERROR");
+        assert_eq!(client.list_lookup_calls.get(), 0);
+    }
+
+    #[test]
+    fn uuid_identifier_propagates_validation_errors_without_fallback() {
+        let identifier = "44444444-4444-4444-4444-444444444444";
+        let client = FakeClient::new(
+            FakeClient::err(422, "VALIDATION_ERROR", "Invalid UUID"),
+            FakeClient::ok_app(json!({"apps":[{"id":identifier,"name":"uuid-app"}]})),
+        );
+
+        let error = resolve_app_with_client(&client, identifier).unwrap_err();
+
+        assert_eq!(error.status_code, 422);
+        assert_eq!(error.code, "VALIDATION_ERROR");
         assert_eq!(client.list_lookup_calls.get(), 0);
     }
 

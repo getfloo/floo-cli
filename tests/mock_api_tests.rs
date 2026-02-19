@@ -52,15 +52,9 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-/// Mock resolve_app (name-based): UUID lookup -> 404, list -> found.
+/// Mock resolve_app (name-based): list -> found.
 fn mock_resolve_app(server: &mut Server) -> Vec<Mock> {
-    let m1 = server
-        .mock("GET", format!("/v1/apps/{TEST_APP_NAME}").as_str())
-        .with_status(404)
-        .with_header("content-type", "application/json")
-        .with_body(r#"{"detail":{"code":"NOT_FOUND","message":"Not found"}}"#)
-        .create();
-    let m2 = server
+    let m = server
         .mock("GET", "/v1/apps")
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("page".into(), "1".into()),
@@ -70,7 +64,7 @@ fn mock_resolve_app(server: &mut Server) -> Vec<Mock> {
         .with_header("content-type", "application/json")
         .with_body(format!(r#"{{"apps":[{app}]}}"#, app = app_json()))
         .create();
-    vec![m1, m2]
+    vec![m]
 }
 
 // ───────────────────────── Apps ─────────────────────────
@@ -653,6 +647,59 @@ fn test_deploy_new_app_json() {
         .stdout(predicate::str::contains(r#""app""#))
         .stdout(predicate::str::contains(r#""deploy""#))
         .stdout(predicate::str::contains(r#""detection""#));
+}
+
+#[test]
+fn test_deploy_existing_app_by_name_json() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+
+    // Create a temp project with package.json for detection
+    let project = TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("package.json"),
+        r#"{"name":"test-project","version":"1.0.0"}"#,
+    )
+    .unwrap();
+
+    let _m_list = server
+        .mock("GET", "/v1/apps")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(r#"{{"apps":[{app}]}}"#, app = app_json()))
+        .create();
+
+    // Return status "live" immediately to skip the polling loop
+    let _m_deploy = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/deploys").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"id":"deploy-001","status":"live","url":"https://{TEST_APP_NAME}.floo.app","build_logs":""}}"#
+        ))
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "deploy",
+            project.path().to_str().unwrap(),
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(r#""id":"app-uuid-1234""#))
+        .stdout(predicate::str::contains(r#""deploy""#));
 }
 
 // ───────────────────────── App Not Found ─────────────────────────
