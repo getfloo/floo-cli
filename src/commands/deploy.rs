@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::process;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::api_client::FlooClient;
 use crate::archive::create_archive;
@@ -11,6 +11,7 @@ use crate::names::generate_name;
 use crate::output;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
+const POLL_TIMEOUT: Duration = Duration::from_secs(600); // 10 minutes
 const TERMINAL_STATUSES: &[&str] = &["live", "failed"];
 
 fn status_label(status: &str) -> &str {
@@ -184,6 +185,7 @@ pub fn deploy(path: PathBuf, name: Option<String>, app: Option<String>) {
     cleanup(&archive_path);
 
     // Poll until terminal status
+    let poll_start = Instant::now();
     let mut last_log_len: usize = 0;
     while !TERMINAL_STATUSES.contains(
         &deploy_data
@@ -212,6 +214,16 @@ pub fn deploy(path: PathBuf, name: Option<String>, app: Option<String>) {
         }
 
         thread::sleep(POLL_INTERVAL);
+
+        if poll_start.elapsed() >= POLL_TIMEOUT {
+            output::error(
+                "Deploy timed out after 10 minutes",
+                "DEPLOY_TIMEOUT",
+                Some("The deploy may still complete — check status with `floo apps status`"),
+            );
+            process::exit(1);
+        }
+
         let app_id = app_data.get("id").and_then(|v| v.as_str()).unwrap_or("");
         let deploy_id = deploy_data.get("id").and_then(|v| v.as_str()).unwrap_or("");
         deploy_data = match client.get_deploy(app_id, deploy_id) {

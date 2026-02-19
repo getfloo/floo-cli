@@ -16,6 +16,10 @@ const DEFAULT_IGNORE_PATTERNS: &[&str] = &[
     ".env",
     "*.pyc",
     ".DS_Store",
+    "target", // Rust/Maven build output
+    "dist",   // JS/Python distribution output
+    "build",  // Generic build output
+    ".next",  // Next.js build cache
 ];
 
 fn load_flooignore(path: &Path) -> Vec<String> {
@@ -285,5 +289,37 @@ mod tests {
         assert!(matches_pattern("node_modules", "node_modules"));
         assert!(!matches_pattern("app.js", "*.pyc"));
         assert!(matches_pattern(".DS_Store", ".DS_Store"));
+    }
+
+    #[test]
+    fn test_build_dirs_excluded() {
+        let dir = TempDir::new().unwrap();
+
+        for build_dir in &["target", "dist", "build", ".next"] {
+            fs::create_dir(dir.path().join(build_dir)).unwrap();
+            fs::write(dir.path().join(build_dir).join("output.js"), "").unwrap();
+        }
+        fs::write(dir.path().join("app.js"), "").unwrap();
+
+        let archive = create_archive(dir.path()).unwrap();
+        let file = File::open(&archive).unwrap();
+        let dec = flate2::read::GzDecoder::new(file);
+        let mut tar = tar::Archive::new(dec);
+        let names: Vec<String> = tar
+            .entries()
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path().unwrap().to_string_lossy().to_string())
+            .collect();
+
+        assert!(names.contains(&"app.js".to_string()));
+        for build_dir in &["target", "dist", "build", ".next"] {
+            assert!(
+                !names.iter().any(|n| n.starts_with(build_dir)),
+                "{build_dir} should be excluded"
+            );
+        }
+
+        let _ = fs::remove_file(&archive);
     }
 }

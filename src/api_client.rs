@@ -1,6 +1,3 @@
-#![allow(dead_code)]
-
-use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 
@@ -98,19 +95,6 @@ impl FlooClient {
             .map_err(|e| FlooApiError::new(0, "CONNECTION_ERROR", e.to_string()))
     }
 
-    fn patch_json(
-        &self,
-        path: &str,
-        body: &Value,
-    ) -> Result<reqwest::blocking::Response, FlooApiError> {
-        let mut req = self.client.patch(self.url(path)).json(body);
-        if let Some(auth) = self.auth_header() {
-            req = req.header("Authorization", auth);
-        }
-        req.send()
-            .map_err(|e| FlooApiError::new(0, "CONNECTION_ERROR", e.to_string()))
-    }
-
     fn delete(&self, path: &str) -> Result<reqwest::blocking::Response, FlooApiError> {
         let mut req = self.client.delete(self.url(path));
         if let Some(auth) = self.auth_header() {
@@ -121,12 +105,6 @@ impl FlooClient {
     }
 
     // --- Auth ---
-
-    pub fn register(&self, email: &str, password: &str) -> Result<Value, FlooApiError> {
-        let body = serde_json::json!({"email": email, "password": password});
-        let resp = self.post_json("/v1/auth/register", &body)?;
-        self.handle_response(resp)
-    }
 
     pub fn login(&self, email: &str, password: &str) -> Result<Value, FlooApiError> {
         let body = serde_json::json!({"email": email, "password": password});
@@ -154,16 +132,6 @@ impl FlooClient {
 
     pub fn get_app(&self, app_id: &str) -> Result<Value, FlooApiError> {
         let resp = self.get(&format!("/v1/apps/{app_id}"))?;
-        self.handle_response(resp)
-    }
-
-    pub fn update_app(
-        &self,
-        app_id: &str,
-        fields: &HashMap<String, String>,
-    ) -> Result<Value, FlooApiError> {
-        let body = serde_json::to_value(fields).unwrap_or(Value::Object(Default::default()));
-        let resp = self.patch_json(&format!("/v1/apps/{app_id}"), &body)?;
         self.handle_response(resp)
     }
 
