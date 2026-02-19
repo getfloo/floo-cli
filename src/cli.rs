@@ -63,6 +63,10 @@ pub enum Commands {
     #[command(subcommand)]
     Env(EnvCommands),
 
+    /// Show database details for an app.
+    #[command(subcommand)]
+    Db(DbCommands),
+
     /// Manage custom domains.
     #[command(subcommand)]
     Domains(DomainsCommands),
@@ -204,6 +208,15 @@ pub enum DomainsCommands {
 }
 
 #[derive(Subcommand)]
+pub enum DbCommands {
+    /// Show database connection details for an app.
+    Info {
+        /// App name or ID.
+        app: String,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum RollbacksCommands {
     /// List deploys available for rollback.
     List {
@@ -235,6 +248,10 @@ pub fn run() {
             EnvCommands::Set { key_value, app } => commands::env::set(&key_value, &app),
             EnvCommands::List { app } => commands::env::list(&app),
             EnvCommands::Remove { key, app } => commands::env::remove(&key, &app),
+        },
+
+        Commands::Db(sub) => match sub {
+            DbCommands::Info { app } => commands::db::info(&app),
         },
 
         Commands::Domains(sub) => match sub {

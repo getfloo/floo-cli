@@ -149,6 +149,15 @@ fn test_domains_help() {
 }
 
 #[test]
+fn test_db_help() {
+    floo()
+        .args(["db", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Show database details"));
+}
+
+#[test]
 fn test_deploy_help() {
     floo()
         .args(["deploy", "--help"])
@@ -230,6 +239,28 @@ fn test_domains_list_not_authenticated() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("Not logged in."));
+}
+
+// --- Database (unauthenticated) ---
+
+#[test]
+fn test_db_info_not_authenticated() {
+    floo()
+        .args(["db", "info", "my-app"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Not logged in."));
+}
+
+#[test]
+fn test_db_info_json_not_authenticated() {
+    floo()
+        .args(["--json", "db", "info", "my-app"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"NOT_AUTHENTICATED"#));
 }
 
 // --- Env format validation ---

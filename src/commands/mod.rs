@@ -1,5 +1,6 @@
 pub mod apps;
 pub mod auth;
+pub mod db;
 pub mod deploy;
 pub mod domains;
 pub mod env;
