@@ -25,10 +25,7 @@ pub fn login() {
         }
     };
 
-    let user_code = auth
-        .get("user_code")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let user_code = auth.get("user_code").and_then(|v| v.as_str()).unwrap_or("");
     let verification_uri_complete = auth
         .get("verification_uri_complete")
         .and_then(|v| v.as_str())
@@ -37,10 +34,7 @@ pub fn login() {
         .get("device_code")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let interval = auth
-        .get("interval")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(5);
+    let interval = auth.get("interval").and_then(|v| v.as_u64()).unwrap_or(5);
 
     // Step 2: Display code and open browser
     if output::is_json_mode() {
@@ -54,15 +48,9 @@ pub fn login() {
         );
     } else {
         eprintln!();
-        eprintln!(
-            "  Your one-time code is:  {}",
-            user_code.bold()
-        );
+        eprintln!("  Your one-time code is:  {}", user_code.bold());
         eprintln!();
-        eprintln!(
-            "  Opening browser to: {}",
-            verification_uri_complete
-        );
+        eprintln!("  Opening browser to: {}", verification_uri_complete);
         eprintln!("  If the browser didn't open, visit the URL above and enter the code.");
         eprintln!();
     }
@@ -120,11 +108,7 @@ pub fn login() {
             }
             Err(e) if e.code == "DEVICE_AUTH_DENIED" => {
                 spinner.finish();
-                output::error(
-                    "Authorization was denied.",
-                    "DEVICE_AUTH_DENIED",
-                    None,
-                );
+                output::error("Authorization was denied.", "DEVICE_AUTH_DENIED", None);
                 process::exit(1);
             }
             Err(e) if e.status_code == 0 => {

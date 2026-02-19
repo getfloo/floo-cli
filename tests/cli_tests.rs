@@ -63,7 +63,9 @@ fn test_auth_help() {
         .args(["auth", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Authenticate and manage your account"));
+        .stdout(predicate::str::contains(
+            "Authenticate and manage your account",
+        ));
 }
 
 #[test]
@@ -139,7 +141,9 @@ fn test_auth_whoami_help() {
         .args(["auth", "whoami", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Show the currently authenticated user"));
+        .stdout(predicate::str::contains(
+            "Show the currently authenticated user",
+        ));
 }
 
 // --- Apps (unauthenticated) ---
