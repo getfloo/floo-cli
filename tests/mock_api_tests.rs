@@ -563,6 +563,53 @@ fn test_app_not_found_json() {
         .stdout(predicate::str::contains("APP_NOT_FOUND"));
 }
 
+#[test]
+fn test_apps_status_uuid_surfaces_get_app_api_error() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let app_id = "11111111-1111-1111-1111-111111111111";
+
+    let _m_get = server
+        .mock("GET", format!("/v1/apps/{app_id}").as_str())
+        .with_status(500)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":{"code":"INTERNAL_ERROR","message":"Server error"}}"#)
+        .create();
+
+    floo()
+        .args(["--json", "apps", "status", app_id])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("INTERNAL_ERROR"))
+        .stdout(predicate::str::contains("APP_NOT_FOUND").not());
+}
+
+#[test]
+fn test_apps_status_name_surfaces_list_apps_api_error() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+
+    let _m_list = server
+        .mock("GET", "/v1/apps")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+        ]))
+        .with_status(500)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":{"code":"INTERNAL_ERROR","message":"Server error"}}"#)
+        .create();
+
+    floo()
+        .args(["--json", "apps", "status", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("INTERNAL_ERROR"))
+        .stdout(predicate::str::contains("APP_NOT_FOUND").not());
+}
+
 // ───────────────────────── Update ─────────────────────────
 
 #[test]
