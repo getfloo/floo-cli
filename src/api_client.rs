@@ -128,10 +128,26 @@ impl FlooClient {
         let resp = self.post_json("/v1/auth/device/token", &body)?;
         let status = resp.status().as_u16();
         if status == 202 {
+            let resp_body: Value = resp.json().map_err(|e| {
+                FlooApiError::new(
+                    500,
+                    "PARSE_ERROR",
+                    format!("Failed to parse 202 response: {e}"),
+                )
+            })?;
+            let poll_status = resp_body
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("pending");
+            let code = if poll_status == "slow_down" {
+                "DEVICE_SLOW_DOWN"
+            } else {
+                "DEVICE_PENDING"
+            };
             return Err(FlooApiError::new(
                 202,
-                "DEVICE_PENDING",
-                "Authorization pending",
+                code,
+                format!("Authorization {poll_status}"),
             ));
         }
         self.handle_response(resp)

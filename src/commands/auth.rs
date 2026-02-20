@@ -1,6 +1,6 @@
 use std::process;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use colored::Colorize;
 use dialoguer::Password;
@@ -57,6 +57,13 @@ pub fn login() {
             output::error("Invalid response: missing interval", "PARSE_ERROR", None);
             process::exit(1);
         });
+    let expires_in = auth
+        .get("expires_in")
+        .and_then(|v| v.as_u64())
+        .unwrap_or_else(|| {
+            output::error("Invalid response: missing expires_in", "PARSE_ERROR", None);
+            process::exit(1);
+        });
 
     // Step 2: Display code and open browser
     if !output::is_json_mode() {
@@ -74,22 +81,50 @@ pub fn login() {
     // Step 3: Poll for completion
     let spinner = output::Spinner::new("Waiting for browser authentication...");
     let mut network_retries = 0u8;
+    let deadline = Instant::now() + Duration::from_secs(expires_in);
+    let mut poll_interval = interval;
 
     loop {
-        thread::sleep(Duration::from_secs(interval));
+        thread::sleep(Duration::from_secs(poll_interval));
+
+        if Instant::now() > deadline {
+            spinner.finish();
+            output::error(
+                "Device code expired. Please try again.",
+                "DEVICE_CODE_EXPIRED",
+                Some("Run 'floo auth login' to start a new session."),
+            );
+            process::exit(1);
+        }
 
         match client.device_token(device_code) {
             Ok(result) => {
                 spinner.finish();
-                let mut config = load_config();
-                config.api_key = result
+                let api_key = result
                     .get("api_key")
                     .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-                config.user_email = result
+                    .unwrap_or_else(|| {
+                        output::error(
+                            "Server returned success but API key was missing.",
+                            "PARSE_ERROR",
+                            Some("This may be a server bug. Please try again."),
+                        );
+                        process::exit(1);
+                    });
+                let email = result
                     .get("email")
                     .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
+                    .unwrap_or_else(|| {
+                        output::error(
+                            "Server returned success but email was missing.",
+                            "PARSE_ERROR",
+                            Some("This may be a server bug. Please try again."),
+                        );
+                        process::exit(1);
+                    });
+                let mut config = load_config();
+                config.api_key = Some(api_key.to_string());
+                config.user_email = Some(email.to_string());
                 if let Err(e) = save_config(&config) {
                     output::error(
                         &format!("Failed to save credentials: {e}"),
@@ -98,16 +133,19 @@ pub fn login() {
                     );
                     process::exit(1);
                 }
-                let display_email = config.user_email.as_deref().unwrap_or("unknown");
                 output::success(
-                    &format!("Logged in as {display_email}"),
-                    Some(serde_json::json!({"email": display_email})),
+                    &format!("Logged in as {email}"),
+                    Some(serde_json::json!({"email": email})),
                 );
                 return;
             }
             Err(e) if e.status_code == 202 => {
                 // Still pending — continue polling
                 network_retries = 0;
+                if e.code == "DEVICE_SLOW_DOWN" {
+                    // RFC 8628: increase interval by 5 seconds on slow_down
+                    poll_interval = interval + 5;
+                }
                 continue;
             }
             Err(e) if e.code == "DEVICE_CODE_EXPIRED" => {
@@ -155,15 +193,31 @@ pub fn register(email: &str) {
     match client.register(email, &password) {
         Ok(result) => {
             spinner.finish();
-            let mut config = load_config();
-            config.api_key = result
+            let api_key = result
                 .get("api_key")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            config.user_email = result
+                .unwrap_or_else(|| {
+                    output::error(
+                        "Server returned success but API key was missing.",
+                        "PARSE_ERROR",
+                        Some("This may be a server bug. Please try again."),
+                    );
+                    process::exit(1);
+                });
+            let resp_email = result
                 .get("email")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
+                .unwrap_or_else(|| {
+                    output::error(
+                        "Server returned success but email was missing.",
+                        "PARSE_ERROR",
+                        Some("This may be a server bug. Please try again."),
+                    );
+                    process::exit(1);
+                });
+            let mut config = load_config();
+            config.api_key = Some(api_key.to_string());
+            config.user_email = Some(resp_email.to_string());
             if let Err(e) = save_config(&config) {
                 output::error(
                     &format!("Failed to save credentials: {e}"),
@@ -172,10 +226,9 @@ pub fn register(email: &str) {
                 );
                 process::exit(1);
             }
-            let display_email = config.user_email.as_deref().unwrap_or(email);
             output::success(
-                &format!("Account created! Logged in as {display_email}"),
-                Some(serde_json::json!({"email": display_email})),
+                &format!("Account created! Logged in as {resp_email}"),
+                Some(serde_json::json!({"email": resp_email})),
             );
         }
         Err(e) if e.code == "EMAIL_TAKEN" => {
