@@ -871,6 +871,205 @@ fn test_apps_status_name_surfaces_list_apps_api_error() {
         .stdout(predicate::str::contains("APP_NOT_FOUND").not());
 }
 
+// ───────────────────────── Deploy SSE streaming ─────────────────────────
+
+#[test]
+fn test_deploy_with_sse_streaming() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+
+    let project = TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("package.json"),
+        r#"{"name":"test-project","version":"1.0.0"}"#,
+    )
+    .unwrap();
+
+    let _m_create_app = server
+        .mock("POST", "/v1/apps")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"id":"{TEST_APP_ID}","name":"test-stream","status":"created","runtime":"nodejs"}}"#
+        ))
+        .create();
+
+    // Deploy returns pending (Phase 2 — not terminal)
+    let _m_deploy = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"id":"deploy-001","status":"pending","url":null,"build_logs":""}"#)
+        .create();
+
+    // SSE stream endpoint
+    let sse_body = concat!(
+        "event: status\ndata: {\"status\": \"building\"}\n\n",
+        "event: log\ndata: {\"text\": \"Building image...\\nPushing to registry...\"}\n\n",
+        "event: status\ndata: {\"status\": \"deploying\"}\n\n",
+        "event: done\ndata: {\"status\": \"live\", \"url\": \"https://test-stream.floo.app\"}\n\n",
+    );
+
+    let _m_stream = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/deploys/deploy-001/logs/stream").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "text/event-stream")
+        .with_body(sse_body)
+        .create();
+
+    // Final deploy state fetched after stream ends
+    let _m_get_deploy = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/deploys/deploy-001").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"id":"deploy-001","status":"live","url":"https://test-stream.floo.app","build_logs":"Building image...\nPushing to registry..."}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "deploy",
+            project.path().to_str().unwrap(),
+            "--name",
+            "test-stream",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Building"))
+        .stderr(predicate::str::contains("https://test-stream.floo.app"));
+}
+
+#[test]
+fn test_deploy_sse_fallback_to_polling() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+
+    let project = TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("package.json"),
+        r#"{"name":"test-project","version":"1.0.0"}"#,
+    )
+    .unwrap();
+
+    let _m_create_app = server
+        .mock("POST", "/v1/apps")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"id":"{TEST_APP_ID}","name":"test-fallback","status":"created","runtime":"nodejs"}}"#
+        ))
+        .create();
+
+    // Deploy returns pending (Phase 2)
+    let _m_deploy = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"id":"deploy-002","status":"pending","url":null,"build_logs":""}"#)
+        .create();
+
+    // SSE endpoint returns 404 — forces fallback to polling
+    let _m_stream = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/deploys/deploy-002/logs/stream").as_str(),
+        )
+        .with_status(404)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":{"code":"NOT_FOUND","message":"Not found"}}"#)
+        .create();
+
+    // Polling endpoint returns live immediately
+    let _m_get_deploy = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/deploys/deploy-002").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"id":"deploy-002","status":"live","url":"https://test-fallback.floo.app","build_logs":"done"}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "deploy",
+            project.path().to_str().unwrap(),
+            "--name",
+            "test-fallback",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("https://test-fallback.floo.app"));
+}
+
+#[test]
+fn test_deploy_json_mode_uses_polling() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+
+    let project = TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("package.json"),
+        r#"{"name":"test-project","version":"1.0.0"}"#,
+    )
+    .unwrap();
+
+    let _m_create_app = server
+        .mock("POST", "/v1/apps")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"id":"{TEST_APP_ID}","name":"test-poll","status":"created","runtime":"nodejs"}}"#
+        ))
+        .create();
+
+    // Deploy returns pending
+    let _m_deploy = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"id":"deploy-003","status":"pending","url":null,"build_logs":""}"#)
+        .create();
+
+    // Polling endpoint returns live (SSE is never called in --json mode)
+    let _m_get_deploy = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/deploys/deploy-003").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"id":"deploy-003","status":"live","url":"https://test-poll.floo.app","build_logs":"done"}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "deploy",
+            project.path().to_str().unwrap(),
+            "--name",
+            "test-poll",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains("https://test-poll.floo.app"));
+}
+
 // ───────────────────────── Update ─────────────────────────
 
 #[test]

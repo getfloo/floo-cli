@@ -1,11 +1,14 @@
+use std::io::BufRead;
 use std::path::PathBuf;
 use std::process;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::api_client::FlooClient;
 use crate::archive::create_archive;
 use crate::config::load_config;
 use crate::detection::detect;
+use crate::errors::FlooApiError;
 use crate::names::generate_name;
 use crate::output;
 use crate::resolve::resolve_app;
@@ -178,58 +181,31 @@ pub fn deploy(path: PathBuf, name: Option<String>, app: Option<String>) {
     // Clean up archive immediately after upload
     cleanup(&archive_path);
 
-    // Poll until terminal status
-    let poll_start = Instant::now();
-    let mut last_log_len: usize = 0;
-    while !TERMINAL_STATUSES.contains(
-        &deploy_data
-            .get("status")
-            .and_then(|v| v.as_str())
-            .unwrap_or(""),
-    ) {
-        if !output::is_json_mode() {
-            let build_logs = deploy_data
-                .get("build_logs")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            if build_logs.len() > last_log_len {
-                let new_logs = &build_logs[last_log_len..];
-                for line in new_logs.trim().lines() {
-                    output::dim_line(line);
-                }
-                last_log_len = build_logs.len();
-            }
+    // Wait for deploy to complete via SSE streaming or polling
+    let initial_status = deploy_data
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
 
-            let status = deploy_data
-                .get("status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            output::bold_line(status_label(status));
-        }
-
-        thread::sleep(POLL_INTERVAL);
-
-        if poll_start.elapsed() >= POLL_TIMEOUT {
-            let deploy_id = required_response_id(&deploy_data, "deploy");
-            output::error(
-                "Deploy timed out after 10 minutes",
-                "DEPLOY_TIMEOUT",
-                Some(&format!(
-                    "The deploy may still complete — check status with \
-                     `floo apps status {app_id}` (deploy ID: {deploy_id})"
-                )),
-            );
-            process::exit(1);
-        }
-
+    if TERMINAL_STATUSES.contains(&initial_status) {
+        // Phase 1: deploy already complete synchronously, skip streaming/polling
+    } else if !output::is_json_mode() {
+        // Phase 2 human mode: try SSE streaming, fall back to polling
         let deploy_id = required_response_id(&deploy_data, "deploy").to_string();
-        deploy_data = match client.get_deploy(&app_id, &deploy_id) {
-            Ok(d) => d,
+        match stream_deploy(&client, &app_id, &deploy_id) {
+            Ok(final_data) => deploy_data = final_data,
             Err(e) => {
-                output::error(&e.message, &e.code, None);
-                process::exit(1);
+                // SSE failed — fall back to polling
+                eprintln!(
+                    "Stream unavailable ({}), falling back to polling...",
+                    e.code
+                );
+                deploy_data = poll_deploy(&client, &app_id, &deploy_data);
             }
-        };
+        }
+    } else {
+        // Phase 2 JSON mode: use polling
+        deploy_data = poll_deploy(&client, &app_id, &deploy_data);
     }
 
     let final_status = deploy_data
@@ -238,18 +214,6 @@ pub fn deploy(path: PathBuf, name: Option<String>, app: Option<String>) {
         .unwrap_or("");
 
     if final_status == "failed" {
-        if !output::is_json_mode() {
-            let build_logs = deploy_data
-                .get("build_logs")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            if build_logs.len() > last_log_len {
-                let new_logs = &build_logs[last_log_len..];
-                for line in new_logs.trim().lines() {
-                    output::dim_line(line);
-                }
-            }
-        }
         let build_logs = deploy_data
             .get("build_logs")
             .and_then(|v| v.as_str())
@@ -280,6 +244,157 @@ pub fn deploy(path: PathBuf, name: Option<String>, app: Option<String>) {
             "detection": detection.to_value(),
         })),
     );
+}
+
+/// Stream deploy logs via SSE and return the final deploy state.
+fn stream_deploy(
+    client: &FlooClient,
+    app_id: &str,
+    deploy_id: &str,
+) -> Result<serde_json::Value, FlooApiError> {
+    let response = client.stream_deploy_logs(app_id, deploy_id)?;
+    let reader = std::io::BufReader::new(response);
+
+    let mut event_type = String::new();
+    let mut data_buf = String::new();
+
+    for line_result in reader.lines() {
+        let line = match line_result {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("SSE connection error: {e}");
+                break;
+            }
+        };
+
+        if let Some(suffix) = line.strip_prefix("event: ") {
+            event_type = suffix.to_string();
+        } else if let Some(suffix) = line.strip_prefix("data: ") {
+            data_buf = suffix.to_string();
+        } else if line.starts_with(':') {
+            continue; // SSE comment (heartbeat)
+        } else if line.is_empty() && !event_type.is_empty() {
+            // Event complete — process it
+            match event_type.as_str() {
+                "status" => match serde_json::from_str::<serde_json::Value>(&data_buf) {
+                    Ok(parsed) => {
+                        let status = parsed.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                        output::bold_line(status_label(status));
+                    }
+                    Err(e) => eprintln!("Malformed SSE status event: {e}"),
+                },
+                "log" => match serde_json::from_str::<serde_json::Value>(&data_buf) {
+                    Ok(parsed) => {
+                        if let Some(text) = parsed.get("text").and_then(|v| v.as_str()) {
+                            for log_line in text.trim().lines() {
+                                output::dim_line(log_line);
+                            }
+                        }
+                    }
+                    Err(e) => eprintln!("Malformed SSE log event: {e}"),
+                },
+                "done" => {
+                    break;
+                }
+                "error" => match serde_json::from_str::<serde_json::Value>(&data_buf) {
+                    Ok(parsed) => {
+                        let msg = parsed
+                            .get("message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Stream error");
+                        return Err(FlooApiError::new(0, "STREAM_ERROR", msg));
+                    }
+                    Err(e) => {
+                        eprintln!("Malformed SSE error event: {e}");
+                        break;
+                    }
+                },
+                _ => {}
+            }
+            event_type.clear();
+            data_buf.clear();
+        }
+    }
+
+    // After stream ends, fetch final deploy state for success/error output
+    client.get_deploy(app_id, deploy_id)
+}
+
+/// Poll the deploy endpoint until it reaches a terminal status.
+fn poll_deploy(
+    client: &FlooClient,
+    app_id: &str,
+    initial_data: &serde_json::Value,
+) -> serde_json::Value {
+    let deploy_id = required_response_id(initial_data, "deploy").to_string();
+    let poll_start = Instant::now();
+    let mut last_log_len: usize = 0;
+    let mut deploy_data = initial_data.clone();
+
+    while !TERMINAL_STATUSES.contains(
+        &deploy_data
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or(""),
+    ) {
+        if !output::is_json_mode() {
+            let build_logs = deploy_data
+                .get("build_logs")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if build_logs.len() > last_log_len {
+                let new_logs = &build_logs[last_log_len..];
+                for line in new_logs.trim().lines() {
+                    output::dim_line(line);
+                }
+                last_log_len = build_logs.len();
+            }
+
+            let status = deploy_data
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            output::bold_line(status_label(status));
+        }
+
+        thread::sleep(POLL_INTERVAL);
+
+        if poll_start.elapsed() >= POLL_TIMEOUT {
+            output::error(
+                "Deploy timed out after 10 minutes",
+                "DEPLOY_TIMEOUT",
+                Some(&format!(
+                    "The deploy may still complete — check status with \
+                     `floo apps status {app_id}` (deploy ID: {deploy_id})"
+                )),
+            );
+            process::exit(1);
+        }
+
+        deploy_data = match client.get_deploy(app_id, &deploy_id) {
+            Ok(d) => d,
+            Err(e) => {
+                output::error(&e.message, &e.code, None);
+                process::exit(1);
+            }
+        };
+    }
+
+    // Print any remaining build logs for the final state
+    if !output::is_json_mode() {
+        let build_logs = deploy_data
+            .get("build_logs")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if build_logs.len() > last_log_len {
+            let new_logs = &build_logs[last_log_len..];
+            for line in new_logs.trim().lines() {
+                output::dim_line(line);
+            }
+        }
+    }
+
+    deploy_data
 }
 
 fn cleanup(path: &PathBuf) {
