@@ -8,6 +8,7 @@ mod detection;
 mod errors;
 mod names;
 mod output;
+mod project_config;
 mod resolve;
 mod updater;
 
