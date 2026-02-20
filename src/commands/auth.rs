@@ -25,28 +25,41 @@ pub fn login() {
         }
     };
 
-    let user_code = auth.get("user_code").and_then(|v| v.as_str()).unwrap_or("");
+    let user_code = auth
+        .get("user_code")
+        .and_then(|v| v.as_str())
+        .unwrap_or_else(|| {
+            output::error("Invalid response: missing user_code", "PARSE_ERROR", None);
+            process::exit(1);
+        });
     let verification_uri_complete = auth
         .get("verification_uri_complete")
         .and_then(|v| v.as_str())
-        .unwrap_or("");
+        .unwrap_or_else(|| {
+            output::error(
+                "Invalid response: missing verification_uri_complete",
+                "PARSE_ERROR",
+                None,
+            );
+            process::exit(1);
+        });
     let device_code = auth
         .get("device_code")
         .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let interval = auth.get("interval").and_then(|v| v.as_u64()).unwrap_or(5);
+        .unwrap_or_else(|| {
+            output::error("Invalid response: missing device_code", "PARSE_ERROR", None);
+            process::exit(1);
+        });
+    let interval = auth
+        .get("interval")
+        .and_then(|v| v.as_u64())
+        .unwrap_or_else(|| {
+            output::error("Invalid response: missing interval", "PARSE_ERROR", None);
+            process::exit(1);
+        });
 
     // Step 2: Display code and open browser
-    if output::is_json_mode() {
-        output::info(
-            "Awaiting browser authentication",
-            Some(serde_json::json!({
-                "status": "awaiting_auth",
-                "user_code": user_code,
-                "verification_uri_complete": verification_uri_complete,
-            })),
-        );
-    } else {
+    if !output::is_json_mode() {
         eprintln!();
         eprintln!("  Your one-time code is:  {}", user_code.bold());
         eprintln!();
