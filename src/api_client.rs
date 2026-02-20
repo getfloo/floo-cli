@@ -237,6 +237,53 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn stream_deploy_logs(
+        &self,
+        app_id: &str,
+        deploy_id: &str,
+    ) -> Result<reqwest::blocking::Response, FlooApiError> {
+        let streaming_client = Client::builder()
+            .timeout(Duration::from_secs(1200))
+            .build()
+            .map_err(|e| {
+                FlooApiError::new(
+                    0,
+                    "CONNECTION_ERROR",
+                    format!("Failed to create streaming client: {e}"),
+                )
+            })?;
+
+        let url = format!(
+            "{}/v1/apps/{}/deploys/{}/logs/stream",
+            self.base_url, app_id, deploy_id
+        );
+        let mut req = streaming_client
+            .get(&url)
+            .header("Accept", "text/event-stream");
+        if let Some(auth) = self.auth_header() {
+            req = req.header("Authorization", auth);
+        }
+        let response = req
+            .send()
+            .map_err(|e| FlooApiError::new(0, "CONNECTION_ERROR", e.to_string()))?;
+
+        if response.status().as_u16() == 404 {
+            return Err(FlooApiError::new(
+                404,
+                "NOT_FOUND",
+                "Stream endpoint not available",
+            ));
+        }
+        if !response.status().is_success() {
+            return Err(FlooApiError::new(
+                response.status().as_u16(),
+                "STREAM_ERROR",
+                format!("Stream endpoint returned {}", response.status()),
+            ));
+        }
+        Ok(response)
+    }
+
     // --- Env vars ---
 
     pub fn set_env_var(&self, app_id: &str, key: &str, value: &str) -> Result<Value, FlooApiError> {
