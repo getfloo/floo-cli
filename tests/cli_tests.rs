@@ -446,6 +446,82 @@ fn test_logs_json_not_authenticated() {
         .stdout(predicate::str::contains(r#""code":"NOT_AUTHENTICATED"#));
 }
 
+// --- floo.toml validation ---
+
+#[test]
+fn test_deploy_invalid_floo_toml() {
+    let home = tempfile::TempDir::new().unwrap();
+    let config_dir = home.path().join(".floo");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("config.json"),
+        r#"{"api_key": "floo_test123", "api_url": "https://api.test.local"}"#,
+    )
+    .unwrap();
+
+    // Create a project dir with an invalid floo.toml
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.toml"),
+        r#"[app]
+name = "my-app"
+
+[[services]]
+name = "web"
+type = "database"
+path = "."
+port = 3000
+ingress = "public"
+"#,
+    )
+    .unwrap();
+
+    floo()
+        .args(["deploy", project.path().to_str().unwrap()])
+        .env("HOME", home.path().to_str().unwrap())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Invalid floo.toml"));
+}
+
+#[test]
+fn test_deploy_invalid_floo_toml_json() {
+    let home = tempfile::TempDir::new().unwrap();
+    let config_dir = home.path().join(".floo");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("config.json"),
+        r#"{"api_key": "floo_test123", "api_url": "https://api.test.local"}"#,
+    )
+    .unwrap();
+
+    // Create a project dir with an invalid floo.toml
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.toml"),
+        r#"[app]
+name = "my-app"
+
+[[services]]
+name = "web"
+type = "database"
+path = "."
+port = 3000
+ingress = "public"
+"#,
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "deploy", project.path().to_str().unwrap()])
+        .env("HOME", home.path().to_str().unwrap())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            r#""code":"INVALID_PROJECT_CONFIG"#,
+        ));
+}
+
 // --- Top-level login/logout/whoami removed ---
 
 #[test]

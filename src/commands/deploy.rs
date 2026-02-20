@@ -11,6 +11,7 @@ use crate::detection::detect;
 use crate::errors::FlooApiError;
 use crate::names::generate_name;
 use crate::output;
+use crate::project_config;
 use crate::resolve::resolve_app;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -70,6 +71,38 @@ pub fn deploy(path: PathBuf, name: Option<String>, app: Option<String>) {
             Some("Provide a valid project directory."),
         );
         process::exit(1);
+    }
+
+    // Load project config if present
+    let project_config = match project_config::load_project_config(&project_path) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            output::error(&e.message, &e.code, e.suggestion.as_deref());
+            process::exit(1);
+        }
+    };
+    if !output::is_json_mode() {
+        if let Some(ref cfg) = project_config {
+            let service_list: Vec<String> = cfg
+                .services
+                .iter()
+                .map(|s| {
+                    format!(
+                        "{} ({} at {}, :{}, {})",
+                        s.name, s.service_type, s.path, s.port, s.ingress
+                    )
+                })
+                .collect();
+            output::info(
+                &format!(
+                    "Loaded floo.toml — app '{}', {} service(s): {}",
+                    cfg.app.name,
+                    cfg.services.len(),
+                    service_list.join(", ")
+                ),
+                None,
+            );
+        }
     }
 
     // Detect runtime/framework
