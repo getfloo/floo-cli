@@ -55,12 +55,50 @@ fn test_no_args_shows_help() {
         .stderr(predicate::str::contains("Usage: floo"));
 }
 
-// --- Auth (unauthenticated) ---
+// --- Auth subcommand ---
 
 #[test]
-fn test_whoami_not_authenticated() {
+fn test_auth_help() {
     floo()
-        .arg("whoami")
+        .args(["auth", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Authenticate and manage your account",
+        ));
+}
+
+#[test]
+fn test_auth_login_help() {
+    floo()
+        .args(["auth", "login", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Authenticate with the Floo API"));
+}
+
+#[test]
+fn test_auth_register_help() {
+    floo()
+        .args(["auth", "register", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Create a new Floo account"));
+}
+
+#[test]
+fn test_auth_register_missing_email() {
+    floo()
+        .args(["auth", "register"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("required"));
+}
+
+#[test]
+fn test_auth_whoami_not_authenticated() {
+    floo()
+        .args(["auth", "whoami"])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
@@ -68,9 +106,9 @@ fn test_whoami_not_authenticated() {
 }
 
 #[test]
-fn test_whoami_json_not_authenticated() {
+fn test_auth_whoami_json_not_authenticated() {
     floo()
-        .args(["--json", "whoami"])
+        .args(["--json", "auth", "whoami"])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
@@ -78,9 +116,9 @@ fn test_whoami_json_not_authenticated() {
 }
 
 #[test]
-fn test_logout_succeeds() {
+fn test_auth_logout_succeeds() {
     floo()
-        .arg("logout")
+        .args(["auth", "logout"])
         .env("HOME", "/tmp/floo-test-logout")
         .assert()
         .success()
@@ -88,13 +126,24 @@ fn test_logout_succeeds() {
 }
 
 #[test]
-fn test_logout_json() {
+fn test_auth_logout_json() {
     floo()
-        .args(["--json", "logout"])
+        .args(["--json", "auth", "logout"])
         .env("HOME", "/tmp/floo-test-logout-json")
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""success":true"#));
+}
+
+#[test]
+fn test_auth_whoami_help() {
+    floo()
+        .args(["auth", "whoami", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Show the currently authenticated user",
+        ));
 }
 
 // --- Apps (unauthenticated) ---
@@ -395,4 +444,33 @@ fn test_logs_json_not_authenticated() {
         .assert()
         .failure()
         .stdout(predicate::str::contains(r#""code":"NOT_AUTHENTICATED"#));
+}
+
+// --- Top-level login/logout/whoami removed ---
+
+#[test]
+fn test_top_level_login_removed() {
+    floo()
+        .arg("login")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unrecognized subcommand"));
+}
+
+#[test]
+fn test_top_level_logout_removed() {
+    floo()
+        .arg("logout")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unrecognized subcommand"));
+}
+
+#[test]
+fn test_top_level_whoami_removed() {
+    floo()
+        .arg("whoami")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unrecognized subcommand"));
 }

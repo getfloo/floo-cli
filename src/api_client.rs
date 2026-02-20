@@ -112,9 +112,44 @@ impl FlooClient {
 
     // --- Auth ---
 
-    pub fn login(&self, email: &str, password: &str) -> Result<Value, FlooApiError> {
+    pub fn register(&self, email: &str, password: &str) -> Result<Value, FlooApiError> {
         let body = serde_json::json!({"email": email, "password": password});
-        let resp = self.post_json("/v1/auth/login", &body)?;
+        let resp = self.post_json("/v1/auth/register", &body)?;
+        self.handle_response(resp)
+    }
+
+    pub fn device_authorize(&self) -> Result<Value, FlooApiError> {
+        let resp = self.post_json("/v1/auth/device", &serde_json::json!({}))?;
+        self.handle_response(resp)
+    }
+
+    pub fn device_token(&self, device_code: &str) -> Result<Value, FlooApiError> {
+        let body = serde_json::json!({"device_code": device_code});
+        let resp = self.post_json("/v1/auth/device/token", &body)?;
+        let status = resp.status().as_u16();
+        if status == 202 {
+            let resp_body: Value = resp.json().map_err(|e| {
+                FlooApiError::new(
+                    500,
+                    "PARSE_ERROR",
+                    format!("Failed to parse 202 response: {e}"),
+                )
+            })?;
+            let poll_status = resp_body
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("pending");
+            let code = if poll_status == "slow_down" {
+                "DEVICE_SLOW_DOWN"
+            } else {
+                "DEVICE_PENDING"
+            };
+            return Err(FlooApiError::new(
+                202,
+                code,
+                format!("Authorization {poll_status}"),
+            ));
+        }
         self.handle_response(resp)
     }
 

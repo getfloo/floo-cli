@@ -38,22 +38,9 @@ pub enum Commands {
         app: Option<String>,
     },
 
-    /// Authenticate with the Floo API and store credentials.
-    Login {
-        /// Account email.
-        #[arg(short, long)]
-        email: Option<String>,
-
-        /// Account password.
-        #[arg(short, long)]
-        password: Option<String>,
-    },
-
-    /// Clear stored credentials.
-    Logout,
-
-    /// Show the currently authenticated user.
-    Whoami,
+    /// Authenticate and manage your account.
+    #[command(subcommand)]
+    Auth(AuthCommands),
 
     /// Manage your apps.
     #[command(subcommand)]
@@ -122,6 +109,21 @@ pub enum Commands {
         /// Specific release tag to install (e.g. v0.2.0).
         #[arg(long)]
         version: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum AuthCommands {
+    /// Authenticate with the Floo API (opens browser).
+    Login,
+    /// Clear stored credentials.
+    Logout,
+    /// Show the currently authenticated user.
+    Whoami,
+    /// Create a new Floo account.
+    Register {
+        /// Account email address.
+        email: String,
     },
 }
 
@@ -234,9 +236,12 @@ pub fn run() {
 
     match cli.command {
         Commands::Deploy { path, name, app } => commands::deploy::deploy(path, name, app),
-        Commands::Login { email, password } => commands::auth::login(email, password),
-        Commands::Logout => commands::auth::logout(),
-        Commands::Whoami => commands::auth::whoami(),
+        Commands::Auth(sub) => match sub {
+            AuthCommands::Login => commands::auth::login(),
+            AuthCommands::Logout => commands::auth::logout(),
+            AuthCommands::Whoami => commands::auth::whoami(),
+            AuthCommands::Register { email } => commands::auth::register(&email),
+        },
 
         Commands::Apps(sub) => match sub {
             AppsCommands::List => commands::apps::list(),
