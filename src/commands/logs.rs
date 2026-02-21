@@ -44,6 +44,7 @@ pub fn logs(
     tail: u32,
     since: Option<&str>,
     severity: Option<&str>,
+    service: Option<&str>,
     output_path: Option<&Path>,
 ) {
     require_auth();
@@ -77,7 +78,7 @@ pub fn logs(
         }
     };
 
-    let result = match client.get_logs(app_id, tail, since, severity) {
+    let result = match client.get_logs(app_id, tail, since, severity, service) {
         Ok(r) => r,
         Err(e) => {
             output::error(&e.message, &e.code, None);

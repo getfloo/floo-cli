@@ -192,12 +192,14 @@ pub fn deploy(path: PathBuf, name: Option<String>, app: Option<String>) {
     let app_id = required_response_id(&app_data, "app").to_string();
 
     // Deploy
+    let services = project_config.as_ref().map(|c| c.services.as_slice());
     let spinner = output::Spinner::new("Uploading...");
     let mut deploy_data = match client.create_deploy(
         &app_id,
         &archive_path,
         &detection.runtime,
         detection.framework.as_deref(),
+        services,
     ) {
         Ok(d) => {
             spinner.finish();

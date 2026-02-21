@@ -1,7 +1,7 @@
 use std::fmt;
 use std::path::Path;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::errors::FlooError;
 
@@ -21,18 +21,18 @@ pub struct AppConfig {
     pub name: String,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceConfig {
     pub name: String,
-    #[serde(rename = "type")]
+    #[serde(rename(deserialize = "type", serialize = "service_type"))]
     pub service_type: ServiceType,
     pub path: String,
     pub port: u16,
     pub ingress: ServiceIngress,
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum ServiceType {
     Web,
@@ -50,7 +50,7 @@ impl fmt::Display for ServiceType {
     }
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum ServiceIngress {
     Public,
@@ -270,6 +270,25 @@ ingress = "public"
 
         let err = load_project_config(dir.path()).unwrap_err();
         assert_eq!(err.code, "INVALID_PROJECT_CONFIG");
+    }
+
+    #[test]
+    fn test_service_config_json_serialization() {
+        let config = ServiceConfig {
+            name: "api".to_string(),
+            service_type: ServiceType::Api,
+            path: "backend".to_string(),
+            port: 8000,
+            ingress: ServiceIngress::Internal,
+        };
+        let json = serde_json::to_value(&config).unwrap();
+        assert_eq!(json["name"], "api");
+        assert_eq!(json["service_type"], "api");
+        assert_eq!(json["path"], "backend");
+        assert_eq!(json["port"], 8000);
+        assert_eq!(json["ingress"], "internal");
+        // Verify "type" key is NOT present (serialized as "service_type")
+        assert!(json.get("type").is_none());
     }
 
     #[test]
