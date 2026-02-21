@@ -1,23 +1,10 @@
 use std::process;
 
-use crate::config::load_config;
 use crate::output;
 use crate::resolve::resolve_app;
 
-fn require_auth() {
-    let config = load_config();
-    if config.api_key.is_none() {
-        output::error(
-            "Not logged in.",
-            "NOT_AUTHENTICATED",
-            Some("Run 'floo login' to authenticate."),
-        );
-        process::exit(1);
-    }
-}
-
 pub fn list() {
-    require_auth();
+    super::require_auth();
     let client = super::init_client(None);
     let result = match client.list_apps(1, 20) {
         Ok(r) => r,
@@ -78,7 +65,7 @@ pub fn list() {
 }
 
 pub fn status(app_name: &str) {
-    require_auth();
+    super::require_auth();
     let client = super::init_client(None);
     let app_data = match resolve_app(&client, app_name) {
         Ok(a) => a,
@@ -132,7 +119,7 @@ pub fn status(app_name: &str) {
 }
 
 pub fn delete(app_name: &str, force: bool) {
-    require_auth();
+    super::require_auth();
     let client = super::init_client(None);
     let app_data = match resolve_app(&client, app_name) {
         Ok(a) => a,
@@ -176,7 +163,7 @@ pub fn delete(app_name: &str, force: bool) {
 }
 
 pub fn connect(repo: &str, installation_id: u64, app_name: &str, branch: Option<&str>) {
-    require_auth();
+    super::require_auth();
     let client = super::init_client(None);
     let app_data = match resolve_app(&client, app_name) {
         Ok(a) => a,
@@ -194,7 +181,7 @@ pub fn connect(repo: &str, installation_id: u64, app_name: &str, branch: Option<
         }
     };
 
-    let app_id = app_data.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    let app_id = super::expect_str_field(&app_data, "id");
     let name = app_data
         .get("name")
         .and_then(|v| v.as_str())
@@ -207,7 +194,7 @@ pub fn connect(repo: &str, installation_id: u64, app_name: &str, branch: Option<
                 "GITHUB_ALREADY_CONNECTED" => {
                     Some("Disconnect first: floo apps disconnect --app <name>")
                 }
-                "REPO_NOT_ACCESSIBLE" => {
+                "GITHUB_REPO_NOT_ACCESSIBLE" => {
                     Some("Ensure the GitHub App is installed on the repo's organization.")
                 }
                 _ => None,
@@ -217,10 +204,7 @@ pub fn connect(repo: &str, installation_id: u64, app_name: &str, branch: Option<
         }
     };
 
-    let connected_branch = result
-        .get("default_branch")
-        .and_then(|v| v.as_str())
-        .unwrap_or("main");
+    let connected_branch = super::expect_str_field(&result, "default_branch");
 
     output::success(
         &format!("Connected {name} to {repo} (branch: {connected_branch})"),
@@ -229,7 +213,7 @@ pub fn connect(repo: &str, installation_id: u64, app_name: &str, branch: Option<
 }
 
 pub fn disconnect(app_name: &str) {
-    require_auth();
+    super::require_auth();
     let client = super::init_client(None);
     let app_data = match resolve_app(&client, app_name) {
         Ok(a) => a,
@@ -247,7 +231,7 @@ pub fn disconnect(app_name: &str) {
         }
     };
 
-    let app_id = app_data.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    let app_id = super::expect_str_field(&app_data, "id");
     let name = app_data
         .get("name")
         .and_then(|v| v.as_str())

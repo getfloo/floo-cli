@@ -462,7 +462,7 @@ impl FlooClient {
         if let Some(b) = branch {
             body.as_object_mut()
                 .unwrap()
-                .insert("branch".to_string(), Value::String(b.to_string()));
+                .insert("default_branch".to_string(), Value::String(b.to_string()));
         }
         let resp = self.post_json(&format!("/v1/apps/{app_id}/github/connect"), &body)?;
         self.handle_response(resp)
@@ -470,10 +470,6 @@ impl FlooClient {
 
     pub fn github_disconnect(&self, app_id: &str) -> Result<(), FlooApiError> {
         let resp = self.delete(&format!("/v1/apps/{app_id}/github/disconnect"))?;
-        if resp.status().as_u16() == 200 {
-            let _ = self.handle_response(resp)?;
-            return Ok(());
-        }
         self.handle_response(resp)?;
         Ok(())
     }

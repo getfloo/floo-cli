@@ -1,23 +1,10 @@
 use std::process;
 
-use crate::config::load_config;
 use crate::output;
 use crate::resolve::resolve_app;
 
-fn require_auth() {
-    let config = load_config();
-    if config.api_key.is_none() {
-        output::error(
-            "Not logged in.",
-            "NOT_AUTHENTICATED",
-            Some("Run 'floo login' to authenticate."),
-        );
-        process::exit(1);
-    }
-}
-
 pub fn promote(app_name: &str, tag: Option<&str>) {
-    require_auth();
+    super::require_auth();
     let client = super::init_client(None);
     let app_data = match resolve_app(&client, app_name) {
         Ok(a) => a,
@@ -35,7 +22,7 @@ pub fn promote(app_name: &str, tag: Option<&str>) {
         }
     };
 
-    let app_id = app_data.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    let app_id = super::expect_str_field(&app_data, "id");
     let name = app_data
         .get("name")
         .and_then(|v| v.as_str())
@@ -59,23 +46,17 @@ pub fn promote(app_name: &str, tag: Option<&str>) {
         }
     };
 
-    let result_tag = result
-        .get("tag")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown");
-    let release_url = result
-        .get("release_url")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let result_tag = super::expect_str_field(&result, "tag");
+    let release_url = super::expect_str_field(&result, "release_url");
 
     if output::is_json_mode() {
         output::success(
-            &format!("Promoted {name} → prod ({result_tag})"),
+            &format!("Promoted {name} \u{2192} prod ({result_tag})"),
             Some(result),
         );
     } else {
         output::success(
-            &format!("Promoted {name} → prod ({result_tag})"),
+            &format!("Promoted {name} \u{2192} prod ({result_tag})"),
             Some(serde_json::json!({
                 "app": name,
                 "tag": result_tag,
@@ -90,7 +71,7 @@ pub fn promote(app_name: &str, tag: Option<&str>) {
 }
 
 pub fn list(app_name: &str) {
-    require_auth();
+    super::require_auth();
     let client = super::init_client(None);
     let app_data = match resolve_app(&client, app_name) {
         Ok(a) => a,
@@ -108,7 +89,7 @@ pub fn list(app_name: &str) {
         }
     };
 
-    let app_id = app_data.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    let app_id = super::expect_str_field(&app_data, "id");
 
     let result = match client.list_releases(app_id, 1, 20) {
         Ok(r) => r,
@@ -121,8 +102,15 @@ pub fn list(app_name: &str) {
     let releases = result
         .get("releases")
         .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
+        .unwrap_or_else(|| {
+            output::error(
+                "Failed to parse releases from API response.",
+                "PARSE_ERROR",
+                Some("This is a bug. Please report it."),
+            );
+            process::exit(1);
+        })
+        .clone();
 
     if releases.is_empty() {
         if output::is_json_mode() {
@@ -137,7 +125,11 @@ pub fn list(app_name: &str) {
         .iter()
         .map(|r| {
             let sha = r.get("commit_sha").and_then(|v| v.as_str()).unwrap_or("-");
-            let short_sha = if sha.len() > 7 { &sha[..7] } else { sha };
+            let short_sha = if sha.len() > 7 && sha.is_ascii() {
+                &sha[..7]
+            } else {
+                sha
+            };
             vec![
                 r.get("release_number")
                     .and_then(|v| v.as_u64())
@@ -168,7 +160,7 @@ pub fn list(app_name: &str) {
 }
 
 pub fn show(release_id: &str, app_name: &str) {
-    require_auth();
+    super::require_auth();
     let client = super::init_client(None);
     let app_data = match resolve_app(&client, app_name) {
         Ok(a) => a,
@@ -186,7 +178,7 @@ pub fn show(release_id: &str, app_name: &str) {
         }
     };
 
-    let app_id = app_data.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    let app_id = super::expect_str_field(&app_data, "id");
 
     let release = match client.get_release(app_id, release_id) {
         Ok(r) => r,
