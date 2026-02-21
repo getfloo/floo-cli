@@ -174,3 +174,92 @@ pub fn delete(app_name: &str, force: bool) {
         Some(serde_json::json!({"id": app_id})),
     );
 }
+
+pub fn connect(repo: &str, installation_id: u64, app_name: &str, branch: Option<&str>) {
+    require_auth();
+    let client = super::init_client(None);
+    let app_data = match resolve_app(&client, app_name) {
+        Ok(a) => a,
+        Err(e) => {
+            if e.code == "APP_NOT_FOUND" {
+                output::error(
+                    &format!("App '{app_name}' not found."),
+                    "APP_NOT_FOUND",
+                    Some("Check the app name or ID and try again."),
+                );
+            } else {
+                output::error(&e.message, &e.code, None);
+            }
+            process::exit(1);
+        }
+    };
+
+    let app_id = app_data.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    let name = app_data
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or(app_name);
+
+    let result = match client.github_connect(app_id, repo, installation_id, branch) {
+        Ok(r) => r,
+        Err(e) => {
+            let suggestion = match e.code.as_str() {
+                "GITHUB_ALREADY_CONNECTED" => {
+                    Some("Disconnect first: floo apps disconnect --app <name>")
+                }
+                "REPO_NOT_ACCESSIBLE" => {
+                    Some("Ensure the GitHub App is installed on the repo's organization.")
+                }
+                _ => None,
+            };
+            output::error(&e.message, &e.code, suggestion);
+            process::exit(1);
+        }
+    };
+
+    let connected_branch = result
+        .get("default_branch")
+        .and_then(|v| v.as_str())
+        .unwrap_or("main");
+
+    output::success(
+        &format!("Connected {name} to {repo} (branch: {connected_branch})"),
+        Some(result),
+    );
+}
+
+pub fn disconnect(app_name: &str) {
+    require_auth();
+    let client = super::init_client(None);
+    let app_data = match resolve_app(&client, app_name) {
+        Ok(a) => a,
+        Err(e) => {
+            if e.code == "APP_NOT_FOUND" {
+                output::error(
+                    &format!("App '{app_name}' not found."),
+                    "APP_NOT_FOUND",
+                    Some("Check the app name or ID and try again."),
+                );
+            } else {
+                output::error(&e.message, &e.code, None);
+            }
+            process::exit(1);
+        }
+    };
+
+    let app_id = app_data.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    let name = app_data
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or(app_name);
+
+    if let Err(e) = client.github_disconnect(app_id) {
+        output::error(&e.message, &e.code, None);
+        process::exit(1);
+    }
+
+    output::success(
+        &format!("Disconnected {name} from GitHub."),
+        Some(serde_json::json!({"app": name})),
+    );
+}

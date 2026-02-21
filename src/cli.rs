@@ -58,6 +58,20 @@ pub enum Commands {
     #[command(subcommand)]
     Domains(DomainsCommands),
 
+    /// Manage releases.
+    #[command(subcommand)]
+    Releases(ReleasesCommands),
+
+    /// Promote an app to prod by creating a GitHub release.
+    Promote {
+        /// App name or ID.
+        app: String,
+
+        /// Release tag (auto-generated if omitted).
+        #[arg(short, long)]
+        tag: Option<String>,
+    },
+
     /// View deploy history for rollback.
     #[command(subcommand)]
     Rollbacks(RollbacksCommands),
@@ -151,6 +165,32 @@ pub enum AppsCommands {
         #[arg(short, long)]
         force: bool,
     },
+
+    /// Connect a GitHub repo to an app for auto-deploy.
+    Connect {
+        /// GitHub repo (owner/repo).
+        #[arg(long)]
+        repo: String,
+
+        /// GitHub App installation ID.
+        #[arg(long)]
+        installation_id: u64,
+
+        /// App name or ID.
+        #[arg(short, long)]
+        app: String,
+
+        /// Default branch (defaults to "main").
+        #[arg(short, long)]
+        branch: Option<String>,
+    },
+
+    /// Disconnect a GitHub repo from an app.
+    Disconnect {
+        /// App name or ID.
+        #[arg(short, long)]
+        app: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -223,6 +263,26 @@ pub enum DbCommands {
 }
 
 #[derive(Subcommand)]
+pub enum ReleasesCommands {
+    /// List releases for an app.
+    List {
+        /// App name or ID.
+        #[arg(short, long)]
+        app: String,
+    },
+
+    /// Show details for a release.
+    Show {
+        /// Release ID.
+        release_id: String,
+
+        /// App name or ID.
+        #[arg(short, long)]
+        app: String,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum RollbacksCommands {
     /// List deploys available for rollback.
     List {
@@ -251,6 +311,13 @@ pub fn run() {
             AppsCommands::List => commands::apps::list(),
             AppsCommands::Status { app_name } => commands::apps::status(&app_name),
             AppsCommands::Delete { app_name, force } => commands::apps::delete(&app_name, force),
+            AppsCommands::Connect {
+                repo,
+                installation_id,
+                app,
+                branch,
+            } => commands::apps::connect(&repo, installation_id, &app, branch.as_deref()),
+            AppsCommands::Disconnect { app } => commands::apps::disconnect(&app),
         },
 
         Commands::Env(sub) => match sub {
@@ -268,6 +335,15 @@ pub fn run() {
             DomainsCommands::List { app } => commands::domains::list(&app),
             DomainsCommands::Remove { hostname, app } => commands::domains::remove(&hostname, &app),
         },
+
+        Commands::Releases(sub) => match sub {
+            ReleasesCommands::List { app } => commands::releases::list(&app),
+            ReleasesCommands::Show { release_id, app } => {
+                commands::releases::show(&release_id, &app)
+            }
+        },
+
+        Commands::Promote { app, tag } => commands::releases::promote(&app, tag.as_deref()),
 
         Commands::Rollbacks(sub) => match sub {
             RollbacksCommands::List { app } => commands::rollbacks::list(&app),

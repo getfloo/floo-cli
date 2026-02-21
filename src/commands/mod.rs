@@ -11,6 +11,7 @@ pub mod deploy;
 pub mod domains;
 pub mod env;
 pub mod logs;
+pub mod releases;
 pub mod rollbacks;
 pub mod update;
 

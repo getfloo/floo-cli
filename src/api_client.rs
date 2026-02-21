@@ -445,4 +445,66 @@ impl FlooClient {
         let resp = self.get(&path)?;
         self.handle_response(resp)
     }
+
+    // --- GitHub ---
+
+    pub fn github_connect(
+        &self,
+        app_id: &str,
+        repo_full_name: &str,
+        installation_id: u64,
+        branch: Option<&str>,
+    ) -> Result<Value, FlooApiError> {
+        let mut body = serde_json::json!({
+            "repo_full_name": repo_full_name,
+            "installation_id": installation_id,
+        });
+        if let Some(b) = branch {
+            body.as_object_mut()
+                .unwrap()
+                .insert("branch".to_string(), Value::String(b.to_string()));
+        }
+        let resp = self.post_json(&format!("/v1/apps/{app_id}/github/connect"), &body)?;
+        self.handle_response(resp)
+    }
+
+    pub fn github_disconnect(&self, app_id: &str) -> Result<(), FlooApiError> {
+        let resp = self.delete(&format!("/v1/apps/{app_id}/github/disconnect"))?;
+        if resp.status().as_u16() == 200 {
+            let _ = self.handle_response(resp)?;
+            return Ok(());
+        }
+        self.handle_response(resp)?;
+        Ok(())
+    }
+
+    // --- Releases ---
+
+    pub fn promote_app(&self, app_id: &str, tag: Option<&str>) -> Result<Value, FlooApiError> {
+        let mut body = serde_json::json!({});
+        if let Some(t) = tag {
+            body.as_object_mut()
+                .unwrap()
+                .insert("tag".to_string(), Value::String(t.to_string()));
+        }
+        let resp = self.post_json(&format!("/v1/apps/{app_id}/promote"), &body)?;
+        self.handle_response(resp)
+    }
+
+    pub fn list_releases(
+        &self,
+        app_id: &str,
+        page: u32,
+        per_page: u32,
+    ) -> Result<Value, FlooApiError> {
+        let resp = self.get(&format!(
+            "/v1/apps/{app_id}/releases?page={page}&per_page={per_page}"
+        ))?;
+        self.handle_response(resp)
+    }
+
+    pub fn get_release(&self, app_id: &str, release_id: &str) -> Result<Value, FlooApiError> {
+        let resp = self.get(&format!("/v1/apps/{app_id}/releases/{release_id}"))?;
+        self.handle_response(resp)
+    }
 }
