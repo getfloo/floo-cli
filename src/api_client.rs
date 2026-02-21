@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use crate::config::{load_config, FlooConfig};
 use crate::errors::FlooApiError;
+use crate::project_config::ServiceConfig;
 
 pub struct FlooClient {
     client: Client,
@@ -193,6 +194,7 @@ impl FlooClient {
         tarball_path: &Path,
         runtime: &str,
         framework: Option<&str>,
+        services: Option<&[ServiceConfig]>,
     ) -> Result<Value, FlooApiError> {
         let file_bytes = std::fs::read(tarball_path).map_err(|e| {
             FlooApiError::new(0, "FILE_ERROR", format!("Failed to read archive: {e}"))
@@ -208,10 +210,21 @@ impl FlooClient {
             .mime_str("application/gzip")
             .unwrap();
 
-        let form = multipart::Form::new()
+        let mut form = multipart::Form::new()
             .part("file", file_part)
             .text("runtime", runtime.to_string())
             .text("framework", framework.unwrap_or("").to_string());
+
+        if let Some(svcs) = services {
+            let json = serde_json::to_string(svcs).map_err(|e| {
+                FlooApiError::new(
+                    0,
+                    "SERIALIZATION_ERROR",
+                    format!("Failed to serialize services: {e}"),
+                )
+            })?;
+            form = form.text("services", json);
+        }
 
         let mut req = self
             .client
@@ -417,6 +430,7 @@ impl FlooClient {
         limit: u32,
         since: Option<&str>,
         severity: Option<&str>,
+        service: Option<&str>,
     ) -> Result<Value, FlooApiError> {
         let mut path = format!("/v1/apps/{app_id}/logs?limit={limit}");
         if let Some(s) = since {
@@ -424,6 +438,9 @@ impl FlooClient {
         }
         if let Some(sev) = severity {
             path.push_str(&format!("&severity={sev}"));
+        }
+        if let Some(svc) = service {
+            path.push_str(&format!("&service={svc}"));
         }
         let resp = self.get(&path)?;
         self.handle_response(resp)

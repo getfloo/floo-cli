@@ -96,6 +96,10 @@ pub enum Commands {
         #[arg(long)]
         severity: Option<String>,
 
+        /// Filter logs to a specific service (e.g., "api", "web").
+        #[arg(long)]
+        service: Option<String>,
+
         /// Write logs to a file (JSON or plain text based on --json flag).
         #[arg(short, long)]
         output: Option<PathBuf>,
@@ -281,6 +285,7 @@ pub fn run() {
             since,
             error,
             severity,
+            service,
             output,
         } => {
             let sev = if error {
@@ -288,7 +293,14 @@ pub fn run() {
             } else {
                 severity.as_deref()
             };
-            commands::logs::logs(&app, tail, since.as_deref(), sev, output.as_deref());
+            commands::logs::logs(
+                &app,
+                tail,
+                since.as_deref(),
+                sev,
+                service.as_deref(),
+                output.as_deref(),
+            );
         }
         Commands::Version => commands::update::version(),
         Commands::Update { version } => commands::update::update(version.as_deref()),
