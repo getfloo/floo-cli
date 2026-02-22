@@ -107,10 +107,10 @@ Packs source into `.tar.gz`, respects `.flooignore`. 500MB size limit.
 - No hardcoded API URLs — use config or `FLOO_API_URL` env var
 - Unit tests inline (`#[cfg(test)] mod tests`), integration tests in `tests/`
 - Reset `output::set_json_mode(false)` at the start of every test (global state leaks)
-- Issue tracker source of truth: `getfloo/floo-workspace` (do not leave active issues in `getfloo/floo-cli`)
+- Issue tracker: CLI issues live in `getfloo/floo-cli` (this repo). API/infra issues live in `getfloo/floo`.
 - PR closure language is mandatory for issue-driven work:
-  - Use fully-qualified references, e.g. `Closes getfloo/floo-workspace#46`
-  - Do not use bare `Closes #46` in this repo
+  - CLI issues: `Closes #N` (same-repo reference)
+  - Cross-repo issues: `Closes getfloo/floo#N`
 
 ## Release Flow
 
