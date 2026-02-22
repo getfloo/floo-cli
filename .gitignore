@@ -15,5 +15,7 @@ Thumbs.db
 .env
 .env.*
 
-# Claude Code local settings
-.claude/
+# Claude Code
+.claude/settings.local.json
+.claude/worktrees/
+.claude/todos/
