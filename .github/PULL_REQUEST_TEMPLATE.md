@@ -2,10 +2,10 @@
 - <1-3 bullet points>
 
 ## Issue Closure (Required)
-Closes getfloo/floo-workspace#<issue-number>
+Closes #<issue-number>
 
 If this PR should not close an issue, write `N/A` and explain why in one sentence.
-Do not use bare references like `Closes #123` in this repo.
+For cross-repo issues, use `Closes getfloo/floo#N`.
 
 ## Changes
 - <files changed and why>
