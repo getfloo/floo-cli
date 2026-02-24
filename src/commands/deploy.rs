@@ -239,8 +239,12 @@ pub fn deploy(path: PathBuf, name: Option<String>, app: Option<String>) {
             }
         }
     } else {
-        // Phase 2 JSON mode: use polling
-        deploy_data = poll_deploy(&client, &app_id, &deploy_data);
+        // Phase 2 JSON mode: stream structured NDJSON events via SSE
+        let deploy_id = required_response_id(&deploy_data, "deploy").to_string();
+        match stream_deploy_json(&client, &app_id, &deploy_id) {
+            Ok(final_data) => deploy_data = final_data,
+            Err(_) => deploy_data = poll_deploy(&client, &app_id, &deploy_data),
+        }
     }
 
     let final_status = deploy_data
@@ -352,6 +356,79 @@ fn stream_deploy(
     }
 
     // After stream ends, fetch final deploy state for success/error output
+    client.get_deploy(app_id, deploy_id)
+}
+
+/// Stream deploy events via SSE and emit NDJSON to stdout for JSON mode.
+fn stream_deploy_json(
+    client: &FlooClient,
+    app_id: &str,
+    deploy_id: &str,
+) -> Result<serde_json::Value, FlooApiError> {
+    let response = client.stream_deploy_logs(app_id, deploy_id)?;
+    let reader = std::io::BufReader::new(response);
+
+    let mut event_type = String::new();
+    let mut data_buf = String::new();
+
+    for line_result in reader.lines() {
+        let line = match line_result {
+            Ok(l) => l,
+            Err(_) => break,
+        };
+
+        if let Some(suffix) = line.strip_prefix("event: ") {
+            event_type = suffix.to_string();
+        } else if let Some(suffix) = line.strip_prefix("data: ") {
+            data_buf = suffix.to_string();
+        } else if line.starts_with(':') {
+            continue;
+        } else if line.is_empty() && !event_type.is_empty() {
+            match event_type.as_str() {
+                "status" => {
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data_buf) {
+                        let status = parsed.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                        println!(
+                            "{}",
+                            serde_json::json!({"event": "status", "status": status})
+                        );
+                    }
+                }
+                "log" => {
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data_buf) {
+                        if let Some(text) = parsed.get("text").and_then(|v| v.as_str()) {
+                            println!("{}", serde_json::json!({"event": "log", "text": text}));
+                        }
+                    }
+                }
+                "done" => {
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data_buf) {
+                        let status = parsed.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                        let url = parsed.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                        println!(
+                            "{}",
+                            serde_json::json!({"event": "done", "status": status, "url": url})
+                        );
+                    }
+                    break;
+                }
+                "error" => {
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data_buf) {
+                        let msg = parsed
+                            .get("message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Stream error");
+                        return Err(FlooApiError::new(0, "STREAM_ERROR", msg));
+                    }
+                    break;
+                }
+                _ => {}
+            }
+            event_type.clear();
+            data_buf.clear();
+        }
+    }
+
     client.get_deploy(app_id, deploy_id)
 }
 
