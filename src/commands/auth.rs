@@ -3,7 +3,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use colored::Colorize;
-use dialoguer::Password;
 
 use crate::config::{clear_config, load_config, save_config};
 use crate::output;
@@ -182,15 +181,9 @@ pub fn login() {
 }
 
 pub fn register(email: &str) {
-    let password = Password::new()
-        .with_prompt("Password")
-        .with_confirmation("Confirm password", "Passwords do not match.")
-        .interact()
-        .unwrap_or_else(|_| process::exit(1));
-
     let spinner = output::Spinner::new("Creating account...");
     let client = super::init_client(None);
-    match client.register(email, &password) {
+    match client.register(email) {
         Ok(result) => {
             spinner.finish();
             let api_key = result
