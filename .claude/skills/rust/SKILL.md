@@ -233,22 +233,6 @@ New constants go here. Never hardcode values in command files.
 
 ## Interactive Prompts
 
-Commands use `dialoguer` for user input:
-
-```rust
-use dialoguer::{Input, Password};
-
-let email: String = Input::new()
-    .with_prompt("Email")
-    .interact_text()
-    .unwrap_or_else(|_| process::exit(1));
-
-let password: String = Password::new()
-    .with_prompt("Password")
-    .interact()
-    .unwrap_or_else(|_| process::exit(1));
-```
-
 Confirmations use `output::confirm()`:
 
 ```rust

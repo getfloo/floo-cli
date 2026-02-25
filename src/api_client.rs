@@ -113,8 +113,8 @@ impl FlooClient {
 
     // --- Auth ---
 
-    pub fn register(&self, email: &str, password: &str) -> Result<Value, FlooApiError> {
-        let body = serde_json::json!({"email": email, "password": password});
+    pub fn register(&self, email: &str) -> Result<Value, FlooApiError> {
+        let body = serde_json::json!({"email": email});
         let resp = self.post_json("/v1/auth/register", &body)?;
         self.handle_response(resp)
     }
