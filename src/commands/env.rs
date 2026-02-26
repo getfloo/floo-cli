@@ -243,7 +243,7 @@ fn parse_env_file(path: &Path) -> Vec<(String, String)> {
 // Commands
 // ---------------------------------------------------------------------------
 
-pub fn set(key_value: &str, app_flag: Option<&str>, service_names: &[String]) {
+pub fn set(key_value: &str, app_flag: Option<&str>, service_names: &[String], restart: bool) {
     super::require_auth();
 
     if !key_value.contains('=') {
@@ -262,6 +262,7 @@ pub fn set(key_value: &str, app_flag: Option<&str>, service_names: &[String]) {
     let (app_id, app_name) = resolve_app_id(&client, app_flag);
     let targets = resolve_service_ids(&client, &app_id, &app_name, service_names);
 
+    let mut last_env_result = serde_json::Value::Null;
     for (service_id, service_name) in &targets {
         match client.set_env_var(&app_id, &key, value, service_id.as_deref()) {
             Ok(result) => {
@@ -269,13 +270,68 @@ pub fn set(key_value: &str, app_flag: Option<&str>, service_names: &[String]) {
                     Some(sn) => format!("{app_name}/{sn}"),
                     None => app_name.clone(),
                 };
-                output::success(&format!("Set {key} on {target}."), Some(result));
+                last_env_result = result.clone();
+                if !restart || !output::is_json_mode() {
+                    output::success(&format!("Set {key} on {target}."), Some(result));
+                }
             }
             Err(e) => {
                 output::error(&e.message, &e.code, None);
                 process::exit(1);
             }
         }
+    }
+
+    if restart {
+        let svcs = if service_names.is_empty() {
+            None
+        } else {
+            Some(service_names)
+        };
+
+        let spinner = output::Spinner::new("Restarting...");
+        let deploy_data = match client.restart_app(&app_id, svcs) {
+            Ok(d) => {
+                spinner.finish();
+                d
+            }
+            Err(e) => {
+                spinner.finish();
+                output::error(&e.message, &e.code, None);
+                process::exit(1);
+            }
+        };
+
+        let final_status = match deploy_data.get("status").and_then(|v| v.as_str()) {
+            Some(s) => s,
+            None => {
+                output::error(
+                    "API response missing 'status' field.",
+                    "INVALID_RESPONSE",
+                    Some("This may indicate a CLI/API version mismatch. Try `floo update`."),
+                );
+                process::exit(1);
+            }
+        };
+        let url = deploy_data
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(no URL)");
+
+        if final_status == "failed" {
+            output::error_with_data(
+                "Restart failed.",
+                "RESTART_FAILED",
+                Some("Run `floo logs` for details."),
+                Some(serde_json::json!({"env": last_env_result, "deploy": deploy_data})),
+            );
+            process::exit(1);
+        }
+
+        output::success(
+            &format!("Restarted {url}"),
+            Some(serde_json::json!({"env": last_env_result, "deploy": deploy_data})),
+        );
     }
 }
 

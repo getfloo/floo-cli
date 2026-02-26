@@ -568,6 +568,19 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn restart_app(
+        &self,
+        app_id: &str,
+        services: Option<&[String]>,
+    ) -> Result<Value, FlooApiError> {
+        let body = match services {
+            Some(svcs) => serde_json::json!({"services": svcs}),
+            None => serde_json::json!({}),
+        };
+        let resp = self.post_json(&format!("/v1/apps/{app_id}/restart"), &body)?;
+        self.handle_response(resp)
+    }
+
     pub fn list_releases(
         &self,
         app_id: &str,
