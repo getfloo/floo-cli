@@ -50,9 +50,9 @@ pub enum Commands {
     #[command(subcommand)]
     Env(EnvCommands),
 
-    /// Show database details for an app.
+    /// Manage services for an app.
     #[command(subcommand)]
-    Db(DbCommands),
+    Services(ServicesCommands),
 
     /// Manage custom domains.
     #[command(subcommand)]
@@ -64,8 +64,9 @@ pub enum Commands {
 
     /// Promote an app to prod by creating a GitHub release.
     Promote {
-        /// App name or ID.
-        app: String,
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
 
         /// Release tag (auto-generated if omitted).
         #[arg(short, long)]
@@ -224,22 +225,50 @@ pub enum EnvCommands {
 }
 
 #[derive(Subcommand)]
+pub enum ServicesCommands {
+    /// List all services for an app.
+    List {
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+
+    /// Show details for a service (managed or user-managed).
+    Info {
+        /// Service name.
+        service_name: String,
+
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum DomainsCommands {
     /// Add a custom domain to an app.
     Add {
         /// Domain hostname (e.g. app.example.com).
         hostname: String,
 
-        /// App name or ID.
+        /// App name or ID (uses config file if omitted).
         #[arg(short, long)]
-        app: String,
+        app: Option<String>,
+
+        /// Target service name (required for multi-service apps).
+        #[arg(long)]
+        services: Option<String>,
     },
 
     /// List custom domains for an app.
     List {
-        /// App name or ID.
+        /// App name or ID (uses config file if omitted).
         #[arg(short, long)]
-        app: String,
+        app: Option<String>,
+
+        /// Target service name (required for multi-service apps).
+        #[arg(long)]
+        services: Option<String>,
     },
 
     /// Remove a custom domain from an app.
@@ -247,18 +276,13 @@ pub enum DomainsCommands {
         /// Domain hostname to remove.
         hostname: String,
 
-        /// App name or ID.
+        /// App name or ID (uses config file if omitted).
         #[arg(short, long)]
-        app: String,
-    },
-}
+        app: Option<String>,
 
-#[derive(Subcommand)]
-pub enum DbCommands {
-    /// Show database connection details for an app.
-    Info {
-        /// App name or ID.
-        app: String,
+        /// Target service name (required for multi-service apps).
+        #[arg(long)]
+        services: Option<String>,
     },
 }
 
@@ -266,9 +290,9 @@ pub enum DbCommands {
 pub enum ReleasesCommands {
     /// List releases for an app.
     List {
-        /// App name or ID.
+        /// App name or ID (uses config file if omitted).
         #[arg(short, long)]
-        app: String,
+        app: Option<String>,
     },
 
     /// Show details for a release.
@@ -276,9 +300,9 @@ pub enum ReleasesCommands {
         /// Release ID.
         release_id: String,
 
-        /// App name or ID.
+        /// App name or ID (uses config file if omitted).
         #[arg(short, long)]
-        app: String,
+        app: Option<String>,
     },
 }
 
@@ -286,8 +310,9 @@ pub enum ReleasesCommands {
 pub enum RollbacksCommands {
     /// List deploys available for rollback.
     List {
-        /// App name or ID.
-        app: String,
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
     },
 }
 
@@ -326,27 +351,42 @@ pub fn run() {
             EnvCommands::Remove { key, app } => commands::env::remove(&key, &app),
         },
 
-        Commands::Db(sub) => match sub {
-            DbCommands::Info { app } => commands::db::info(&app),
-        },
-
-        Commands::Domains(sub) => match sub {
-            DomainsCommands::Add { hostname, app } => commands::domains::add(&hostname, &app),
-            DomainsCommands::List { app } => commands::domains::list(&app),
-            DomainsCommands::Remove { hostname, app } => commands::domains::remove(&hostname, &app),
-        },
-
-        Commands::Releases(sub) => match sub {
-            ReleasesCommands::List { app } => commands::releases::list(&app),
-            ReleasesCommands::Show { release_id, app } => {
-                commands::releases::show(&release_id, &app)
+        Commands::Services(sub) => match sub {
+            ServicesCommands::List { app } => commands::services::list(app.as_deref()),
+            ServicesCommands::Info { service_name, app } => {
+                commands::services::info(&service_name, app.as_deref())
             }
         },
 
-        Commands::Promote { app, tag } => commands::releases::promote(&app, tag.as_deref()),
+        Commands::Domains(sub) => match sub {
+            DomainsCommands::Add {
+                hostname,
+                app,
+                services,
+            } => commands::domains::add(&hostname, app.as_deref(), services.as_deref()),
+            DomainsCommands::List { app, services } => {
+                commands::domains::list(app.as_deref(), services.as_deref())
+            }
+            DomainsCommands::Remove {
+                hostname,
+                app,
+                services,
+            } => commands::domains::remove(&hostname, app.as_deref(), services.as_deref()),
+        },
+
+        Commands::Releases(sub) => match sub {
+            ReleasesCommands::List { app } => commands::releases::list(app.as_deref()),
+            ReleasesCommands::Show { release_id, app } => {
+                commands::releases::show(&release_id, app.as_deref())
+            }
+        },
+
+        Commands::Promote { app, tag } => {
+            commands::releases::promote(app.as_deref(), tag.as_deref())
+        }
 
         Commands::Rollbacks(sub) => match sub {
-            RollbacksCommands::List { app } => commands::rollbacks::list(&app),
+            RollbacksCommands::List { app } => commands::rollbacks::list(app.as_deref()),
         },
 
         Commands::Rollback {

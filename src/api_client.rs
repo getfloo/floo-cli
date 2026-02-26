@@ -382,6 +382,13 @@ impl FlooClient {
         }
     }
 
+    // --- Services ---
+
+    pub fn list_services(&self, app_id: &str) -> Result<Value, FlooApiError> {
+        let resp = self.get(&format!("/v1/apps/{app_id}/services?page=1&per_page=100"))?;
+        self.handle_response(resp)
+    }
+
     // --- Domains ---
 
     pub fn add_domain(&self, app_id: &str, hostname: &str) -> Result<Value, FlooApiError> {

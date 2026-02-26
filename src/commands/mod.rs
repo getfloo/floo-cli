@@ -6,13 +6,13 @@ use crate::output;
 
 pub mod apps;
 pub mod auth;
-pub mod db;
 pub mod deploy;
 pub mod domains;
 pub mod env;
 pub mod logs;
 pub mod releases;
 pub mod rollbacks;
+pub mod services;
 pub mod update;
 
 pub(crate) fn init_client(config: Option<FlooConfig>) -> FlooClient {
