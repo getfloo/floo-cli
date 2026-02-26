@@ -454,3 +454,5 @@ All error codes used in the CLI. New error codes must be `UPPER_SNAKE_CASE` and 
 | `NO_CONFIG_FOUND` | project_config/resolve.rs | No config files found and no `--app` flag |
 | `LEGACY_CONFIG` | project_config/resolve.rs | Found old `floo.toml`, must migrate to new config files |
 | `CONFIG_WRITE_ERROR` | project_config/ | Failed to serialize or write config file |
+| `MISSING_ARGUMENT` | commands/skills | Required argument not provided (e.g. --path or --print) |
+| `IO_ERROR` | commands/skills | File system operation failed (create dir, write file, resolve path) |

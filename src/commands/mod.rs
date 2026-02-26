@@ -13,6 +13,7 @@ pub mod logs;
 pub mod releases;
 pub mod rollbacks;
 pub mod services;
+pub mod skills;
 pub mod update;
 
 pub(crate) fn init_client(config: Option<FlooConfig>) -> FlooClient {

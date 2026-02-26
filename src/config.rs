@@ -14,6 +14,8 @@ pub struct FlooConfig {
     pub api_url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_email: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skill_paths: Vec<String>,
 }
 
 fn default_api_url() -> String {
@@ -26,7 +28,19 @@ impl Default for FlooConfig {
             api_key: None,
             api_url: DEFAULT_API_URL.to_string(),
             user_email: None,
+            skill_paths: Vec::new(),
         }
+    }
+}
+
+impl FlooConfig {
+    /// Add a skill path if not already tracked. Returns true if added.
+    pub fn add_skill_path(&mut self, path: &str) -> bool {
+        if self.skill_paths.iter().any(|p| p == path) {
+            return false;
+        }
+        self.skill_paths.push(path.to_string());
+        true
     }
 }
 
@@ -120,12 +134,36 @@ mod tests {
             api_key: Some("floo_test123".to_string()),
             api_url: "https://api.test.local".to_string(),
             user_email: Some("test@example.com".to_string()),
+            skill_paths: vec!["/tmp/floo.md".to_string()],
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: FlooConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.api_key.as_deref(), Some("floo_test123"));
         assert_eq!(deserialized.api_url, "https://api.test.local");
         assert_eq!(deserialized.user_email.as_deref(), Some("test@example.com"));
+        assert_eq!(deserialized.skill_paths, vec!["/tmp/floo.md"]);
+    }
+
+    #[test]
+    fn test_config_without_skill_paths_deserializes() {
+        let json = r#"{"api_key":"floo_x","api_url":"https://api.getfloo.com"}"#;
+        let config: FlooConfig = serde_json::from_str(json).unwrap();
+        assert!(config.skill_paths.is_empty());
+    }
+
+    #[test]
+    fn test_add_skill_path_deduplicates() {
+        let mut config = FlooConfig::default();
+        assert!(config.add_skill_path("/tmp/floo.md"));
+        assert!(!config.add_skill_path("/tmp/floo.md"));
+        assert_eq!(config.skill_paths.len(), 1);
+    }
+
+    #[test]
+    fn test_skill_paths_omitted_when_empty() {
+        let config = FlooConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(!json.contains("skill_paths"));
     }
 
     #[test]
