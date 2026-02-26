@@ -200,16 +200,24 @@ pub enum EnvCommands {
         /// KEY=VALUE pair to set.
         key_value: String,
 
-        /// App name or ID.
+        /// App name or ID (reads from config if omitted).
         #[arg(short, long)]
-        app: String,
+        app: Option<String>,
+
+        /// Target specific services (repeatable).
+        #[arg(long)]
+        services: Vec<String>,
     },
 
     /// List environment variables for an app.
     List {
-        /// App name or ID.
+        /// App name or ID (reads from config if omitted).
         #[arg(short, long)]
-        app: String,
+        app: Option<String>,
+
+        /// Target specific services (repeatable).
+        #[arg(long)]
+        services: Vec<String>,
     },
 
     /// Remove an environment variable from an app.
@@ -217,9 +225,41 @@ pub enum EnvCommands {
         /// Environment variable key to remove.
         key: String,
 
-        /// App name or ID.
+        /// App name or ID (reads from config if omitted).
         #[arg(short, long)]
-        app: String,
+        app: Option<String>,
+
+        /// Target specific services (repeatable).
+        #[arg(long)]
+        services: Vec<String>,
+    },
+
+    /// Get an environment variable's plaintext value.
+    Get {
+        /// Environment variable key.
+        key: String,
+
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Target a specific service.
+        #[arg(long)]
+        service: Option<String>,
+    },
+
+    /// Import environment variables from a .env file.
+    Import {
+        /// Path to .env file (defaults to env_file from config or .env).
+        file: Option<PathBuf>,
+
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Target specific services (repeatable).
+        #[arg(long)]
+        services: Vec<String>,
     },
 }
 
@@ -321,9 +361,23 @@ pub fn run() {
         },
 
         Commands::Env(sub) => match sub {
-            EnvCommands::Set { key_value, app } => commands::env::set(&key_value, &app),
-            EnvCommands::List { app } => commands::env::list(&app),
-            EnvCommands::Remove { key, app } => commands::env::remove(&key, &app),
+            EnvCommands::Set {
+                key_value,
+                app,
+                services,
+            } => commands::env::set(&key_value, app.as_deref(), &services),
+            EnvCommands::List { app, services } => commands::env::list(app.as_deref(), &services),
+            EnvCommands::Remove { key, app, services } => {
+                commands::env::remove(&key, app.as_deref(), &services)
+            }
+            EnvCommands::Get { key, app, service } => {
+                commands::env::get(&key, app.as_deref(), service.as_deref())
+            }
+            EnvCommands::Import {
+                file,
+                app,
+                services,
+            } => commands::env::import_vars(file.as_deref(), app.as_deref(), &services),
         },
 
         Commands::Db(sub) => match sub {

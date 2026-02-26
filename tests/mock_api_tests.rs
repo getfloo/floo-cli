@@ -203,11 +203,48 @@ fn test_apps_list_api_error() {
 
 // ───────────────────────── Env ─────────────────────────
 
+const TEST_SERVICE_ID: &str = "svc-uuid-1234";
+const TEST_SERVICE_NAME: &str = "web";
+
+fn mock_list_services_one(server: &mut Server) -> Mock {
+    server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/services").as_str())
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"services":[{{"id":"{TEST_SERVICE_ID}","name":"{TEST_SERVICE_NAME}"}}]}}"#
+        ))
+        .create()
+}
+
+fn mock_list_services_two(server: &mut Server) -> Mock {
+    server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/services").as_str(),
+        )
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"services":[{{"id":"{TEST_SERVICE_ID}","name":"web"}},{{"id":"svc-uuid-5678","name":"api"}}]}}"#
+        ))
+        .create()
+}
+
 #[test]
 fn test_env_set_json() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
 
     let _m_set = server
         .mock("POST", format!("/v1/apps/{TEST_APP_ID}/env").as_str())
@@ -237,9 +274,14 @@ fn test_env_list_json() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
 
     let _m_list = server
         .mock("GET", format!("/v1/apps/{TEST_APP_ID}/env").as_str())
+        .match_query(Matcher::UrlEncoded(
+            "service_id".into(),
+            TEST_SERVICE_ID.into(),
+        ))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(r#"{"env_vars":[{"key":"DATABASE_URL","masked_value":"post****"}]}"#)
@@ -260,12 +302,17 @@ fn test_env_remove_json() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
 
     let _m_del = server
         .mock(
             "DELETE",
             format!("/v1/apps/{TEST_APP_ID}/env/MY_KEY").as_str(),
         )
+        .match_query(Matcher::UrlEncoded(
+            "service_id".into(),
+            TEST_SERVICE_ID.into(),
+        ))
         .with_status(204)
         .create();
 
@@ -276,6 +323,114 @@ fn test_env_remove_json() {
         .success()
         .stdout(predicate::str::contains(r#""success":true"#))
         .stdout(predicate::str::contains("MY_KEY"));
+}
+
+#[test]
+fn test_env_get_json() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
+
+    let _m_get = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/env/MY_KEY").as_str())
+        .match_query(Matcher::UrlEncoded(
+            "service_id".into(),
+            TEST_SERVICE_ID.into(),
+        ))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"key":"MY_KEY","value":"secret123"}"#)
+        .create();
+
+    floo()
+        .args(["--json", "env", "get", "MY_KEY", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains("secret123"));
+}
+
+#[test]
+fn test_env_get_human_raw_stdout() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
+
+    let _m_get = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/env/MY_KEY").as_str())
+        .match_query(Matcher::UrlEncoded(
+            "service_id".into(),
+            TEST_SERVICE_ID.into(),
+        ))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"key":"MY_KEY","value":"secret123"}"#)
+        .create();
+
+    floo()
+        .args(["env", "get", "MY_KEY", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("secret123"));
+}
+
+#[test]
+fn test_env_import_json() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
+
+    let _m_import = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/env/import").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"imported":2}"#)
+        .create();
+
+    // Write a temp .env file
+    let env_dir = TempDir::new().unwrap();
+    let env_path = env_dir.path().join(".env");
+    std::fs::write(&env_path, "KEY1=val1\nKEY2=val2\n").unwrap();
+
+    floo()
+        .args([
+            "--json",
+            "env",
+            "import",
+            env_path.to_str().unwrap(),
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains("imported"));
+}
+
+#[test]
+fn test_env_multiple_services_error() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_two(&mut server);
+
+    floo()
+        .args(["--json", "env", "list", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("MULTIPLE_SERVICES"))
+        .stdout(predicate::str::contains("web"))
+        .stdout(predicate::str::contains("api"));
 }
 
 // ───────────────────────── Domains ─────────────────────────

@@ -268,6 +268,36 @@ fn test_env_list_not_authenticated() {
         .stderr(predicate::str::contains("Not logged in."));
 }
 
+#[test]
+fn test_env_remove_not_authenticated() {
+    floo()
+        .args(["env", "remove", "MY_KEY", "--app", "test"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Not logged in."));
+}
+
+#[test]
+fn test_env_get_not_authenticated() {
+    floo()
+        .args(["env", "get", "MY_KEY", "--app", "test"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Not logged in."));
+}
+
+#[test]
+fn test_env_import_not_authenticated() {
+    floo()
+        .args(["env", "import", "--app", "test"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Not logged in."));
+}
+
 // --- Domains (unauthenticated) ---
 
 #[test]

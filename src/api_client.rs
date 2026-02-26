@@ -299,24 +299,91 @@ impl FlooClient {
 
     // --- Env vars ---
 
-    pub fn set_env_var(&self, app_id: &str, key: &str, value: &str) -> Result<Value, FlooApiError> {
-        let body = serde_json::json!({"key": key, "value": value});
+    pub fn set_env_var(
+        &self,
+        app_id: &str,
+        key: &str,
+        value: &str,
+        service_id: Option<&str>,
+    ) -> Result<Value, FlooApiError> {
+        let mut body = serde_json::json!({"key": key, "value": value});
+        if let Some(sid) = service_id {
+            body.as_object_mut()
+                .unwrap()
+                .insert("service_id".to_string(), Value::String(sid.to_string()));
+        }
         let resp = self.post_json(&format!("/v1/apps/{app_id}/env"), &body)?;
         self.handle_response(resp)
     }
 
-    pub fn list_env_vars(&self, app_id: &str) -> Result<Value, FlooApiError> {
-        let resp = self.get(&format!("/v1/apps/{app_id}/env"))?;
+    pub fn list_env_vars(
+        &self,
+        app_id: &str,
+        service_id: Option<&str>,
+    ) -> Result<Value, FlooApiError> {
+        let mut path = format!("/v1/apps/{app_id}/env");
+        if let Some(sid) = service_id {
+            path.push_str(&format!("?service_id={sid}"));
+        }
+        let resp = self.get(&path)?;
         self.handle_response(resp)
     }
 
-    pub fn delete_env_var(&self, app_id: &str, key: &str) -> Result<(), FlooApiError> {
-        let resp = self.delete(&format!("/v1/apps/{app_id}/env/{key}"))?;
+    pub fn delete_env_var(
+        &self,
+        app_id: &str,
+        key: &str,
+        service_id: Option<&str>,
+    ) -> Result<(), FlooApiError> {
+        let mut path = format!("/v1/apps/{app_id}/env/{key}");
+        if let Some(sid) = service_id {
+            path.push_str(&format!("?service_id={sid}"));
+        }
+        let resp = self.delete(&path)?;
         if resp.status().as_u16() == 204 {
             return Ok(());
         }
         self.handle_response(resp)?;
         Ok(())
+    }
+
+    pub fn get_env_var(
+        &self,
+        app_id: &str,
+        key: &str,
+        service_id: Option<&str>,
+    ) -> Result<Value, FlooApiError> {
+        let mut path = format!("/v1/apps/{app_id}/env/{key}");
+        if let Some(sid) = service_id {
+            path.push_str(&format!("?service_id={sid}"));
+        }
+        let resp = self.get(&path)?;
+        self.handle_response(resp)
+    }
+
+    pub fn import_env_vars(
+        &self,
+        app_id: &str,
+        env_vars: &[(String, String)],
+        service_id: Option<&str>,
+    ) -> Result<Value, FlooApiError> {
+        let vars: Vec<Value> = env_vars
+            .iter()
+            .map(|(k, v)| serde_json::json!({"key": k, "value": v}))
+            .collect();
+        let mut body = serde_json::json!({"env_vars": vars});
+        if let Some(sid) = service_id {
+            body.as_object_mut()
+                .unwrap()
+                .insert("service_id".to_string(), Value::String(sid.to_string()));
+        }
+        let resp = self.post_json(&format!("/v1/apps/{app_id}/env/import"), &body)?;
+        self.handle_response(resp)
+    }
+
+    pub fn list_services(&self, app_id: &str) -> Result<Value, FlooApiError> {
+        let resp = self.get(&format!("/v1/apps/{app_id}/services?page=1&per_page=100"))?;
+        self.handle_response(resp)
     }
 
     // --- Databases ---
