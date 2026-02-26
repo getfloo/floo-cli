@@ -1,4 +1,5 @@
 use std::io::{self, Write};
+use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use colored::Colorize;
@@ -130,6 +131,29 @@ pub fn confirm(message: &str) -> bool {
     match io::stdin().read_line(&mut input) {
         Ok(_) => matches!(input.trim().to_lowercase().as_str(), "y" | "yes"),
         Err(_) => false,
+    }
+}
+
+pub fn prompt_with_default(prompt: &str, default: &str) -> String {
+    if is_json_mode() {
+        return default.to_string();
+    }
+    eprint!("  ? {prompt}: ({default}) ");
+    let _ = io::stderr().flush();
+    let mut input = String::new();
+    match io::stdin().read_line(&mut input) {
+        Ok(_) => {
+            let trimmed = input.trim();
+            if trimmed.is_empty() {
+                default.to_string()
+            } else {
+                trimmed.to_string()
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to read input: {e}");
+            process::exit(1);
+        }
     }
 }
 

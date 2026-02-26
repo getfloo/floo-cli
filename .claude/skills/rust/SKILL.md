@@ -26,6 +26,11 @@ commands/                   <- One file per command group
   env.rs                    <- set, list, remove
   domains.rs                <- add, list, remove
   logs.rs                   <- view runtime logs
+project_config/             <- Config file system
+  mod.rs                    <- Re-exports, constants (SERVICE_CONFIG_FILE, APP_CONFIG_FILE)
+  service_config.rs         <- floo.service.toml structs + ServiceConfig API wire type
+  app_config.rs             <- floo.app.toml structs
+  resolve.rs                <- Walk-up directory resolution (resolve_app_context)
 output.rs                   <- Dual-mode output (critical)
 api_client.rs               <- FlooClient wrapping reqwest
 config.rs                   <- ~/.floo/config.json management
@@ -445,4 +450,7 @@ All error codes used in the CLI. New error codes must be `UPPER_SNAKE_CASE` and 
 | `DEVICE_AUTH_FAILED` | API (502) | Device code flow — WorkOS backend failure |
 | `EMAIL_TAKEN` | API (409) | Registration — email already in use |
 | `PERMISSION_DENIED` | API (403) | User has VIEWER role; write action denied |
-| `INVALID_PROJECT_CONFIG` | project_config.rs | Malformed or invalid `floo.toml` |
+| `INVALID_PROJECT_CONFIG` | project_config/ | Malformed or invalid `floo.service.toml` or `floo.app.toml` |
+| `NO_CONFIG_FOUND` | project_config/resolve.rs | No config files found and no `--app` flag |
+| `LEGACY_CONFIG` | project_config/resolve.rs | Found old `floo.toml`, must migrate to new config files |
+| `CONFIG_WRITE_ERROR` | project_config/ | Failed to serialize or write config file |

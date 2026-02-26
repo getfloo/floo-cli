@@ -52,6 +52,25 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+/// Write a floo.service.toml to the project dir (required for --json deploy).
+fn write_service_config(project: &TempDir, app_name: &str) {
+    std::fs::write(
+        project.path().join("floo.service.toml"),
+        format!(
+            r#"[app]
+name = "{app_name}"
+
+[service]
+name = "web"
+type = "web"
+port = 3000
+ingress = "public"
+"#
+        ),
+    )
+    .unwrap();
+}
+
 /// Mock resolve_app (name-based): list -> found.
 fn mock_resolve_app(server: &mut Server) -> Vec<Mock> {
     let m = server
@@ -602,13 +621,26 @@ fn test_deploy_new_app_json() {
     let mut server = Server::new();
     let home = setup_config(&server);
 
-    // Create a temp project with package.json for detection
+    // Create a temp project with package.json for detection and service config
     let project = TempDir::new().unwrap();
     std::fs::write(
         project.path().join("package.json"),
         r#"{"name":"test-project","version":"1.0.0"}"#,
     )
     .unwrap();
+    write_service_config(&project, "test-deploy");
+
+    // Config-resolved deploy: resolve_app (name lookup) returns 404, then creates app
+    let _m_list = server
+        .mock("GET", "/v1/apps")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"apps":[]}"#)
+        .create();
 
     let _m_create_app = server
         .mock("POST", "/v1/apps")
@@ -633,13 +665,7 @@ fn test_deploy_new_app_json() {
         .create();
 
     floo()
-        .args([
-            "--json",
-            "deploy",
-            project.path().to_str().unwrap(),
-            "--name",
-            "test-deploy",
-        ])
+        .args(["--json", "deploy", project.path().to_str().unwrap()])
         .env("HOME", home.path())
         .assert()
         .success()
@@ -713,7 +739,21 @@ fn test_deploy_fails_with_invalid_response_when_app_id_missing() {
         r#"{"name":"test-project","version":"1.0.0"}"#,
     )
     .unwrap();
+    write_service_config(&project, "test-deploy");
 
+    // resolve_app returns 404 (name not found), so deploy creates app
+    let _m_list = server
+        .mock("GET", "/v1/apps")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"apps":[]}"#)
+        .create();
+
+    // create_app returns response without "id" field
     let _m_create_app = server
         .mock("POST", "/v1/apps")
         .with_status(200)
@@ -722,13 +762,7 @@ fn test_deploy_fails_with_invalid_response_when_app_id_missing() {
         .create();
 
     floo()
-        .args([
-            "--json",
-            "deploy",
-            project.path().to_str().unwrap(),
-            "--name",
-            "test-deploy",
-        ])
+        .args(["--json", "deploy", project.path().to_str().unwrap()])
         .env("HOME", home.path())
         .assert()
         .failure()
@@ -1024,6 +1058,19 @@ fn test_deploy_json_mode_uses_polling() {
         r#"{"name":"test-project","version":"1.0.0"}"#,
     )
     .unwrap();
+    write_service_config(&project, "test-poll");
+
+    // resolve_app returns 404, then creates app
+    let _m_list = server
+        .mock("GET", "/v1/apps")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"apps":[]}"#)
+        .create();
 
     let _m_create_app = server
         .mock("POST", "/v1/apps")
@@ -1042,7 +1089,23 @@ fn test_deploy_json_mode_uses_polling() {
         .with_body(r#"{"id":"deploy-003","status":"pending","url":null,"build_logs":""}"#)
         .create();
 
-    // Polling endpoint returns live (SSE is never called in --json mode)
+    // SSE stream endpoint for JSON mode
+    let sse_body = concat!(
+        "event: status\ndata: {\"status\": \"building\"}\n\n",
+        "event: done\ndata: {\"status\": \"live\", \"url\": \"https://test-poll.floo.app\"}\n\n",
+    );
+
+    let _m_stream = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/deploys/deploy-003/logs/stream").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "text/event-stream")
+        .with_body(sse_body)
+        .create();
+
+    // Final deploy state fetched after stream ends
     let _m_get_deploy = server
         .mock(
             "GET",
@@ -1056,13 +1119,7 @@ fn test_deploy_json_mode_uses_polling() {
         .create();
 
     floo()
-        .args([
-            "--json",
-            "deploy",
-            project.path().to_str().unwrap(),
-            "--name",
-            "test-poll",
-        ])
+        .args(["--json", "deploy", project.path().to_str().unwrap()])
         .env("HOME", home.path())
         .assert()
         .success()
