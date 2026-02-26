@@ -16,6 +16,25 @@ impl DetectionResult {
     pub fn to_value(&self) -> Value {
         serde_json::to_value(self).unwrap_or(Value::Null)
     }
+
+    pub fn default_port(&self) -> u16 {
+        match self.runtime.as_str() {
+            "nodejs" => 3000,
+            "python" => 8000,
+            "go" => 8080,
+            "docker" => 8080,
+            "static" => 8080,
+            _ => 8080,
+        }
+    }
+
+    pub fn default_service_type(&self) -> &str {
+        match self.framework.as_deref() {
+            Some("Express") | Some("Fastify") | Some("FastAPI") | Some("Flask")
+            | Some("Django") => "api",
+            _ => "web",
+        }
+    }
 }
 
 fn detect_dockerfile(path: &Path) -> Option<DetectionResult> {
@@ -360,6 +379,78 @@ mod tests {
         .unwrap();
         let result = detect(dir.path());
         assert_eq!(result.runtime, "docker");
+    }
+
+    #[test]
+    fn test_default_port_nodejs() {
+        let result = DetectionResult {
+            runtime: "nodejs".into(),
+            framework: None,
+            version: None,
+            confidence: "high".into(),
+            reason: "test".into(),
+        };
+        assert_eq!(result.default_port(), 3000);
+    }
+
+    #[test]
+    fn test_default_port_python() {
+        let result = DetectionResult {
+            runtime: "python".into(),
+            framework: None,
+            version: None,
+            confidence: "high".into(),
+            reason: "test".into(),
+        };
+        assert_eq!(result.default_port(), 8000);
+    }
+
+    #[test]
+    fn test_default_port_go() {
+        let result = DetectionResult {
+            runtime: "go".into(),
+            framework: None,
+            version: None,
+            confidence: "high".into(),
+            reason: "test".into(),
+        };
+        assert_eq!(result.default_port(), 8080);
+    }
+
+    #[test]
+    fn test_default_service_type_express_is_api() {
+        let result = DetectionResult {
+            runtime: "nodejs".into(),
+            framework: Some("Express".into()),
+            version: None,
+            confidence: "high".into(),
+            reason: "test".into(),
+        };
+        assert_eq!(result.default_service_type(), "api");
+    }
+
+    #[test]
+    fn test_default_service_type_nextjs_is_web() {
+        let result = DetectionResult {
+            runtime: "nodejs".into(),
+            framework: Some("Next.js".into()),
+            version: None,
+            confidence: "high".into(),
+            reason: "test".into(),
+        };
+        assert_eq!(result.default_service_type(), "web");
+    }
+
+    #[test]
+    fn test_default_service_type_no_framework_is_web() {
+        let result = DetectionResult {
+            runtime: "nodejs".into(),
+            framework: None,
+            version: None,
+            confidence: "high".into(),
+            reason: "test".into(),
+        };
+        assert_eq!(result.default_service_type(), "web");
     }
 
     #[test]
