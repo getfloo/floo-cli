@@ -29,13 +29,13 @@ pub enum Commands {
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// App name (generated if omitted).
-        #[arg(short, long)]
-        name: Option<String>,
-
         /// Existing app ID or name to deploy to.
         #[arg(short, long)]
         app: Option<String>,
+
+        /// Deploy only these services (repeatable: --services api --services web).
+        #[arg(short, long = "services")]
+        services: Vec<String>,
     },
 
     /// Authenticate and manage your account.
@@ -92,8 +92,9 @@ pub enum Commands {
 
     /// View runtime logs for an app.
     Logs {
-        /// App name or ID.
-        app: String,
+        /// App name or ID (overrides config file).
+        #[arg(short, long)]
+        app: Option<String>,
 
         /// Number of log lines to show.
         #[arg(short, long, default_value = "100")]
@@ -111,9 +112,17 @@ pub enum Commands {
         #[arg(long)]
         severity: Option<String>,
 
-        /// Filter logs to a specific service (e.g., "api", "web").
+        /// Filter logs to specific services (repeatable).
         #[arg(long)]
-        service: Option<String>,
+        services: Vec<String>,
+
+        /// Filter log messages by text (case-insensitive).
+        #[arg(long)]
+        search: Option<String>,
+
+        /// Stream logs in real-time (poll every 2s).
+        #[arg(short = 'f', long, conflicts_with = "output")]
+        live: bool,
 
         /// Write logs to a file (JSON or plain text based on --json flag).
         #[arg(short, long)]
@@ -201,16 +210,24 @@ pub enum EnvCommands {
         /// KEY=VALUE pair to set.
         key_value: String,
 
-        /// App name or ID.
+        /// App name or ID (reads from config if omitted).
         #[arg(short, long)]
-        app: String,
+        app: Option<String>,
+
+        /// Target specific services (repeatable).
+        #[arg(long)]
+        services: Vec<String>,
     },
 
     /// List environment variables for an app.
     List {
-        /// App name or ID.
+        /// App name or ID (reads from config if omitted).
         #[arg(short, long)]
-        app: String,
+        app: Option<String>,
+
+        /// Target specific services (repeatable).
+        #[arg(long)]
+        services: Vec<String>,
     },
 
     /// Remove an environment variable from an app.
@@ -218,9 +235,41 @@ pub enum EnvCommands {
         /// Environment variable key to remove.
         key: String,
 
-        /// App name or ID.
+        /// App name or ID (reads from config if omitted).
         #[arg(short, long)]
-        app: String,
+        app: Option<String>,
+
+        /// Target specific services (repeatable).
+        #[arg(long)]
+        services: Vec<String>,
+    },
+
+    /// Get an environment variable's plaintext value.
+    Get {
+        /// Environment variable key.
+        key: String,
+
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Target a specific service.
+        #[arg(long)]
+        service: Option<String>,
+    },
+
+    /// Import environment variables from a .env file.
+    Import {
+        /// Path to .env file (defaults to env_file from config or .env).
+        file: Option<PathBuf>,
+
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Target specific services (repeatable).
+        #[arg(long)]
+        services: Vec<String>,
     },
 }
 
@@ -324,7 +373,11 @@ pub fn run() {
     }
 
     match cli.command {
-        Commands::Deploy { path, name, app } => commands::deploy::deploy(path, name, app),
+        Commands::Deploy {
+            path,
+            app,
+            services,
+        } => commands::deploy::deploy(path, app, services),
         Commands::Auth(sub) => match sub {
             AuthCommands::Login => commands::auth::login(),
             AuthCommands::Logout => commands::auth::logout(),
@@ -346,9 +399,23 @@ pub fn run() {
         },
 
         Commands::Env(sub) => match sub {
-            EnvCommands::Set { key_value, app } => commands::env::set(&key_value, &app),
-            EnvCommands::List { app } => commands::env::list(&app),
-            EnvCommands::Remove { key, app } => commands::env::remove(&key, &app),
+            EnvCommands::Set {
+                key_value,
+                app,
+                services,
+            } => commands::env::set(&key_value, app.as_deref(), &services),
+            EnvCommands::List { app, services } => commands::env::list(app.as_deref(), &services),
+            EnvCommands::Remove { key, app, services } => {
+                commands::env::remove(&key, app.as_deref(), &services)
+            }
+            EnvCommands::Get { key, app, service } => {
+                commands::env::get(&key, app.as_deref(), service.as_deref())
+            }
+            EnvCommands::Import {
+                file,
+                app,
+                services,
+            } => commands::env::import_vars(file.as_deref(), app.as_deref(), &services),
         },
 
         Commands::Services(sub) => match sub {
@@ -401,7 +468,9 @@ pub fn run() {
             since,
             error,
             severity,
-            service,
+            services,
+            search,
+            live,
             output,
         } => {
             let sev = if error {
@@ -410,11 +479,13 @@ pub fn run() {
                 severity.as_deref()
             };
             commands::logs::logs(
-                &app,
+                app.as_deref(),
                 tail,
                 since.as_deref(),
                 sev,
-                service.as_deref(),
+                &services,
+                search.as_deref(),
+                live,
                 output.as_deref(),
             );
         }

@@ -1,4 +1,5 @@
 mod app_config;
+mod discover;
 mod resolve;
 mod service_config;
 
@@ -9,7 +10,8 @@ const SCHEMA_URL: &str = "https://getfloo.com/docs/floo-toml";
 const MAX_WALK_UP_LEVELS: usize = 20;
 
 pub use app_config::{write_app_config, AppFileAppSection, AppFileConfig};
-pub use resolve::{resolve_app_context, AppSource, ResolvedApp};
+pub use discover::{discover_services, filter_services};
+pub use resolve::{resolve_app_context, AppSource};
 pub use service_config::{
     write_service_config, ServiceConfig, ServiceFileAppSection, ServiceFileConfig, ServiceIngress,
     ServiceSection, ServiceType,

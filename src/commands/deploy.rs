@@ -13,8 +13,8 @@ use crate::errors::FlooApiError;
 use crate::names::generate_name;
 use crate::output;
 use crate::project_config::{
-    self, AppFileAppSection, AppFileConfig, AppSource, ResolvedApp, ServiceConfig,
-    ServiceFileAppSection, ServiceFileConfig, ServiceIngress, ServiceSection, ServiceType,
+    self, AppFileAppSection, AppFileConfig, AppSource, ServiceConfig, ServiceFileAppSection,
+    ServiceFileConfig, ServiceIngress, ServiceSection, ServiceType,
 };
 use crate::resolve::resolve_app;
 
@@ -45,7 +45,7 @@ fn required_response_id<'a>(value: &'a serde_json::Value, object_name: &str) -> 
     }
 }
 
-pub fn deploy(path: PathBuf, name: Option<String>, app: Option<String>) {
+pub fn deploy(path: PathBuf, app: Option<String>, services_filter: Vec<String>) {
     let config = load_config();
     if config.api_key.is_none() {
         output::error(
@@ -77,37 +77,7 @@ pub fn deploy(path: PathBuf, name: Option<String>, app: Option<String>) {
         process::exit(1);
     }
 
-    // Detect runtime/framework (needed for default_port/default_service_type in first-deploy)
-    let detection = detect(&project_path);
-    if detection.runtime == "unknown" {
-        output::error(
-            "No supported project files found.",
-            "NO_RUNTIME_DETECTED",
-            Some("Add a package.json, requirements.txt, or Dockerfile to your project."),
-        );
-        process::exit(1);
-    }
-
-    if !output::is_json_mode() {
-        let framework_label = detection
-            .framework
-            .as_deref()
-            .map(|f| format!(" ({f})"))
-            .unwrap_or_default();
-        output::info(
-            &format!(
-                "Detected {}{framework_label} \u{2014} {} confidence",
-                detection.runtime, detection.confidence
-            ),
-            None,
-        );
-    }
-
-    if detection.confidence == "low" && !output::confirm("Continue with this detection?") {
-        process::exit(0);
-    }
-
-    // Resolve app context from config files
+    // Resolve app context from config files (before detection, so we know if multi-service)
     let resolved = match project_config::resolve_app_context(&project_path, app.as_deref()) {
         Ok(r) => Some(r),
         Err(e) if e.code == "NO_CONFIG_FOUND" => {
@@ -122,6 +92,40 @@ pub fn deploy(path: PathBuf, name: Option<String>, app: Option<String>) {
             process::exit(1);
         }
     };
+
+    // Detect runtime/framework (needed for API call metadata and first-deploy prompts)
+    let detection = detect(&project_path);
+    let has_config = resolved.is_some();
+    if detection.runtime == "unknown" && !has_config {
+        output::error(
+            "No supported project files found.",
+            "NO_RUNTIME_DETECTED",
+            Some("Add a package.json, requirements.txt, or Dockerfile to your project."),
+        );
+        process::exit(1);
+    }
+
+    if !output::is_json_mode() && detection.runtime != "unknown" {
+        let framework_label = detection
+            .framework
+            .as_deref()
+            .map(|f| format!(" ({f})"))
+            .unwrap_or_default();
+        output::info(
+            &format!(
+                "Detected {}{framework_label} \u{2014} {} confidence",
+                detection.runtime, detection.confidence
+            ),
+            None,
+        );
+    }
+
+    if detection.confidence == "low"
+        && !has_config
+        && !output::confirm("Continue with this detection?")
+    {
+        process::exit(0);
+    }
 
     // Display config info for resolved apps
     if !output::is_json_mode() {
@@ -184,15 +188,48 @@ pub fn deploy(path: PathBuf, name: Option<String>, app: Option<String>) {
     // Build the app name and services list
     let (app_name, services, write_configs_on_success) = match resolved {
         Some(ref r) => {
-            let svcs = build_services_from_resolved(r);
-            (r.app_name.clone(), svcs, false)
+            let all_services = match project_config::discover_services(r) {
+                Ok(svcs) => svcs,
+                Err(e) => {
+                    output::error(&e.message, &e.code, e.suggestion.as_deref());
+                    process::exit(1);
+                }
+            };
+            let filtered = match project_config::filter_services(all_services, &services_filter) {
+                Ok(svcs) => svcs,
+                Err(e) => {
+                    output::error(&e.message, &e.code, e.suggestion.as_deref());
+                    process::exit(1);
+                }
+            };
+            (r.app_name.clone(), Some(filtered), false)
         }
         None => {
-            // First-deploy interactive flow
-            let prompted = prompt_first_deploy(&detection, name.as_deref());
+            if !services_filter.is_empty() {
+                output::error(
+                    "--services requires config files.",
+                    "NO_CONFIG_FOUND",
+                    Some("Create floo.app.toml with service entries before using --services."),
+                );
+                process::exit(1);
+            }
+            let prompted = prompt_first_deploy(&detection);
             (prompted.app_name, Some(vec![prompted.service]), true)
         }
     };
+
+    // Display per-service summary for multi-service deploys
+    if !output::is_json_mode() {
+        if let Some(ref svcs) = services {
+            if svcs.len() > 1 {
+                let names: Vec<&str> = svcs.iter().map(|s| s.name.as_str()).collect();
+                output::info(
+                    &format!("Deploying {} services: {}", svcs.len(), names.join(", ")),
+                    None,
+                );
+            }
+        }
+    }
 
     // Create archive
     let spinner = output::Spinner::new("Packaging source...");
@@ -378,12 +415,18 @@ pub fn deploy(path: PathBuf, name: Option<String>, app: Option<String>) {
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
+    let service_names: Vec<&str> = services
+        .as_ref()
+        .map(|svcs| svcs.iter().map(|s| s.name.as_str()).collect())
+        .unwrap_or_default();
+
     output::success(
         &format!("Deployed to {url}"),
         Some(serde_json::json!({
             "app": app_data,
             "deploy": deploy_data,
             "detection": detection.to_value(),
+            "services": service_names,
         })),
     );
 }
@@ -393,13 +436,8 @@ struct FirstDeployResult {
     service: ServiceConfig,
 }
 
-fn prompt_first_deploy(
-    detection: &crate::detection::DetectionResult,
-    name_flag: Option<&str>,
-) -> FirstDeployResult {
-    let default_name = name_flag
-        .map(|s| s.to_string())
-        .unwrap_or_else(generate_name);
+fn prompt_first_deploy(detection: &crate::detection::DetectionResult) -> FirstDeployResult {
+    let default_name = generate_name();
     let app_name = output::prompt_with_default("App name", &default_name);
 
     let default_port = detection.default_port().to_string();
@@ -429,13 +467,6 @@ fn prompt_first_deploy(
             ingress: ServiceIngress::Public,
         },
     }
-}
-
-fn build_services_from_resolved(resolved: &ResolvedApp) -> Option<Vec<ServiceConfig>> {
-    resolved
-        .service_config
-        .as_ref()
-        .map(|svc_file| vec![svc_file.service.to_api_service_config(".")])
 }
 
 fn write_first_deploy_configs(project_path: &Path, app_name: &str, service: &ServiceConfig) {

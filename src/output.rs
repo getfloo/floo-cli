@@ -18,7 +18,7 @@ pub fn is_json_mode() -> bool {
     JSON_MODE.load(Ordering::SeqCst)
 }
 
-fn print_json(data: &Value) {
+pub fn print_json(data: &Value) {
     println!("{}", serde_json::to_string(data).unwrap_or_default());
 }
 
@@ -155,6 +155,13 @@ pub fn prompt_with_default(prompt: &str, default: &str) -> String {
             process::exit(1);
         }
     }
+}
+
+/// Print a raw value to stdout for piping. Used by `env get` in human mode.
+/// In JSON mode, callers should use `success()` instead.
+pub fn raw_value(value: &str) {
+    debug_assert!(!is_json_mode(), "raw_value called in JSON mode");
+    println!("{value}");
 }
 
 pub fn dim_line(line: &str) {
