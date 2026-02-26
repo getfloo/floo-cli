@@ -136,6 +136,12 @@ pub fn login() {
                     &format!("Logged in as {email}"),
                     Some(serde_json::json!({"email": email})),
                 );
+                if !output::is_json_mode() {
+                    eprintln!();
+                    eprintln!(
+                        "  Tip: Run 'floo skills install --path <dir>' to set up agent integration."
+                    );
+                }
                 return;
             }
             Err(e) if e.status_code == 202 => {

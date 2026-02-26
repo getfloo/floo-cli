@@ -176,13 +176,15 @@ main() {
     [[ -n "$version_output" ]] || fail "Installation completed but '${INSTALL_DIR}/${BINARY_NAME} --version' failed."
 
     echo
-    echo "Floo CLI installed successfully."
-    echo "Version: ${version_output}"
+    echo "floo installed successfully (${version_output})"
     echo
     echo "Get started:"
-    echo "  floo login"
-    echo "  floo deploy"
-    echo "  floo update"
+    echo "  floo auth login                        log in or create an account"
+    echo "  floo --help                            see all available commands"
+    echo
+    echo "Agent integration:"
+    echo "  floo skills install --path <dir>       install agent skill to a directory"
+    echo "  floo skills install --print            print skill to stdout"
 }
 
 main "$@"

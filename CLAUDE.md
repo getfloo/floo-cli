@@ -112,6 +112,12 @@ Packs source into `.tar.gz`, respects `.flooignore`. 500MB size limit.
   - CLI issues: `Closes #N` (same-repo reference)
   - Cross-repo issues: `Closes getfloo/floo#N`
 
+## Agent Skill Maintenance
+
+The file `skills/floo.md` is the agent playbook embedded in the binary via `include_str!`.
+When adding new commands, changing flags, or modifying error codes, update `skills/floo.md`
+to reflect the changes. The skill is the primary way agents learn to use floo.
+
 ## Release Flow
 
 1. Tag `v*` on main branch

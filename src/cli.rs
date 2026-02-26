@@ -133,6 +133,10 @@ pub enum Commands {
         output: Option<PathBuf>,
     },
 
+    /// Install agent skills for AI coding assistants.
+    #[command(subcommand)]
+    Skills(SkillsCommands),
+
     /// Print installed CLI version.
     Version,
 
@@ -381,6 +385,20 @@ pub enum RollbacksCommands {
     },
 }
 
+#[derive(Subcommand)]
+pub enum SkillsCommands {
+    /// Install the floo agent skill file to a directory.
+    Install {
+        /// Directory to write floo.md into (e.g. ~/.claude/commands/).
+        #[arg(long)]
+        path: Option<PathBuf>,
+
+        /// Print skill content to stdout instead of writing a file.
+        #[arg(long)]
+        print: bool,
+    },
+}
+
 pub fn run() {
     let cli = Cli::parse();
 
@@ -479,6 +497,10 @@ pub fn run() {
             deploy_id,
             force,
         } => commands::rollbacks::rollback(&app, &deploy_id, force),
+
+        Commands::Skills(sub) => match sub {
+            SkillsCommands::Install { path, print } => commands::skills::install(path, print),
+        },
 
         Commands::Logs {
             app,

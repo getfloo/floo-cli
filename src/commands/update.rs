@@ -19,11 +19,20 @@ pub fn update(version: Option<&str>) {
 
     match updater::run_update(version) {
         Ok(result) => {
+            let refreshed = super::skills::refresh_skill_files();
+
+            if !output::is_json_mode() {
+                for path in &refreshed {
+                    eprintln!("  Refreshed agent skill at {path}");
+                }
+            }
+
             output::success(
                 &format!("Updated Floo to {}.", result.version),
                 Some(serde_json::json!({
                     "version": result.version,
                     "path": result.install_path,
+                    "refreshed_skills": refreshed,
                 })),
             );
         }
