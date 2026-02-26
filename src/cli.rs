@@ -91,8 +91,9 @@ pub enum Commands {
 
     /// View runtime logs for an app.
     Logs {
-        /// App name or ID.
-        app: String,
+        /// App name or ID (overrides config file).
+        #[arg(short, long)]
+        app: Option<String>,
 
         /// Number of log lines to show.
         #[arg(short, long, default_value = "100")]
@@ -110,9 +111,17 @@ pub enum Commands {
         #[arg(long)]
         severity: Option<String>,
 
-        /// Filter logs to a specific service (e.g., "api", "web").
+        /// Filter logs to specific services (repeatable).
         #[arg(long)]
-        service: Option<String>,
+        services: Vec<String>,
+
+        /// Filter log messages by text (case-insensitive).
+        #[arg(long)]
+        search: Option<String>,
+
+        /// Stream logs in real-time (poll every 2s).
+        #[arg(short = 'f', long, conflicts_with = "output")]
+        live: bool,
 
         /// Write logs to a file (JSON or plain text based on --json flag).
         #[arg(short, long)]
@@ -415,7 +424,9 @@ pub fn run() {
             since,
             error,
             severity,
-            service,
+            services,
+            search,
+            live,
             output,
         } => {
             let sev = if error {
@@ -424,11 +435,13 @@ pub fn run() {
                 severity.as_deref()
             };
             commands::logs::logs(
-                &app,
+                app.as_deref(),
                 tail,
                 since.as_deref(),
                 sev,
-                service.as_deref(),
+                &services,
+                search.as_deref(),
+                live,
                 output.as_deref(),
             );
         }
