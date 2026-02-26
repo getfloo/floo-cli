@@ -161,6 +161,15 @@ pub fn login() {
                 output::error("Authorization was denied.", "DEVICE_AUTH_DENIED", None);
                 process::exit(1);
             }
+            Err(e) if e.code == "SIGNUP_DISABLED" => {
+                spinner.finish();
+                output::error(
+                    &e.message,
+                    "SIGNUP_DISABLED",
+                    Some("Join the waitlist at https://getfloo.com to request access."),
+                );
+                process::exit(1);
+            }
             Err(e) if e.status_code == 0 => {
                 // Network error — retry up to 3 times
                 network_retries += 1;
