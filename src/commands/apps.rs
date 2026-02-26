@@ -3,10 +3,10 @@ use std::process;
 use crate::output;
 use crate::resolve::resolve_app;
 
-pub fn list() {
+pub fn list(page: u32, per_page: u32) {
     super::require_auth();
     let client = super::init_client(None);
-    let result = match client.list_apps(1, 20) {
+    let result = match client.list_apps(page, per_page) {
         Ok(r) => r,
         Err(e) => {
             output::error(&e.message, &e.code, None);
@@ -20,11 +20,24 @@ pub fn list() {
         .cloned()
         .unwrap_or_default();
 
+    let total = match result.get("total").and_then(|v| v.as_u64()) {
+        Some(t) => t as u32,
+        None => {
+            eprintln!("Warning: API response missing 'total' field; pagination may be inaccurate.");
+            apps.len() as u32
+        }
+    };
+
     if apps.is_empty() {
         if !output::is_json_mode() {
             output::info("No apps yet. Deploy one with floo deploy.", None);
         } else {
-            output::success("No apps.", Some(serde_json::json!({"apps": []})));
+            output::success(
+                "No apps.",
+                Some(
+                    serde_json::json!({"apps": [], "total": total, "page": page, "per_page": per_page}),
+                ),
+            );
         }
         return;
     }
@@ -60,8 +73,21 @@ pub fn list() {
     output::table(
         &["Name", "Status", "URL", "Runtime", "Created"],
         &rows,
-        Some(serde_json::json!({"apps": apps})),
+        Some(serde_json::json!({"apps": apps, "total": total, "page": page, "per_page": per_page})),
     );
+
+    if !output::is_json_mode() {
+        if let Some(shown) = page.checked_mul(per_page) {
+            if total > shown {
+                let remaining = total - shown;
+                output::dim_line(&format!(
+                    "{remaining} more app{} not shown. Use --page {} to see next page.",
+                    if remaining == 1 { "" } else { "s" },
+                    page + 1
+                ));
+            }
+        }
+    }
 }
 
 pub fn status(app_name: &str) {

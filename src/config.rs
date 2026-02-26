@@ -48,8 +48,26 @@ pub fn load_config() -> FlooConfig {
     let path = config_path();
     let mut config = if path.exists() {
         match fs::read_to_string(&path) {
-            Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
-            Err(_) => FlooConfig::default(),
+            Ok(content) => match serde_json::from_str(&content) {
+                Ok(parsed) => parsed,
+                Err(e) => {
+                    eprintln!(
+                        "Warning: config file at {} is corrupted ({e}), using defaults.",
+                        path.display()
+                    );
+                    eprintln!(
+                        "  Your API key may have been lost. Run 'floo login' to re-authenticate."
+                    );
+                    FlooConfig::default()
+                }
+            },
+            Err(e) => {
+                eprintln!(
+                    "Warning: could not read config file at {} ({e}), using defaults.",
+                    path.display()
+                );
+                FlooConfig::default()
+            }
         }
     } else {
         FlooConfig::default()
@@ -108,6 +126,19 @@ mod tests {
         assert_eq!(deserialized.api_key.as_deref(), Some("floo_test123"));
         assert_eq!(deserialized.api_url, "https://api.test.local");
         assert_eq!(deserialized.user_email.as_deref(), Some("test@example.com"));
+    }
+
+    #[test]
+    fn test_corrupted_config_file_returns_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(CONFIG_DIR_NAME);
+        fs::create_dir_all(&config_dir).unwrap();
+        fs::write(config_dir.join(CONFIG_FILE_NAME), "{ not valid json !!!").unwrap();
+
+        env::set_var("HOME", tmp.path());
+        let config = load_config();
+        assert!(config.api_key.is_none());
+        assert_eq!(config.api_url, DEFAULT_API_URL);
     }
 
     #[test]

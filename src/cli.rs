@@ -158,7 +158,15 @@ pub enum AuthCommands {
 #[derive(Subcommand)]
 pub enum AppsCommands {
     /// List all your apps.
-    List,
+    List {
+        /// Page number.
+        #[arg(long, default_value = "1")]
+        page: u32,
+
+        /// Results per page.
+        #[arg(long, default_value = "50")]
+        per_page: u32,
+    },
 
     /// Show details for an app.
     Status {
@@ -386,7 +394,7 @@ pub fn run() {
         },
 
         Commands::Apps(sub) => match sub {
-            AppsCommands::List => commands::apps::list(),
+            AppsCommands::List { page, per_page } => commands::apps::list(page, per_page),
             AppsCommands::Status { app_name } => commands::apps::status(&app_name),
             AppsCommands::Delete { app_name, force } => commands::apps::delete(&app_name, force),
             AppsCommands::Connect {
