@@ -45,7 +45,7 @@ fn required_response_id<'a>(value: &'a serde_json::Value, object_name: &str) -> 
     }
 }
 
-pub fn deploy(path: PathBuf, app: Option<String>, services_filter: Vec<String>) {
+pub fn deploy(path: PathBuf, app: Option<String>, services_filter: Vec<String>, restart: bool) {
     let config = load_config();
     if config.api_key.is_none() {
         output::error(
@@ -54,6 +54,105 @@ pub fn deploy(path: PathBuf, app: Option<String>, services_filter: Vec<String>) 
             Some("Run 'floo login' to authenticate."),
         );
         process::exit(1);
+    }
+
+    // --- Restart path: skip detection/archive, call restart API ---
+    if restart {
+        let client = super::init_client(Some(config));
+        let app_ident = match app.as_deref() {
+            Some(a) => a.to_string(),
+            None => {
+                let cwd = std::env::current_dir().unwrap_or_else(|e| {
+                    output::error(
+                        &format!("Failed to read current directory: {e}"),
+                        "FILE_ERROR",
+                        None,
+                    );
+                    process::exit(1);
+                });
+                match project_config::resolve_app_context(&cwd, None) {
+                    Ok(r) => r.app_name,
+                    Err(e) => {
+                        output::error(&e.message, &e.code, e.suggestion.as_deref());
+                        process::exit(1);
+                    }
+                }
+            }
+        };
+
+        let app_data = match resolve_app(&client, &app_ident) {
+            Ok(a) => a,
+            Err(e) => {
+                if e.code == "APP_NOT_FOUND" {
+                    output::error(
+                        &format!("App '{app_ident}' not found."),
+                        "APP_NOT_FOUND",
+                        Some("Check the app name or ID and try again."),
+                    );
+                } else {
+                    output::error(&e.message, &e.code, None);
+                }
+                process::exit(1);
+            }
+        };
+        let app_id = required_response_id(&app_data, "app").to_string();
+
+        let svcs = if services_filter.is_empty() {
+            None
+        } else {
+            Some(services_filter.as_slice())
+        };
+
+        let spinner = output::Spinner::new("Restarting...");
+        let deploy_data = match client.restart_app(&app_id, svcs) {
+            Ok(d) => {
+                spinner.finish();
+                d
+            }
+            Err(e) => {
+                spinner.finish();
+                output::error(&e.message, &e.code, None);
+                process::exit(1);
+            }
+        };
+
+        let final_status = match deploy_data.get("status").and_then(|v| v.as_str()) {
+            Some(s) => s,
+            None => {
+                output::error(
+                    "API response missing 'status' field.",
+                    "INVALID_RESPONSE",
+                    Some("This may indicate a CLI/API version mismatch. Try `floo update`."),
+                );
+                process::exit(1);
+            }
+        };
+        let url = deploy_data
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(no URL)");
+
+        if final_status == "failed" {
+            output::error_with_data(
+                "Restart failed.",
+                "RESTART_FAILED",
+                Some("Run `floo logs` for details."),
+                Some(serde_json::json!({
+                    "app": app_data,
+                    "deploy": deploy_data,
+                })),
+            );
+            process::exit(1);
+        }
+
+        output::success(
+            &format!("Restarted {url}"),
+            Some(serde_json::json!({
+                "app": app_data,
+                "deploy": deploy_data,
+            })),
+        );
+        return;
     }
 
     let project_path = match path.canonicalize() {

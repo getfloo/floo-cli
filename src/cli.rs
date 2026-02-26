@@ -36,6 +36,10 @@ pub enum Commands {
         /// Deploy only these services (repeatable: --services api --services web).
         #[arg(short, long = "services")]
         services: Vec<String>,
+
+        /// Restart the app without re-uploading source (redeploy existing images with fresh env vars).
+        #[arg(long)]
+        restart: bool,
     },
 
     /// Authenticate and manage your account.
@@ -225,6 +229,10 @@ pub enum EnvCommands {
         /// Target specific services (repeatable).
         #[arg(long)]
         services: Vec<String>,
+
+        /// Restart the app after setting the env var (redeploy with fresh env vars).
+        #[arg(long)]
+        restart: bool,
     },
 
     /// List environment variables for an app.
@@ -385,7 +393,8 @@ pub fn run() {
             path,
             app,
             services,
-        } => commands::deploy::deploy(path, app, services),
+            restart,
+        } => commands::deploy::deploy(path, app, services, restart),
         Commands::Auth(sub) => match sub {
             AuthCommands::Login => commands::auth::login(),
             AuthCommands::Logout => commands::auth::logout(),
@@ -411,7 +420,8 @@ pub fn run() {
                 key_value,
                 app,
                 services,
-            } => commands::env::set(&key_value, app.as_deref(), &services),
+                restart,
+            } => commands::env::set(&key_value, app.as_deref(), &services, restart),
             EnvCommands::List { app, services } => commands::env::list(app.as_deref(), &services),
             EnvCommands::Remove { key, app, services } => {
                 commands::env::remove(&key, app.as_deref(), &services)
