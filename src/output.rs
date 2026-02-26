@@ -157,6 +157,13 @@ pub fn prompt_with_default(prompt: &str, default: &str) -> String {
     }
 }
 
+/// Print a raw value to stdout for piping. Used by `env get` in human mode.
+/// In JSON mode, callers should use `success()` instead.
+pub fn raw_value(value: &str) {
+    debug_assert!(!is_json_mode(), "raw_value called in JSON mode");
+    println!("{value}");
+}
+
 pub fn dim_line(line: &str) {
     if !is_json_mode() {
         eprintln!("  {}", line.dimmed());
