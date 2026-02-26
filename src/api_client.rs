@@ -89,6 +89,19 @@ impl FlooClient {
             .map_err(|e| FlooApiError::new(0, "CONNECTION_ERROR", e.to_string()))
     }
 
+    fn get_with_query(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+    ) -> Result<reqwest::blocking::Response, FlooApiError> {
+        let mut req = self.client.get(self.url(path)).query(query);
+        if let Some(auth) = self.auth_header() {
+            req = req.header("Authorization", auth);
+        }
+        req.send()
+            .map_err(|e| FlooApiError::new(0, "CONNECTION_ERROR", e.to_string()))
+    }
+
     fn post_json(
         &self,
         path: &str,
@@ -499,17 +512,18 @@ impl FlooClient {
         severity: Option<&str>,
         service: Option<&str>,
     ) -> Result<Value, FlooApiError> {
-        let mut path = format!("/v1/apps/{app_id}/logs?limit={limit}");
+        let limit_str = limit.to_string();
+        let mut params: Vec<(&str, &str)> = vec![("limit", &limit_str)];
         if let Some(s) = since {
-            path.push_str(&format!("&since={s}"));
+            params.push(("since", s));
         }
         if let Some(sev) = severity {
-            path.push_str(&format!("&severity={sev}"));
+            params.push(("severity", sev));
         }
         if let Some(svc) = service {
-            path.push_str(&format!("&service={svc}"));
+            params.push(("service", svc));
         }
-        let resp = self.get(&path)?;
+        let resp = self.get_with_query(&format!("/v1/apps/{app_id}/logs"), &params)?;
         self.handle_response(resp)
     }
 
