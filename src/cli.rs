@@ -29,13 +29,13 @@ pub enum Commands {
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// App name (generated if omitted).
-        #[arg(short, long)]
-        name: Option<String>,
-
         /// Existing app ID or name to deploy to.
         #[arg(short, long)]
         app: Option<String>,
+
+        /// Deploy only these services (repeatable: --services api --services web).
+        #[arg(short, long = "services")]
+        services: Vec<String>,
     },
 
     /// Authenticate and manage your account.
@@ -348,7 +348,11 @@ pub fn run() {
     }
 
     match cli.command {
-        Commands::Deploy { path, name, app } => commands::deploy::deploy(path, name, app),
+        Commands::Deploy {
+            path,
+            app,
+            services,
+        } => commands::deploy::deploy(path, app, services),
         Commands::Auth(sub) => match sub {
             AuthCommands::Login => commands::auth::login(),
             AuthCommands::Logout => commands::auth::logout(),
