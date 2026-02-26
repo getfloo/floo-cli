@@ -429,7 +429,7 @@ fn test_logs_help() {
 #[test]
 fn test_logs_not_authenticated() {
     floo()
-        .args(["logs", "my-app"])
+        .args(["logs", "--app", "my-app"])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
@@ -439,7 +439,7 @@ fn test_logs_not_authenticated() {
 #[test]
 fn test_logs_json_not_authenticated() {
     floo()
-        .args(["--json", "logs", "my-app"])
+        .args(["--json", "logs", "--app", "my-app"])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()

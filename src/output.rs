@@ -18,7 +18,7 @@ pub fn is_json_mode() -> bool {
     JSON_MODE.load(Ordering::SeqCst)
 }
 
-fn print_json(data: &Value) {
+pub fn print_json(data: &Value) {
     println!("{}", serde_json::to_string(data).unwrap_or_default());
 }
 
