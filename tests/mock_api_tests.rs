@@ -86,6 +86,40 @@ fn mock_resolve_app(server: &mut Server) -> Vec<Mock> {
     vec![m]
 }
 
+/// Mock a single user-managed service (web).
+fn mock_services_single(server: &mut Server) -> Mock {
+    server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/services").as_str(),
+        )
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"services":[{"name":"web","type":"web","status":"live","cloud_run_url":"https://web.floo.app","port":3000}]}"#)
+        .create()
+}
+
+/// Mock two user-managed services (api + web).
+fn mock_services_multi(server: &mut Server) -> Mock {
+    server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/services").as_str(),
+        )
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"services":[{"name":"api","type":"api","status":"live","cloud_run_url":"https://api.floo.app","port":8000},{"name":"web","type":"web","status":"live","cloud_run_url":"https://web.floo.app","port":3000}]}"#)
+        .create()
+}
+
 // ───────────────────────── Apps ─────────────────────────
 
 #[test]
@@ -440,6 +474,7 @@ fn test_domains_add_json() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_services_single(&mut server);
 
     let _m_add = server
         .mock(
@@ -474,6 +509,7 @@ fn test_domains_list_json() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_services_single(&mut server);
 
     let _m_list = server
         .mock(
@@ -502,6 +538,7 @@ fn test_domains_remove_json() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_services_single(&mut server);
 
     let _m_del = server
         .mock(
@@ -527,6 +564,55 @@ fn test_domains_remove_json() {
         .stdout(predicate::str::contains("app.example.com"));
 }
 
+#[test]
+fn test_domains_list_multi_service_requires_services_flag() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_services_multi(&mut server);
+
+    floo()
+        .args(["--json", "domains", "list", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("MULTIPLE_SERVICES_NO_TARGET"));
+}
+
+#[test]
+fn test_domains_list_multi_service_with_services_flag() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_services_multi(&mut server);
+
+    let _m_list = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/domains").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"domains":[{"hostname":"api.example.com","status":"ACTIVE","dns_instructions":""}]}"#)
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "domains",
+            "list",
+            "--app",
+            TEST_APP_NAME,
+            "--services",
+            "api",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains("api.example.com"));
+}
+
 // ───────────────────────── Rollbacks ─────────────────────────
 
 #[test]
@@ -548,7 +634,7 @@ fn test_rollbacks_list_json() {
         .create();
 
     floo()
-        .args(["--json", "rollbacks", "list", TEST_APP_NAME])
+        .args(["--json", "rollbacks", "list", "--app", TEST_APP_NAME])
         .env("HOME", home.path())
         .assert()
         .success()
@@ -831,13 +917,62 @@ fn test_logs_single_service_no_prefix() {
         .stderr(predicate::str::contains("[api]").not());
 }
 
-// ───────────────────────── Databases ─────────────────────────
+// ───────────────────────── Services ─────────────────────────
 
 #[test]
-fn test_db_info_json_uses_db_endpoint() {
+fn test_services_list_json() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_services_single(&mut server);
+
+    floo()
+        .args(["--json", "services", "list", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains("services"))
+        .stdout(predicate::str::contains("web"));
+}
+
+#[test]
+fn test_services_info_user_managed() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_services_single(&mut server);
+
+    floo()
+        .args(["--json", "services", "info", "web", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains("web"))
+        .stdout(predicate::str::contains("https://web.floo.app"));
+}
+
+#[test]
+fn test_services_info_db_uses_db_endpoint() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    // No user-managed services
+    let _m_services = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/services").as_str(),
+        )
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"services":[]}"#)
+        .create();
 
     let _m_db = server
         .mock("GET", format!("/v1/apps/{TEST_APP_ID}/db").as_str())
@@ -849,7 +984,7 @@ fn test_db_info_json_uses_db_endpoint() {
         .create();
 
     floo()
-        .args(["--json", "db", "info", TEST_APP_NAME])
+        .args(["--json", "services", "info", "db", "--app", TEST_APP_NAME])
         .env("HOME", home.path())
         .assert()
         .success()
@@ -859,10 +994,24 @@ fn test_db_info_json_uses_db_endpoint() {
 }
 
 #[test]
-fn test_db_info_json_falls_back_to_databases_endpoint() {
+fn test_services_info_db_falls_back_to_databases_endpoint() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
+
+    let _m_services = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/services").as_str(),
+        )
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"services":[]}"#)
+        .create();
 
     let _m_db_not_found = server
         .mock("GET", format!("/v1/apps/{TEST_APP_ID}/db").as_str())
@@ -881,7 +1030,7 @@ fn test_db_info_json_falls_back_to_databases_endpoint() {
         .create();
 
     floo()
-        .args(["--json", "db", "info", TEST_APP_NAME])
+        .args(["--json", "services", "info", "db", "--app", TEST_APP_NAME])
         .env("HOME", home.path())
         .assert()
         .success()
@@ -890,7 +1039,7 @@ fn test_db_info_json_falls_back_to_databases_endpoint() {
 }
 
 #[test]
-fn test_db_info_json_app_not_found() {
+fn test_services_info_app_not_found() {
     let mut server = Server::new();
     let home = setup_config(&server);
 
@@ -906,7 +1055,7 @@ fn test_db_info_json_app_not_found() {
         .create();
 
     floo()
-        .args(["--json", "db", "info", "missing-app"])
+        .args(["--json", "services", "info", "db", "--app", "missing-app"])
         .env("HOME", home.path())
         .assert()
         .failure()
@@ -914,20 +1063,27 @@ fn test_db_info_json_app_not_found() {
 }
 
 #[test]
-fn test_db_info_json_surfaces_api_errors() {
+fn test_services_info_surfaces_api_errors() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
 
-    let _m_db = server
-        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/db").as_str())
+    let _m_services = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/services").as_str(),
+        )
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+        ]))
         .with_status(500)
         .with_header("content-type", "application/json")
         .with_body(r#"{"detail":{"code":"INTERNAL_ERROR","message":"Server error"}}"#)
         .create();
 
     floo()
-        .args(["--json", "db", "info", TEST_APP_NAME])
+        .args(["--json", "services", "info", "db", "--app", TEST_APP_NAME])
         .env("HOME", home.path())
         .assert()
         .failure()
@@ -936,24 +1092,63 @@ fn test_db_info_json_surfaces_api_errors() {
 }
 
 #[test]
-fn test_db_info_json_returns_parse_error_for_malformed_payload() {
+fn test_releases_list_from_config() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
+    let project = TempDir::new().unwrap();
+    write_service_config(&project, TEST_APP_NAME);
 
-    let _m_db = server
-        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/db").as_str())
+    let _m_releases = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/releases").as_str(),
+        )
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "20".into()),
+        ]))
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"host":"db.example.internal","port":"bad","database":"floo_apps","status":"READY"}"#)
+        .with_body(r#"{"releases":[{"release_number":1,"tag":"v0.1.0","commit_sha":"abc1234","promoted_by":"user@example.com","created_at":"2024-01-01T00:00:00Z"}]}"#)
         .create();
 
     floo()
-        .args(["--json", "db", "info", TEST_APP_NAME])
+        .args(["--json", "releases", "list"])
+        .current_dir(project.path())
         .env("HOME", home.path())
         .assert()
-        .failure()
-        .stdout(predicate::str::contains("PARSE_ERROR"));
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains("v0.1.0"));
+}
+
+#[test]
+fn test_rollbacks_list_from_config() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let project = TempDir::new().unwrap();
+    write_service_config(&project, TEST_APP_NAME);
+
+    let _m_deploys = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/deploys").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"deploys":[{"id":"deploy-123","status":"live","runtime":"nodejs","created_at":"2024-01-01T00:00:00Z"}]}"#)
+        .create();
+
+    floo()
+        .args(["--json", "rollbacks", "list"])
+        .current_dir(project.path())
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains("deploy-123"));
 }
 
 // ───────────────────────── Deploy ─────────────────────────

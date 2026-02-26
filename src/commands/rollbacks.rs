@@ -1,31 +1,36 @@
+use std::env;
 use std::process;
 
-use crate::config::load_config;
 use crate::output;
+use crate::project_config::resolve_app_context;
 use crate::resolve::resolve_app;
 
-fn require_auth() {
-    let config = load_config();
-    if config.api_key.is_none() {
-        output::error(
-            "Not logged in.",
-            "NOT_AUTHENTICATED",
-            Some("Run 'floo login' to authenticate."),
-        );
-        process::exit(1);
-    }
-}
-
-pub fn list(app_name: &str) {
-    require_auth();
+pub fn list(app: Option<&str>) {
+    super::require_auth();
     let client = super::init_client(None);
 
-    let app_data = match resolve_app(&client, app_name) {
+    let cwd = env::current_dir().unwrap_or_else(|e| {
+        output::error(
+            &format!("Failed to read current directory: {e}"),
+            "CWD_ERROR",
+            Some("Ensure the current directory exists and you have read permission."),
+        );
+        process::exit(1);
+    });
+    let resolved = match resolve_app_context(&cwd, app) {
+        Ok(r) => r,
+        Err(e) => {
+            output::error(&e.message, &e.code, e.suggestion.as_deref());
+            process::exit(1);
+        }
+    };
+
+    let app_data = match resolve_app(&client, &resolved.app_name) {
         Ok(a) => a,
         Err(e) => {
             if e.code == "APP_NOT_FOUND" {
                 output::error(
-                    &format!("App '{app_name}' not found."),
+                    &format!("App '{}' not found.", resolved.app_name),
                     "APP_NOT_FOUND",
                     Some("Check the app name or ID and try again."),
                 );
@@ -112,7 +117,7 @@ pub fn list(app_name: &str) {
 }
 
 pub fn rollback(app_name: &str, deploy_id: &str, force: bool) {
-    require_auth();
+    super::require_auth();
     let client = super::init_client(None);
 
     let app_data = match resolve_app(&client, app_name) {

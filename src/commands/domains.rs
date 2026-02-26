@@ -1,30 +1,34 @@
+use std::env;
 use std::process;
 
-use crate::config::load_config;
+use crate::api_client::FlooClient;
 use crate::output;
+use crate::project_config::resolve_app_context;
 use crate::resolve::resolve_app;
 
-fn require_auth() {
-    let config = load_config();
-    if config.api_key.is_none() {
+fn resolve(client: &FlooClient, app: Option<&str>) -> (String, String) {
+    let cwd = env::current_dir().unwrap_or_else(|e| {
         output::error(
-            "Not logged in.",
-            "NOT_AUTHENTICATED",
-            Some("Run 'floo login' to authenticate."),
+            &format!("Failed to read current directory: {e}"),
+            "CWD_ERROR",
+            Some("Ensure the current directory exists and you have read permission."),
         );
         process::exit(1);
-    }
-}
+    });
+    let resolved = match resolve_app_context(&cwd, app) {
+        Ok(r) => r,
+        Err(e) => {
+            output::error(&e.message, &e.code, e.suggestion.as_deref());
+            process::exit(1);
+        }
+    };
 
-pub fn add(hostname: &str, app_name: &str) {
-    require_auth();
-    let client = super::init_client(None);
-    let app_data = match resolve_app(&client, app_name) {
+    let app_data = match resolve_app(client, &resolved.app_name) {
         Ok(a) => a,
         Err(e) => {
             if e.code == "APP_NOT_FOUND" {
                 output::error(
-                    &format!("App '{app_name}' not found."),
+                    &format!("App '{}' not found.", resolved.app_name),
                     "APP_NOT_FOUND",
                     Some("Check the app name or ID and try again."),
                 );
@@ -35,13 +39,70 @@ pub fn add(hostname: &str, app_name: &str) {
         }
     };
 
-    let app_id = app_data.get("id").and_then(|v| v.as_str()).unwrap_or("");
-    let name = app_data
+    let app_id = super::expect_str_field(&app_data, "id").to_string();
+    let app_name = app_data
         .get("name")
         .and_then(|v| v.as_str())
-        .unwrap_or(app_name);
+        .unwrap_or(&resolved.app_name)
+        .to_string();
 
-    let result = match client.add_domain(app_id, hostname) {
+    (app_id, app_name)
+}
+
+fn check_services_flag(client: &FlooClient, app_id: &str, services: Option<&str>) {
+    let result = match client.list_services(app_id) {
+        Ok(r) => r,
+        Err(e) => {
+            output::error(&e.message, &e.code, None);
+            process::exit(1);
+        }
+    };
+
+    let service_list = result
+        .get("services")
+        .and_then(|v| v.as_array())
+        .unwrap_or_else(|| {
+            output::error(
+                "Failed to parse services from API response.",
+                "PARSE_ERROR",
+                Some("This is a bug. Please report it."),
+            );
+            process::exit(1);
+        })
+        .clone();
+
+    if service_list.len() > 1 && services.is_none() {
+        output::error(
+            "Multiple services found. Specify --services.",
+            "MULTIPLE_SERVICES_NO_TARGET",
+            Some("Use --services <name> to target a specific service."),
+        );
+        process::exit(1);
+    }
+
+    if let Some(svc_name) = services {
+        let exists = service_list
+            .iter()
+            .any(|s| s.get("name").and_then(|v| v.as_str()) == Some(svc_name));
+        if !exists {
+            output::error(
+                &format!("Service '{svc_name}' not found."),
+                "SERVICE_NOT_FOUND",
+                Some("Run 'floo services list' to see available services."),
+            );
+            process::exit(1);
+        }
+    }
+}
+
+pub fn add(hostname: &str, app: Option<&str>, services: Option<&str>) {
+    super::require_auth();
+    let client = super::init_client(None);
+
+    let (app_id, app_name) = resolve(&client, app);
+    check_services_flag(&client, &app_id, services);
+
+    let result = match client.add_domain(&app_id, hostname) {
         Ok(r) => r,
         Err(e) => {
             output::error(&e.message, &e.code, None);
@@ -53,7 +114,7 @@ pub fn add(hostname: &str, app_name: &str) {
         output::success(&format!("Added {hostname}"), Some(result));
     } else {
         output::success(
-            &format!("Added domain {hostname} to {name}."),
+            &format!("Added domain {hostname} to {app_name}."),
             Some(serde_json::Value::Null),
         );
         let status = result.get("status").and_then(|v| v.as_str()).unwrap_or("-");
@@ -64,32 +125,14 @@ pub fn add(hostname: &str, app_name: &str) {
     }
 }
 
-pub fn list(app_name: &str) {
-    require_auth();
+pub fn list(app: Option<&str>, services: Option<&str>) {
+    super::require_auth();
     let client = super::init_client(None);
-    let app_data = match resolve_app(&client, app_name) {
-        Ok(a) => a,
-        Err(e) => {
-            if e.code == "APP_NOT_FOUND" {
-                output::error(
-                    &format!("App '{app_name}' not found."),
-                    "APP_NOT_FOUND",
-                    Some("Check the app name or ID and try again."),
-                );
-            } else {
-                output::error(&e.message, &e.code, None);
-            }
-            process::exit(1);
-        }
-    };
 
-    let app_id = app_data.get("id").and_then(|v| v.as_str()).unwrap_or("");
-    let name = app_data
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or(app_name);
+    let (app_id, app_name) = resolve(&client, app);
+    check_services_flag(&client, &app_id, services);
 
-    let result = match client.list_domains(app_id) {
+    let result = match client.list_domains(&app_id) {
         Ok(r) => r,
         Err(e) => {
             output::error(&e.message, &e.code, None);
@@ -100,14 +143,21 @@ pub fn list(app_name: &str) {
     let domains = result
         .get("domains")
         .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
+        .unwrap_or_else(|| {
+            output::error(
+                "Failed to parse domains from API response.",
+                "PARSE_ERROR",
+                Some("This is a bug. Please report it."),
+            );
+            process::exit(1);
+        })
+        .clone();
 
     if domains.is_empty() {
         if !output::is_json_mode() {
             output::info(
                 &format!(
-                    "No custom domains on {name}. Add one with floo domains add example.com --app {name}."
+                    "No custom domains on {app_name}. Add one with floo domains add example.com --app {app_name}."
                 ),
                 None,
             );
@@ -144,38 +194,20 @@ pub fn list(app_name: &str) {
     );
 }
 
-pub fn remove(hostname: &str, app_name: &str) {
-    require_auth();
+pub fn remove(hostname: &str, app: Option<&str>, services: Option<&str>) {
+    super::require_auth();
     let client = super::init_client(None);
-    let app_data = match resolve_app(&client, app_name) {
-        Ok(a) => a,
-        Err(e) => {
-            if e.code == "APP_NOT_FOUND" {
-                output::error(
-                    &format!("App '{app_name}' not found."),
-                    "APP_NOT_FOUND",
-                    Some("Check the app name or ID and try again."),
-                );
-            } else {
-                output::error(&e.message, &e.code, None);
-            }
-            process::exit(1);
-        }
-    };
 
-    let app_id = app_data.get("id").and_then(|v| v.as_str()).unwrap_or("");
-    let name = app_data
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or(app_name);
+    let (app_id, app_name) = resolve(&client, app);
+    check_services_flag(&client, &app_id, services);
 
-    if let Err(e) = client.delete_domain(app_id, hostname) {
+    if let Err(e) = client.delete_domain(&app_id, hostname) {
         output::error(&e.message, &e.code, None);
         process::exit(1);
     }
 
     output::success(
-        &format!("Removed domain {hostname} from {name}."),
+        &format!("Removed domain {hostname} from {app_name}."),
         Some(serde_json::json!({"hostname": hostname})),
     );
 }

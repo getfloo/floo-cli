@@ -1,17 +1,36 @@
+use std::env;
 use std::process;
 
 use crate::output;
+use crate::project_config::resolve_app_context;
 use crate::resolve::resolve_app;
 
-pub fn promote(app_name: &str, tag: Option<&str>) {
+pub fn promote(app: Option<&str>, tag: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);
-    let app_data = match resolve_app(&client, app_name) {
+
+    let cwd = env::current_dir().unwrap_or_else(|e| {
+        output::error(
+            &format!("Failed to read current directory: {e}"),
+            "CWD_ERROR",
+            Some("Ensure the current directory exists and you have read permission."),
+        );
+        process::exit(1);
+    });
+    let resolved = match resolve_app_context(&cwd, app) {
+        Ok(r) => r,
+        Err(e) => {
+            output::error(&e.message, &e.code, e.suggestion.as_deref());
+            process::exit(1);
+        }
+    };
+
+    let app_data = match resolve_app(&client, &resolved.app_name) {
         Ok(a) => a,
         Err(e) => {
             if e.code == "APP_NOT_FOUND" {
                 output::error(
-                    &format!("App '{app_name}' not found."),
+                    &format!("App '{}' not found.", resolved.app_name),
                     "APP_NOT_FOUND",
                     Some("Check the app name or ID and try again."),
                 );
@@ -26,7 +45,7 @@ pub fn promote(app_name: &str, tag: Option<&str>) {
     let name = app_data
         .get("name")
         .and_then(|v| v.as_str())
-        .unwrap_or(app_name);
+        .unwrap_or(&resolved.app_name);
 
     let _spinner = output::Spinner::new(&format!("Promoting {name} to prod..."));
 
@@ -70,15 +89,32 @@ pub fn promote(app_name: &str, tag: Option<&str>) {
     }
 }
 
-pub fn list(app_name: &str) {
+pub fn list(app: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);
-    let app_data = match resolve_app(&client, app_name) {
+
+    let cwd = env::current_dir().unwrap_or_else(|e| {
+        output::error(
+            &format!("Failed to read current directory: {e}"),
+            "CWD_ERROR",
+            Some("Ensure the current directory exists and you have read permission."),
+        );
+        process::exit(1);
+    });
+    let resolved = match resolve_app_context(&cwd, app) {
+        Ok(r) => r,
+        Err(e) => {
+            output::error(&e.message, &e.code, e.suggestion.as_deref());
+            process::exit(1);
+        }
+    };
+
+    let app_data = match resolve_app(&client, &resolved.app_name) {
         Ok(a) => a,
         Err(e) => {
             if e.code == "APP_NOT_FOUND" {
                 output::error(
-                    &format!("App '{app_name}' not found."),
+                    &format!("App '{}' not found.", resolved.app_name),
                     "APP_NOT_FOUND",
                     Some("Check the app name or ID and try again."),
                 );
@@ -116,7 +152,7 @@ pub fn list(app_name: &str) {
         if output::is_json_mode() {
             output::success("No releases.", Some(serde_json::json!({"releases": []})));
         } else {
-            output::info("No releases yet. Promote with: floo promote <app>", None);
+            output::info("No releases yet. Promote with: floo promote", None);
         }
         return;
     }
@@ -159,15 +195,32 @@ pub fn list(app_name: &str) {
     );
 }
 
-pub fn show(release_id: &str, app_name: &str) {
+pub fn show(release_id: &str, app: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);
-    let app_data = match resolve_app(&client, app_name) {
+
+    let cwd = env::current_dir().unwrap_or_else(|e| {
+        output::error(
+            &format!("Failed to read current directory: {e}"),
+            "CWD_ERROR",
+            Some("Ensure the current directory exists and you have read permission."),
+        );
+        process::exit(1);
+    });
+    let resolved = match resolve_app_context(&cwd, app) {
+        Ok(r) => r,
+        Err(e) => {
+            output::error(&e.message, &e.code, e.suggestion.as_deref());
+            process::exit(1);
+        }
+    };
+
+    let app_data = match resolve_app(&client, &resolved.app_name) {
         Ok(a) => a,
         Err(e) => {
             if e.code == "APP_NOT_FOUND" {
                 output::error(
-                    &format!("App '{app_name}' not found."),
+                    &format!("App '{}' not found.", resolved.app_name),
                     "APP_NOT_FOUND",
                     Some("Check the app name or ID and try again."),
                 );

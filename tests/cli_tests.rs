@@ -198,12 +198,12 @@ fn test_domains_help() {
 }
 
 #[test]
-fn test_db_help() {
+fn test_services_help() {
     floo()
-        .args(["db", "--help"])
+        .args(["services", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Show database details"));
+        .stdout(predicate::str::contains("Manage services for an app"));
 }
 
 #[test]
@@ -320,12 +320,12 @@ fn test_domains_list_not_authenticated() {
         .stderr(predicate::str::contains("Not logged in."));
 }
 
-// --- Database (unauthenticated) ---
+// --- Services (unauthenticated) ---
 
 #[test]
-fn test_db_info_not_authenticated() {
+fn test_services_info_not_authenticated() {
     floo()
-        .args(["db", "info", "my-app"])
+        .args(["services", "info", "db", "--app", "my-app"])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
@@ -333,9 +333,9 @@ fn test_db_info_not_authenticated() {
 }
 
 #[test]
-fn test_db_info_json_not_authenticated() {
+fn test_services_info_json_not_authenticated() {
     floo()
-        .args(["--json", "db", "info", "my-app"])
+        .args(["--json", "services", "info", "db", "--app", "my-app"])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
@@ -397,7 +397,7 @@ fn test_rollbacks_help() {
 #[test]
 fn test_rollbacks_list_not_authenticated() {
     floo()
-        .args(["rollbacks", "list", "my-app"])
+        .args(["rollbacks", "list", "--app", "my-app"])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
@@ -407,7 +407,7 @@ fn test_rollbacks_list_not_authenticated() {
 #[test]
 fn test_rollbacks_list_json_not_authenticated() {
     floo()
-        .args(["--json", "rollbacks", "list", "my-app"])
+        .args(["--json", "rollbacks", "list", "--app", "my-app"])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
