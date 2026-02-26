@@ -7,7 +7,14 @@ use crate::project_config::resolve_app_context;
 use crate::resolve::resolve_app;
 
 fn resolve(client: &FlooClient, app: Option<&str>) -> (String, String) {
-    let cwd = env::current_dir().unwrap_or_default();
+    let cwd = env::current_dir().unwrap_or_else(|e| {
+        output::error(
+            &format!("Failed to read current directory: {e}"),
+            "CWD_ERROR",
+            Some("Ensure the current directory exists and you have read permission."),
+        );
+        process::exit(1);
+    });
     let resolved = match resolve_app_context(&cwd, app) {
         Ok(r) => r,
         Err(e) => {
@@ -32,11 +39,7 @@ fn resolve(client: &FlooClient, app: Option<&str>) -> (String, String) {
         }
     };
 
-    let app_id = app_data
-        .get("id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+    let app_id = super::expect_str_field(&app_data, "id").to_string();
     let app_name = app_data
         .get("name")
         .and_then(|v| v.as_str())
@@ -58,8 +61,15 @@ fn check_services_flag(client: &FlooClient, app_id: &str, services: Option<&str>
     let service_list = result
         .get("services")
         .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
+        .unwrap_or_else(|| {
+            output::error(
+                "Failed to parse services from API response.",
+                "PARSE_ERROR",
+                Some("This is a bug. Please report it."),
+            );
+            process::exit(1);
+        })
+        .clone();
 
     if service_list.len() > 1 && services.is_none() {
         output::error(
@@ -133,8 +143,15 @@ pub fn list(app: Option<&str>, services: Option<&str>) {
     let domains = result
         .get("domains")
         .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
+        .unwrap_or_else(|| {
+            output::error(
+                "Failed to parse domains from API response.",
+                "PARSE_ERROR",
+                Some("This is a bug. Please report it."),
+            );
+            process::exit(1);
+        })
+        .clone();
 
     if domains.is_empty() {
         if !output::is_json_mode() {

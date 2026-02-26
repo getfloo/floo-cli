@@ -9,7 +9,14 @@ pub fn promote(app: Option<&str>, tag: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);
 
-    let cwd = env::current_dir().unwrap_or_default();
+    let cwd = env::current_dir().unwrap_or_else(|e| {
+        output::error(
+            &format!("Failed to read current directory: {e}"),
+            "CWD_ERROR",
+            Some("Ensure the current directory exists and you have read permission."),
+        );
+        process::exit(1);
+    });
     let resolved = match resolve_app_context(&cwd, app) {
         Ok(r) => r,
         Err(e) => {
@@ -86,7 +93,14 @@ pub fn list(app: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);
 
-    let cwd = env::current_dir().unwrap_or_default();
+    let cwd = env::current_dir().unwrap_or_else(|e| {
+        output::error(
+            &format!("Failed to read current directory: {e}"),
+            "CWD_ERROR",
+            Some("Ensure the current directory exists and you have read permission."),
+        );
+        process::exit(1);
+    });
     let resolved = match resolve_app_context(&cwd, app) {
         Ok(r) => r,
         Err(e) => {
@@ -185,7 +199,14 @@ pub fn show(release_id: &str, app: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);
 
-    let cwd = env::current_dir().unwrap_or_default();
+    let cwd = env::current_dir().unwrap_or_else(|e| {
+        output::error(
+            &format!("Failed to read current directory: {e}"),
+            "CWD_ERROR",
+            Some("Ensure the current directory exists and you have read permission."),
+        );
+        process::exit(1);
+    });
     let resolved = match resolve_app_context(&cwd, app) {
         Ok(r) => r,
         Err(e) => {

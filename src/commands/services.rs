@@ -9,7 +9,14 @@ pub fn list(app: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);
 
-    let cwd = env::current_dir().unwrap_or_default();
+    let cwd = env::current_dir().unwrap_or_else(|e| {
+        output::error(
+            &format!("Failed to read current directory: {e}"),
+            "CWD_ERROR",
+            Some("Ensure the current directory exists and you have read permission."),
+        );
+        process::exit(1);
+    });
     let resolved = match resolve_app_context(&cwd, app) {
         Ok(r) => r,
         Err(e) => {
@@ -51,8 +58,15 @@ pub fn list(app: Option<&str>) {
     let services = result
         .get("services")
         .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
+        .unwrap_or_else(|| {
+            output::error(
+                "Failed to parse services from API response.",
+                "PARSE_ERROR",
+                Some("This is a bug. Please report it."),
+            );
+            process::exit(1);
+        })
+        .clone();
 
     if services.is_empty() {
         if output::is_json_mode() {
@@ -70,18 +84,9 @@ pub fn list(app: Option<&str>) {
         .iter()
         .map(|s| {
             vec![
-                s.get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("-")
-                    .to_string(),
-                s.get("type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("-")
-                    .to_string(),
-                s.get("status")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("-")
-                    .to_string(),
+                super::expect_str_field(s, "name").to_string(),
+                super::expect_str_field(s, "type").to_string(),
+                super::expect_str_field(s, "status").to_string(),
                 s.get("cloud_run_url")
                     .and_then(|v| v.as_str())
                     .unwrap_or("-")
@@ -101,7 +106,14 @@ pub fn info(service_name: &str, app: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);
 
-    let cwd = env::current_dir().unwrap_or_default();
+    let cwd = env::current_dir().unwrap_or_else(|e| {
+        output::error(
+            &format!("Failed to read current directory: {e}"),
+            "CWD_ERROR",
+            Some("Ensure the current directory exists and you have read permission."),
+        );
+        process::exit(1);
+    });
     let resolved = match resolve_app_context(&cwd, app) {
         Ok(r) => r,
         Err(e) => {
@@ -143,8 +155,15 @@ pub fn info(service_name: &str, app: Option<&str>) {
     let services = services_result
         .get("services")
         .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
+        .unwrap_or_else(|| {
+            output::error(
+                "Failed to parse services from API response.",
+                "PARSE_ERROR",
+                Some("This is a bug. Please report it."),
+            );
+            process::exit(1);
+        })
+        .clone();
 
     // Check if any user-managed service matches the given name
     let matched = services
@@ -181,7 +200,26 @@ pub fn info(service_name: &str, app: Option<&str>) {
         return;
     }
 
-    // No user-managed service found — try Floo-managed database
+    // No user-managed service found with that name.
+    // If the app has user-managed services, the name is simply wrong.
+    if !services.is_empty() {
+        let names: Vec<&str> = services
+            .iter()
+            .filter_map(|s| s.get("name").and_then(|v| v.as_str()))
+            .collect();
+        let suggestion = format!(
+            "Available services: {}. Run 'floo services list' for details.",
+            names.join(", ")
+        );
+        output::error(
+            &format!("Service '{service_name}' not found on {app_name}."),
+            "SERVICE_NOT_FOUND",
+            Some(&suggestion),
+        );
+        process::exit(1);
+    }
+
+    // No user-managed services at all — try Floo-managed database.
     let db_data = match client.get_database_info(app_id) {
         Ok(db) => db,
         Err(e) => {
@@ -206,20 +244,21 @@ pub fn info(service_name: &str, app: Option<&str>) {
         return;
     }
 
-    let host = db_data.get("host").and_then(|v| v.as_str()).unwrap_or("-");
+    let host = super::expect_str_field(&db_data, "host");
     let port = db_data
         .get("port")
         .and_then(|v| v.as_u64())
         .map(|p| p.to_string())
-        .unwrap_or_else(|| "-".to_string());
-    let database = db_data
-        .get("database")
-        .and_then(|v| v.as_str())
-        .unwrap_or("-");
-    let status = db_data
-        .get("status")
-        .and_then(|v| v.as_str())
-        .unwrap_or("-");
+        .unwrap_or_else(|| {
+            output::error(
+                "Response missing 'port' field.",
+                "PARSE_ERROR",
+                Some("This is a bug. Please report it."),
+            );
+            process::exit(1);
+        });
+    let database = super::expect_str_field(&db_data, "database");
+    let status = super::expect_str_field(&db_data, "status");
 
     output::info(&format!("Service {service_name} ({app_name}):"), None);
     output::info(&format!("  Host:     {host}"), None);
