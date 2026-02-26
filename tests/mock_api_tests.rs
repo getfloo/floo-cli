@@ -131,7 +131,7 @@ fn test_apps_list_json() {
         .mock("GET", "/v1/apps")
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("page".into(), "1".into()),
-            Matcher::UrlEncoded("per_page".into(), "20".into()),
+            Matcher::UrlEncoded("per_page".into(), "50".into()),
         ]))
         .with_status(200)
         .with_header("content-type", "application/json")
@@ -157,7 +157,7 @@ fn test_apps_list_human() {
         .mock("GET", "/v1/apps")
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("page".into(), "1".into()),
-            Matcher::UrlEncoded("per_page".into(), "20".into()),
+            Matcher::UrlEncoded("per_page".into(), "50".into()),
         ]))
         .with_status(200)
         .with_header("content-type", "application/json")
@@ -219,7 +219,7 @@ fn test_apps_list_api_error() {
         .mock("GET", "/v1/apps")
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("page".into(), "1".into()),
-            Matcher::UrlEncoded("per_page".into(), "20".into()),
+            Matcher::UrlEncoded("per_page".into(), "50".into()),
         ]))
         .with_status(500)
         .with_header("content-type", "application/json")
@@ -961,10 +961,7 @@ fn test_services_info_db_uses_db_endpoint() {
 
     // No user-managed services
     let _m_services = server
-        .mock(
-            "GET",
-            format!("/v1/apps/{TEST_APP_ID}/services").as_str(),
-        )
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/services").as_str())
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("page".into(), "1".into()),
             Matcher::UrlEncoded("per_page".into(), "100".into()),
@@ -1000,10 +997,7 @@ fn test_services_info_db_falls_back_to_databases_endpoint() {
     let _resolve = mock_resolve_app(&mut server);
 
     let _m_services = server
-        .mock(
-            "GET",
-            format!("/v1/apps/{TEST_APP_ID}/services").as_str(),
-        )
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/services").as_str())
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("page".into(), "1".into()),
             Matcher::UrlEncoded("per_page".into(), "100".into()),
@@ -1069,10 +1063,7 @@ fn test_services_info_surfaces_api_errors() {
     let _resolve = mock_resolve_app(&mut server);
 
     let _m_services = server
-        .mock(
-            "GET",
-            format!("/v1/apps/{TEST_APP_ID}/services").as_str(),
-        )
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/services").as_str())
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("page".into(), "1".into()),
             Matcher::UrlEncoded("per_page".into(), "100".into()),

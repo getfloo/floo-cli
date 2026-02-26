@@ -31,7 +31,9 @@ pub fn list(page: u32, per_page: u32) {
         } else {
             output::success(
                 "No apps.",
-                Some(serde_json::json!({"apps": [], "total": total, "page": page, "per_page": per_page})),
+                Some(
+                    serde_json::json!({"apps": [], "total": total, "page": page, "per_page": per_page}),
+                ),
             );
         }
         return;
