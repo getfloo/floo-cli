@@ -129,11 +129,16 @@ mod tests {
     }
 
     #[test]
-    fn test_corrupted_json_returns_default() {
-        let corrupted = "{ not valid json !!!";
-        let result: FlooConfig = serde_json::from_str(corrupted).unwrap_or_default();
-        assert!(result.api_key.is_none());
-        assert_eq!(result.api_url, DEFAULT_API_URL);
+    fn test_corrupted_config_file_returns_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(CONFIG_DIR_NAME);
+        fs::create_dir_all(&config_dir).unwrap();
+        fs::write(config_dir.join(CONFIG_FILE_NAME), "{ not valid json !!!").unwrap();
+
+        env::set_var("HOME", tmp.path());
+        let config = load_config();
+        assert!(config.api_key.is_none());
+        assert_eq!(config.api_url, DEFAULT_API_URL);
     }
 
     #[test]

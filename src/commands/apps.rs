@@ -20,10 +20,13 @@ pub fn list(page: u32, per_page: u32) {
         .cloned()
         .unwrap_or_default();
 
-    let total = result
-        .get("total")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(apps.len() as u64) as u32;
+    let total = match result.get("total").and_then(|v| v.as_u64()) {
+        Some(t) => t as u32,
+        None => {
+            eprintln!("Warning: API response missing 'total' field; pagination may be inaccurate.");
+            apps.len() as u32
+        }
+    };
 
     if apps.is_empty() {
         if !output::is_json_mode() {
@@ -73,13 +76,17 @@ pub fn list(page: u32, per_page: u32) {
         Some(serde_json::json!({"apps": apps, "total": total, "page": page, "per_page": per_page})),
     );
 
-    if !output::is_json_mode() && total > page * per_page {
-        let remaining = total - page * per_page;
-        output::dim_line(&format!(
-            "{remaining} more app{} not shown. Use --page {} to see next page.",
-            if remaining == 1 { "" } else { "s" },
-            page + 1
-        ));
+    if !output::is_json_mode() {
+        if let Some(shown) = page.checked_mul(per_page) {
+            if total > shown {
+                let remaining = total - shown;
+                output::dim_line(&format!(
+                    "{remaining} more app{} not shown. Use --page {} to see next page.",
+                    if remaining == 1 { "" } else { "s" },
+                    page + 1
+                ));
+            }
+        }
     }
 }
 
