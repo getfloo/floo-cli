@@ -208,6 +208,7 @@ impl FlooClient {
         runtime: &str,
         framework: Option<&str>,
         services: Option<&[ServiceConfig]>,
+        access_mode: Option<&str>,
     ) -> Result<Value, FlooApiError> {
         let file_bytes = std::fs::read(tarball_path).map_err(|e| {
             FlooApiError::new(0, "FILE_ERROR", format!("Failed to read archive: {e}"))
@@ -237,6 +238,10 @@ impl FlooClient {
                 )
             })?;
             form = form.text("services", json);
+        }
+
+        if let Some(mode) = access_mode {
+            form = form.text("access_mode", mode.to_string());
         }
 
         let mut req = self
@@ -528,6 +533,26 @@ impl FlooClient {
     }
 
     // --- GitHub ---
+
+    pub fn github_setup_begin(&self) -> Result<Value, FlooApiError> {
+        let resp = self.post_json("/v1/github/setup/begin", &serde_json::json!({}))?;
+        self.handle_response(resp)
+    }
+
+    pub fn github_setup_poll(&self) -> Result<Value, FlooApiError> {
+        let resp = self.get("/v1/github/setup/poll")?;
+        self.handle_response(resp)
+    }
+
+    pub fn github_installation_repos(
+        &self,
+        installation_id: u64,
+    ) -> Result<Value, FlooApiError> {
+        let resp = self.get(&format!(
+            "/v1/github/installations/{installation_id}/repos"
+        ))?;
+        self.handle_response(resp)
+    }
 
     pub fn github_connect(
         &self,

@@ -15,10 +15,30 @@ pub struct AppFileConfig {
     pub services: HashMap<String, AppServiceEntry>,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum AppAccessMode {
+    Public,
+    Password,
+    FlooAccounts,
+}
+
+impl AppAccessMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AppAccessMode::Public => "public",
+            AppAccessMode::Password => "password",
+            AppAccessMode::FlooAccounts => "floo_accounts",
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppFileAppSection {
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access_mode: Option<AppAccessMode>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -270,6 +290,7 @@ type = "mysql"
         let config = AppFileConfig {
             app: AppFileAppSection {
                 name: "roundtrip-app".to_string(),
+                access_mode: None,
             },
             services: HashMap::new(),
         };
@@ -312,5 +333,89 @@ path = "./backend"
         assert_eq!(config.services["cache"].service_type, AppServiceType::Redis);
         assert_eq!(config.services["web"].service_type, AppServiceType::Web);
         assert_eq!(config.services["api"].service_type, AppServiceType::Api);
+    }
+
+    #[test]
+    fn test_load_app_config_with_access_mode_public() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+access_mode = "public"
+"#,
+        )
+        .unwrap();
+
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        assert_eq!(config.app.access_mode, Some(AppAccessMode::Public));
+    }
+
+    #[test]
+    fn test_load_app_config_with_access_mode_floo_accounts() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+access_mode = "floo_accounts"
+"#,
+        )
+        .unwrap();
+
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        assert_eq!(config.app.access_mode, Some(AppAccessMode::FlooAccounts));
+    }
+
+    #[test]
+    fn test_load_app_config_with_access_mode_password() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+access_mode = "password"
+"#,
+        )
+        .unwrap();
+
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        assert_eq!(config.app.access_mode, Some(AppAccessMode::Password));
+    }
+
+    #[test]
+    fn test_load_app_config_without_access_mode_defaults_none() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+"#,
+        )
+        .unwrap();
+
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        assert!(config.app.access_mode.is_none());
+    }
+
+    #[test]
+    fn test_load_app_config_invalid_access_mode() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+access_mode = "private"
+"#,
+        )
+        .unwrap();
+
+        let err = load_app_config(dir.path()).unwrap_err();
+        assert_eq!(err.code, "INVALID_PROJECT_CONFIG");
     }
 }

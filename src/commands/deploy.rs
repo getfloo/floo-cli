@@ -13,8 +13,8 @@ use crate::errors::FlooApiError;
 use crate::names::generate_name;
 use crate::output;
 use crate::project_config::{
-    self, AppFileAppSection, AppFileConfig, AppSource, ServiceConfig, ServiceFileAppSection,
-    ServiceFileConfig, ServiceIngress, ServiceSection, ServiceType,
+    self, AppAccessMode, AppFileAppSection, AppFileConfig, AppSource, ServiceConfig,
+    ServiceFileAppSection, ServiceFileConfig, ServiceIngress, ServiceSection, ServiceType,
 };
 use crate::resolve::resolve_app;
 
@@ -421,6 +421,14 @@ pub fn deploy(path: PathBuf, app: Option<String>, services_filter: Vec<String>, 
     };
     let app_id = required_response_id(&app_data, "app").to_string();
 
+    // Extract access_mode from config: app_config wins over service_config
+    let access_mode: Option<AppAccessMode> = resolved.as_ref().and_then(|r| {
+        r.app_config
+            .as_ref()
+            .and_then(|c| c.app.access_mode)
+            .or_else(|| r.service_config.as_ref().and_then(|c| c.app.access_mode))
+    });
+
     // Deploy
     let svc_slice = services.as_deref();
     let spinner = output::Spinner::new("Uploading...");
@@ -430,6 +438,7 @@ pub fn deploy(path: PathBuf, app: Option<String>, services_filter: Vec<String>, 
         &detection.runtime,
         detection.framework.as_deref(),
         svc_slice,
+        access_mode.as_ref().map(|m| m.as_str()),
     ) {
         Ok(d) => {
             spinner.finish();
@@ -572,6 +581,7 @@ fn write_first_deploy_configs(project_path: &Path, app_name: &str, service: &Ser
     let service_file = ServiceFileConfig {
         app: ServiceFileAppSection {
             name: app_name.to_string(),
+            access_mode: None,
         },
         service: ServiceSection {
             name: service.name.clone(),
@@ -585,6 +595,7 @@ fn write_first_deploy_configs(project_path: &Path, app_name: &str, service: &Ser
     let app_file = AppFileConfig {
         app: AppFileAppSection {
             name: app_name.to_string(),
+            access_mode: None,
         },
         services: HashMap::new(),
     };
