@@ -9,7 +9,7 @@ pub const LEGACY_CONFIG_FILE: &str = "floo.toml";
 const SCHEMA_URL: &str = "https://getfloo.com/docs/floo-toml";
 const MAX_WALK_UP_LEVELS: usize = 20;
 
-pub use app_config::{write_app_config, AppFileAppSection, AppFileConfig};
+pub use app_config::{write_app_config, AppAccessMode, AppFileAppSection, AppFileConfig};
 pub use discover::{discover_services, filter_services};
 pub use resolve::{resolve_app_context, AppSource};
 pub use service_config::{

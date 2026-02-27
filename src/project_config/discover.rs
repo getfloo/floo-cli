@@ -207,6 +207,7 @@ ingress = "public"
         let svc_file = ServiceFileConfig {
             app: ServiceFileAppSection {
                 name: "my-app".to_string(),
+                access_mode: None,
             },
             service: ServiceSection {
                 name: "api".to_string(),
@@ -276,6 +277,7 @@ ingress = "public"
         let app_config = AppFileConfig {
             app: AppFileAppSection {
                 name: "my-app".to_string(),
+                access_mode: None,
             },
             services: services_map,
         };
@@ -312,6 +314,7 @@ ingress = "public"
         let root_svc = ServiceFileConfig {
             app: ServiceFileAppSection {
                 name: "my-app".to_string(),
+                access_mode: None,
             },
             service: ServiceSection {
                 name: "web".to_string(),
@@ -346,6 +349,7 @@ ingress = "public"
         let app_config = AppFileConfig {
             app: AppFileAppSection {
                 name: "my-app".to_string(),
+                access_mode: None,
             },
             services: services_map,
         };
@@ -377,6 +381,7 @@ ingress = "public"
         let root_svc = ServiceFileConfig {
             app: ServiceFileAppSection {
                 name: "my-app".to_string(),
+                access_mode: None,
             },
             service: ServiceSection {
                 name: "web".to_string(),
@@ -412,6 +417,7 @@ ingress = "public"
         let app_config = AppFileConfig {
             app: AppFileAppSection {
                 name: "my-app".to_string(),
+                access_mode: None,
             },
             services: services_map,
         };
@@ -453,6 +459,7 @@ ingress = "public"
         let app_config = AppFileConfig {
             app: AppFileAppSection {
                 name: "my-app".to_string(),
+                access_mode: None,
             },
             services: services_map,
         };
@@ -497,6 +504,7 @@ ingress = "public"
         let app_config = AppFileConfig {
             app: AppFileAppSection {
                 name: "my-app".to_string(),
+                access_mode: None,
             },
             services: services_map,
         };
@@ -523,6 +531,7 @@ ingress = "public"
         let root_svc = ServiceFileConfig {
             app: ServiceFileAppSection {
                 name: "my-app".to_string(),
+                access_mode: None,
             },
             service: ServiceSection {
                 name: "api".to_string(),
@@ -557,6 +566,7 @@ ingress = "public"
         let app_config = AppFileConfig {
             app: AppFileAppSection {
                 name: "my-app".to_string(),
+                access_mode: None,
             },
             services: services_map,
         };
@@ -593,6 +603,7 @@ ingress = "public"
         let app_config = AppFileConfig {
             app: AppFileAppSection {
                 name: "my-app".to_string(),
+                access_mode: None,
             },
             services: services_map,
         };
@@ -636,6 +647,7 @@ ingress = "public"
         let app_config = AppFileConfig {
             app: AppFileAppSection {
                 name: "my-app".to_string(),
+                access_mode: None,
             },
             services: services_map,
         };

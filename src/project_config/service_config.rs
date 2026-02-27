@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::errors::FlooError;
 
+use super::app_config::AppAccessMode;
 use super::SCHEMA_URL;
 
 // --- API wire format (sent to the API as JSON) ---
@@ -67,6 +68,8 @@ pub struct ServiceFileConfig {
 #[serde(deny_unknown_fields)]
 pub struct ServiceFileAppSection {
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access_mode: Option<AppAccessMode>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -249,6 +252,7 @@ ingress = "internal"
         let config = ServiceFileConfig {
             app: ServiceFileAppSection {
                 name: "roundtrip-app".to_string(),
+                access_mode: None,
             },
             service: ServiceSection {
                 name: "web".to_string(),
@@ -300,5 +304,50 @@ ingress = "internal"
         assert_eq!(json["port"], 8000);
         assert_eq!(json["ingress"], "internal");
         assert!(json.get("type").is_none());
+    }
+
+    #[test]
+    fn test_load_service_config_with_access_mode() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::SERVICE_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+access_mode = "floo_accounts"
+
+[service]
+name = "api"
+type = "api"
+port = 8000
+ingress = "public"
+"#,
+        )
+        .unwrap();
+
+        let config = load_service_config(dir.path()).unwrap().unwrap();
+        assert_eq!(config.app.access_mode, Some(AppAccessMode::FlooAccounts));
+    }
+
+    #[test]
+    fn test_load_service_config_without_access_mode() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::SERVICE_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[service]
+name = "api"
+type = "api"
+port = 8000
+ingress = "public"
+"#,
+        )
+        .unwrap();
+
+        let config = load_service_config(dir.path()).unwrap().unwrap();
+        assert!(config.app.access_mode.is_none());
     }
 }
