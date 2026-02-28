@@ -23,6 +23,16 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// View traffic analytics for an app or org.
+    Analytics {
+        /// App name or ID. Omit for org-level overview.
+        app: Option<String>,
+
+        /// Time period: 7d, 30d, or 90d.
+        #[arg(short, long, default_value = "30d", value_parser = ["7d", "30d", "90d"])]
+        period: String,
+    },
+
     /// Deploy a project to Floo.
     Deploy {
         /// Project directory to deploy.
@@ -407,6 +417,8 @@ pub fn run() {
     }
 
     match cli.command {
+        Commands::Analytics { app, period } => commands::analytics::analytics(app, &period),
+
         Commands::Deploy {
             path,
             app,

@@ -622,4 +622,21 @@ impl FlooClient {
         let resp = self.get(&format!("/v1/apps/{app_id}/releases/{release_id}"))?;
         self.handle_response(resp)
     }
+
+    // --- Analytics ---
+
+    pub fn get_app_analytics(
+        &self,
+        app_id: &str,
+        period: &str,
+    ) -> Result<Value, FlooApiError> {
+        let resp =
+            self.get_with_query(&format!("/v1/apps/{app_id}/analytics"), &[("period", period)])?;
+        self.handle_response(resp)
+    }
+
+    pub fn get_org_analytics(&self, period: &str) -> Result<Value, FlooApiError> {
+        let resp = self.get_with_query("/v1/orgs/analytics", &[("period", period)])?;
+        self.handle_response(resp)
+    }
 }
