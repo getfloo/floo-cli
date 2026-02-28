@@ -1,4 +1,4 @@
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -16,6 +16,12 @@ pub fn set_json_mode(enabled: bool) {
 
 pub fn is_json_mode() -> bool {
     JSON_MODE.load(Ordering::SeqCst)
+}
+
+/// Returns true when stdin is a TTY and JSON mode is off — i.e. a human is
+/// at the keyboard and can answer prompts.
+pub fn is_interactive() -> bool {
+    !is_json_mode() && io::stdin().is_terminal()
 }
 
 pub fn print_json(data: &Value) {
@@ -125,6 +131,9 @@ pub fn confirm(message: &str) -> bool {
     if is_json_mode() {
         return true;
     }
+    if !is_interactive() {
+        return false;
+    }
     eprint!("{message} [y/N] ");
     let _ = io::stderr().flush();
     let mut input = String::new();
@@ -135,7 +144,7 @@ pub fn confirm(message: &str) -> bool {
 }
 
 pub fn prompt_with_default(prompt: &str, default: &str) -> String {
-    if is_json_mode() {
+    if !is_interactive() {
         return default.to_string();
     }
     eprint!("  ? {prompt}: ({default}) ");
@@ -192,6 +201,13 @@ mod tests {
         assert!(!is_json_mode());
         set_json_mode(true);
         assert!(is_json_mode());
+        set_json_mode(false);
+    }
+
+    #[test]
+    fn test_is_interactive_false_in_json_mode() {
+        set_json_mode(true);
+        assert!(!is_interactive());
         set_json_mode(false);
     }
 }

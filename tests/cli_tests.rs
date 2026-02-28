@@ -654,3 +654,53 @@ fn test_top_level_whoami_removed() {
         .failure()
         .stderr(predicate::str::contains("unrecognized subcommand"));
 }
+
+// --- Deploy non-interactive (piped stdin) ---
+
+#[test]
+fn test_deploy_no_config_piped_errors() {
+    let home = tempfile::TempDir::new().unwrap();
+    let config_dir = home.path().join(".floo");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("config.json"),
+        r#"{"api_key": "floo_test123", "api_url": "https://api.test.local"}"#,
+    )
+    .unwrap();
+
+    // Empty project dir with a recognizable file but no floo config
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(project.path().join("package.json"), r#"{"name":"test"}"#).unwrap();
+
+    // assert_cmd pipes stdin (no TTY), so this should error with NO_CONFIG_FOUND
+    floo()
+        .args(["deploy", project.path().to_str().unwrap()])
+        .env("HOME", home.path().to_str().unwrap())
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("NO_CONFIG_FOUND").or(predicate::str::contains("floo init")),
+        );
+}
+
+#[test]
+fn test_deploy_no_config_piped_json_errors() {
+    let home = tempfile::TempDir::new().unwrap();
+    let config_dir = home.path().join(".floo");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("config.json"),
+        r#"{"api_key": "floo_test123", "api_url": "https://api.test.local"}"#,
+    )
+    .unwrap();
+
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(project.path().join("package.json"), r#"{"name":"test"}"#).unwrap();
+
+    floo()
+        .args(["--json", "deploy", project.path().to_str().unwrap()])
+        .env("HOME", home.path().to_str().unwrap())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"NO_CONFIG_FOUND"#));
+}

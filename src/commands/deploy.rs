@@ -180,8 +180,12 @@ pub fn deploy(path: PathBuf, app: Option<String>, services_filter: Vec<String>, 
     let resolved = match project_config::resolve_app_context(&project_path, app.as_deref()) {
         Ok(r) => Some(r),
         Err(e) if e.code == "NO_CONFIG_FOUND" => {
-            if output::is_json_mode() {
-                output::error(&e.message, &e.code, e.suggestion.as_deref());
+            if !output::is_interactive() {
+                output::error(
+                    "No floo.app.toml or floo.service.toml found.",
+                    "NO_CONFIG_FOUND",
+                    Some("Run `floo init` to create config files."),
+                );
                 process::exit(1);
             }
             None
@@ -578,6 +582,12 @@ fn prompt_first_deploy(detection: &crate::detection::DetectionResult) -> FirstDe
 }
 
 fn write_first_deploy_configs(project_path: &Path, app_name: &str, service: &ServiceConfig) {
+    let env_file = if project_path.join(".env").exists() {
+        Some(".env".to_string())
+    } else {
+        None
+    };
+
     let service_file = ServiceFileConfig {
         app: ServiceFileAppSection {
             name: app_name.to_string(),
@@ -588,7 +598,7 @@ fn write_first_deploy_configs(project_path: &Path, app_name: &str, service: &Ser
             service_type: service.service_type,
             port: service.port,
             ingress: service.ingress,
-            env_file: None,
+            env_file,
         },
     };
 
