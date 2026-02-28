@@ -4,6 +4,7 @@ use crate::api_client::FlooClient;
 use crate::config::{load_config, FlooConfig};
 use crate::output;
 
+pub mod analytics;
 pub mod apps;
 pub mod auth;
 pub mod deploy;
