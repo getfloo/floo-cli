@@ -33,6 +33,16 @@ pub enum Commands {
         period: String,
     },
 
+    /// Initialize a new Floo project (creates config files).
+    Init {
+        /// App name (required in non-interactive/JSON mode).
+        name: Option<String>,
+
+        /// Project directory.
+        #[arg(short, long, default_value = ".")]
+        path: PathBuf,
+    },
+
     /// Deploy a project to Floo.
     Deploy {
         /// Project directory to deploy.
@@ -428,6 +438,8 @@ pub fn run() {
 
     match cli.command {
         Commands::Analytics { app, period } => commands::analytics::analytics(app, &period),
+
+        Commands::Init { name, path } => commands::init::init(name, path),
 
         Commands::Deploy {
             path,

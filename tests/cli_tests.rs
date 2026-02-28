@@ -704,3 +704,76 @@ fn test_deploy_no_config_piped_json_errors() {
         .failure()
         .stdout(predicate::str::contains(r#""code":"NO_CONFIG_FOUND"#));
 }
+
+// --- Init command ---
+
+#[test]
+fn test_init_help() {
+    floo()
+        .args(["init", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Initialize a new Floo project"));
+}
+
+#[test]
+fn test_init_creates_config_json() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("package.json"),
+        r#"{"dependencies": {"next": "^14.0.0"}}"#,
+    )
+    .unwrap();
+
+    floo()
+        .args([
+            "--json",
+            "init",
+            "myapp",
+            "--path",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""app_name":"myapp"#))
+        .stdout(predicate::str::contains(r#""success":true"#));
+
+    // Verify files were created
+    assert!(project.path().join("floo.app.toml").exists());
+    assert!(project.path().join("floo.service.toml").exists());
+}
+
+#[test]
+fn test_init_requires_name_in_json_mode() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(project.path().join("package.json"), r#"{"name":"test"}"#).unwrap();
+
+    floo()
+        .args(["--json", "init", "--path", project.path().to_str().unwrap()])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"MISSING_APP_NAME"#));
+}
+
+#[test]
+fn test_init_refuses_existing_config() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(project.path().join("package.json"), r#"{"name":"test"}"#).unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        "[app]\nname = \"existing\"\n",
+    )
+    .unwrap();
+
+    floo()
+        .args([
+            "--json",
+            "init",
+            "myapp",
+            "--path",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"CONFIG_EXISTS"#));
+}

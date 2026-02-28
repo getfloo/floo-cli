@@ -10,6 +10,7 @@ pub mod auth;
 pub mod deploy;
 pub mod domains;
 pub mod env;
+pub mod init;
 pub mod logs;
 pub mod releases;
 pub mod rollbacks;
