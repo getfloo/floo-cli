@@ -777,3 +777,185 @@ fn test_init_refuses_existing_config() {
         .failure()
         .stdout(predicate::str::contains(r#""code":"CONFIG_EXISTS"#));
 }
+
+// --- Service add/rm ---
+
+#[test]
+fn test_service_add_help() {
+    floo()
+        .args(["services", "add", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Add a service"));
+}
+
+#[test]
+fn test_service_add_creates_files() {
+    let project = tempfile::TempDir::new().unwrap();
+    // Create app config first (required)
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        "[app]\nname = \"myapp\"\n",
+    )
+    .unwrap();
+    // Create the service subdirectory
+    std::fs::create_dir(project.path().join("api")).unwrap();
+    std::fs::write(
+        project.path().join("api").join("package.json"),
+        r#"{"name":"api"}"#,
+    )
+    .unwrap();
+
+    floo()
+        .args([
+            "--json", "services", "add", "api", "api", "--port", "8000", "--type", "api",
+        ])
+        .current_dir(project.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""name":"api"#));
+
+    // Verify service toml was created
+    assert!(project.path().join("api/floo.service.toml").exists());
+}
+
+#[test]
+fn test_service_add_requires_port_in_json() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        "[app]\nname = \"myapp\"\n",
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "services", "add", "web", ".", "--type", "web"])
+        .current_dir(project.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"MISSING_PORT"#));
+}
+
+#[test]
+fn test_service_add_duplicate_name() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[services.api]
+type = "api"
+path = "./api"
+"#,
+    )
+    .unwrap();
+
+    floo()
+        .args([
+            "--json", "services", "add", "api", "api2", "--port", "8000", "--type", "api",
+        ])
+        .current_dir(project.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"DUPLICATE_SERVICE"#));
+}
+
+// --- Check command ---
+
+#[test]
+fn test_check_help() {
+    floo()
+        .args(["check", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Validate project config"));
+}
+
+#[test]
+fn test_check_valid_config() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        "[app]\nname = \"myapp\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project.path().join("floo.service.toml"),
+        r#"[app]
+name = "myapp"
+
+[service]
+name = "web"
+type = "web"
+port = 3000
+ingress = "public"
+"#,
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "check", project.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""valid":true"#));
+}
+
+#[test]
+fn test_check_missing_service_toml() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[services.api]
+type = "api"
+path = "./api"
+"#,
+    )
+    .unwrap();
+    // Create the dir but NOT the service toml
+    std::fs::create_dir(project.path().join("api")).unwrap();
+
+    floo()
+        .args(["--json", "check", project.path().to_str().unwrap()])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""valid":false"#));
+}
+
+#[test]
+fn test_check_port_mismatch_warning() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        "[app]\nname = \"myapp\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project.path().join("floo.service.toml"),
+        r#"[app]
+name = "myapp"
+
+[service]
+name = "web"
+type = "web"
+port = 3000
+ingress = "public"
+"#,
+    )
+    .unwrap();
+    // Dockerfile with different EXPOSE
+    std::fs::write(
+        project.path().join("Dockerfile"),
+        "FROM node:18\nEXPOSE 8080\n",
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "check", project.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("EXPOSE 8080"));
+}
