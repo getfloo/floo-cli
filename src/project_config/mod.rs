@@ -14,7 +14,7 @@ pub use app_config::{
     AppServiceEntry, AppServiceType,
 };
 pub use discover::{discover_services, filter_services};
-pub use resolve::{resolve_app_context, AppSource};
+pub use resolve::{resolve_app_context, AppSource, ResolvedApp};
 pub use service_config::{
     load_service_config, write_service_config, ServiceConfig, ServiceFileAppSection,
     ServiceFileConfig, ServiceIngress, ServiceSection, ServiceType,

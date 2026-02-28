@@ -959,3 +959,23 @@ ingress = "public"
         .success()
         .stdout(predicate::str::contains("EXPOSE 8080"));
 }
+
+// --- Env Import --all ---
+
+#[test]
+fn test_env_import_all_conflicts_with_file() {
+    floo()
+        .args(["env", "import", ".env", "--all"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"));
+}
+
+#[test]
+fn test_env_import_all_conflicts_with_services() {
+    floo()
+        .args(["env", "import", "--all", "--services", "web"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"));
+}

@@ -425,6 +425,11 @@ pub fn deploy(path: PathBuf, app: Option<String>, services_filter: Vec<String>, 
     };
     let app_id = required_response_id(&app_data, "app").to_string();
 
+    // Warn about missing env vars (best-effort, warning only)
+    if let Some(ref r) = resolved {
+        warn_missing_env_vars(&client, &app_id, r);
+    }
+
     // Extract access_mode from config: app_config wins over service_config
     let access_mode: Option<AppAccessMode> = resolved.as_ref().and_then(|r| {
         r.app_config
@@ -852,6 +857,82 @@ fn poll_deploy(
     }
 
     deploy_data
+}
+
+/// Best-effort check: warn when services have `env_file` configured but 0 env vars on server.
+/// Silently skips on any API error (e.g., first deploy where services don't exist yet).
+fn warn_missing_env_vars(
+    client: &FlooClient,
+    app_id: &str,
+    resolved: &project_config::ResolvedApp,
+) {
+    let mut services_with_env_file: Vec<String> = Vec::new();
+
+    // Check root service
+    if let Some(ref svc_config) = resolved.service_config {
+        if svc_config.service.env_file.is_some() {
+            services_with_env_file.push(svc_config.service.name.clone());
+        }
+    }
+
+    // Check sub-services
+    if let Some(ref app_config) = resolved.app_config {
+        for (_, entry) in &app_config.services {
+            if let Some(ref path_str) = entry.path {
+                let normalized = path_str.strip_prefix("./").unwrap_or(path_str);
+                let normalized = normalized.strip_suffix('/').unwrap_or(normalized);
+                if normalized.is_empty() || normalized == "." {
+                    continue;
+                }
+                let svc_dir = resolved.config_dir.join(normalized);
+                if let Ok(Some(svc_config)) = project_config::load_service_config(&svc_dir) {
+                    if svc_config.service.env_file.is_some() {
+                        services_with_env_file.push(svc_config.service.name.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    if services_with_env_file.is_empty() {
+        return;
+    }
+
+    // Get server-side services
+    let server_services = match client.list_services(app_id) {
+        Ok(r) => match r.get("services").and_then(|v| v.as_array()) {
+            Some(arr) => arr.clone(),
+            None => return,
+        },
+        Err(_) => return,
+    };
+
+    for svc_name in &services_with_env_file {
+        let server_svc = server_services
+            .iter()
+            .find(|s| s.get("name").and_then(|v| v.as_str()) == Some(svc_name));
+
+        let Some(svc) = server_svc else { continue };
+        let Some(svc_id) = svc.get("id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+
+        let env_count = match client.list_env_vars(app_id, Some(svc_id)) {
+            Ok(r) => r
+                .get("env_vars")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.len())
+                .unwrap_or(0),
+            Err(_) => continue,
+        };
+
+        if env_count == 0 {
+            output::warn(&format!(
+                "Service '{svc_name}' has env_file configured but 0 env vars on server. \
+                 Run `floo env import` first."
+            ));
+        }
+    }
 }
 
 fn cleanup(path: &PathBuf) {

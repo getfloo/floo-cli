@@ -318,6 +318,7 @@ pub enum EnvCommands {
     /// Import environment variables from a .env file.
     Import {
         /// Path to .env file (defaults to env_file from config or .env).
+        #[arg(conflicts_with = "all")]
         file: Option<PathBuf>,
 
         /// App name or ID (reads from config if omitted).
@@ -325,8 +326,12 @@ pub enum EnvCommands {
         app: Option<String>,
 
         /// Target specific services (repeatable).
-        #[arg(long)]
+        #[arg(long, conflicts_with = "all")]
         services: Vec<String>,
+
+        /// Import env vars for all services using their configured env_file paths.
+        #[arg(long)]
+        all: bool,
     },
 }
 
@@ -532,7 +537,14 @@ pub fn run() {
                 file,
                 app,
                 services,
-            } => commands::env::import_vars(file.as_deref(), app.as_deref(), &services),
+                all,
+            } => {
+                if all {
+                    commands::env::import_all_services(app.as_deref());
+                } else {
+                    commands::env::import_vars(file.as_deref(), app.as_deref(), &services);
+                }
+            }
         },
 
         Commands::Services(sub) => match sub {

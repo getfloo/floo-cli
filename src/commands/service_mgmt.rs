@@ -1,10 +1,9 @@
-use std::path::Path;
 use std::process;
 
 use crate::output;
 use crate::project_config::{
-    self, validate_service_name, AppFileAppSection, AppFileConfig, AppServiceEntry, AppServiceType,
-    ServiceFileAppSection, ServiceFileConfig, ServiceIngress, ServiceSection, ServiceType,
+    self, validate_service_name, AppServiceEntry, AppServiceType, ServiceFileAppSection,
+    ServiceFileConfig, ServiceIngress, ServiceSection, ServiceType,
 };
 
 pub fn add(

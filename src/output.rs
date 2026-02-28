@@ -173,6 +173,12 @@ pub fn raw_value(value: &str) {
     println!("{value}");
 }
 
+pub fn warn(message: &str) {
+    if !is_json_mode() {
+        eprintln!("  {} {}", "\u{26a0}".yellow(), message);
+    }
+}
+
 pub fn dim_line(line: &str) {
     if !is_json_mode() {
         eprintln!("  {}", line.dimmed());
