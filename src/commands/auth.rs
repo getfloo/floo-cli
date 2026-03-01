@@ -24,10 +24,7 @@ pub fn login(api_key: Option<&str>, force: bool) {
         let client = super::init_client(Some(config));
         match client.whoami() {
             Ok(result) => {
-                let email = result
-                    .get("email")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
+                let email = &result.email;
                 // Save the email too
                 let mut config = load_config();
                 config.user_email = Some(email.to_string());
@@ -54,10 +51,7 @@ pub fn login(api_key: Option<&str>, force: bool) {
             let client = super::init_client(Some(config));
             match client.whoami() {
                 Ok(result) => {
-                    let email = result
-                        .get("email")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
+                    let email = &result.email;
                     output::success(
                         &format!("Already logged in as {email}"),
                         Some(serde_json::json!({"email": email, "already_authenticated": true})),
@@ -88,52 +82,18 @@ pub fn login(api_key: Option<&str>, force: bool) {
         }
     };
 
-    let user_code = auth
-        .get("user_code")
-        .and_then(|v| v.as_str())
-        .unwrap_or_else(|| {
-            output::error("Invalid response: missing user_code", "PARSE_ERROR", None);
-            process::exit(1);
-        });
-    let verification_uri_complete = auth
-        .get("verification_uri_complete")
-        .and_then(|v| v.as_str())
-        .unwrap_or_else(|| {
-            output::error(
-                "Invalid response: missing verification_uri_complete",
-                "PARSE_ERROR",
-                None,
-            );
-            process::exit(1);
-        });
-    let device_code = auth
-        .get("device_code")
-        .and_then(|v| v.as_str())
-        .unwrap_or_else(|| {
-            output::error("Invalid response: missing device_code", "PARSE_ERROR", None);
-            process::exit(1);
-        });
-    let interval = auth
-        .get("interval")
-        .and_then(|v| v.as_u64())
-        .unwrap_or_else(|| {
-            output::error("Invalid response: missing interval", "PARSE_ERROR", None);
-            process::exit(1);
-        });
-    let expires_in = auth
-        .get("expires_in")
-        .and_then(|v| v.as_u64())
-        .unwrap_or_else(|| {
-            output::error("Invalid response: missing expires_in", "PARSE_ERROR", None);
-            process::exit(1);
-        });
+    let user_code = &auth.user_code;
+    let verification_uri_complete = &auth.verification_uri_complete;
+    let device_code = &auth.device_code;
+    let interval = auth.interval;
+    let expires_in = auth.expires_in;
 
     // Step 2: Display code and open browser
     if !output::is_json_mode() {
         eprintln!();
         eprintln!("  Your one-time code is:  {}", user_code.bold());
         eprintln!();
-        eprintln!("  Opening browser to: {}", verification_uri_complete);
+        eprintln!("  Opening browser to: {verification_uri_complete}");
         eprintln!("  If the browser didn't open, visit the URL above and enter the code.");
         eprintln!();
     }
@@ -163,28 +123,8 @@ pub fn login(api_key: Option<&str>, force: bool) {
         match client.device_token(device_code) {
             Ok(result) => {
                 spinner.finish();
-                let api_key = result
-                    .get("api_key")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_else(|| {
-                        output::error(
-                            "Server returned success but API key was missing.",
-                            "PARSE_ERROR",
-                            Some("This may be a server bug. Please try again."),
-                        );
-                        process::exit(1);
-                    });
-                let email = result
-                    .get("email")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_else(|| {
-                        output::error(
-                            "Server returned success but email was missing.",
-                            "PARSE_ERROR",
-                            Some("This may be a server bug. Please try again."),
-                        );
-                        process::exit(1);
-                    });
+                let api_key = &result.api_key;
+                let email = &result.email;
                 let mut config = load_config();
                 config.api_key = Some(api_key.to_string());
                 config.user_email = Some(email.to_string());
@@ -290,28 +230,8 @@ pub fn register(email: &str) {
     match client.register(email) {
         Ok(result) => {
             spinner.finish();
-            let api_key = result
-                .get("api_key")
-                .and_then(|v| v.as_str())
-                .unwrap_or_else(|| {
-                    output::error(
-                        "Server returned success but API key was missing.",
-                        "PARSE_ERROR",
-                        Some("This may be a server bug. Please try again."),
-                    );
-                    process::exit(1);
-                });
-            let resp_email = result
-                .get("email")
-                .and_then(|v| v.as_str())
-                .unwrap_or_else(|| {
-                    output::error(
-                        "Server returned success but email was missing.",
-                        "PARSE_ERROR",
-                        Some("This may be a server bug. Please try again."),
-                    );
-                    process::exit(1);
-                });
+            let api_key = &result.api_key;
+            let resp_email = &result.email;
             let mut config = load_config();
             config.api_key = Some(api_key.to_string());
             config.user_email = Some(resp_email.to_string());
@@ -351,10 +271,10 @@ pub fn update_profile(name: &str) {
 
     match client.update_profile(name) {
         Ok(result) => {
-            let updated_name = result.get("name").and_then(|v| v.as_str()).unwrap_or(name);
+            let updated_name = &result.name;
             output::success(
                 &format!("Profile updated. Name: {updated_name}"),
-                Some(result),
+                Some(output::to_value(&result)),
             );
         }
         Err(e) => {
@@ -391,11 +311,8 @@ pub fn whoami() {
             let client = super::init_client(None);
             match client.whoami() {
                 Ok(result) => {
-                    let email = result
-                        .get("email")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
-                    let name = result.get("name").and_then(|v| v.as_str());
+                    let email = &result.email;
+                    let name = result.name.as_deref();
 
                     let mut data = serde_json::json!({
                         "email": email,

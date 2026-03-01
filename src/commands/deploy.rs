@@ -6,6 +6,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::api_client::FlooClient;
+use crate::api_types::Deploy;
 use crate::archive::create_archive;
 use crate::config::load_config;
 use crate::detection::detect;
@@ -28,20 +29,6 @@ fn status_label(status: &str) -> &str {
         "building" => "Building...",
         "deploying" => "Deploying...",
         _ => "Deploying...",
-    }
-}
-
-fn required_response_id<'a>(value: &'a serde_json::Value, object_name: &str) -> &'a str {
-    match value.get("id").and_then(|v| v.as_str()) {
-        Some(id) if !id.is_empty() => id,
-        _ => {
-            output::error(
-                &format!("Unexpected API response: {object_name} is missing required 'id'."),
-                "INVALID_RESPONSE",
-                Some("This may indicate a CLI/API mismatch. Check for updates with `floo update`."),
-            );
-            process::exit(1);
-        }
     }
 }
 
@@ -101,7 +88,7 @@ pub fn deploy(
                 process::exit(1);
             }
         };
-        let app_id = required_response_id(&app_data, "app").to_string();
+        let app_id = app_data.id.clone();
 
         let svcs = if services_filter.is_empty() {
             None
@@ -144,7 +131,7 @@ pub fn deploy(
                 "RESTART_FAILED",
                 Some("Run `floo logs` for details."),
                 Some(serde_json::json!({
-                    "app": app_data,
+                    "app": output::to_value(&app_data),
                     "deploy": deploy_data,
                 })),
             );
@@ -154,7 +141,7 @@ pub fn deploy(
         output::success(
             &format!("Restarted {url}"),
             Some(serde_json::json!({
-                "app": app_data,
+                "app": output::to_value(&app_data),
                 "deploy": deploy_data,
             })),
         );
@@ -429,7 +416,7 @@ pub fn deploy(
             }
         }
     };
-    let app_id = required_response_id(&app_data, "app").to_string();
+    let app_id = app_data.id.clone();
 
     // Auto-import env vars on first deploy (or force with --sync-env)
     if let Some(ref r) = resolved {
@@ -471,16 +458,13 @@ pub fn deploy(
     cleanup(&archive_path);
 
     // Wait for deploy to complete via SSE streaming or polling
-    let initial_status = deploy_data
-        .get("status")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let initial_status = deploy_data.status.as_deref().unwrap_or("");
 
     if TERMINAL_STATUSES.contains(&initial_status) {
         // Phase 1: deploy already complete synchronously, skip streaming/polling
     } else if !output::is_json_mode() {
         // Phase 2 human mode: try SSE streaming, fall back to polling
-        let deploy_id = required_response_id(&deploy_data, "deploy").to_string();
+        let deploy_id = deploy_data.id.clone();
         match stream_deploy(&client, &app_id, &deploy_id) {
             Ok(final_data) => deploy_data = final_data,
             Err(e) => {
@@ -494,30 +478,24 @@ pub fn deploy(
         }
     } else {
         // Phase 2 JSON mode: stream structured NDJSON events via SSE
-        let deploy_id = required_response_id(&deploy_data, "deploy").to_string();
+        let deploy_id = deploy_data.id.clone();
         match stream_deploy_json(&client, &app_id, &deploy_id) {
             Ok(final_data) => deploy_data = final_data,
             Err(_) => deploy_data = poll_deploy(&client, &app_id, &deploy_data),
         }
     }
 
-    let final_status = deploy_data
-        .get("status")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let final_status = deploy_data.status.as_deref().unwrap_or("");
 
     if final_status == "failed" {
-        let build_logs = deploy_data
-            .get("build_logs")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let build_logs = deploy_data.build_logs.as_deref().unwrap_or("");
         output::error_with_data(
             "Deploy failed.",
             "DEPLOY_FAILED",
             Some("Check build output above, or run `floo logs` for details."),
             Some(serde_json::json!({
-                "app": app_data,
-                "deploy": deploy_data,
+                "app": output::to_value(&app_data),
+                "deploy": output::to_value(&deploy_data),
                 "build_logs": build_logs,
             })),
         );
@@ -533,10 +511,7 @@ pub fn deploy(
         }
     }
 
-    let url = deploy_data
-        .get("url")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let url = deploy_data.url.as_deref().unwrap_or("");
 
     let service_names: Vec<&str> = services
         .as_ref()
@@ -546,8 +521,8 @@ pub fn deploy(
     output::success(
         &format!("Deployed to {url}"),
         Some(serde_json::json!({
-            "app": app_data,
-            "deploy": deploy_data,
+            "app": output::to_value(&app_data),
+            "deploy": output::to_value(&deploy_data),
             "detection": detection.to_value(),
             "services": service_names,
         })),
@@ -642,7 +617,7 @@ pub(crate) fn stream_deploy(
     client: &FlooClient,
     app_id: &str,
     deploy_id: &str,
-) -> Result<serde_json::Value, FlooApiError> {
+) -> Result<Deploy, FlooApiError> {
     let response = client.stream_deploy_logs(app_id, deploy_id)?;
     let reader = std::io::BufReader::new(response);
 
@@ -716,7 +691,7 @@ pub(crate) fn stream_deploy_json(
     client: &FlooClient,
     app_id: &str,
     deploy_id: &str,
-) -> Result<serde_json::Value, FlooApiError> {
+) -> Result<Deploy, FlooApiError> {
     let response = client.stream_deploy_logs(app_id, deploy_id)?;
     let reader = std::io::BufReader::new(response);
 
@@ -740,16 +715,15 @@ pub(crate) fn stream_deploy_json(
                 "status" => {
                     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data_buf) {
                         let status = parsed.get("status").and_then(|v| v.as_str()).unwrap_or("");
-                        println!(
-                            "{}",
-                            serde_json::json!({"event": "status", "status": status})
+                        output::print_json(
+                            &serde_json::json!({"event": "status", "status": status}),
                         );
                     }
                 }
                 "log" => {
                     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data_buf) {
                         if let Some(text) = parsed.get("text").and_then(|v| v.as_str()) {
-                            println!("{}", serde_json::json!({"event": "log", "text": text}));
+                            output::print_json(&serde_json::json!({"event": "log", "text": text}));
                         }
                     }
                 }
@@ -757,9 +731,8 @@ pub(crate) fn stream_deploy_json(
                     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data_buf) {
                         let status = parsed.get("status").and_then(|v| v.as_str()).unwrap_or("");
                         let url = parsed.get("url").and_then(|v| v.as_str()).unwrap_or("");
-                        println!(
-                            "{}",
-                            serde_json::json!({"event": "done", "status": status, "url": url})
+                        output::print_json(
+                            &serde_json::json!({"event": "done", "status": status, "url": url}),
                         );
                     }
                     break;
@@ -785,27 +758,15 @@ pub(crate) fn stream_deploy_json(
 }
 
 /// Poll the deploy endpoint until it reaches a terminal status.
-pub(crate) fn poll_deploy(
-    client: &FlooClient,
-    app_id: &str,
-    initial_data: &serde_json::Value,
-) -> serde_json::Value {
-    let deploy_id = required_response_id(initial_data, "deploy").to_string();
+pub(crate) fn poll_deploy(client: &FlooClient, app_id: &str, initial_data: &Deploy) -> Deploy {
+    let deploy_id = initial_data.id.clone();
     let poll_start = Instant::now();
     let mut last_log_len: usize = 0;
     let mut deploy_data = initial_data.clone();
 
-    while !TERMINAL_STATUSES.contains(
-        &deploy_data
-            .get("status")
-            .and_then(|v| v.as_str())
-            .unwrap_or(""),
-    ) {
+    while !TERMINAL_STATUSES.contains(&deploy_data.status.as_deref().unwrap_or("")) {
         if !output::is_json_mode() {
-            let build_logs = deploy_data
-                .get("build_logs")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let build_logs = deploy_data.build_logs.as_deref().unwrap_or("");
             if build_logs.len() > last_log_len {
                 let new_logs = &build_logs[last_log_len..];
                 for line in new_logs.trim().lines() {
@@ -814,10 +775,7 @@ pub(crate) fn poll_deploy(
                 last_log_len = build_logs.len();
             }
 
-            let status = deploy_data
-                .get("status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let status = deploy_data.status.as_deref().unwrap_or("");
             output::bold_line(status_label(status));
         }
 
@@ -846,10 +804,7 @@ pub(crate) fn poll_deploy(
 
     // Print any remaining build logs for the final state
     if !output::is_json_mode() {
-        let build_logs = deploy_data
-            .get("build_logs")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let build_logs = deploy_data.build_logs.as_deref().unwrap_or("");
         if build_logs.len() > last_log_len {
             let new_logs = &build_logs[last_log_len..];
             for line in new_logs.trim().lines() {
@@ -941,30 +896,19 @@ pub(crate) fn sync_env_vars_if_needed(
 
     // Get server-side services — silently return on API error (services may not exist on first deploy)
     let server_services = match client.list_services(app_id) {
-        Ok(r) => match r.get("services").and_then(|v| v.as_array()) {
-            Some(arr) => arr.clone(),
-            None => return,
-        },
+        Ok(r) => r.services,
         Err(_) => return,
     };
 
     for (svc_name, env_file_path) in &env_file_entries {
-        let server_svc = server_services
-            .iter()
-            .find(|s| s.get("name").and_then(|v| v.as_str()) == Some(svc_name));
+        let server_svc = server_services.iter().find(|s| s.name == *svc_name);
 
         let Some(svc) = server_svc else { continue };
-        let Some(svc_id) = svc.get("id").and_then(|v| v.as_str()) else {
-            continue;
-        };
+        let svc_id = &svc.id;
 
         // Check env var count on server
         let env_count = match client.list_env_vars(app_id, Some(svc_id)) {
-            Ok(r) => r
-                .get("env_vars")
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.len())
-                .unwrap_or(0),
+            Ok(r) => r.env_vars.len(),
             Err(_) => continue,
         };
 

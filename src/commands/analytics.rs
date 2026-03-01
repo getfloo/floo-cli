@@ -1,9 +1,8 @@
+use std::collections::HashMap;
 use std::process;
 
-use serde_json::Value;
-
+use crate::api_types::{AppAnalyticsResponse, TimeSeriesPoint};
 use crate::output;
-use crate::resolve::resolve_app;
 
 pub fn analytics(app: Option<String>, period: &str) {
     super::require_auth();
@@ -15,78 +14,11 @@ pub fn analytics(app: Option<String>, period: &str) {
     }
 }
 
-fn expect_i64(value: &Value, path: &str) -> i64 {
-    value.as_i64().unwrap_or_else(|| {
-        output::error(
-            &format!("Analytics response missing or invalid field: '{path}'."),
-            "PARSE_ERROR",
-            Some("The API response format may have changed. Try 'floo update'."),
-        );
-        process::exit(1);
-    })
-}
-
-fn expect_f64(value: &Value, path: &str) -> f64 {
-    value.as_f64().unwrap_or_else(|| {
-        output::error(
-            &format!("Analytics response missing or invalid field: '{path}'."),
-            "PARSE_ERROR",
-            Some("The API response format may have changed. Try 'floo update'."),
-        );
-        process::exit(1);
-    })
-}
-
-fn expect_str<'a>(value: &'a Value, path: &str) -> &'a str {
-    value.as_str().unwrap_or_else(|| {
-        output::error(
-            &format!("Analytics response missing or invalid field: '{path}'."),
-            "PARSE_ERROR",
-            Some("The API response format may have changed. Try 'floo update'."),
-        );
-        process::exit(1);
-    })
-}
-
-fn expect_object<'a>(data: &'a Value, key: &str) -> &'a Value {
-    let val = data.get(key).unwrap_or_else(|| {
-        output::error(
-            &format!("Analytics response missing '{key}' object."),
-            "PARSE_ERROR",
-            Some("The API response format may have changed. Try 'floo update'."),
-        );
-        process::exit(1);
-    });
-    if !val.is_object() {
-        output::error(
-            &format!("Analytics response '{key}' is not an object."),
-            "PARSE_ERROR",
-            Some("The API response format may have changed. Try 'floo update'."),
-        );
-        process::exit(1);
-    }
-    val
-}
-
 fn app_analytics(client: &crate::api_client::FlooClient, app_name: &str, period: &str) {
-    let app_data = match resolve_app(client, app_name) {
-        Ok(a) => a,
-        Err(e) => {
-            if e.code == "APP_NOT_FOUND" {
-                output::error(
-                    &format!("App '{app_name}' not found."),
-                    "APP_NOT_FOUND",
-                    Some("Check the app name or ID and try again."),
-                );
-            } else {
-                output::error(&e.message, &e.code, None);
-            }
-            process::exit(1);
-        }
-    };
+    let app_data = super::resolve_app_or_exit(client, app_name);
 
-    let app_id = super::expect_str_field(&app_data, "id");
-    let name = super::expect_str_field(&app_data, "name");
+    let app_id = &app_data.id;
+    let name = &app_data.name;
 
     let data = match client.get_app_analytics(app_id, period) {
         Ok(d) => d,
@@ -97,7 +29,10 @@ fn app_analytics(client: &crate::api_client::FlooClient, app_name: &str, period:
     };
 
     if output::is_json_mode() {
-        output::success(&format!("Analytics for {name}"), Some(data));
+        output::success(
+            &format!("Analytics for {name}"),
+            Some(output::to_value(&data)),
+        );
         return;
     }
 
@@ -114,18 +49,18 @@ fn org_analytics(client: &crate::api_client::FlooClient, period: &str) {
     };
 
     if output::is_json_mode() {
-        output::success("Organization analytics", Some(data));
+        output::success("Organization analytics", Some(output::to_value(&data)));
         return;
     }
 
     render_org_analytics(period, &data);
 }
 
-fn render_app_analytics(name: &str, period: &str, data: &Value) {
-    let summary = expect_object(data, "summary");
-    let total_requests = expect_i64(&summary["total_requests"], "summary.total_requests");
-    let total_errors = expect_i64(&summary["total_errors"], "summary.total_errors");
-    let error_rate = expect_f64(&summary["error_rate"], "summary.error_rate");
+fn render_app_analytics(name: &str, period: &str, data: &AppAnalyticsResponse) {
+    let summary = &data.summary;
+    let total_requests = summary.total_requests;
+    let total_errors = summary.total_errors;
+    let error_rate = summary.error_rate;
 
     eprintln!();
     eprintln!("Analytics for {} (last {})", name, format_period(period));
@@ -138,17 +73,17 @@ fn render_app_analytics(name: &str, period: &str, data: &Value) {
         error_rate * 100.0
     );
 
-    if let Some(avg) = summary["avg_latency_ms"].as_i64() {
+    if let Some(avg) = summary.avg_latency_ms {
         eprintln!("  {:14}{:>10}", "Avg Latency", format!("{}ms", avg));
     }
-    if let Some(p95) = summary["p95_latency_ms"].as_i64() {
+    if let Some(p95) = summary.p95_latency_ms {
         eprintln!("  {:14}{:>10}", "P95 Latency", format!("{}ms", p95));
     }
-    if let Some(unique) = summary["unique_users"].as_i64() {
+    if let Some(unique) = summary.unique_users {
         eprintln!("  {:14}{:>10}", "Unique Users", format_number(unique));
     }
 
-    if let Some(breakdown) = summary["status_code_breakdown"].as_object() {
+    if let Some(breakdown) = &summary.status_code_breakdown {
         if !breakdown.is_empty() {
             eprintln!();
             eprintln!("Status Codes");
@@ -156,7 +91,7 @@ fn render_app_analytics(name: &str, period: &str, data: &Value) {
         }
     }
 
-    if let Some(time_series) = data["time_series"].as_array() {
+    if let Some(time_series) = &data.time_series {
         if !time_series.is_empty() {
             eprintln!();
             eprintln!("Traffic");
@@ -167,15 +102,12 @@ fn render_app_analytics(name: &str, period: &str, data: &Value) {
     eprintln!();
 }
 
-fn render_org_analytics(period: &str, data: &Value) {
-    let summary = expect_object(data, "summary");
-    let total_requests = expect_i64(&summary["total_requests"], "summary.total_requests");
-    let total_errors = expect_i64(&summary["total_errors"], "summary.total_errors");
-    let error_rate = expect_f64(&summary["error_rate"], "summary.error_rate");
-    let apps_with_traffic = expect_i64(
-        &summary["total_apps_with_traffic"],
-        "summary.total_apps_with_traffic",
-    );
+fn render_org_analytics(period: &str, data: &AppAnalyticsResponse) {
+    let summary = &data.summary;
+    let total_requests = summary.total_requests;
+    let total_errors = summary.total_errors;
+    let error_rate = summary.error_rate;
+    let apps_with_traffic = summary.total_apps_with_traffic.unwrap_or(0);
 
     eprintln!();
     eprintln!("Organization Analytics (last {})", format_period(period));
@@ -197,22 +129,18 @@ fn render_org_analytics(period: &str, data: &Value) {
         format_number(apps_with_traffic)
     );
 
-    if let Some(apps) = data["apps"].as_array() {
+    if let Some(apps) = &data.apps {
         if !apps.is_empty() {
             eprintln!();
 
             let rows: Vec<Vec<String>> = apps
                 .iter()
                 .map(|a| {
-                    let name = expect_str(&a["app_name"], "apps[].app_name");
-                    let reqs = expect_i64(&a["total_requests"], "apps[].total_requests");
-                    let errs = expect_i64(&a["total_errors"], "apps[].total_errors");
-                    let erate = expect_f64(&a["error_rate"], "apps[].error_rate");
                     vec![
-                        name.to_string(),
-                        format_number(reqs),
-                        format_number(errs),
-                        format!("{:.2}%", erate * 100.0),
+                        a.app_name.clone(),
+                        format_number(a.total_requests),
+                        format_number(a.total_errors),
+                        format!("{:.2}%", a.error_rate * 100.0),
                     ]
                 })
                 .collect();
@@ -221,7 +149,7 @@ fn render_org_analytics(period: &str, data: &Value) {
         }
     }
 
-    if let Some(time_series) = data["time_series"].as_array() {
+    if let Some(time_series) = &data.time_series {
         if !time_series.is_empty() {
             eprintln!();
             eprintln!("Traffic");
@@ -232,15 +160,12 @@ fn render_org_analytics(period: &str, data: &Value) {
     eprintln!();
 }
 
-fn render_status_code_chart(breakdown: &serde_json::Map<String, Value>, total: i64) {
+fn render_status_code_chart(breakdown: &HashMap<String, i64>, total: i64) {
     let max_bar_width: usize = 20;
 
     let mut entries: Vec<(&str, i64)> = breakdown
         .iter()
-        .map(|(k, v)| {
-            let count = expect_i64(v, &format!("status_code_breakdown.{k}"));
-            (k.as_str(), count)
-        })
+        .map(|(k, &count)| (k.as_str(), count))
         .collect();
     entries.sort_by_key(|(k, _)| k.to_string());
 
@@ -273,16 +198,13 @@ fn render_status_code_chart(breakdown: &serde_json::Map<String, Value>, total: i
     }
 }
 
-fn render_sparkline(time_series: &[Value]) {
+fn render_sparkline(time_series: &[TimeSeriesPoint]) {
     let blocks = [
         '\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}', '\u{2587}',
         '\u{2588}',
     ];
 
-    let counts: Vec<i64> = time_series
-        .iter()
-        .map(|p| expect_i64(&p["request_count"], "time_series[].request_count"))
-        .collect();
+    let counts: Vec<i64> = time_series.iter().map(|p| p.request_count).collect();
 
     let max = counts
         .iter()

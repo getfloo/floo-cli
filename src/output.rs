@@ -192,7 +192,6 @@ pub fn bold_line(line: &str) {
 }
 
 /// Helper to serialize any Serialize type to a Value.
-#[allow(dead_code)]
 pub fn to_value<T: Serialize>(val: &T) -> Value {
     serde_json::to_value(val).unwrap_or(Value::Null)
 }

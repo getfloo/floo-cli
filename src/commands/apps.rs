@@ -5,7 +5,6 @@ use crate::archive::create_archive;
 use crate::detection::detect;
 use crate::output;
 use crate::project_config::{self, AppAccessMode};
-use crate::resolve::resolve_app;
 
 pub fn list(page: u32, per_page: u32) {
     super::require_auth();
@@ -18,21 +17,12 @@ pub fn list(page: u32, per_page: u32) {
         }
     };
 
-    let apps = result
-        .get("apps")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
+    let total = result.total.unwrap_or_else(|| {
+        eprintln!("Warning: API response missing 'total' field; pagination may be inaccurate.");
+        result.apps.len() as u64
+    }) as u32;
 
-    let total = match result.get("total").and_then(|v| v.as_u64()) {
-        Some(t) => t as u32,
-        None => {
-            eprintln!("Warning: API response missing 'total' field; pagination may be inaccurate.");
-            apps.len() as u32
-        }
-    };
-
-    if apps.is_empty() {
+    if result.apps.is_empty() {
         if !output::is_json_mode() {
             output::info("No apps yet. Deploy one with floo deploy.", None);
         } else {
@@ -46,30 +36,16 @@ pub fn list(page: u32, per_page: u32) {
         return;
     }
 
-    let rows: Vec<Vec<String>> = apps
+    let rows: Vec<Vec<String>> = result
+        .apps
         .iter()
         .map(|a| {
             vec![
-                a.get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("-")
-                    .to_string(),
-                a.get("status")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("-")
-                    .to_string(),
-                a.get("url")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("\u{2014}")
-                    .to_string(),
-                a.get("runtime")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("\u{2014}")
-                    .to_string(),
-                a.get("created_at")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("-")
-                    .to_string(),
+                a.name.clone(),
+                a.status.as_deref().unwrap_or("-").to_string(),
+                a.url.as_deref().unwrap_or("\u{2014}").to_string(),
+                a.runtime.as_deref().unwrap_or("\u{2014}").to_string(),
+                a.created_at.as_deref().unwrap_or("-").to_string(),
             ]
         })
         .collect();
@@ -77,7 +53,9 @@ pub fn list(page: u32, per_page: u32) {
     output::table(
         &["Name", "Status", "URL", "Runtime", "Created"],
         &rows,
-        Some(serde_json::json!({"apps": apps, "total": total, "page": page, "per_page": per_page})),
+        Some(
+            serde_json::json!({"apps": output::to_value(&result.apps), "total": total, "page": page, "per_page": per_page}),
+        ),
     );
 
     if !output::is_json_mode() {
@@ -97,98 +75,60 @@ pub fn list(page: u32, per_page: u32) {
 pub fn status(app_name: &str) {
     super::require_auth();
     let client = super::init_client(None);
-    let app_data = match resolve_app(&client, app_name) {
-        Ok(a) => a,
-        Err(e) => {
-            if e.code == "APP_NOT_FOUND" {
-                output::error(
-                    &format!("App '{app_name}' not found."),
-                    "APP_NOT_FOUND",
-                    Some("Check the app name or ID and try again."),
-                );
-            } else {
-                output::error(&e.message, &e.code, None);
-            }
-            process::exit(1);
-        }
-    };
+    let app = super::resolve_app_or_exit(&client, app_name);
 
     if output::is_json_mode() {
-        let name = app_data
-            .get("name")
-            .and_then(|v| v.as_str())
-            .unwrap_or(app_name);
-        output::success(&format!("App {name}"), Some(app_data));
+        output::success(&format!("App {}", app.name), Some(output::to_value(&app)));
     } else {
-        let name = app_data.get("name").and_then(|v| v.as_str()).unwrap_or("-");
-        let st = app_data
-            .get("status")
-            .and_then(|v| v.as_str())
-            .unwrap_or("-");
-        let url = app_data
-            .get("url")
-            .and_then(|v| v.as_str())
-            .unwrap_or("\u{2014}");
-        let runtime = app_data
-            .get("runtime")
-            .and_then(|v| v.as_str())
-            .unwrap_or("\u{2014}");
-        let id = app_data.get("id").and_then(|v| v.as_str()).unwrap_or("-");
-        let created = app_data
-            .get("created_at")
-            .and_then(|v| v.as_str())
-            .unwrap_or("-");
-
-        output::info(name, None);
-        output::info(&format!("  Status:   {st}"), None);
-        output::info(&format!("  URL:      {url}"), None);
-        output::info(&format!("  Runtime:  {runtime}"), None);
-        output::info(&format!("  ID:       {id}"), None);
-        output::info(&format!("  Created:  {created}"), None);
+        output::info(&app.name, None);
+        output::info(
+            &format!("  Status:   {}", app.status.as_deref().unwrap_or("-")),
+            None,
+        );
+        output::info(
+            &format!("  URL:      {}", app.url.as_deref().unwrap_or("\u{2014}")),
+            None,
+        );
+        output::info(
+            &format!(
+                "  Runtime:  {}",
+                app.runtime.as_deref().unwrap_or("\u{2014}")
+            ),
+            None,
+        );
+        output::info(&format!("  ID:       {}", app.id), None);
+        output::info(
+            &format!("  Created:  {}", app.created_at.as_deref().unwrap_or("-")),
+            None,
+        );
     }
 }
 
 pub fn delete(app_name: &str, force: bool) {
     super::require_auth();
     let client = super::init_client(None);
-    let app_data = match resolve_app(&client, app_name) {
-        Ok(a) => a,
-        Err(e) => {
-            if e.code == "APP_NOT_FOUND" {
-                output::error(
-                    &format!("App '{app_name}' not found."),
-                    "APP_NOT_FOUND",
-                    Some("Check the app name or ID and try again."),
-                );
-            } else {
-                output::error(&e.message, &e.code, None);
-            }
-            process::exit(1);
-        }
-    };
+    let app = super::resolve_app_or_exit(&client, app_name);
 
-    let name = app_data
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or(app_name);
-
-    if !force && !output::confirm(&format!("Delete app '{name}'? This cannot be undone.")) {
+    if !force
+        && !output::confirm(&format!(
+            "Delete app '{}'? This cannot be undone.",
+            app.name
+        ))
+    {
         if !output::is_json_mode() {
             output::info("Cancelled.", None);
         }
         process::exit(0);
     }
 
-    let app_id = app_data.get("id").and_then(|v| v.as_str()).unwrap_or("");
-
-    if let Err(e) = client.delete_app(app_id) {
+    if let Err(e) = client.delete_app(&app.id) {
         output::error(&e.message, &e.code, None);
         process::exit(1);
     }
 
     output::success(
-        &format!("Deleted app '{name}'."),
-        Some(serde_json::json!({"id": app_id})),
+        &format!("Deleted app '{}'.", app.name),
+        Some(serde_json::json!({"id": app.id})),
     );
 }
 
@@ -202,28 +142,10 @@ pub fn connect(
 ) {
     super::require_auth();
     let client = super::init_client(None);
-    let app_data = match resolve_app(&client, app_name) {
-        Ok(a) => a,
-        Err(e) => {
-            if e.code == "APP_NOT_FOUND" {
-                output::error(
-                    &format!("App '{app_name}' not found."),
-                    "APP_NOT_FOUND",
-                    Some("Check the app name or ID and try again."),
-                );
-            } else {
-                output::error(&e.message, &e.code, None);
-            }
-            process::exit(1);
-        }
-    };
+    let app = super::resolve_app_or_exit(&client, app_name);
 
-    let app_id = super::expect_str_field(&app_data, "id").to_string();
-    let name = app_data
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or(app_name)
-        .to_string();
+    let app_id = app.id.clone();
+    let name = app.name.clone();
 
     // Try to load project config from cwd to import env vars and trigger deploy
     let cwd = std::env::current_dir().unwrap_or_else(|e| {
@@ -234,10 +156,10 @@ pub fn connect(
         );
         process::exit(1);
     });
-    let resolved = match project_config::resolve_app_context(&cwd, Some(app_name)) {
-        Ok(r) => Some(r),
-        Err(_) => None,
-    };
+    // Project config is optional for connect — missing config is fine, all other
+    // errors (LEGACY_CONFIG, INVALID_PROJECT_CONFIG) are also suppressed so the
+    // connect itself still succeeds; users can run `floo env import` separately.
+    let resolved = project_config::resolve_app_context(&cwd, Some(app_name)).ok();
 
     // Step 1: Import env vars from local env_file before connecting
     if let Some(ref r) = resolved {
@@ -263,15 +185,11 @@ pub fn connect(
         }
     };
 
-    let connected_branch = result
-        .get("default_branch")
-        .and_then(|v| v.as_str())
-        .unwrap_or("main")
-        .to_string();
+    let connected_branch = result.default_branch.as_deref().unwrap_or("main");
 
     output::success(
         &format!("Connected {name} to {repo} (branch: {connected_branch})"),
-        Some(result),
+        Some(output::to_value(&result)),
     );
 
     // Step 3: Trigger initial deploy unless --no-deploy
@@ -362,23 +280,18 @@ fn trigger_initial_deploy(
 
     super::deploy::cleanup(&archive_path);
 
-    let initial_status = deploy_data
-        .get("status")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let initial_status = deploy_data.status.as_deref().unwrap_or("");
 
     if !super::deploy::TERMINAL_STATUSES.contains(&initial_status) {
-        let deploy_id = match deploy_data.get("id").and_then(|v| v.as_str()) {
-            Some(id) => id.to_string(),
-            None => {
-                output::error(
-                    "Unexpected API response: deploy is missing required 'id'.",
-                    "INVALID_RESPONSE",
-                    Some("This may indicate a CLI/API mismatch. Check for updates with `floo update`."),
-                );
-                process::exit(1);
-            }
-        };
+        if deploy_data.id.is_empty() {
+            output::error(
+                "Unexpected API response: deploy is missing required 'id'.",
+                "INVALID_RESPONSE",
+                Some("This may indicate a CLI/API mismatch. Check for updates with `floo update`."),
+            );
+            process::exit(1);
+        }
+        let deploy_id = deploy_data.id.clone();
 
         if !output::is_json_mode() {
             match super::deploy::stream_deploy(client, app_id, &deploy_id) {
@@ -393,64 +306,38 @@ fn trigger_initial_deploy(
         }
     }
 
-    let final_status = deploy_data
-        .get("status")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let final_status = deploy_data.status.as_deref().unwrap_or("");
 
     if final_status == "failed" {
         output::error_with_data(
             "Deploy failed.",
             "DEPLOY_FAILED",
             Some("Check build output above, or run `floo logs` for details."),
-            Some(deploy_data),
+            Some(output::to_value(&deploy_data)),
         );
         process::exit(1);
     }
 
-    let url = deploy_data
-        .get("url")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let url = deploy_data.url.as_deref().unwrap_or("");
 
     output::success(
         &format!("Deployed to {url}"),
-        Some(deploy_data),
+        Some(output::to_value(&deploy_data)),
     );
 }
 
 pub fn disconnect(app_name: &str) {
     super::require_auth();
     let client = super::init_client(None);
-    let app_data = match resolve_app(&client, app_name) {
-        Ok(a) => a,
-        Err(e) => {
-            if e.code == "APP_NOT_FOUND" {
-                output::error(
-                    &format!("App '{app_name}' not found."),
-                    "APP_NOT_FOUND",
-                    Some("Check the app name or ID and try again."),
-                );
-            } else {
-                output::error(&e.message, &e.code, None);
-            }
-            process::exit(1);
-        }
-    };
+    let app = super::resolve_app_or_exit(&client, app_name);
 
-    let app_id = super::expect_str_field(&app_data, "id");
-    let name = app_data
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or(app_name);
-
-    if let Err(e) = client.github_disconnect(app_id) {
+    if let Err(e) = client.github_disconnect(&app.id) {
         output::error(&e.message, &e.code, None);
         process::exit(1);
     }
 
     output::success(
-        &format!("Disconnected {name} from GitHub."),
-        Some(serde_json::json!({"app": name})),
+        &format!("Disconnected {} from GitHub.", app.name),
+        Some(serde_json::json!({"app": app.name})),
     );
 }

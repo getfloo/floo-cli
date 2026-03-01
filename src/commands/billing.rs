@@ -14,39 +14,23 @@ pub fn spend_cap_get() {
         }
     };
 
-    let spend_cap = match org.get("spend_cap") {
-        Some(v) => v.as_u64(),
-        None => {
-            output::error(
-                "Response missing 'spend_cap' field.",
-                "PARSE_ERROR",
-                Some("This is a bug. Please report it."),
-            );
-            process::exit(1);
-        }
-    };
-    let current_spend = org
-        .get("current_period_spend_cents")
-        .and_then(|v| v.as_u64())
-        .unwrap_or_else(|| {
-            output::error(
-                "Response missing 'current_period_spend_cents' field.",
-                "PARSE_ERROR",
-                Some("This is a bug. Please report it."),
-            );
-            process::exit(1);
-        });
-    let exceeded = org
-        .get("spend_cap_exceeded")
-        .and_then(|v| v.as_bool())
-        .unwrap_or_else(|| {
-            output::error(
-                "Response missing 'spend_cap_exceeded' field.",
-                "PARSE_ERROR",
-                Some("This is a bug. Please report it."),
-            );
-            process::exit(1);
-        });
+    let spend_cap = org.spend_cap;
+    let current_spend = org.current_period_spend_cents.unwrap_or_else(|| {
+        output::error(
+            "Response missing 'current_period_spend_cents' field.",
+            "PARSE_ERROR",
+            Some("This is a bug. Please report it."),
+        );
+        process::exit(1);
+    });
+    let exceeded = org.spend_cap_exceeded.unwrap_or_else(|| {
+        output::error(
+            "Response missing 'spend_cap_exceeded' field.",
+            "PARSE_ERROR",
+            Some("This is a bug. Please report it."),
+        );
+        process::exit(1);
+    });
 
     let data = serde_json::json!({
         "spend_cap": spend_cap,
@@ -75,7 +59,7 @@ pub fn spend_cap_set(amount: f64) {
     super::require_auth();
     let client = super::init_client(None);
 
-    if !amount.is_finite() || amount < 0.0 || amount > 1_000_000.0 {
+    if !amount.is_finite() || !(0.0..=1_000_000.0).contains(&amount) {
         output::error(
             "Spend cap must be between $0 and $1,000,000.",
             "INVALID_AMOUNT",

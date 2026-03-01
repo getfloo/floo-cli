@@ -1,6 +1,7 @@
 use std::process;
 
 use crate::api_client::FlooClient;
+use crate::api_types::App;
 use crate::config::{load_config, FlooConfig};
 use crate::output;
 
@@ -48,15 +49,45 @@ pub(crate) fn require_auth() {
     }
 }
 
-pub(crate) fn expect_str_field<'a>(data: &'a serde_json::Value, field: &str) -> &'a str {
-    data.get(field).and_then(|v| v.as_str()).unwrap_or_else(|| {
+pub(crate) fn resolve_app_or_exit(client: &FlooClient, app_name: &str) -> App {
+    match crate::resolve::resolve_app(client, app_name) {
+        Ok(a) => a,
+        Err(e) => {
+            if e.code == "APP_NOT_FOUND" {
+                output::error(
+                    &format!("App '{app_name}' not found."),
+                    "APP_NOT_FOUND",
+                    Some("Check the app name or ID and try again."),
+                );
+            } else {
+                output::error(&e.message, &e.code, None);
+            }
+            process::exit(1);
+        }
+    }
+}
+
+pub(crate) fn resolve_app_from_config(
+    client: &FlooClient,
+    app_flag: Option<&str>,
+) -> (String, String) {
+    let cwd = std::env::current_dir().unwrap_or_else(|e| {
         output::error(
-            &format!("Response missing '{field}' field."),
-            "PARSE_ERROR",
-            Some("This is a bug. Please report it."),
+            &format!("Failed to read current directory: {e}"),
+            "CWD_ERROR",
+            Some("Ensure the current directory exists and you have read permission."),
         );
         process::exit(1);
-    })
+    });
+    let resolved = match crate::project_config::resolve_app_context(&cwd, app_flag) {
+        Ok(r) => r,
+        Err(e) => {
+            output::error(&e.message, &e.code, e.suggestion.as_deref());
+            process::exit(1);
+        }
+    };
+    let app = resolve_app_or_exit(client, &resolved.app_name);
+    (app.id.clone(), app.name.clone())
 }
 
 /// Detect the deploy env file in a directory: prefers .floo.env, falls back to .env.
