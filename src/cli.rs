@@ -85,7 +85,6 @@ pub enum Commands {
     #[command(subcommand)]
     Billing(BillingCommands),
 
-
     /// Manage your apps.
     #[command(subcommand)]
     Apps(AppsCommands),
@@ -579,7 +578,6 @@ pub fn run() {
                 SpendCapCommands::Set { amount } => commands::billing::spend_cap_set(amount),
             },
         },
-
 
         Commands::Orgs(sub) => match sub {
             OrgsCommands::Members(members_sub) => match members_sub {

@@ -1,53 +1,7 @@
-use std::env;
 use std::process;
 
 use crate::api_client::FlooClient;
 use crate::output;
-use crate::project_config::resolve_app_context;
-use crate::resolve::resolve_app;
-
-fn resolve(client: &FlooClient, app: Option<&str>) -> (String, String) {
-    let cwd = env::current_dir().unwrap_or_else(|e| {
-        output::error(
-            &format!("Failed to read current directory: {e}"),
-            "CWD_ERROR",
-            Some("Ensure the current directory exists and you have read permission."),
-        );
-        process::exit(1);
-    });
-    let resolved = match resolve_app_context(&cwd, app) {
-        Ok(r) => r,
-        Err(e) => {
-            output::error(&e.message, &e.code, e.suggestion.as_deref());
-            process::exit(1);
-        }
-    };
-
-    let app_data = match resolve_app(client, &resolved.app_name) {
-        Ok(a) => a,
-        Err(e) => {
-            if e.code == "APP_NOT_FOUND" {
-                output::error(
-                    &format!("App '{}' not found.", resolved.app_name),
-                    "APP_NOT_FOUND",
-                    Some("Check the app name or ID and try again."),
-                );
-            } else {
-                output::error(&e.message, &e.code, None);
-            }
-            process::exit(1);
-        }
-    };
-
-    let app_id = super::expect_str_field(&app_data, "id").to_string();
-    let app_name = app_data
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or(&resolved.app_name)
-        .to_string();
-
-    (app_id, app_name)
-}
 
 fn check_services_flag(client: &FlooClient, app_id: &str, services: Option<&str>) {
     let result = match client.list_services(app_id) {
@@ -99,7 +53,7 @@ pub fn add(hostname: &str, app: Option<&str>, services: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);
 
-    let (app_id, app_name) = resolve(&client, app);
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app);
     check_services_flag(&client, &app_id, services);
 
     let result = match client.add_domain(&app_id, hostname) {
@@ -129,7 +83,7 @@ pub fn list(app: Option<&str>, services: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);
 
-    let (app_id, app_name) = resolve(&client, app);
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app);
     check_services_flag(&client, &app_id, services);
 
     let result = match client.list_domains(&app_id) {
@@ -198,7 +152,7 @@ pub fn remove(hostname: &str, app: Option<&str>, services: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);
 
-    let (app_id, app_name) = resolve(&client, app);
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app);
     check_services_flag(&client, &app_id, services);
 
     if let Err(e) = client.delete_domain(&app_id, hostname) {

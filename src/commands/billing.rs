@@ -75,7 +75,7 @@ pub fn spend_cap_set(amount: f64) {
     super::require_auth();
     let client = super::init_client(None);
 
-    if !amount.is_finite() || amount < 0.0 || amount > 1_000_000.0 {
+    if !amount.is_finite() || !(0.0..=1_000_000.0).contains(&amount) {
         output::error(
             "Spend cap must be between $0 and $1,000,000.",
             "INVALID_AMOUNT",

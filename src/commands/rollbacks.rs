@@ -1,57 +1,13 @@
-use std::env;
 use std::process;
 
 use crate::output;
-use crate::project_config::resolve_app_context;
-use crate::resolve::resolve_app;
 
 pub fn list(app: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);
 
-    let cwd = env::current_dir().unwrap_or_else(|e| {
-        output::error(
-            &format!("Failed to read current directory: {e}"),
-            "CWD_ERROR",
-            Some("Ensure the current directory exists and you have read permission."),
-        );
-        process::exit(1);
-    });
-    let resolved = match resolve_app_context(&cwd, app) {
-        Ok(r) => r,
-        Err(e) => {
-            output::error(&e.message, &e.code, e.suggestion.as_deref());
-            process::exit(1);
-        }
-    };
-
-    let app_data = match resolve_app(&client, &resolved.app_name) {
-        Ok(a) => a,
-        Err(e) => {
-            if e.code == "APP_NOT_FOUND" {
-                output::error(
-                    &format!("App '{}' not found.", resolved.app_name),
-                    "APP_NOT_FOUND",
-                    Some("Check the app name or ID and try again."),
-                );
-            } else {
-                output::error(&e.message, &e.code, None);
-            }
-            process::exit(1);
-        }
-    };
-
-    let app_id = match app_data.get("id").and_then(|v| v.as_str()) {
-        Some(id) if !id.is_empty() => id,
-        _ => {
-            output::error(
-                "Failed to read app ID from API response.",
-                "PARSE_ERROR",
-                Some("This may indicate a CLI/API version mismatch. Try updating the CLI."),
-            );
-            process::exit(1);
-        }
-    };
+    let (app_id, _app_name) = super::resolve_app_from_config(&client, app);
+    let app_id = app_id.as_str();
 
     let result = match client.list_deploys(app_id) {
         Ok(r) => r,
@@ -120,38 +76,12 @@ pub fn rollback(app_name: &str, deploy_id: &str, force: bool) {
     super::require_auth();
     let client = super::init_client(None);
 
-    let app_data = match resolve_app(&client, app_name) {
-        Ok(a) => a,
-        Err(e) => {
-            if e.code == "APP_NOT_FOUND" {
-                output::error(
-                    &format!("App '{app_name}' not found."),
-                    "APP_NOT_FOUND",
-                    Some("Check the app name or ID and try again."),
-                );
-            } else {
-                output::error(&e.message, &e.code, None);
-            }
-            process::exit(1);
-        }
-    };
-
+    let app_data = super::resolve_app_or_exit(&client, app_name);
     let name = app_data
         .get("name")
         .and_then(|v| v.as_str())
         .unwrap_or(app_name);
-
-    let app_id = match app_data.get("id").and_then(|v| v.as_str()) {
-        Some(id) if !id.is_empty() => id,
-        _ => {
-            output::error(
-                "Failed to read app ID from API response.",
-                "PARSE_ERROR",
-                Some("This may indicate a CLI/API version mismatch. Try updating the CLI."),
-            );
-            process::exit(1);
-        }
-    };
+    let app_id = super::expect_str_field(&app_data, "id");
 
     if !force
         && !output::confirm(&format!(

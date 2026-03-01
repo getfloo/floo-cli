@@ -740,16 +740,15 @@ pub(crate) fn stream_deploy_json(
                 "status" => {
                     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data_buf) {
                         let status = parsed.get("status").and_then(|v| v.as_str()).unwrap_or("");
-                        println!(
-                            "{}",
-                            serde_json::json!({"event": "status", "status": status})
+                        output::print_json(
+                            &serde_json::json!({"event": "status", "status": status}),
                         );
                     }
                 }
                 "log" => {
                     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data_buf) {
                         if let Some(text) = parsed.get("text").and_then(|v| v.as_str()) {
-                            println!("{}", serde_json::json!({"event": "log", "text": text}));
+                            output::print_json(&serde_json::json!({"event": "log", "text": text}));
                         }
                     }
                 }
@@ -757,9 +756,8 @@ pub(crate) fn stream_deploy_json(
                     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data_buf) {
                         let status = parsed.get("status").and_then(|v| v.as_str()).unwrap_or("");
                         let url = parsed.get("url").and_then(|v| v.as_str()).unwrap_or("");
-                        println!(
-                            "{}",
-                            serde_json::json!({"event": "done", "status": status, "url": url})
+                        output::print_json(
+                            &serde_json::json!({"event": "done", "status": status, "url": url}),
                         );
                     }
                     break;

@@ -589,16 +589,19 @@ impl FlooClient {
 
     // --- GitHub ---
 
+    #[allow(dead_code)]
     pub fn github_setup_begin(&self) -> Result<Value, FlooApiError> {
         let resp = self.post_json("/v1/github/setup/begin", &serde_json::json!({}))?;
         self.handle_response(resp)
     }
 
+    #[allow(dead_code)]
     pub fn github_setup_poll(&self) -> Result<Value, FlooApiError> {
         let resp = self.get("/v1/github/setup/poll")?;
         self.handle_response(resp)
     }
 
+    #[allow(dead_code)]
     pub fn github_installation_repos(&self, installation_id: u64) -> Result<Value, FlooApiError> {
         let resp = self.get(&format!("/v1/github/installations/{installation_id}/repos"))?;
         self.handle_response(resp)

@@ -5,7 +5,6 @@ use crate::archive::create_archive;
 use crate::detection::detect;
 use crate::output;
 use crate::project_config::{self, AppAccessMode};
-use crate::resolve::resolve_app;
 
 pub fn list(page: u32, per_page: u32) {
     super::require_auth();
@@ -97,21 +96,7 @@ pub fn list(page: u32, per_page: u32) {
 pub fn status(app_name: &str) {
     super::require_auth();
     let client = super::init_client(None);
-    let app_data = match resolve_app(&client, app_name) {
-        Ok(a) => a,
-        Err(e) => {
-            if e.code == "APP_NOT_FOUND" {
-                output::error(
-                    &format!("App '{app_name}' not found."),
-                    "APP_NOT_FOUND",
-                    Some("Check the app name or ID and try again."),
-                );
-            } else {
-                output::error(&e.message, &e.code, None);
-            }
-            process::exit(1);
-        }
-    };
+    let app_data = super::resolve_app_or_exit(&client, app_name);
 
     if output::is_json_mode() {
         let name = app_data
@@ -151,21 +136,7 @@ pub fn status(app_name: &str) {
 pub fn delete(app_name: &str, force: bool) {
     super::require_auth();
     let client = super::init_client(None);
-    let app_data = match resolve_app(&client, app_name) {
-        Ok(a) => a,
-        Err(e) => {
-            if e.code == "APP_NOT_FOUND" {
-                output::error(
-                    &format!("App '{app_name}' not found."),
-                    "APP_NOT_FOUND",
-                    Some("Check the app name or ID and try again."),
-                );
-            } else {
-                output::error(&e.message, &e.code, None);
-            }
-            process::exit(1);
-        }
-    };
+    let app_data = super::resolve_app_or_exit(&client, app_name);
 
     let name = app_data
         .get("name")
@@ -202,21 +173,7 @@ pub fn connect(
 ) {
     super::require_auth();
     let client = super::init_client(None);
-    let app_data = match resolve_app(&client, app_name) {
-        Ok(a) => a,
-        Err(e) => {
-            if e.code == "APP_NOT_FOUND" {
-                output::error(
-                    &format!("App '{app_name}' not found."),
-                    "APP_NOT_FOUND",
-                    Some("Check the app name or ID and try again."),
-                );
-            } else {
-                output::error(&e.message, &e.code, None);
-            }
-            process::exit(1);
-        }
-    };
+    let app_data = super::resolve_app_or_exit(&client, app_name);
 
     let app_id = super::expect_str_field(&app_data, "id").to_string();
     let name = app_data
@@ -234,10 +191,10 @@ pub fn connect(
         );
         process::exit(1);
     });
-    let resolved = match project_config::resolve_app_context(&cwd, Some(app_name)) {
-        Ok(r) => Some(r),
-        Err(_) => None,
-    };
+    // Project config is optional for connect — missing config is fine, all other
+    // errors (LEGACY_CONFIG, INVALID_PROJECT_CONFIG) are also suppressed so the
+    // connect itself still succeeds; users can run `floo env import` separately.
+    let resolved = project_config::resolve_app_context(&cwd, Some(app_name)).ok();
 
     // Step 1: Import env vars from local env_file before connecting
     if let Some(ref r) = resolved {
@@ -413,30 +370,13 @@ fn trigger_initial_deploy(
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
-    output::success(
-        &format!("Deployed to {url}"),
-        Some(deploy_data),
-    );
+    output::success(&format!("Deployed to {url}"), Some(deploy_data));
 }
 
 pub fn disconnect(app_name: &str) {
     super::require_auth();
     let client = super::init_client(None);
-    let app_data = match resolve_app(&client, app_name) {
-        Ok(a) => a,
-        Err(e) => {
-            if e.code == "APP_NOT_FOUND" {
-                output::error(
-                    &format!("App '{app_name}' not found."),
-                    "APP_NOT_FOUND",
-                    Some("Check the app name or ID and try again."),
-                );
-            } else {
-                output::error(&e.message, &e.code, None);
-            }
-            process::exit(1);
-        }
-    };
+    let app_data = super::resolve_app_or_exit(&client, app_name);
 
     let app_id = super::expect_str_field(&app_data, "id");
     let name = app_data

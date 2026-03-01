@@ -4,53 +4,16 @@ use std::process;
 use crate::api_client::FlooClient;
 use crate::output;
 use crate::project_config;
-use crate::resolve::resolve_app;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn resolve_app_id(client: &FlooClient, app_flag: Option<&str>) -> (String, String) {
-    let cwd = std::env::current_dir().unwrap_or_else(|e| {
-        output::error(
-            &format!("Failed to read current directory: {e}"),
-            "FILE_ERROR",
-            None,
-        );
-        process::exit(1);
-    });
-
-    let resolved = match project_config::resolve_app_context(&cwd, app_flag) {
-        Ok(r) => r,
-        Err(e) => {
-            output::error(&e.message, &e.code, e.suggestion.as_deref());
-            process::exit(1);
-        }
-    };
-
-    let app_data = match resolve_app(client, &resolved.app_name) {
-        Ok(a) => a,
-        Err(e) => {
-            if e.code == "APP_NOT_FOUND" {
-                output::error(
-                    &format!("App '{}' not found.", resolved.app_name),
-                    "APP_NOT_FOUND",
-                    Some("Check the app name or ID and try again."),
-                );
-            } else {
-                output::error(&e.message, &e.code, None);
-            }
-            process::exit(1);
-        }
-    };
-
-    let app_id = super::expect_str_field(&app_data, "id").to_string();
-    let app_name = app_data
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or(&resolved.app_name)
-        .to_string();
-    (app_id, app_name)
+fn format_target(app_name: &str, service_name: Option<&str>) -> String {
+    match service_name {
+        Some(sn) => format!("{app_name}/{sn}"),
+        None => app_name.to_string(),
+    }
 }
 
 /// Resolve `--services` names to service IDs.
@@ -259,17 +222,14 @@ pub fn set(key_value: &str, app_flag: Option<&str>, service_names: &[String], re
     let key = key.to_uppercase();
 
     let client = super::init_client(None);
-    let (app_id, app_name) = resolve_app_id(&client, app_flag);
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
     let targets = resolve_service_ids(&client, &app_id, &app_name, service_names);
 
     let mut last_env_result = serde_json::Value::Null;
     for (service_id, service_name) in &targets {
         match client.set_env_var(&app_id, &key, value, service_id.as_deref()) {
             Ok(result) => {
-                let target = match service_name {
-                    Some(sn) => format!("{app_name}/{sn}"),
-                    None => app_name.clone(),
-                };
+                let target = format_target(&app_name, service_name.as_deref());
                 last_env_result = result.clone();
                 if !restart || !output::is_json_mode() {
                     output::success(&format!("Set {key} on {target}."), Some(result));
@@ -338,7 +298,7 @@ pub fn set(key_value: &str, app_flag: Option<&str>, service_names: &[String], re
 pub fn list(app_flag: Option<&str>, service_names: &[String]) {
     super::require_auth();
     let client = super::init_client(None);
-    let (app_id, app_name) = resolve_app_id(&client, app_flag);
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
     let targets = resolve_service_ids(&client, &app_id, &app_name, service_names);
 
     for (service_id, service_name) in &targets {
@@ -362,10 +322,7 @@ pub fn list(app_flag: Option<&str>, service_names: &[String]) {
             }
         };
 
-        let target = match service_name {
-            Some(sn) => format!("{app_name}/{sn}"),
-            None => app_name.clone(),
-        };
+        let target = format_target(&app_name, service_name.as_deref());
 
         if env_vars.is_empty() {
             if output::is_json_mode() {
@@ -405,7 +362,7 @@ pub fn remove(key: &str, app_flag: Option<&str>, service_names: &[String]) {
     super::require_auth();
 
     let client = super::init_client(None);
-    let (app_id, app_name) = resolve_app_id(&client, app_flag);
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
     let targets = resolve_service_ids(&client, &app_id, &app_name, service_names);
 
     for (service_id, service_name) in &targets {
@@ -414,10 +371,7 @@ pub fn remove(key: &str, app_flag: Option<&str>, service_names: &[String]) {
             process::exit(1);
         }
 
-        let target = match service_name {
-            Some(sn) => format!("{app_name}/{sn}"),
-            None => app_name.clone(),
-        };
+        let target = format_target(&app_name, service_name.as_deref());
         output::success(
             &format!("Removed {key} from {target}."),
             Some(serde_json::json!({"key": key})),
@@ -430,7 +384,7 @@ pub fn get(key: &str, app_flag: Option<&str>, service_flag: Option<&str>) {
     super::require_auth();
 
     let client = super::init_client(None);
-    let (app_id, app_name) = resolve_app_id(&client, app_flag);
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
     let (service_id, _service_name) =
         resolve_single_service(&client, &app_id, &app_name, service_flag);
 
@@ -495,25 +449,11 @@ pub fn import_vars(file_flag: Option<&Path>, app_flag: Option<&str>, service_nam
     let vars = parse_env_file(&env_file_path);
     let count = vars.len();
 
-    // Use resolved app name if available, otherwise resolve_app_id will re-resolve from config.
+    // Use resolved app name if available, otherwise fall back to resolving from config.
     let client = super::init_client(None);
     let (app_id, app_name) = match &resolved {
         Some(r) => {
-            let app_data = match resolve_app(&client, &r.app_name) {
-                Ok(a) => a,
-                Err(e) => {
-                    if e.code == "APP_NOT_FOUND" {
-                        output::error(
-                            &format!("App '{}' not found.", r.app_name),
-                            "APP_NOT_FOUND",
-                            Some("Check the app name or ID and try again."),
-                        );
-                    } else {
-                        output::error(&e.message, &e.code, None);
-                    }
-                    process::exit(1);
-                }
-            };
+            let app_data = super::resolve_app_or_exit(&client, &r.app_name);
             let app_id = super::expect_str_field(&app_data, "id").to_string();
             let app_name = app_data
                 .get("name")
@@ -522,7 +462,7 @@ pub fn import_vars(file_flag: Option<&Path>, app_flag: Option<&str>, service_nam
                 .to_string();
             (app_id, app_name)
         }
-        None => resolve_app_id(&client, app_flag),
+        None => super::resolve_app_from_config(&client, app_flag),
     };
 
     let targets = resolve_service_ids(&client, &app_id, &app_name, service_names);
@@ -530,10 +470,7 @@ pub fn import_vars(file_flag: Option<&Path>, app_flag: Option<&str>, service_nam
     for (service_id, service_name) in &targets {
         match client.import_env_vars(&app_id, &vars, service_id.as_deref()) {
             Ok(result) => {
-                let target = match service_name {
-                    Some(sn) => format!("{app_name}/{sn}"),
-                    None => app_name.clone(),
-                };
+                let target = format_target(&app_name, service_name.as_deref());
                 output::success(
                     &format!("Imported {count} variable(s) to {target}."),
                     Some(result),
@@ -632,21 +569,7 @@ pub fn import_all_services(app_flag: Option<&str>) {
     }
 
     let client = super::init_client(None);
-    let app_data = match resolve_app(&client, &resolved.app_name) {
-        Ok(a) => a,
-        Err(e) => {
-            if e.code == "APP_NOT_FOUND" {
-                output::error(
-                    &format!("App '{}' not found.", resolved.app_name),
-                    "APP_NOT_FOUND",
-                    Some("Check the app name or ID and try again."),
-                );
-            } else {
-                output::error(&e.message, &e.code, None);
-            }
-            process::exit(1);
-        }
-    };
+    let app_data = super::resolve_app_or_exit(&client, &resolved.app_name);
     let app_id = super::expect_str_field(&app_data, "id").to_string();
     let app_name = app_data
         .get("name")
