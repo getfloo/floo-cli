@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::errors::FlooError;
+use crate::errors::{ErrorCode, FlooError};
 
 use super::app_config::AppAccessMode;
 use super::SCHEMA_URL;
@@ -114,7 +114,7 @@ pub fn load_service_config(dir: &Path) -> Result<Option<ServiceFileConfig>, Floo
 
     let content = std::fs::read_to_string(&config_path).map_err(|e| {
         FlooError::with_suggestion(
-            "INVALID_PROJECT_CONFIG",
+            ErrorCode::InvalidProjectConfig,
             format!("Failed to read {}: {e}", super::SERVICE_CONFIG_FILE),
             format!("See {SCHEMA_URL} for the schema reference."),
         )
@@ -122,7 +122,7 @@ pub fn load_service_config(dir: &Path) -> Result<Option<ServiceFileConfig>, Floo
 
     let config: ServiceFileConfig = toml::from_str(&content).map_err(|e| {
         FlooError::with_suggestion(
-            "INVALID_PROJECT_CONFIG",
+            ErrorCode::InvalidProjectConfig,
             format!("Invalid {}: {e}", super::SERVICE_CONFIG_FILE),
             format!("See {SCHEMA_URL} for the schema reference."),
         )
@@ -135,13 +135,13 @@ pub fn write_service_config(dir: &Path, config: &ServiceFileConfig) -> Result<()
     let config_path = dir.join(super::SERVICE_CONFIG_FILE);
     let content = toml::to_string_pretty(config).map_err(|e| {
         FlooError::new(
-            "CONFIG_WRITE_ERROR",
+            ErrorCode::ConfigWriteError,
             format!("Failed to serialize {}: {e}", super::SERVICE_CONFIG_FILE),
         )
     })?;
     std::fs::write(&config_path, content).map_err(|e| {
         FlooError::new(
-            "CONFIG_WRITE_ERROR",
+            ErrorCode::ConfigWriteError,
             format!("Failed to write {}: {e}", super::SERVICE_CONFIG_FILE),
         )
     })?;
@@ -231,7 +231,7 @@ unknown = "bad"
         .unwrap();
 
         let err = load_service_config(dir.path()).unwrap_err();
-        assert_eq!(err.code, "INVALID_PROJECT_CONFIG");
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
     }
 
     #[test]
@@ -253,7 +253,7 @@ ingress = "internal"
         .unwrap();
 
         let err = load_service_config(dir.path()).unwrap_err();
-        assert_eq!(err.code, "INVALID_PROJECT_CONFIG");
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
     }
 
     #[test]

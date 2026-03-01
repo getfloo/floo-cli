@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::errors::FlooError;
+use crate::errors::{ErrorCode, FlooError};
 
 use super::app_config::AppServiceType;
 use super::resolve::ResolvedApp;
@@ -32,7 +32,7 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
             let sub_dir = resolved.config_dir.join(normalized_path);
             let svc_file = load_service_config(&sub_dir)?.ok_or_else(|| {
                 FlooError::with_suggestion(
-                    "SERVICE_CONFIG_MISSING",
+                    ErrorCode::ServiceConfigMissing,
                     format!(
                         "No {} found at '{normalized_path}/' (declared as service '{name}' in {}).",
                         super::SERVICE_CONFIG_FILE,
@@ -47,7 +47,7 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
 
             if svc_file.app.name != resolved.app_name {
                 return Err(FlooError::with_suggestion(
-                    "APP_NAME_MISMATCH",
+                    ErrorCode::AppNameMismatch,
                     format!(
                         "Service '{name}' at '{normalized_path}/{}' declares app name '{}', but {} declares '{}'.",
                         super::SERVICE_CONFIG_FILE,
@@ -76,7 +76,7 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
 
             if !seen_names.insert(svc.name.clone()) {
                 return Err(FlooError::new(
-                    "DUPLICATE_SERVICE_NAMES",
+                    ErrorCode::DuplicateServiceNames,
                     format!(
                         "Multiple services named '{}'. Service names must be unique.",
                         svc.name,
@@ -94,7 +94,7 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
     } else {
         // Branch 3: app.toml only with no deployable services
         return Err(FlooError::with_suggestion(
-            "NO_DEPLOYABLE_SERVICES",
+            ErrorCode::NoDeployableServices,
             format!(
                 "{} has no deployable services (only Floo-managed services like postgres/redis).",
                 super::APP_CONFIG_FILE,
@@ -109,7 +109,7 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
     // Multi-service apps must have at least one public service
     if services.len() > 1 && !services.iter().any(|s| s.ingress == ServiceIngress::Public) {
         return Err(FlooError::with_suggestion(
-            "NO_PUBLIC_SERVICES",
+            ErrorCode::NoPublicServices,
             "At least one service must have ingress 'public'. All services are currently set to 'internal'.",
             "Set ingress = \"public\" on at least one service in its floo.service.toml, or override it in floo.app.toml.",
         ));
@@ -132,7 +132,7 @@ pub fn filter_services(
     for name in filter {
         if !available.contains(&name.as_str()) {
             return Err(FlooError::with_suggestion(
-                "UNKNOWN_SERVICE",
+                ErrorCode::UnknownService,
                 format!("Unknown service '{name}'."),
                 format!("Available services: {}", available.join(", ")),
             ));
@@ -499,7 +499,7 @@ ingress = "public"
         );
 
         let err = discover_services(&resolved).unwrap_err();
-        assert_eq!(err.code, "SERVICE_CONFIG_MISSING");
+        assert_eq!(err.code, ErrorCode::ServiceConfigMissing);
         assert!(err.message.contains("backend"));
     }
 
@@ -545,7 +545,7 @@ ingress = "public"
         );
 
         let err = discover_services(&resolved).unwrap_err();
-        assert_eq!(err.code, "APP_NAME_MISMATCH");
+        assert_eq!(err.code, ErrorCode::AppNameMismatch);
         assert!(err.message.contains("wrong-app"));
         assert!(err.message.contains("my-app"));
     }
@@ -608,7 +608,7 @@ ingress = "public"
         );
 
         let err = discover_services(&resolved).unwrap_err();
-        assert_eq!(err.code, "DUPLICATE_SERVICE_NAMES");
+        assert_eq!(err.code, ErrorCode::DuplicateServiceNames);
         assert!(err.message.contains("api"));
     }
 
@@ -646,7 +646,7 @@ ingress = "public"
         );
 
         let err = discover_services(&resolved).unwrap_err();
-        assert_eq!(err.code, "NO_DEPLOYABLE_SERVICES");
+        assert_eq!(err.code, ErrorCode::NoDeployableServices);
     }
 
     #[test]
@@ -762,7 +762,7 @@ ingress = "public"
         ];
 
         let err = filter_services(services, &["nonexistent".to_string()]).unwrap_err();
-        assert_eq!(err.code, "UNKNOWN_SERVICE");
+        assert_eq!(err.code, ErrorCode::UnknownService);
         assert!(err.message.contains("nonexistent"));
         assert!(err.suggestion.as_deref().unwrap().contains("web"));
         assert!(err.suggestion.as_deref().unwrap().contains("api"));
@@ -908,6 +908,6 @@ ingress = "internal"
         );
 
         let err = discover_services(&resolved).unwrap_err();
-        assert_eq!(err.code, "NO_PUBLIC_SERVICES");
+        assert_eq!(err.code, ErrorCode::NoPublicServices);
     }
 }

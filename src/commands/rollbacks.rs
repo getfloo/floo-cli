@@ -1,6 +1,7 @@
 use std::env;
 use std::process;
 
+use crate::errors::ErrorCode;
 use crate::output;
 use crate::project_config::resolve_app_context;
 use crate::resolve::resolve_app;
@@ -12,7 +13,7 @@ pub fn list(app: Option<&str>) {
     let cwd = env::current_dir().unwrap_or_else(|e| {
         output::error(
             &format!("Failed to read current directory: {e}"),
-            "CWD_ERROR",
+            &ErrorCode::CwdError,
             Some("Ensure the current directory exists and you have read permission."),
         );
         process::exit(1);
@@ -31,11 +32,11 @@ pub fn list(app: Option<&str>) {
             if e.code == "APP_NOT_FOUND" {
                 output::error(
                     &format!("App '{}' not found.", resolved.app_name),
-                    "APP_NOT_FOUND",
+                    &ErrorCode::AppNotFound,
                     Some("Check the app name or ID and try again."),
                 );
             } else {
-                output::error(&e.message, &e.code, None);
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             }
             process::exit(1);
         }
@@ -46,7 +47,7 @@ pub fn list(app: Option<&str>) {
         _ => {
             output::error(
                 "Failed to read app ID from API response.",
-                "PARSE_ERROR",
+                &ErrorCode::ParseError,
                 Some("This may indicate a CLI/API version mismatch. Try updating the CLI."),
             );
             process::exit(1);
@@ -56,7 +57,7 @@ pub fn list(app: Option<&str>) {
     let result = match client.list_deploys(app_id) {
         Ok(r) => r,
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
@@ -66,7 +67,7 @@ pub fn list(app: Option<&str>) {
         None => {
             output::error(
                 "Unexpected response format from the API.",
-                "PARSE_ERROR",
+                &ErrorCode::ParseError,
                 Some("Try updating the CLI: curl -fsSL https://getfloo.com/install.sh | bash"),
             );
             process::exit(1);
@@ -126,11 +127,11 @@ pub fn rollback(app_name: &str, deploy_id: &str, force: bool) {
             if e.code == "APP_NOT_FOUND" {
                 output::error(
                     &format!("App '{app_name}' not found."),
-                    "APP_NOT_FOUND",
+                    &ErrorCode::AppNotFound,
                     Some("Check the app name or ID and try again."),
                 );
             } else {
-                output::error(&e.message, &e.code, None);
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             }
             process::exit(1);
         }
@@ -146,7 +147,7 @@ pub fn rollback(app_name: &str, deploy_id: &str, force: bool) {
         _ => {
             output::error(
                 "Failed to read app ID from API response.",
-                "PARSE_ERROR",
+                &ErrorCode::ParseError,
                 Some("This may indicate a CLI/API version mismatch. Try updating the CLI."),
             );
             process::exit(1);
@@ -172,7 +173,7 @@ pub fn rollback(app_name: &str, deploy_id: &str, force: bool) {
         Ok(r) => r,
         Err(e) => {
             spinner.finish();
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };

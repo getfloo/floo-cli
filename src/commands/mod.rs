@@ -2,6 +2,7 @@ use std::process;
 
 use crate::api_client::FlooClient;
 use crate::config::{load_config, FlooConfig};
+use crate::errors::ErrorCode;
 use crate::output;
 
 pub mod analytics;
@@ -28,7 +29,7 @@ pub(crate) fn init_client(config: Option<FlooConfig>) -> FlooClient {
         Err(error) => {
             output::error(
                 &error.message,
-                &error.code,
+                &ErrorCode::from_api(&error.code),
                 Some("Check your network/TLS setup and try again."),
             );
             process::exit(1);
@@ -41,7 +42,7 @@ pub(crate) fn require_auth() {
     if config.api_key.is_none() {
         output::error(
             "Not logged in.",
-            "NOT_AUTHENTICATED",
+            &ErrorCode::NotAuthenticated,
             Some("Run 'floo login' to authenticate."),
         );
         process::exit(1);
@@ -52,7 +53,7 @@ pub(crate) fn expect_str_field<'a>(data: &'a serde_json::Value, field: &str) -> 
     data.get(field).and_then(|v| v.as_str()).unwrap_or_else(|| {
         output::error(
             &format!("Response missing '{field}' field."),
-            "PARSE_ERROR",
+            &ErrorCode::ParseError,
             Some("This is a bug. Please report it."),
         );
         process::exit(1);

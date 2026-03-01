@@ -8,7 +8,7 @@ use reqwest::header::{ACCEPT, USER_AGENT};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::errors::FlooError;
+use crate::errors::{ErrorCode, FlooError};
 
 const DEFAULT_RELEASES_API_BASE: &str = "https://api.github.com/repos/getfloo/floo-cli/releases";
 
@@ -42,7 +42,7 @@ fn target_asset_name() -> Result<String, FlooError> {
         ("windows", "x86_64") => "x86_64-pc-windows-msvc.exe",
         _ => {
             return Err(FlooError::with_suggestion(
-                "UNSUPPORTED_PLATFORM",
+                ErrorCode::UnsupportedPlatform,
                 format!("Platform '{os}/{arch}' is not supported for automatic updates."),
                 "Download a release binary manually from https://github.com/getfloo/floo-cli/releases",
             ));
@@ -66,7 +66,7 @@ fn build_http_client() -> Result<Client, FlooError> {
         .build()
         .map_err(|e| {
         FlooError::with_suggestion(
-            "UPDATE_HTTP_CLIENT_ERROR",
+            ErrorCode::UpdateHttpClientError,
             format!("Failed to initialize update client: {e}"),
             "Try again. If it persists, reinstall via curl -fsSL https://getfloo.com/install.sh | bash",
         )
@@ -86,7 +86,7 @@ fn fetch_release_json(
         .send()
         .map_err(|e| {
             FlooError::with_suggestion(
-                "RELEASE_LOOKUP_FAILED",
+                ErrorCode::ReleaseLookupFailed,
                 format!("Failed to fetch release metadata: {e}"),
                 "Check your network and try again.",
             )
@@ -94,7 +94,7 @@ fn fetch_release_json(
 
     if !response.status().is_success() {
         return Err(FlooError::with_suggestion(
-            "RELEASE_LOOKUP_FAILED",
+            ErrorCode::ReleaseLookupFailed,
             format!("Release lookup failed with status {}.", response.status()),
             "Verify the version tag exists, or run 'floo update' without --version.",
         ));
@@ -102,7 +102,7 @@ fn fetch_release_json(
 
     response.json::<Value>().map_err(|e| {
         FlooError::with_suggestion(
-            "RELEASE_PARSE_ERROR",
+            ErrorCode::ReleaseParseError,
             format!("Failed to parse release metadata: {e}"),
             "Try again. If it persists, reinstall via curl -fsSL https://getfloo.com/install.sh | bash",
         )
@@ -121,7 +121,7 @@ fn release_asset_from_json(release: &Value, asset_name: &str) -> Result<ReleaseA
         .and_then(Value::as_array)
         .ok_or_else(|| {
             FlooError::with_suggestion(
-                "RELEASE_ASSET_MISSING",
+                ErrorCode::ReleaseAssetMissing,
                 "Release metadata did not include assets.".to_string(),
                 "Try again shortly after the release publishes.",
             )
@@ -135,7 +135,7 @@ fn release_asset_from_json(release: &Value, asset_name: &str) -> Result<ReleaseA
         .map(ToString::to_string)
         .ok_or_else(|| {
             FlooError::with_suggestion(
-                "RELEASE_ASSET_MISSING",
+                ErrorCode::ReleaseAssetMissing,
                 format!("No binary asset found for '{asset_name}'."),
                 "Check https://github.com/getfloo/floo-cli/releases for available artifacts.",
             )
@@ -150,7 +150,7 @@ fn release_asset_from_json(release: &Value, asset_name: &str) -> Result<ReleaseA
         .map(ToString::to_string)
         .ok_or_else(|| {
             FlooError::with_suggestion(
-                "CHECKSUM_MISSING",
+                ErrorCode::ChecksumMissing,
                 format!("No checksum asset found for '{asset_name}'."),
                 "Try again once release artifacts are fully published.",
             )
@@ -171,7 +171,7 @@ fn download_bytes(client: &Client, url: &str) -> Result<Vec<u8>, FlooError> {
         .send()
         .map_err(|e| {
             FlooError::with_suggestion(
-                "DOWNLOAD_FAILED",
+                ErrorCode::DownloadFailed,
                 format!("Failed to download update asset: {e}"),
                 "Check your network and try again.",
             )
@@ -179,7 +179,7 @@ fn download_bytes(client: &Client, url: &str) -> Result<Vec<u8>, FlooError> {
 
     if !response.status().is_success() {
         return Err(FlooError::with_suggestion(
-            "DOWNLOAD_FAILED",
+            ErrorCode::DownloadFailed,
             format!("Asset download failed with status {}.", response.status()),
             "Check the release artifacts and try again.",
         ));
@@ -187,7 +187,7 @@ fn download_bytes(client: &Client, url: &str) -> Result<Vec<u8>, FlooError> {
 
     response.bytes().map(|bytes| bytes.to_vec()).map_err(|e| {
         FlooError::with_suggestion(
-            "DOWNLOAD_FAILED",
+            ErrorCode::DownloadFailed,
             format!("Failed to read downloaded bytes: {e}"),
             "Try again.",
         )
@@ -210,7 +210,7 @@ fn parse_checksum(checksum_contents: &str) -> Result<String, FlooError> {
     }
 
     Err(FlooError::with_suggestion(
-        "CHECKSUM_PARSE_ERROR",
+        ErrorCode::ChecksumParseError,
         "Checksum file did not contain a valid SHA256 hash.".to_string(),
         "Try again. If this persists, reinstall via curl -fsSL https://getfloo.com/install.sh | bash",
     ))
@@ -227,12 +227,17 @@ fn set_executable(path: &Path) -> Result<(), FlooError> {
     use std::os::unix::fs::PermissionsExt;
 
     let mut permissions = fs::metadata(path)
-        .map_err(|e| FlooError::new("UPDATE_INSTALL_FAILED", format!("Failed to stat file: {e}")))?
+        .map_err(|e| {
+            FlooError::new(
+                ErrorCode::UpdateInstallFailed,
+                format!("Failed to stat file: {e}"),
+            )
+        })?
         .permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(path, permissions).map_err(|e| {
         FlooError::new(
-            "UPDATE_INSTALL_FAILED",
+            ErrorCode::UpdateInstallFailed,
             format!("Failed to set executable permissions: {e}"),
         )
     })
@@ -254,7 +259,7 @@ fn resolve_install_path() -> Result<PathBuf, FlooError> {
 
     env::current_exe().map_err(|e| {
         FlooError::with_suggestion(
-            "UPDATE_INSTALL_PATH_UNRESOLVED",
+            ErrorCode::UpdateInstallPathUnresolved,
             format!("Failed to determine installed CLI path: {e}"),
             "Set FLOO_UPDATE_TARGET_PATH to the floo binary path or reinstall via curl -fsSL https://getfloo.com/install.sh | bash",
         )
@@ -264,14 +269,14 @@ fn resolve_install_path() -> Result<PathBuf, FlooError> {
 fn install_binary(binary_bytes: &[u8], destination: &Path) -> Result<(), FlooError> {
     let destination_dir = destination.parent().ok_or_else(|| {
         FlooError::new(
-            "UPDATE_INSTALL_FAILED",
+            ErrorCode::UpdateInstallFailed,
             "Failed to determine destination directory.".to_string(),
         )
     })?;
 
     fs::create_dir_all(destination_dir).map_err(|e| {
         FlooError::new(
-            "UPDATE_INSTALL_FAILED",
+            ErrorCode::UpdateInstallFailed,
             format!("Failed to prepare destination directory: {e}"),
         )
     })?;
@@ -288,7 +293,7 @@ fn install_binary(binary_bytes: &[u8], destination: &Path) -> Result<(), FlooErr
 
     fs::write(&temp_path, binary_bytes).map_err(|e| {
         FlooError::new(
-            "UPDATE_INSTALL_FAILED",
+            ErrorCode::UpdateInstallFailed,
             format!("Failed to write update file: {e}"),
         )
     })?;
@@ -298,13 +303,13 @@ fn install_binary(binary_bytes: &[u8], destination: &Path) -> Result<(), FlooErr
         let _ = fs::remove_file(&temp_path);
         if e.kind() == std::io::ErrorKind::PermissionDenied {
             FlooError::with_suggestion(
-                "UPDATE_PERMISSION_DENIED",
+                ErrorCode::UpdatePermissionDenied,
                 format!("Permission denied while writing to '{}'.", destination.display()),
                 "Re-run with appropriate permissions, or reinstall via curl -fsSL https://getfloo.com/install.sh | bash",
             )
         } else {
             FlooError::new(
-                "UPDATE_INSTALL_FAILED",
+                ErrorCode::UpdateInstallFailed,
                 format!("Failed to replace existing binary: {e}"),
             )
         }
@@ -328,7 +333,7 @@ fn run_update_with(
 
     if actual_checksum != expected_checksum {
         return Err(FlooError::with_suggestion(
-            "CHECKSUM_MISMATCH",
+            ErrorCode::ChecksumMismatch,
             format!(
                 "Checksum mismatch for '{}': expected {}, got {}.",
                 release_asset.asset_name, expected_checksum, actual_checksum
@@ -390,7 +395,7 @@ mod tests {
     fn test_parse_checksum_invalid() {
         let result = parse_checksum("not-a-checksum");
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, "CHECKSUM_PARSE_ERROR");
+        assert_eq!(result.unwrap_err().code, ErrorCode::ChecksumParseError);
     }
 
     #[test]
@@ -482,7 +487,10 @@ mod tests {
         );
 
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, "CHECKSUM_MISMATCH");
+        assert_eq!(
+            result.unwrap_err().code,
+            crate::errors::ErrorCode::ChecksumMismatch
+        );
         assert!(!install_path.exists());
     }
 
@@ -508,7 +516,10 @@ mod tests {
         );
 
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().code, "RELEASE_LOOKUP_FAILED");
+        assert_eq!(
+            result.unwrap_err().code,
+            crate::errors::ErrorCode::ReleaseLookupFailed
+        );
     }
 
     #[test]

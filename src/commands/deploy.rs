@@ -9,7 +9,7 @@ use crate::api_client::FlooClient;
 use crate::archive::create_archive;
 use crate::config::load_config;
 use crate::detection::detect;
-use crate::errors::FlooApiError;
+use crate::errors::{ErrorCode, FlooApiError};
 use crate::names::generate_name;
 use crate::output;
 use crate::project_config::{
@@ -37,7 +37,7 @@ fn required_response_id<'a>(value: &'a serde_json::Value, object_name: &str) -> 
         _ => {
             output::error(
                 &format!("Unexpected API response: {object_name} is missing required 'id'."),
-                "INVALID_RESPONSE",
+                &ErrorCode::InvalidResponse,
                 Some("This may indicate a CLI/API mismatch. Check for updates with `floo update`."),
             );
             process::exit(1);
@@ -56,7 +56,7 @@ pub fn deploy(
     if config.api_key.is_none() {
         output::error(
             "Not logged in.",
-            "NOT_AUTHENTICATED",
+            &ErrorCode::NotAuthenticated,
             Some("Run 'floo login' to authenticate."),
         );
         process::exit(1);
@@ -71,7 +71,7 @@ pub fn deploy(
                 let cwd = std::env::current_dir().unwrap_or_else(|e| {
                     output::error(
                         &format!("Failed to read current directory: {e}"),
-                        "FILE_ERROR",
+                        &ErrorCode::FileError,
                         None,
                     );
                     process::exit(1);
@@ -92,11 +92,11 @@ pub fn deploy(
                 if e.code == "APP_NOT_FOUND" {
                     output::error(
                         &format!("App '{app_ident}' not found."),
-                        "APP_NOT_FOUND",
+                        &ErrorCode::AppNotFound,
                         Some("Check the app name or ID and try again."),
                     );
                 } else {
-                    output::error(&e.message, &e.code, None);
+                    output::error(&e.message, &ErrorCode::from_api(&e.code), None);
                 }
                 process::exit(1);
             }
@@ -117,7 +117,7 @@ pub fn deploy(
             }
             Err(e) => {
                 spinner.finish();
-                output::error(&e.message, &e.code, None);
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
                 process::exit(1);
             }
         };
@@ -127,7 +127,7 @@ pub fn deploy(
             None => {
                 output::error(
                     "API response missing 'status' field.",
-                    "INVALID_RESPONSE",
+                    &ErrorCode::InvalidResponse,
                     Some("This may indicate a CLI/API version mismatch. Try `floo update`."),
                 );
                 process::exit(1);
@@ -141,7 +141,7 @@ pub fn deploy(
         if final_status == "failed" {
             output::error_with_data(
                 "Restart failed.",
-                "RESTART_FAILED",
+                &ErrorCode::RestartFailed,
                 Some("Run `floo logs` for details."),
                 Some(serde_json::json!({
                     "app": app_data,
@@ -166,7 +166,7 @@ pub fn deploy(
         Err(_) => {
             output::error(
                 &format!("Path '{}' is not a directory.", path.display()),
-                "INVALID_PATH",
+                &ErrorCode::InvalidPath,
                 Some("Provide a valid project directory."),
             );
             process::exit(1);
@@ -176,7 +176,7 @@ pub fn deploy(
     if !project_path.is_dir() {
         output::error(
             &format!("Path '{}' is not a directory.", path.display()),
-            "INVALID_PATH",
+            &ErrorCode::InvalidPath,
             Some("Provide a valid project directory."),
         );
         process::exit(1);
@@ -185,11 +185,11 @@ pub fn deploy(
     // Resolve app context from config files (before detection, so we know if multi-service)
     let resolved = match project_config::resolve_app_context(&project_path, app.as_deref()) {
         Ok(r) => Some(r),
-        Err(e) if e.code == "NO_CONFIG_FOUND" => {
+        Err(e) if e.code == ErrorCode::NoConfigFound => {
             if !output::is_interactive() {
                 output::error(
                     "No floo.app.toml or floo.service.toml found.",
-                    "NO_CONFIG_FOUND",
+                    &ErrorCode::NoConfigFound,
                     Some("Run `floo init` to create config files."),
                 );
                 process::exit(1);
@@ -208,7 +208,7 @@ pub fn deploy(
     if detection.runtime == "unknown" && !has_config {
         output::error(
             "No supported project files found.",
-            "NO_RUNTIME_DETECTED",
+            &ErrorCode::NoRuntimeDetected,
             Some("Add a package.json, requirements.txt, or Dockerfile to your project."),
         );
         process::exit(1);
@@ -317,7 +317,7 @@ pub fn deploy(
             if !services_filter.is_empty() {
                 output::error(
                     "--services requires config files.",
-                    "NO_CONFIG_FOUND",
+                    &ErrorCode::NoConfigFound,
                     Some("Create floo.app.toml with service entries before using --services."),
                 );
                 process::exit(1);
@@ -370,11 +370,11 @@ pub fn deploy(
                     if error.code == "APP_NOT_FOUND" {
                         output::error(
                             &format!("App '{app_ident}' not found."),
-                            "APP_NOT_FOUND",
+                            &ErrorCode::AppNotFound,
                             Some("Check the app name or ID and try again."),
                         );
                     } else {
-                        output::error(&error.message, &error.code, None);
+                        output::error(&error.message, &ErrorCode::from_api(&error.code), None);
                     }
                     process::exit(1);
                 }
@@ -400,7 +400,7 @@ pub fn deploy(
                         Err(e) => {
                             spinner.finish();
                             cleanup(&archive_path);
-                            output::error(&e.message, &e.code, None);
+                            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
                             process::exit(1);
                         }
                     }
@@ -408,7 +408,7 @@ pub fn deploy(
                 Err(error) => {
                     spinner.finish();
                     cleanup(&archive_path);
-                    output::error(&error.message, &error.code, None);
+                    output::error(&error.message, &ErrorCode::from_api(&error.code), None);
                     process::exit(1);
                 }
             }
@@ -424,7 +424,7 @@ pub fn deploy(
             Err(e) => {
                 spinner.finish();
                 cleanup(&archive_path);
-                output::error(&e.message, &e.code, None);
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
                 process::exit(1);
             }
         }
@@ -462,7 +462,7 @@ pub fn deploy(
         Err(e) => {
             spinner.finish();
             cleanup(&archive_path);
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
@@ -513,7 +513,7 @@ pub fn deploy(
             .unwrap_or("");
         output::error_with_data(
             "Deploy failed.",
-            "DEPLOY_FAILED",
+            &ErrorCode::DeployFailed,
             Some("Check build output above, or run `floo logs` for details."),
             Some(serde_json::json!({
                 "app": app_data,
@@ -568,7 +568,7 @@ fn prompt_first_deploy(detection: &crate::detection::DetectionResult) -> FirstDe
     let port: u16 = port_str.parse().unwrap_or_else(|_| {
         output::error(
             &format!("Invalid port number: '{port_str}'."),
-            "INVALID_FORMAT",
+            &ErrorCode::InvalidFormat,
             Some("Port must be a number between 1 and 65535."),
         );
         process::exit(1);
@@ -826,7 +826,7 @@ pub(crate) fn poll_deploy(
         if poll_start.elapsed() >= POLL_TIMEOUT {
             output::error(
                 "Deploy timed out after 10 minutes",
-                "DEPLOY_TIMEOUT",
+                &ErrorCode::DeployTimeout,
                 Some(&format!(
                     "The deploy may still complete — check status with \
                      `floo apps status {app_id}` (deploy ID: {deploy_id})"
@@ -838,7 +838,7 @@ pub(crate) fn poll_deploy(
         deploy_data = match client.get_deploy(app_id, &deploy_id) {
             Ok(d) => d,
             Err(e) => {
-                output::error(&e.message, &e.code, None);
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
                 process::exit(1);
             }
         };

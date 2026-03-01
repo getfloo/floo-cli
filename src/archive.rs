@@ -5,7 +5,7 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 
 use crate::constants::MAX_ARCHIVE_SIZE_MB;
-use crate::errors::FlooError;
+use crate::errors::{ErrorCode, FlooError};
 
 const DEFAULT_IGNORE_PATTERNS: &[&str] = &[
     ".git",
@@ -29,7 +29,7 @@ fn load_flooignore(path: &Path) -> Result<Vec<String>, FlooError> {
     }
     let content = fs::read_to_string(&ignore_file).map_err(|e| {
         FlooError::with_suggestion(
-            "FLOOIGNORE_READ_FAILED",
+            ErrorCode::FlooignoreReadFailed,
             format!("Failed to read {}: {e}", ignore_file.display()),
             "Fix .flooignore permissions or symlink target and try again.",
         )
@@ -96,25 +96,36 @@ pub fn create_archive(path: &Path) -> Result<PathBuf, FlooError> {
         std::process::id(),
         rand::random::<u32>()
     ));
-    let file = File::create(&tmp)
-        .map_err(|e| FlooError::new("ARCHIVE_ERROR", format!("Failed to create archive: {e}")))?;
+    let file = File::create(&tmp).map_err(|e| {
+        FlooError::new(
+            ErrorCode::ArchiveError,
+            format!("Failed to create archive: {e}"),
+        )
+    })?;
     let enc = GzEncoder::new(file, Compression::default());
     let mut tar = tar::Builder::new(enc);
 
     add_dir_to_tar(&mut tar, path, path, &patterns)?;
 
-    let enc = tar
-        .into_inner()
-        .map_err(|e| FlooError::new("ARCHIVE_ERROR", format!("Failed to finalize archive: {e}")))?;
-    enc.finish()
-        .map_err(|e| FlooError::new("ARCHIVE_ERROR", format!("Failed to compress archive: {e}")))?;
+    let enc = tar.into_inner().map_err(|e| {
+        FlooError::new(
+            ErrorCode::ArchiveError,
+            format!("Failed to finalize archive: {e}"),
+        )
+    })?;
+    enc.finish().map_err(|e| {
+        FlooError::new(
+            ErrorCode::ArchiveError,
+            format!("Failed to compress archive: {e}"),
+        )
+    })?;
 
     let size_mb = fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0) as f64 / (1024.0 * 1024.0);
 
     if size_mb > MAX_ARCHIVE_SIZE_MB as f64 {
         let _ = fs::remove_file(&tmp);
         return Err(FlooError::with_suggestion(
-            "ARCHIVE_TOO_LARGE",
+            ErrorCode::ArchiveTooLarge,
             format!("Archive is {size_mb:.0}MB, exceeding the {MAX_ARCHIVE_SIZE_MB}MB limit."),
             "Add large files to .flooignore to reduce archive size.",
         ));
@@ -129,12 +140,20 @@ fn add_dir_to_tar<W: std::io::Write>(
     current: &Path,
     patterns: &[String],
 ) -> Result<(), FlooError> {
-    let entries = fs::read_dir(current)
-        .map_err(|e| FlooError::new("ARCHIVE_ERROR", format!("Failed to read directory: {e}")))?;
+    let entries = fs::read_dir(current).map_err(|e| {
+        FlooError::new(
+            ErrorCode::ArchiveError,
+            format!("Failed to read directory: {e}"),
+        )
+    })?;
 
     for entry in entries {
-        let entry = entry
-            .map_err(|e| FlooError::new("ARCHIVE_ERROR", format!("Failed to read entry: {e}")))?;
+        let entry = entry.map_err(|e| {
+            FlooError::new(
+                ErrorCode::ArchiveError,
+                format!("Failed to read entry: {e}"),
+            )
+        })?;
         let full_path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
         let rel_path = full_path
@@ -153,7 +172,7 @@ fn add_dir_to_tar<W: std::io::Write>(
             tar.append_path_with_name(&full_path, &rel_path)
                 .map_err(|e| {
                     FlooError::new(
-                        "ARCHIVE_ERROR",
+                        ErrorCode::ArchiveError,
                         format!("Failed to add file {rel_path}: {e}"),
                     )
                 })?;
@@ -281,7 +300,7 @@ mod tests {
 
         fs::set_permissions(&ignore_path, fs::Permissions::from_mode(original_mode)).unwrap();
         let error = result.unwrap_err();
-        assert_eq!(error.code, "FLOOIGNORE_READ_FAILED");
+        assert_eq!(error.code, ErrorCode::FlooignoreReadFailed);
         assert!(error.message.contains(".flooignore"));
     }
 

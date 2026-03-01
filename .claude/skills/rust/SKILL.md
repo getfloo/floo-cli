@@ -138,7 +138,8 @@ Returned when the API returns an error response. The `FlooClient` converts API e
 - `unwrap()` is only acceptable in tests and `#[allow(dead_code)]` development stubs
 - Library functions (archive, detection, resolve) return `Result<T, FlooError>`
 - Command functions return `()` and use `output::error()` + `process::exit(1)` on failure
-- Use `FlooError::new("CODE", "message")` or `FlooError::with_suggestion("CODE", "message", "try this")` for user-facing errors in library functions
+- Use `FlooError::new(ErrorCode::Variant, "message")` or `FlooError::with_suggestion(ErrorCode::Variant, "message", "try this")` for user-facing errors in library functions
+- `output::error()` takes `&ErrorCode` (not `&str`) — use `&ErrorCode::Variant` for literals, or `&ErrorCode::from_api(&e.code)` when forwarding a `FlooApiError`
 
 ---
 
@@ -262,7 +263,7 @@ Commands use `process::exit(1)` on errors — they don't return `Result`. The pa
 match client.list_apps(1, 20) {
     Ok(data) => output::success("Apps retrieved.", &data),
     Err(e) => {
-        output::error(&e.message, &e.code, None);
+        output::error(&e.message, &ErrorCode::from_api(&e.code), None);
         process::exit(1);
     }
 }
@@ -407,52 +408,93 @@ The `AtomicBool` persists across test functions. Always call `output::set_json_m
 
 ## Error Code Reference
 
-All error codes used in the CLI. New error codes must be `UPPER_SNAKE_CASE` and added to this list.
+All error codes used in the CLI. Codes in the `ErrorCode` enum are compile-time typed — use `ErrorCode::Variant` (not string literals). API-sourced codes (from `FlooApiError`) are runtime strings forwarded via `ErrorCode::from_api(&e.code)`.
+
+New error codes must be `UPPER_SNAKE_CASE`, added to the `ErrorCode` enum in `src/errors.rs` (with `as_str()` and `from_api()` arms), and added to this table.
+
+| Code | `ErrorCode` variant | Source | Meaning |
+|------|---------------------|--------|---------|
+| `APP_NAME_MISMATCH` | `AppNameMismatch` | project_config | App name in config doesn't match the deployed app |
+| `APP_NOT_FOUND` | `AppNotFound` | commands | App lookup by name/UUID returned nothing |
+| `ARCHIVE_ERROR` | `ArchiveError` | archive.rs | Failed to create/read archive |
+| `ARCHIVE_TOO_LARGE` | `ArchiveTooLarge` | archive.rs | Source archive exceeds `MAX_ARCHIVE_SIZE_MB` |
+| `CHECKSUM_MISMATCH` | `ChecksumMismatch` | updater/install | Downloaded binary hash does not match published checksum |
+| `CHECKSUM_MISSING` | `ChecksumMissing` | updater/install | Expected checksum asset/file not present |
+| `CHECKSUM_PARSE_ERROR` | `ChecksumParseError` | updater | Checksum file exists but did not contain a valid hash |
+| `CONFIG_ERROR` | `ConfigError` | config.rs | Failed to read/write config file |
+| `CONFIG_EXISTS` | `ConfigExists` | commands/init | Config file already exists at target path |
+| `CONFIG_INVALID` | `ConfigInvalid` | commands/check | Config file is present but cannot be parsed |
+| `CONFIG_WRITE_ERROR` | `ConfigWriteError` | project_config/ | Failed to serialize or write config file |
+| `CWD_ERROR` | `CwdError` | commands | Failed to determine the current working directory |
+| `DATABASE_NOT_FOUND` | `DatabaseNotFound` | commands | Named database service not found in config or API |
+| `DEPLOY_FAILED` | `DeployFailed` | commands/deploy | Deploy completed but status is FAILED |
+| `DEPLOY_TIMEOUT` | `DeployTimeout` | commands/deploy | Deploy polling exceeded 10-minute timeout |
+| `DEVICE_AUTH_DENIED` | `DeviceAuthDenied` | API (403) | Device code flow — user denied authorization |
+| `DEVICE_CODE_EXPIRED` | `DeviceCodeExpired` | API (410) | Device code flow — device code timed out |
+| `DOWNLOAD_FAILED` | `DownloadFailed` | updater/install | Binary or checksum download failed |
+| `DUPLICATE_SERVICE` | `DuplicateService` | commands/service_mgmt | Service name already exists in config |
+| `DUPLICATE_SERVICE_NAMES` | `DuplicateServiceNames` | project_config | Two services share the same name in floo.app.toml |
+| `EMAIL_TAKEN` | `EmailTaken` | API (409) | Registration — email already in use |
+| `ENV_FILE_NOT_FOUND` | `EnvFileNotFound` | commands/env | Specified .env file path does not exist |
+| `ENV_PARSE_ERROR` | `EnvParseError` | commands/env | Failed to parse .env file contents |
+| `FILE_ERROR` | `FileError` | commands | Failed to read a file for processing or upload |
+| `FLOOIGNORE_READ_FAILED` | `FlooignoreReadFailed` | archive.rs | Failed to read `.flooignore` file |
+| `INTERNAL_ERROR` | `InternalError` | commands | Unexpected internal state (should not normally occur) |
+| `INVALID_AMOUNT` | `InvalidAmount` | commands/billing | Spend cap amount is out of valid range |
+| `INVALID_FORMAT` | `InvalidFormat` | commands | Invalid hostname, app name, or other input format |
+| `INVALID_INGRESS` | `InvalidIngress` | commands/service_mgmt | Ingress value is not `public` or `private` |
+| `INVALID_PATH` | `InvalidPath` | commands/deploy | Deploy path doesn't exist or isn't a directory |
+| `INVALID_PROJECT_CONFIG` | `InvalidProjectConfig` | project_config/ | Malformed or invalid `floo.service.toml` or `floo.app.toml` |
+| `INVALID_RESPONSE` | `InvalidResponse` | commands | API response shape was unexpected |
+| `INVALID_ROLE` | `InvalidRole` | commands/orgs | Role string is not one of the allowed org member roles |
+| `INVALID_SERVICE_NAME` | `InvalidServiceName` | commands/service_mgmt | Service name contains invalid characters or is reserved |
+| `INVALID_TYPE` | `InvalidType` | commands/service_mgmt | Service type is not a recognized value |
+| `LEGACY_CONFIG` | `LegacyConfig` | project_config/resolve.rs | Found old `floo.toml`, must migrate to new config files |
+| `MISSING_APP_NAME` | `MissingAppName` | project_config | App name is required but not set in config or flag |
+| `MISSING_PORT` | `MissingPort` | commands/service_mgmt | Worker service definition missing required port |
+| `MISSING_TYPE` | `MissingType` | commands/service_mgmt | Service definition missing required type field |
+| `MULTIPLE_SERVICES` | `MultipleServices` | project_config | Multiple services exist but no target was specified |
+| `MULTIPLE_SERVICES_NO_TARGET` | `MultipleServicesNoTarget` | commands | Multiple services and no `--service` flag provided |
+| `NO_CONFIG_FOUND` | `NoConfigFound` | project_config/resolve.rs | No config files found and no `--app` flag |
+| `NO_DEPLOYABLE_SERVICES` | `NoDeployableServices` | commands/deploy | App config has no services eligible for deploy |
+| `NO_ENV_FILES` | `NoEnvFiles` | commands/env | No .env files found to import |
+| `NO_PUBLIC_SERVICES` | `NoPublicServices` | commands | App has no public-facing services (needed for domains) |
+| `NO_RUNTIME_DETECTED` | `NoRuntimeDetected` | commands/deploy | Detection couldn't identify a runtime |
+| `NOT_AUTHENTICATED` | `NotAuthenticated` | commands | No API key configured (login required) |
+| `PARSE_ERROR` | `ParseError` | commands/api_client | Failed to parse API response or config JSON |
+| `RELEASE_ASSET_MISSING` | `ReleaseAssetMissing` | updater | Expected binary asset not present in release |
+| `RELEASE_LOOKUP_FAILED` | `ReleaseLookupFailed` | updater | Release metadata lookup failed or returned non-200 |
+| `RELEASE_NOT_FOUND` | `ReleaseNotFound` | commands/releases | Specified release ID or tag not found |
+| `RELEASE_PARSE_ERROR` | `ReleaseParseError` | updater | Failed to parse release metadata JSON |
+| `RESTART_FAILED` | `RestartFailed` | commands/service_mgmt | Service restart operation failed |
+| `SERVICE_CONFIG_MISSING` | `ServiceConfigMissing` | project_config | Expected service config block is absent |
+| `SERVICE_NOT_FOUND` | `ServiceNotFound` | commands | Named service not found in config or API |
+| `SIGNUP_DISABLED` | `SignupDisabled` | API | New registrations are disabled |
+| `STREAM_ERROR` | `StreamError` | commands/logs | Error reading from a streaming log response |
+| `UNKNOWN_SERVICE` | `UnknownService` | commands | `--service` flag references a service not in config |
+| `UNSUPPORTED_PLATFORM` | `UnsupportedPlatform` | updater/install | Host OS/arch is not supported for auto-install/update |
+| `UPDATE_HTTP_CLIENT_ERROR` | `UpdateHttpClientError` | updater | Failed to initialize HTTP client for update checks |
+| `UPDATE_INSTALL_FAILED` | `UpdateInstallFailed` | updater | Generic failure writing or replacing updated binary |
+| `UPDATE_INSTALL_PATH_UNRESOLVED` | `UpdateInstallPathUnresolved` | updater | Could not resolve currently installed CLI path |
+| `UPDATE_PERMISSION_DENIED` | `UpdatePermissionDenied` | updater | No permission to replace installed binary |
+
+### API-only codes (runtime strings via `ErrorCode::Other`)
+
+These codes come from `FlooApiError.code` at runtime and are not enum variants. They are forwarded with `ErrorCode::from_api(&e.code)`.
 
 | Code | Source | Meaning |
 |------|--------|---------|
-| `NOT_AUTHENTICATED` | commands | No API key configured (login required) |
-| `INVALID_PATH` | commands/deploy | Deploy path doesn't exist or isn't a directory |
-| `NO_RUNTIME_DETECTED` | commands/deploy | Detection couldn't identify a runtime |
-| `ARCHIVE_TOO_LARGE` | archive.rs | Source archive exceeds `MAX_ARCHIVE_SIZE_MB` |
-| `ARCHIVE_ERROR` | archive.rs | Failed to create/read archive |
-| `INVALID_FORMAT` | commands | Invalid hostname, app name, or other input format |
-| `APP_NOT_FOUND` | commands | App lookup by name/UUID returned nothing |
-| `DEPLOY_NOT_FOUND` | API (404) | Deploy ID not found for app |
-| `INVALID_ROLLBACK_TARGET` | API (400) | Rollback target deploy is not LIVE |
-| `ROLLBACK_IMAGE_MISSING` | API (400) | Rollback target missing stored image URI |
-| `DEPLOY_TIMEOUT` | commands/deploy | Deploy polling exceeded 10-minute timeout |
-| `DEPLOY_FAILED` | commands/deploy | Deploy completed but status is FAILED |
-| `CONFIG_ERROR` | config.rs | Failed to read/write config file |
-| `CONNECTION_ERROR` | api_client.rs | HTTP request failed (network issue) |
-| `FILE_ERROR` | api_client.rs | Failed to read file for upload |
-| `PARSE_ERROR` | api_client.rs | Failed to parse API response JSON |
 | `API_ERROR` | api_client.rs | Generic API error (unrecognized error format) |
-| `LOGS_UNAVAILABLE` | API (503) | GCP project not configured (logs require Cloud Run) |
+| `CONNECTION_ERROR` | api_client.rs | HTTP request failed (network issue) |
+| `DEPLOY_NOT_FOUND` | API (404) | Deploy ID not found for app |
+| `DEVICE_AUTH_FAILED` | API (502) | Device code flow — WorkOS backend failure |
+| `DEVICE_PENDING` | api_client.rs | Device code flow — authorization still pending (HTTP 202) |
+| `INVALID_ROLLBACK_TARGET` | API (400) | Rollback target deploy is not LIVE |
+| `IO_ERROR` | commands/skills | File system operation failed (create dir, write file, resolve path) |
 | `LOGS_QUERY_ERROR` | API (400) | Logs query validation error (bad severity/since) |
 | `LOGS_SERVICE_ERROR` | API (502) | Cloud Logging backend failure |
-| `SERIALIZATION_ERROR` | api_client.rs | Failed to serialize service definitions to JSON |
-| `UNSUPPORTED_PLATFORM` | updater/install | Host OS/arch is not supported for auto-install/update |
-| `RELEASE_LOOKUP_FAILED` | updater | Release metadata lookup failed or returned non-200 |
-| `RELEASE_PARSE_ERROR` | updater | Failed to parse release metadata JSON |
-| `RELEASE_ASSET_MISSING` | updater | Expected binary asset not present in release |
-| `CHECKSUM_MISSING` | updater/install | Expected checksum asset/file not present |
-| `CHECKSUM_PARSE_ERROR` | updater | Checksum file exists but did not contain a valid hash |
-| `CHECKSUM_MISMATCH` | updater/install | Downloaded binary hash does not match published checksum |
-| `DOWNLOAD_FAILED` | updater/install | Binary or checksum download failed |
-| `UPDATE_HTTP_CLIENT_ERROR` | updater | Failed to initialize HTTP client for update checks |
-| `UPDATE_INSTALL_PATH_UNRESOLVED` | updater | Could not resolve currently installed CLI path |
-| `UPDATE_PERMISSION_DENIED` | updater | No permission to replace installed binary |
-| `UPDATE_INSTALL_FAILED` | updater | Generic failure writing or replacing updated binary |
-| `DEVICE_PENDING` | api_client.rs | Device code flow — authorization still pending (HTTP 202) |
-| `DEVICE_CODE_EXPIRED` | API (410) | Device code flow — device code timed out |
-| `DEVICE_AUTH_DENIED` | API (403) | Device code flow — user denied authorization |
-| `DEVICE_AUTH_FAILED` | API (502) | Device code flow — WorkOS backend failure |
-| `EMAIL_TAKEN` | API (409) | Registration — email already in use |
-| `PERMISSION_DENIED` | API (403) | User has VIEWER role; write action denied |
-| `INVALID_PROJECT_CONFIG` | project_config/ | Malformed or invalid `floo.service.toml` or `floo.app.toml` |
-| `NO_CONFIG_FOUND` | project_config/resolve.rs | No config files found and no `--app` flag |
-| `LEGACY_CONFIG` | project_config/resolve.rs | Found old `floo.toml`, must migrate to new config files |
-| `CONFIG_WRITE_ERROR` | project_config/ | Failed to serialize or write config file |
+| `LOGS_UNAVAILABLE` | API (503) | GCP project not configured (logs require Cloud Run) |
 | `MISSING_ARGUMENT` | commands/skills | Required argument not provided (e.g. --path or --print) |
-| `IO_ERROR` | commands/skills | File system operation failed (create dir, write file, resolve path) |
+| `PERMISSION_DENIED` | API (403) | User has VIEWER role; write action denied |
+| `ROLLBACK_IMAGE_MISSING` | API (400) | Rollback target missing stored image URI |
+| `SERIALIZATION_ERROR` | api_client.rs | Failed to serialize service definitions to JSON |

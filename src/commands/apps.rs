@@ -3,6 +3,7 @@ use std::process;
 
 use crate::archive::create_archive;
 use crate::detection::detect;
+use crate::errors::ErrorCode;
 use crate::output;
 use crate::project_config::{self, AppAccessMode};
 use crate::resolve::resolve_app;
@@ -13,7 +14,7 @@ pub fn list(page: u32, per_page: u32) {
     let result = match client.list_apps(page, per_page) {
         Ok(r) => r,
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
@@ -103,11 +104,11 @@ pub fn status(app_name: &str) {
             if e.code == "APP_NOT_FOUND" {
                 output::error(
                     &format!("App '{app_name}' not found."),
-                    "APP_NOT_FOUND",
+                    &ErrorCode::AppNotFound,
                     Some("Check the app name or ID and try again."),
                 );
             } else {
-                output::error(&e.message, &e.code, None);
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             }
             process::exit(1);
         }
@@ -157,11 +158,11 @@ pub fn delete(app_name: &str, force: bool) {
             if e.code == "APP_NOT_FOUND" {
                 output::error(
                     &format!("App '{app_name}' not found."),
-                    "APP_NOT_FOUND",
+                    &ErrorCode::AppNotFound,
                     Some("Check the app name or ID and try again."),
                 );
             } else {
-                output::error(&e.message, &e.code, None);
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             }
             process::exit(1);
         }
@@ -182,7 +183,7 @@ pub fn delete(app_name: &str, force: bool) {
     let app_id = app_data.get("id").and_then(|v| v.as_str()).unwrap_or("");
 
     if let Err(e) = client.delete_app(app_id) {
-        output::error(&e.message, &e.code, None);
+        output::error(&e.message, &ErrorCode::from_api(&e.code), None);
         process::exit(1);
     }
 
@@ -208,11 +209,11 @@ pub fn connect(
             if e.code == "APP_NOT_FOUND" {
                 output::error(
                     &format!("App '{app_name}' not found."),
-                    "APP_NOT_FOUND",
+                    &ErrorCode::AppNotFound,
                     Some("Check the app name or ID and try again."),
                 );
             } else {
-                output::error(&e.message, &e.code, None);
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             }
             process::exit(1);
         }
@@ -229,15 +230,12 @@ pub fn connect(
     let cwd = std::env::current_dir().unwrap_or_else(|e| {
         output::error(
             &format!("Failed to read current directory: {e}"),
-            "FILE_ERROR",
+            &ErrorCode::FileError,
             None,
         );
         process::exit(1);
     });
-    let resolved = match project_config::resolve_app_context(&cwd, Some(app_name)) {
-        Ok(r) => Some(r),
-        Err(_) => None,
-    };
+    let resolved = project_config::resolve_app_context(&cwd, Some(app_name)).ok();
 
     // Step 1: Import env vars from local env_file before connecting
     if let Some(ref r) = resolved {
@@ -258,7 +256,7 @@ pub fn connect(
                 }
                 _ => None,
             };
-            output::error(&e.message, &e.code, suggestion);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), suggestion);
             process::exit(1);
         }
     };
@@ -355,7 +353,7 @@ fn trigger_initial_deploy(
         Err(e) => {
             spinner.finish();
             super::deploy::cleanup(&archive_path);
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
@@ -373,7 +371,7 @@ fn trigger_initial_deploy(
             None => {
                 output::error(
                     "Unexpected API response: deploy is missing required 'id'.",
-                    "INVALID_RESPONSE",
+                    &ErrorCode::InvalidResponse,
                     Some("This may indicate a CLI/API mismatch. Check for updates with `floo update`."),
                 );
                 process::exit(1);
@@ -401,7 +399,7 @@ fn trigger_initial_deploy(
     if final_status == "failed" {
         output::error_with_data(
             "Deploy failed.",
-            "DEPLOY_FAILED",
+            &ErrorCode::DeployFailed,
             Some("Check build output above, or run `floo logs` for details."),
             Some(deploy_data),
         );
@@ -413,10 +411,7 @@ fn trigger_initial_deploy(
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
-    output::success(
-        &format!("Deployed to {url}"),
-        Some(deploy_data),
-    );
+    output::success(&format!("Deployed to {url}"), Some(deploy_data));
 }
 
 pub fn disconnect(app_name: &str) {
@@ -428,11 +423,11 @@ pub fn disconnect(app_name: &str) {
             if e.code == "APP_NOT_FOUND" {
                 output::error(
                     &format!("App '{app_name}' not found."),
-                    "APP_NOT_FOUND",
+                    &ErrorCode::AppNotFound,
                     Some("Check the app name or ID and try again."),
                 );
             } else {
-                output::error(&e.message, &e.code, None);
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             }
             process::exit(1);
         }
@@ -445,7 +440,7 @@ pub fn disconnect(app_name: &str) {
         .unwrap_or(app_name);
 
     if let Err(e) = client.github_disconnect(app_id) {
-        output::error(&e.message, &e.code, None);
+        output::error(&e.message, &ErrorCode::from_api(&e.code), None);
         process::exit(1);
     }
 

@@ -2,6 +2,7 @@ use std::process;
 
 use serde_json::Value;
 
+use crate::errors::ErrorCode;
 use crate::output;
 use crate::resolve::resolve_app;
 
@@ -19,7 +20,7 @@ fn expect_i64(value: &Value, path: &str) -> i64 {
     value.as_i64().unwrap_or_else(|| {
         output::error(
             &format!("Analytics response missing or invalid field: '{path}'."),
-            "PARSE_ERROR",
+            &ErrorCode::ParseError,
             Some("The API response format may have changed. Try 'floo update'."),
         );
         process::exit(1);
@@ -30,7 +31,7 @@ fn expect_f64(value: &Value, path: &str) -> f64 {
     value.as_f64().unwrap_or_else(|| {
         output::error(
             &format!("Analytics response missing or invalid field: '{path}'."),
-            "PARSE_ERROR",
+            &ErrorCode::ParseError,
             Some("The API response format may have changed. Try 'floo update'."),
         );
         process::exit(1);
@@ -41,7 +42,7 @@ fn expect_str<'a>(value: &'a Value, path: &str) -> &'a str {
     value.as_str().unwrap_or_else(|| {
         output::error(
             &format!("Analytics response missing or invalid field: '{path}'."),
-            "PARSE_ERROR",
+            &ErrorCode::ParseError,
             Some("The API response format may have changed. Try 'floo update'."),
         );
         process::exit(1);
@@ -52,7 +53,7 @@ fn expect_object<'a>(data: &'a Value, key: &str) -> &'a Value {
     let val = data.get(key).unwrap_or_else(|| {
         output::error(
             &format!("Analytics response missing '{key}' object."),
-            "PARSE_ERROR",
+            &ErrorCode::ParseError,
             Some("The API response format may have changed. Try 'floo update'."),
         );
         process::exit(1);
@@ -60,7 +61,7 @@ fn expect_object<'a>(data: &'a Value, key: &str) -> &'a Value {
     if !val.is_object() {
         output::error(
             &format!("Analytics response '{key}' is not an object."),
-            "PARSE_ERROR",
+            &ErrorCode::ParseError,
             Some("The API response format may have changed. Try 'floo update'."),
         );
         process::exit(1);
@@ -75,11 +76,11 @@ fn app_analytics(client: &crate::api_client::FlooClient, app_name: &str, period:
             if e.code == "APP_NOT_FOUND" {
                 output::error(
                     &format!("App '{app_name}' not found."),
-                    "APP_NOT_FOUND",
+                    &ErrorCode::AppNotFound,
                     Some("Check the app name or ID and try again."),
                 );
             } else {
-                output::error(&e.message, &e.code, None);
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             }
             process::exit(1);
         }
@@ -91,7 +92,7 @@ fn app_analytics(client: &crate::api_client::FlooClient, app_name: &str, period:
     let data = match client.get_app_analytics(app_id, period) {
         Ok(d) => d,
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
@@ -108,7 +109,7 @@ fn org_analytics(client: &crate::api_client::FlooClient, period: &str) {
     let data = match client.get_org_analytics(period) {
         Ok(d) => d,
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };

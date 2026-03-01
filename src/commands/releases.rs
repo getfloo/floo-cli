@@ -1,6 +1,7 @@
 use std::env;
 use std::process;
 
+use crate::errors::ErrorCode;
 use crate::output;
 use crate::project_config::resolve_app_context;
 use crate::resolve::resolve_app;
@@ -12,7 +13,7 @@ pub fn promote(app: Option<&str>, tag: Option<&str>) {
     let cwd = env::current_dir().unwrap_or_else(|e| {
         output::error(
             &format!("Failed to read current directory: {e}"),
-            "CWD_ERROR",
+            &ErrorCode::CwdError,
             Some("Ensure the current directory exists and you have read permission."),
         );
         process::exit(1);
@@ -31,11 +32,11 @@ pub fn promote(app: Option<&str>, tag: Option<&str>) {
             if e.code == "APP_NOT_FOUND" {
                 output::error(
                     &format!("App '{}' not found.", resolved.app_name),
-                    "APP_NOT_FOUND",
+                    &ErrorCode::AppNotFound,
                     Some("Check the app name or ID and try again."),
                 );
             } else {
-                output::error(&e.message, &e.code, None);
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             }
             process::exit(1);
         }
@@ -60,7 +61,7 @@ pub fn promote(app: Option<&str>, tag: Option<&str>) {
                 "RELEASE_TAG_EXISTS" => Some("Use a different tag with --tag <tag>"),
                 _ => None,
             };
-            output::error(&e.message, &e.code, suggestion);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), suggestion);
             process::exit(1);
         }
     };
@@ -96,7 +97,7 @@ pub fn list(app: Option<&str>) {
     let cwd = env::current_dir().unwrap_or_else(|e| {
         output::error(
             &format!("Failed to read current directory: {e}"),
-            "CWD_ERROR",
+            &ErrorCode::CwdError,
             Some("Ensure the current directory exists and you have read permission."),
         );
         process::exit(1);
@@ -115,11 +116,11 @@ pub fn list(app: Option<&str>) {
             if e.code == "APP_NOT_FOUND" {
                 output::error(
                     &format!("App '{}' not found.", resolved.app_name),
-                    "APP_NOT_FOUND",
+                    &ErrorCode::AppNotFound,
                     Some("Check the app name or ID and try again."),
                 );
             } else {
-                output::error(&e.message, &e.code, None);
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             }
             process::exit(1);
         }
@@ -130,7 +131,7 @@ pub fn list(app: Option<&str>) {
     let result = match client.list_releases(app_id, 1, 20) {
         Ok(r) => r,
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
@@ -141,7 +142,7 @@ pub fn list(app: Option<&str>) {
         .unwrap_or_else(|| {
             output::error(
                 "Failed to parse releases from API response.",
-                "PARSE_ERROR",
+                &ErrorCode::ParseError,
                 Some("This is a bug. Please report it."),
             );
             process::exit(1);
@@ -202,7 +203,7 @@ pub fn show(release_id: &str, app: Option<&str>) {
     let cwd = env::current_dir().unwrap_or_else(|e| {
         output::error(
             &format!("Failed to read current directory: {e}"),
-            "CWD_ERROR",
+            &ErrorCode::CwdError,
             Some("Ensure the current directory exists and you have read permission."),
         );
         process::exit(1);
@@ -221,11 +222,11 @@ pub fn show(release_id: &str, app: Option<&str>) {
             if e.code == "APP_NOT_FOUND" {
                 output::error(
                     &format!("App '{}' not found.", resolved.app_name),
-                    "APP_NOT_FOUND",
+                    &ErrorCode::AppNotFound,
                     Some("Check the app name or ID and try again."),
                 );
             } else {
-                output::error(&e.message, &e.code, None);
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             }
             process::exit(1);
         }
@@ -239,11 +240,11 @@ pub fn show(release_id: &str, app: Option<&str>) {
             if e.code == "RELEASE_NOT_FOUND" {
                 output::error(
                     &format!("Release '{release_id}' not found."),
-                    "RELEASE_NOT_FOUND",
+                    &ErrorCode::ReleaseNotFound,
                     Some("Check the release ID and try again."),
                 );
             } else {
-                output::error(&e.message, &e.code, None);
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             }
             process::exit(1);
         }

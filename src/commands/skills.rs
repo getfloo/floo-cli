@@ -5,6 +5,7 @@ use std::process;
 
 use crate::config::{load_config, save_config};
 use crate::constants::VERSION;
+use crate::errors::ErrorCode;
 use crate::output;
 
 const SKILL_CONTENT: &str = include_str!("../../skills/floo.md");
@@ -23,7 +24,11 @@ pub fn install(path: Option<PathBuf>, print: bool) {
             std::io::stdout()
                 .write_all(SKILL_CONTENT.as_bytes())
                 .unwrap_or_else(|e| {
-                    output::error(&format!("Failed to write to stdout: {e}"), "IO_ERROR", None);
+                    output::error(
+                        &format!("Failed to write to stdout: {e}"),
+                        &ErrorCode::Other("IO_ERROR".into()),
+                        None,
+                    );
                     process::exit(1);
                 });
         }
@@ -35,7 +40,7 @@ pub fn install(path: Option<PathBuf>, print: bool) {
         None => {
             output::error(
                 "No target specified.",
-                "MISSING_ARGUMENT",
+                &ErrorCode::Other("MISSING_ARGUMENT".into()),
                 Some("Provide --path <dir> to install or --print to output to stdout."),
             );
             process::exit(1);
@@ -45,7 +50,7 @@ pub fn install(path: Option<PathBuf>, print: bool) {
     if let Err(e) = fs::create_dir_all(&dir) {
         output::error(
             &format!("Failed to create directory '{}': {e}", dir.display()),
-            "IO_ERROR",
+            &ErrorCode::Other("IO_ERROR".into()),
             None,
         );
         process::exit(1);
@@ -61,7 +66,7 @@ pub fn install(path: Option<PathBuf>, print: bool) {
         Err(e) => {
             output::error(
                 &format!("Failed to resolve path '{}': {e}", file_path.display()),
-                "IO_ERROR",
+                &ErrorCode::Other("IO_ERROR".into()),
                 None,
             );
             process::exit(1);
@@ -71,7 +76,7 @@ pub fn install(path: Option<PathBuf>, print: bool) {
     if let Err(e) = fs::write(&abs_path, SKILL_CONTENT) {
         output::error(
             &format!("Failed to write '{}': {e}", abs_path.display()),
-            "IO_ERROR",
+            &ErrorCode::Other("IO_ERROR".into()),
             None,
         );
         process::exit(1);
@@ -86,7 +91,7 @@ pub fn install(path: Option<PathBuf>, print: bool) {
                     "Path '{}' contains invalid UTF-8 and cannot be tracked.",
                     abs_path.display()
                 ),
-                "IO_ERROR",
+                &ErrorCode::Other("IO_ERROR".into()),
                 Some("Use a path containing only valid UTF-8 characters."),
             );
             process::exit(1);
@@ -97,7 +102,7 @@ pub fn install(path: Option<PathBuf>, print: bool) {
     if let Err(e) = save_config(&config) {
         output::error(
             &format!("Skill installed but failed to save config: {e}"),
-            "CONFIG_ERROR",
+            &ErrorCode::ConfigError,
             None,
         );
         process::exit(1);

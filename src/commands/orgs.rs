@@ -1,5 +1,6 @@
 use std::process;
 
+use crate::errors::ErrorCode;
 use crate::output;
 
 pub fn list_members() {
@@ -9,7 +10,7 @@ pub fn list_members() {
     let org = match client.get_org_me() {
         Ok(o) => o,
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
@@ -18,7 +19,7 @@ pub fn list_members() {
     let result = match client.list_members(org_id) {
         Ok(r) => r,
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
@@ -29,7 +30,7 @@ pub fn list_members() {
         .unwrap_or_else(|| {
             output::error(
                 "Failed to parse members from API response.",
-                "PARSE_ERROR",
+                &ErrorCode::ParseError,
                 Some("This is a bug. Please report it."),
             );
             process::exit(1);
@@ -71,7 +72,7 @@ pub fn set_role(user_id: &str, role: &str) {
     if !valid_roles.contains(&role) {
         output::error(
             &format!("Invalid role '{role}'. Must be one of: admin, member, viewer."),
-            "INVALID_ROLE",
+            &ErrorCode::InvalidRole,
             None,
         );
         process::exit(1);
@@ -80,7 +81,7 @@ pub fn set_role(user_id: &str, role: &str) {
     let org = match client.get_org_me() {
         Ok(o) => o,
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
@@ -99,7 +100,7 @@ pub fn set_role(user_id: &str, role: &str) {
             );
         }
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     }

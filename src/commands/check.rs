@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::process;
 
+use crate::errors::ErrorCode;
 use crate::output;
 use crate::project_config::{self, validate_service_name};
 
@@ -10,7 +11,7 @@ pub fn check(path: PathBuf) {
         Err(_) => {
             output::error(
                 &format!("Path '{}' does not exist.", path.display()),
-                "INVALID_PATH",
+                &ErrorCode::InvalidPath,
                 Some("Provide a valid project directory."),
             );
             process::exit(1);
@@ -27,7 +28,7 @@ pub fn check(path: PathBuf) {
         Ok(None) => {
             output::error(
                 &format!("{} not found.", project_config::APP_CONFIG_FILE),
-                "CONFIG_INVALID",
+                &ErrorCode::ConfigInvalid,
                 Some("Run `floo init` to create config files."),
             );
             process::exit(1);
@@ -179,7 +180,7 @@ pub fn check(path: PathBuf) {
             }
             output::error(
                 &format!("{} error(s) found.", errors.len()),
-                "CONFIG_INVALID",
+                &ErrorCode::ConfigInvalid,
                 Some("Fix the errors above and run `floo check` again."),
             );
         } else {

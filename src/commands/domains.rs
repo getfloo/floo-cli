@@ -2,6 +2,7 @@ use std::env;
 use std::process;
 
 use crate::api_client::FlooClient;
+use crate::errors::ErrorCode;
 use crate::output;
 use crate::project_config::resolve_app_context;
 use crate::resolve::resolve_app;
@@ -10,7 +11,7 @@ fn resolve(client: &FlooClient, app: Option<&str>) -> (String, String) {
     let cwd = env::current_dir().unwrap_or_else(|e| {
         output::error(
             &format!("Failed to read current directory: {e}"),
-            "CWD_ERROR",
+            &ErrorCode::CwdError,
             Some("Ensure the current directory exists and you have read permission."),
         );
         process::exit(1);
@@ -29,11 +30,11 @@ fn resolve(client: &FlooClient, app: Option<&str>) -> (String, String) {
             if e.code == "APP_NOT_FOUND" {
                 output::error(
                     &format!("App '{}' not found.", resolved.app_name),
-                    "APP_NOT_FOUND",
+                    &ErrorCode::AppNotFound,
                     Some("Check the app name or ID and try again."),
                 );
             } else {
-                output::error(&e.message, &e.code, None);
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             }
             process::exit(1);
         }
@@ -53,7 +54,7 @@ fn check_services_flag(client: &FlooClient, app_id: &str, services: Option<&str>
     let result = match client.list_services(app_id) {
         Ok(r) => r,
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
@@ -64,7 +65,7 @@ fn check_services_flag(client: &FlooClient, app_id: &str, services: Option<&str>
         .unwrap_or_else(|| {
             output::error(
                 "Failed to parse services from API response.",
-                "PARSE_ERROR",
+                &ErrorCode::ParseError,
                 Some("This is a bug. Please report it."),
             );
             process::exit(1);
@@ -74,7 +75,7 @@ fn check_services_flag(client: &FlooClient, app_id: &str, services: Option<&str>
     if service_list.len() > 1 && services.is_none() {
         output::error(
             "Multiple services found. Specify --services.",
-            "MULTIPLE_SERVICES_NO_TARGET",
+            &ErrorCode::MultipleServicesNoTarget,
             Some("Use --services <name> to target a specific service."),
         );
         process::exit(1);
@@ -87,7 +88,7 @@ fn check_services_flag(client: &FlooClient, app_id: &str, services: Option<&str>
         if !exists {
             output::error(
                 &format!("Service '{svc_name}' not found."),
-                "SERVICE_NOT_FOUND",
+                &ErrorCode::ServiceNotFound,
                 Some("Run 'floo services list' to see available services."),
             );
             process::exit(1);
@@ -105,7 +106,7 @@ pub fn add(hostname: &str, app: Option<&str>, services: Option<&str>) {
     let result = match client.add_domain(&app_id, hostname) {
         Ok(r) => r,
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
@@ -135,7 +136,7 @@ pub fn list(app: Option<&str>, services: Option<&str>) {
     let result = match client.list_domains(&app_id) {
         Ok(r) => r,
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
@@ -146,7 +147,7 @@ pub fn list(app: Option<&str>, services: Option<&str>) {
         .unwrap_or_else(|| {
             output::error(
                 "Failed to parse domains from API response.",
-                "PARSE_ERROR",
+                &ErrorCode::ParseError,
                 Some("This is a bug. Please report it."),
             );
             process::exit(1);
@@ -202,7 +203,7 @@ pub fn remove(hostname: &str, app: Option<&str>, services: Option<&str>) {
     check_services_flag(&client, &app_id, services);
 
     if let Err(e) = client.delete_domain(&app_id, hostname) {
-        output::error(&e.message, &e.code, None);
+        output::error(&e.message, &ErrorCode::from_api(&e.code), None);
         process::exit(1);
     }
 
