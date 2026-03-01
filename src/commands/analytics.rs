@@ -3,7 +3,6 @@ use std::process;
 use serde_json::Value;
 
 use crate::output;
-use crate::resolve::resolve_app;
 
 pub fn analytics(app: Option<String>, period: &str) {
     super::require_auth();
@@ -69,21 +68,7 @@ fn expect_object<'a>(data: &'a Value, key: &str) -> &'a Value {
 }
 
 fn app_analytics(client: &crate::api_client::FlooClient, app_name: &str, period: &str) {
-    let app_data = match resolve_app(client, app_name) {
-        Ok(a) => a,
-        Err(e) => {
-            if e.code == "APP_NOT_FOUND" {
-                output::error(
-                    &format!("App '{app_name}' not found."),
-                    "APP_NOT_FOUND",
-                    Some("Check the app name or ID and try again."),
-                );
-            } else {
-                output::error(&e.message, &e.code, None);
-            }
-            process::exit(1);
-        }
-    };
+    let app_data = super::resolve_app_or_exit(client, app_name);
 
     let app_id = super::expect_str_field(&app_data, "id");
     let name = super::expect_str_field(&app_data, "name");
