@@ -87,6 +87,10 @@ pub fn list(app: Option<&str>) {
                 super::expect_str_field(s, "name").to_string(),
                 super::expect_str_field(s, "type").to_string(),
                 super::expect_str_field(s, "status").to_string(),
+                s.get("ingress")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("-")
+                    .to_string(),
                 s.get("cloud_run_url")
                     .and_then(|v| v.as_str())
                     .unwrap_or("-")
@@ -96,7 +100,7 @@ pub fn list(app: Option<&str>) {
         .collect();
 
     output::table(
-        &["Name", "Type", "Status", "URL"],
+        &["Name", "Type", "Status", "Ingress", "URL"],
         &rows,
         Some(serde_json::json!({"services": services})),
     );
@@ -182,6 +186,7 @@ pub fn info(service_name: &str, app: Option<&str>) {
 
         let svc_type = svc.get("type").and_then(|v| v.as_str()).unwrap_or("-");
         let status = svc.get("status").and_then(|v| v.as_str()).unwrap_or("-");
+        let ingress = svc.get("ingress").and_then(|v| v.as_str()).unwrap_or("-");
         let url = svc
             .get("cloud_run_url")
             .and_then(|v| v.as_str())
@@ -193,10 +198,11 @@ pub fn info(service_name: &str, app: Option<&str>) {
             .unwrap_or_else(|| "-".to_string());
 
         output::info(&format!("Service {service_name} ({app_name}):"), None);
-        output::info(&format!("  Type:   {svc_type}"), None);
-        output::info(&format!("  Status: {status}"), None);
-        output::info(&format!("  URL:    {url}"), None);
-        output::info(&format!("  Port:   {port}"), None);
+        output::info(&format!("  Type:    {svc_type}"), None);
+        output::info(&format!("  Status:  {status}"), None);
+        output::info(&format!("  Ingress: {ingress}"), None);
+        output::info(&format!("  URL:     {url}"), None);
+        output::info(&format!("  Port:    {port}"), None);
         return;
     }
 

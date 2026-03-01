@@ -265,7 +265,7 @@ pub fn deploy(
                         svc.service.name,
                         svc.service.service_type,
                         svc.service.port,
-                        svc.service.ingress
+                        svc.service.resolved_ingress()
                     ),
                     None,
                 );
@@ -604,7 +604,7 @@ fn write_first_deploy_configs(project_path: &Path, app_name: &str, service: &Ser
             name: service.name.clone(),
             service_type: service.service_type,
             port: service.port,
-            ingress: service.ingress,
+            ingress: Some(service.ingress),
             env_file,
         },
     };

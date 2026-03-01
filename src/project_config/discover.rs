@@ -4,7 +4,7 @@ use crate::errors::FlooError;
 
 use super::app_config::AppServiceType;
 use super::resolve::ResolvedApp;
-use super::service_config::{load_service_config, ServiceConfig};
+use super::service_config::{load_service_config, ServiceConfig, ServiceIngress};
 
 /// Discover all deployable services from resolved config files.
 ///
@@ -16,7 +16,7 @@ use super::service_config::{load_service_config, ServiceConfig};
 pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, FlooError> {
     let path_entries = user_managed_path_entries(resolved);
 
-    if !path_entries.is_empty() {
+    let services = if !path_entries.is_empty() {
         // Branch 1: app.toml has user-managed services with path fields
         let mut services = Vec::new();
         let mut seen_names = HashSet::new();
@@ -63,7 +63,16 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
                 ));
             }
 
-            let svc = svc_file.service.to_api_service_config(normalized_path);
+            let mut svc = svc_file.service.to_api_service_config(normalized_path);
+
+            // Let floo.app.toml ingress override floo.service.toml value
+            if let Some(ref app_cfg) = resolved.app_config {
+                if let Some(entry) = app_cfg.services.get(name) {
+                    if let Some(override_ingress) = entry.ingress {
+                        svc.ingress = override_ingress;
+                    }
+                }
+            }
 
             if !seen_names.insert(svc.name.clone()) {
                 return Err(FlooError::new(
@@ -78,13 +87,13 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
             services.push(svc);
         }
 
-        Ok(services)
+        services
     } else if let Some(ref svc_file) = resolved.service_config {
         // Branch 2: single floo.service.toml only
-        Ok(vec![svc_file.service.to_api_service_config(".")])
+        vec![svc_file.service.to_api_service_config(".")]
     } else {
         // Branch 3: app.toml only with no deployable services
-        Err(FlooError::with_suggestion(
+        return Err(FlooError::with_suggestion(
             "NO_DEPLOYABLE_SERVICES",
             format!(
                 "{} has no deployable services (only Floo-managed services like postgres/redis).",
@@ -94,8 +103,19 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
                 "Add a user-managed service with a 'path' field, or create a {} in your project root.",
                 super::SERVICE_CONFIG_FILE,
             ),
-        ))
+        ));
+    };
+
+    // Multi-service apps must have at least one public service
+    if services.len() > 1 && !services.iter().any(|s| s.ingress == ServiceIngress::Public) {
+        return Err(FlooError::with_suggestion(
+            "NO_PUBLIC_SERVICES",
+            "At least one service must have ingress 'public'. All services are currently set to 'internal'.",
+            "Set ingress = \"public\" on at least one service in its floo.service.toml, or override it in floo.app.toml.",
+        ));
     }
+
+    Ok(services)
 }
 
 /// Filter services by name. Empty filter returns all.
@@ -213,7 +233,7 @@ ingress = "public"
                 name: "api".to_string(),
                 service_type: ServiceType::Api,
                 port: 8000,
-                ingress: ServiceIngress::Public,
+                ingress: Some(ServiceIngress::Public),
                 env_file: None,
             },
         };
@@ -261,6 +281,7 @@ ingress = "public"
                 repo: None,
                 version: None,
                 plan: None,
+                ingress: None,
             },
         );
         services_map.insert(
@@ -271,6 +292,7 @@ ingress = "public"
                 repo: None,
                 version: None,
                 plan: None,
+                ingress: None,
             },
         );
 
@@ -320,7 +342,7 @@ ingress = "public"
                 name: "web".to_string(),
                 service_type: ServiceType::Web,
                 port: 3000,
-                ingress: ServiceIngress::Public,
+                ingress: Some(ServiceIngress::Public),
                 env_file: None,
             },
         };
@@ -343,6 +365,7 @@ ingress = "public"
                 repo: None,
                 version: None,
                 plan: None,
+                ingress: None,
             },
         );
 
@@ -387,7 +410,7 @@ ingress = "public"
                 name: "web".to_string(),
                 service_type: ServiceType::Web,
                 port: 3000,
-                ingress: ServiceIngress::Public,
+                ingress: Some(ServiceIngress::Public),
                 env_file: None,
             },
         };
@@ -401,6 +424,7 @@ ingress = "public"
                 repo: None,
                 version: Some("16".to_string()),
                 plan: None,
+                ingress: None,
             },
         );
         services_map.insert(
@@ -411,6 +435,7 @@ ingress = "public"
                 repo: None,
                 version: None,
                 plan: None,
+                ingress: None,
             },
         );
 
@@ -453,6 +478,7 @@ ingress = "public"
                 repo: None,
                 version: None,
                 plan: None,
+                ingress: None,
             },
         );
 
@@ -498,6 +524,7 @@ ingress = "public"
                 repo: None,
                 version: None,
                 plan: None,
+                ingress: None,
             },
         );
 
@@ -537,7 +564,7 @@ ingress = "public"
                 name: "api".to_string(),
                 service_type: ServiceType::Api,
                 port: 8000,
-                ingress: ServiceIngress::Public,
+                ingress: Some(ServiceIngress::Public),
                 env_file: None,
             },
         };
@@ -560,6 +587,7 @@ ingress = "public"
                 repo: None,
                 version: None,
                 plan: None,
+                ingress: None,
             },
         );
 
@@ -597,6 +625,7 @@ ingress = "public"
                 repo: None,
                 version: Some("16".to_string()),
                 plan: None,
+                ingress: None,
             },
         );
 
@@ -641,6 +670,7 @@ ingress = "public"
                 repo: None,
                 version: None,
                 plan: None,
+                ingress: None,
             },
         );
 
@@ -736,5 +766,148 @@ ingress = "public"
         assert!(err.message.contains("nonexistent"));
         assert!(err.suggestion.as_deref().unwrap().contains("web"));
         assert!(err.suggestion.as_deref().unwrap().contains("api"));
+    }
+
+    #[test]
+    fn test_app_toml_ingress_overrides_service_toml() {
+        let dir = TempDir::new().unwrap();
+
+        // Sub-service declares ingress = "public"
+        let backend = dir.path().join("backend");
+        fs::create_dir(&backend).unwrap();
+        fs::write(
+            backend.join("floo.service.toml"),
+            make_service_toml("api", "my-app", "api", 8000),
+        )
+        .unwrap();
+
+        // Root service to satisfy at-least-one-public
+        let root_svc = ServiceFileConfig {
+            app: ServiceFileAppSection {
+                name: "my-app".to_string(),
+                access_mode: None,
+            },
+            service: ServiceSection {
+                name: "web".to_string(),
+                service_type: ServiceType::Web,
+                port: 3000,
+                ingress: Some(ServiceIngress::Public),
+                env_file: None,
+            },
+        };
+
+        let mut services_map = HashMap::new();
+        services_map.insert(
+            "api".to_string(),
+            AppServiceEntry {
+                service_type: AppServiceType::Api,
+                path: Some("./backend".to_string()),
+                repo: None,
+                version: None,
+                plan: None,
+                ingress: Some(ServiceIngress::Internal),
+            },
+        );
+
+        let app_config = AppFileConfig {
+            app: AppFileAppSection {
+                name: "my-app".to_string(),
+                access_mode: None,
+            },
+            services: services_map,
+        };
+
+        let resolved = make_resolved(
+            dir.path(),
+            "my-app",
+            Some(root_svc),
+            Some(app_config),
+            AppSource::ServiceFile,
+        );
+
+        let services = discover_services(&resolved).unwrap();
+        let api = services.iter().find(|s| s.name == "api").unwrap();
+        assert_eq!(api.ingress, ServiceIngress::Internal);
+    }
+
+    #[test]
+    fn test_all_internal_multi_service_errors() {
+        let dir = TempDir::new().unwrap();
+
+        let backend = dir.path().join("backend");
+        let worker_dir = dir.path().join("worker");
+        fs::create_dir(&backend).unwrap();
+        fs::create_dir(&worker_dir).unwrap();
+
+        // Both services declare internal ingress via TOML
+        fs::write(
+            backend.join("floo.service.toml"),
+            r#"[app]
+name = "my-app"
+
+[service]
+name = "api"
+type = "api"
+port = 8000
+ingress = "internal"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            worker_dir.join("floo.service.toml"),
+            r#"[app]
+name = "my-app"
+
+[service]
+name = "bg"
+type = "worker"
+port = 9000
+ingress = "internal"
+"#,
+        )
+        .unwrap();
+
+        let mut services_map = HashMap::new();
+        services_map.insert(
+            "api".to_string(),
+            AppServiceEntry {
+                service_type: AppServiceType::Api,
+                path: Some("./backend".to_string()),
+                repo: None,
+                version: None,
+                plan: None,
+                ingress: None,
+            },
+        );
+        services_map.insert(
+            "bg".to_string(),
+            AppServiceEntry {
+                service_type: AppServiceType::Worker,
+                path: Some("./worker".to_string()),
+                repo: None,
+                version: None,
+                plan: None,
+                ingress: None,
+            },
+        );
+
+        let app_config = AppFileConfig {
+            app: AppFileAppSection {
+                name: "my-app".to_string(),
+                access_mode: None,
+            },
+            services: services_map,
+        };
+
+        let resolved = make_resolved(
+            dir.path(),
+            "my-app",
+            None,
+            Some(app_config),
+            AppSource::AppFile,
+        );
+
+        let err = discover_services(&resolved).unwrap_err();
+        assert_eq!(err.code, "NO_PUBLIC_SERVICES");
     }
 }

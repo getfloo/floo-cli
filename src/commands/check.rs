@@ -289,6 +289,6 @@ fn validate_service(
         "path": path,
         "port": service.port,
         "type": service.service_type.to_string(),
-        "ingress": service.ingress.to_string(),
+        "ingress": service.resolved_ingress().to_string(),
     }));
 }

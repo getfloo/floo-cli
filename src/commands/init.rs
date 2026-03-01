@@ -88,7 +88,7 @@ fn init_non_interactive(
             name: service_name.clone(),
             service_type,
             port,
-            ingress: ServiceIngress::Public,
+            ingress: Some(ServiceIngress::Public),
             env_file,
         },
     };
@@ -223,6 +223,7 @@ fn init_interactive(
                         repo: None,
                         version: None,
                         plan: None,
+                        ingress: None,
                     },
                 );
             }
@@ -238,7 +239,7 @@ fn init_interactive(
                         name: svc_name.clone(),
                         service_type,
                         port,
-                        ingress: ServiceIngress::Public,
+                        ingress: Some(ServiceIngress::Public),
                         env_file: env_file.clone(),
                     },
                 });
@@ -255,7 +256,7 @@ fn init_interactive(
                             name: svc_name.clone(),
                             service_type,
                             port,
-                            ingress: ServiceIngress::Public,
+                            ingress: Some(ServiceIngress::Public),
                             env_file: env_file.clone(),
                         },
                     };
@@ -291,7 +292,7 @@ fn init_interactive(
                 name: default_type.to_string(),
                 service_type,
                 port: detection.default_port(),
-                ingress: ServiceIngress::Public,
+                ingress: Some(ServiceIngress::Public),
                 env_file,
             },
         });
