@@ -345,6 +345,25 @@ pub fn register(email: &str) {
     }
 }
 
+pub fn update_profile(name: &str) {
+    super::require_auth();
+    let client = super::init_client(None);
+
+    match client.update_profile(name) {
+        Ok(result) => {
+            let updated_name = result.get("name").and_then(|v| v.as_str()).unwrap_or(name);
+            output::success(
+                &format!("Profile updated. Name: {updated_name}"),
+                Some(result),
+            );
+        }
+        Err(e) => {
+            output::error(&e.message, &e.code, None);
+            process::exit(1);
+        }
+    }
+}
+
 pub fn logout() {
     clear_config();
     output::success("Logged out.", None);
@@ -367,17 +386,43 @@ pub fn whoami() {
             } else {
                 key.clone()
             };
-            let data = serde_json::json!({
-                "email": config.user_email,
-                "api_key": masked,
-            });
-            output::success(
-                &format!(
-                    "Logged in as {} (key: {masked})",
-                    config.user_email.as_deref().unwrap_or("unknown")
-                ),
-                Some(data),
-            );
+
+            // Fetch live profile data from the API
+            let client = super::init_client(None);
+            match client.whoami() {
+                Ok(result) => {
+                    let email = result
+                        .get("email")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let name = result.get("name").and_then(|v| v.as_str());
+
+                    let mut data = serde_json::json!({
+                        "email": email,
+                        "api_key": masked,
+                    });
+                    if let Some(n) = name {
+                        data.as_object_mut()
+                            .unwrap()
+                            .insert("name".to_string(), serde_json::Value::String(n.to_string()));
+                    }
+
+                    let display = if let Some(n) = name {
+                        format!("{n} ({email}, key: {masked})")
+                    } else {
+                        format!("{email} (key: {masked})")
+                    };
+                    output::success(&format!("Logged in as {display}"), Some(data));
+                }
+                Err(e) => {
+                    output::error(
+                        &e.message,
+                        &e.code,
+                        Some("Your API key may be invalid. Try 'floo auth login'."),
+                    );
+                    process::exit(1);
+                }
+            }
         }
     }
 }

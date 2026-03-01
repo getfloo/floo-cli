@@ -13,6 +13,7 @@ pub mod domains;
 pub mod env;
 pub mod init;
 pub mod logs;
+pub mod orgs;
 pub mod releases;
 pub mod rollbacks;
 pub mod service_mgmt;

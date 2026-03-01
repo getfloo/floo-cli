@@ -77,6 +77,10 @@ pub enum Commands {
     #[command(subcommand)]
     Auth(AuthCommands),
 
+    /// Manage your organization.
+    #[command(subcommand)]
+    Orgs(OrgsCommands),
+
     /// Manage your apps.
     #[command(subcommand)]
     Apps(AppsCommands),
@@ -201,6 +205,32 @@ pub enum AuthCommands {
     Register {
         /// Account email address.
         email: String,
+    },
+    /// Update your display name.
+    UpdateProfile {
+        /// New display name.
+        #[arg(long)]
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum OrgsCommands {
+    /// Manage org members.
+    #[command(subcommand)]
+    Members(MembersCommands),
+}
+
+#[derive(Subcommand)]
+pub enum MembersCommands {
+    /// List members of the current org.
+    List,
+    /// Change a member's role.
+    SetRole {
+        /// User ID of the member.
+        user_id: String,
+        /// New role (admin, member, or viewer).
+        role: String,
     },
 }
 
@@ -509,6 +539,16 @@ pub fn run() {
             AuthCommands::Whoami => commands::auth::whoami(),
             AuthCommands::Token => commands::auth::token(),
             AuthCommands::Register { email } => commands::auth::register(&email),
+            AuthCommands::UpdateProfile { name } => commands::auth::update_profile(&name),
+        },
+
+        Commands::Orgs(sub) => match sub {
+            OrgsCommands::Members(members_sub) => match members_sub {
+                MembersCommands::List => commands::orgs::list_members(),
+                MembersCommands::SetRole { user_id, role } => {
+                    commands::orgs::set_role(&user_id, &role)
+                }
+            },
         },
 
         Commands::Apps(sub) => match sub {

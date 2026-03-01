@@ -23,11 +23,7 @@ pub fn install(path: Option<PathBuf>, print: bool) {
             std::io::stdout()
                 .write_all(SKILL_CONTENT.as_bytes())
                 .unwrap_or_else(|e| {
-                    output::error(
-                        &format!("Failed to write to stdout: {e}"),
-                        "IO_ERROR",
-                        None,
-                    );
+                    output::error(&format!("Failed to write to stdout: {e}"), "IO_ERROR", None);
                     process::exit(1);
                 });
         }
@@ -135,9 +131,7 @@ pub fn refresh_skill_files() -> Vec<String> {
         if !parent_exists {
             // Parent directory gone — prune from tracking
             if !output::is_json_mode() {
-                eprintln!(
-                    "  Removed stale skill path (directory gone): {path_str}"
-                );
+                eprintln!("  Removed stale skill path (directory gone): {path_str}");
             }
             continue;
         }
@@ -151,9 +145,7 @@ pub fn refresh_skill_files() -> Vec<String> {
                 // Write failed but directory exists — keep tracking, report error
                 still_valid.push(path_str.clone());
                 if !output::is_json_mode() {
-                    eprintln!(
-                        "  Warning: failed to refresh skill at {path_str}: {e}"
-                    );
+                    eprintln!("  Warning: failed to refresh skill at {path_str}: {e}");
                 }
             }
         }
