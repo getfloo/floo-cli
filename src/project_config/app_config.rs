@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::errors::FlooError;
 
+use super::service_config::ServiceIngress;
 use super::SCHEMA_URL;
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -54,6 +55,8 @@ pub struct AppServiceEntry {
     pub version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plan: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ingress: Option<ServiceIngress>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
@@ -400,6 +403,37 @@ name = "my-app"
 
         let config = load_app_config(dir.path()).unwrap().unwrap();
         assert!(config.app.access_mode.is_none());
+    }
+
+    #[test]
+    fn test_load_app_config_with_service_ingress() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[services.worker]
+type = "worker"
+path = "./worker"
+ingress = "internal"
+
+[services.api]
+type = "api"
+path = "./backend"
+"#,
+        )
+        .unwrap();
+
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        let worker = &config.services["worker"];
+        assert_eq!(
+            worker.ingress,
+            Some(super::super::service_config::ServiceIngress::Internal)
+        );
+        let api = &config.services["api"];
+        assert!(api.ingress.is_none());
     }
 
     #[test]

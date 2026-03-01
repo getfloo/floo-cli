@@ -79,19 +79,29 @@ pub struct ServiceSection {
     #[serde(rename = "type")]
     pub service_type: ServiceType,
     pub port: u16,
-    pub ingress: ServiceIngress,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ingress: Option<ServiceIngress>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub env_file: Option<String>,
 }
 
 impl ServiceSection {
+    /// Resolve the effective ingress mode: explicit value if set,
+    /// otherwise `Internal` for workers, `Public` for everything else.
+    pub fn resolved_ingress(&self) -> ServiceIngress {
+        self.ingress.unwrap_or(match self.service_type {
+            ServiceType::Worker => ServiceIngress::Internal,
+            _ => ServiceIngress::Public,
+        })
+    }
+
     pub fn to_api_service_config(&self, path: &str) -> ServiceConfig {
         ServiceConfig {
             name: self.name.clone(),
             service_type: self.service_type,
             path: path.to_string(),
             port: self.port,
-            ingress: self.ingress,
+            ingress: self.resolved_ingress(),
         }
     }
 }
@@ -167,7 +177,7 @@ ingress = "public"
         assert_eq!(config.service.name, "api");
         assert_eq!(config.service.service_type, ServiceType::Api);
         assert_eq!(config.service.port, 8000);
-        assert_eq!(config.service.ingress, ServiceIngress::Public);
+        assert_eq!(config.service.ingress, Some(ServiceIngress::Public));
         assert!(config.service.env_file.is_none());
     }
 
@@ -258,7 +268,7 @@ ingress = "internal"
                 name: "web".to_string(),
                 service_type: ServiceType::Web,
                 port: 3000,
-                ingress: ServiceIngress::Public,
+                ingress: Some(ServiceIngress::Public),
                 env_file: None,
             },
         };
@@ -276,7 +286,7 @@ ingress = "internal"
             name: "api".to_string(),
             service_type: ServiceType::Api,
             port: 8000,
-            ingress: ServiceIngress::Internal,
+            ingress: Some(ServiceIngress::Internal),
             env_file: None,
         };
 
@@ -349,5 +359,75 @@ ingress = "public"
 
         let config = load_service_config(dir.path()).unwrap().unwrap();
         assert!(config.app.access_mode.is_none());
+    }
+
+    #[test]
+    fn test_worker_defaults_to_internal_ingress() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::SERVICE_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[service]
+name = "bg"
+type = "worker"
+port = 8000
+"#,
+        )
+        .unwrap();
+
+        let config = load_service_config(dir.path()).unwrap().unwrap();
+        assert!(config.service.ingress.is_none());
+        assert_eq!(config.service.resolved_ingress(), ServiceIngress::Internal);
+
+        let api_cfg = config.service.to_api_service_config(".");
+        assert_eq!(api_cfg.ingress, ServiceIngress::Internal);
+    }
+
+    #[test]
+    fn test_worker_explicit_public_overrides_default() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::SERVICE_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[service]
+name = "bg"
+type = "worker"
+port = 8000
+ingress = "public"
+"#,
+        )
+        .unwrap();
+
+        let config = load_service_config(dir.path()).unwrap().unwrap();
+        assert_eq!(config.service.ingress, Some(ServiceIngress::Public));
+        assert_eq!(config.service.resolved_ingress(), ServiceIngress::Public);
+    }
+
+    #[test]
+    fn test_api_defaults_to_public_ingress() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::SERVICE_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[service]
+name = "api"
+type = "api"
+port = 8000
+"#,
+        )
+        .unwrap();
+
+        let config = load_service_config(dir.path()).unwrap().unwrap();
+        assert!(config.service.ingress.is_none());
+        assert_eq!(config.service.resolved_ingress(), ServiceIngress::Public);
     }
 }

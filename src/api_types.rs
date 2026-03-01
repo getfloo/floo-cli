@@ -125,6 +125,7 @@ pub struct ApiService {
     #[serde(rename = "type")]
     pub service_type: Option<String>,
     pub status: Option<String>,
+    pub ingress: Option<String>,
     pub cloud_run_url: Option<String>,
     pub port: Option<u64>,
 }

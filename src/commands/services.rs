@@ -38,13 +38,14 @@ pub fn list(app: Option<&str>) {
                 s.name.clone(),
                 s.service_type.as_deref().unwrap_or("-").to_string(),
                 s.status.as_deref().unwrap_or("-").to_string(),
+                s.ingress.as_deref().unwrap_or("-").to_string(),
                 s.cloud_run_url.as_deref().unwrap_or("-").to_string(),
             ]
         })
         .collect();
 
     output::table(
-        &["Name", "Type", "Status", "URL"],
+        &["Name", "Type", "Status", "Ingress", "URL"],
         &rows,
         Some(output::to_value(&result)),
     );
@@ -81,6 +82,7 @@ pub fn info(service_name: &str, app: Option<&str>) {
 
         let svc_type = svc.service_type.as_deref().unwrap_or("-");
         let status = svc.status.as_deref().unwrap_or("-");
+        let ingress = svc.ingress.as_deref().unwrap_or("-");
         let url = svc.cloud_run_url.as_deref().unwrap_or("-");
         let port = svc
             .port
@@ -88,10 +90,11 @@ pub fn info(service_name: &str, app: Option<&str>) {
             .unwrap_or_else(|| "-".to_string());
 
         output::info(&format!("Service {service_name} ({app_name}):"), None);
-        output::info(&format!("  Type:   {svc_type}"), None);
-        output::info(&format!("  Status: {status}"), None);
-        output::info(&format!("  URL:    {url}"), None);
-        output::info(&format!("  Port:   {port}"), None);
+        output::info(&format!("  Type:    {svc_type}"), None);
+        output::info(&format!("  Status:  {status}"), None);
+        output::info(&format!("  Ingress: {ingress}"), None);
+        output::info(&format!("  URL:     {url}"), None);
+        output::info(&format!("  Port:    {port}"), None);
         return;
     }
 

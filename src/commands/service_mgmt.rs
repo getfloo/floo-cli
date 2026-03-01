@@ -171,6 +171,7 @@ pub fn add(
                 repo: None,
                 version: None,
                 plan: None,
+                ingress: None,
             },
         );
     }
@@ -201,7 +202,7 @@ pub fn add(
             name: name.to_string(),
             service_type: svc_type,
             port: resolved_port,
-            ingress: svc_ingress,
+            ingress: Some(svc_ingress),
             env_file: env_file_val.clone(),
         },
     };
