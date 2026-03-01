@@ -257,6 +257,11 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn get_app_password(&self, app_id: &str) -> Result<AppPasswordResponse, FlooApiError> {
+        let resp = self.get(&format!("/v1/apps/{app_id}/password"))?;
+        self.handle_response(resp)
+    }
+
     pub fn delete_app(&self, app_id: &str) -> Result<(), FlooApiError> {
         let resp = self.delete(&format!("/v1/apps/{app_id}"))?;
         if resp.status().as_u16() == 204 {

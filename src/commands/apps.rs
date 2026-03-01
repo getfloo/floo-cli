@@ -342,3 +342,20 @@ pub fn disconnect(app_name: &str) {
         Some(serde_json::json!({"app": app.name})),
     );
 }
+
+pub fn show_password(app_name: &str) {
+    super::require_auth();
+    let client = super::init_client(None);
+    let app = super::resolve_app_or_exit(&client, app_name);
+
+    match client.get_app_password(&app.id) {
+        Ok(resp) => output::success(
+            "App password",
+            Some(serde_json::json!({ "password": resp.password })),
+        ),
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    }
+}

@@ -14,6 +14,15 @@ pub struct AppFileConfig {
     pub app: AppFileAppSection,
     #[serde(default)]
     pub services: HashMap<String, AppServiceEntry>,
+    #[serde(default)]
+    pub environments: HashMap<String, AppEnvironmentOverrides>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct AppEnvironmentOverrides {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access_mode: Option<AppAccessMode>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq)]
@@ -57,6 +66,8 @@ pub struct AppServiceEntry {
     pub plan: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ingress: Option<ServiceIngress>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
@@ -296,6 +307,7 @@ type = "mysql"
                 access_mode: None,
             },
             services: HashMap::new(),
+            environments: HashMap::new(),
         };
 
         write_app_config(dir.path(), &config).unwrap();
