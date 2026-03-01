@@ -153,6 +153,17 @@ floo skills install --path <dir>         # install agent skill to directory
 floo skills install --print              # print skill content to stdout
 ```
 
+### Auto-Update
+
+The CLI checks for updates once every 24 hours in the background. Updates are downloaded silently and applied automatically on the next launch. This never blocks command execution.
+
+- Check + download happen in a background thread during normal commands
+- On the next run, the staged binary is swapped in before the command runs
+- Nothing happens in `--json` mode (no noise for agents)
+- Set `FLOO_NO_UPDATE_CHECK=1` to disable auto-update entirely
+- Cache file: `~/.floo/version-check.json`
+- Staged binary: `~/.floo/staged-update/`
+
 ## Error Codes
 
 | Code | Meaning | Recovery |

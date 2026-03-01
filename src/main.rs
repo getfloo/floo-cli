@@ -12,6 +12,7 @@ mod output;
 mod project_config;
 mod resolve;
 mod updater;
+mod version_check;
 
 fn main() {
     cli::run();

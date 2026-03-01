@@ -546,12 +546,36 @@ pub enum SkillsCommands {
     },
 }
 
+fn should_check_version(cli: &Cli) -> bool {
+    if cli.json {
+        return false;
+    }
+    if std::env::var("FLOO_NO_UPDATE_CHECK").is_ok() {
+        return false;
+    }
+    !matches!(cli.command, Commands::Update { .. } | Commands::Version)
+}
+
 pub fn run() {
     let cli = Cli::parse();
 
     if cli.json {
         output::set_json_mode(true);
     }
+
+    let do_version_check = should_check_version(&cli);
+
+    // Phase 2: Auto-apply any staged update (before command dispatch)
+    if do_version_check {
+        crate::version_check::apply_staged_update(VERSION);
+    }
+
+    // Phase 1: Spawn background check + download (non-blocking)
+    let version_handle = if do_version_check {
+        crate::version_check::spawn_check(VERSION)
+    } else {
+        None
+    };
 
     match cli.command {
         Commands::Analytics { app, period } => commands::analytics::analytics(app, &period),
@@ -741,5 +765,10 @@ pub fn run() {
         }
         Commands::Version => commands::update::version(),
         Commands::Update { version } => commands::update::update(version.as_deref()),
+    }
+
+    // Post-command: print notice if download completed during this run
+    if let Some(handle) = version_handle {
+        handle.print_notice();
     }
 }
