@@ -65,11 +65,14 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
 
             let mut svc = svc_file.service.to_api_service_config(normalized_path);
 
-            // Let floo.app.toml ingress override floo.service.toml value
+            // Let floo.app.toml overrides take precedence over floo.service.toml
             if let Some(ref app_cfg) = resolved.app_config {
                 if let Some(entry) = app_cfg.services.get(name) {
                     if let Some(override_ingress) = entry.ingress {
                         svc.ingress = override_ingress;
+                    }
+                    if entry.domain.is_some() {
+                        svc.domain = entry.domain.clone();
                     }
                 }
             }
@@ -235,6 +238,7 @@ ingress = "public"
                 port: 8000,
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
+                domain: None,
             },
         };
         let resolved = make_resolved(
@@ -282,6 +286,7 @@ ingress = "public"
                 version: None,
                 plan: None,
                 ingress: None,
+                domain: None,
             },
         );
         services_map.insert(
@@ -293,6 +298,7 @@ ingress = "public"
                 version: None,
                 plan: None,
                 ingress: None,
+                domain: None,
             },
         );
 
@@ -344,6 +350,7 @@ ingress = "public"
                 port: 3000,
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
+                domain: None,
             },
         };
 
@@ -366,6 +373,7 @@ ingress = "public"
                 version: None,
                 plan: None,
                 ingress: None,
+                domain: None,
             },
         );
 
@@ -412,6 +420,7 @@ ingress = "public"
                 port: 3000,
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
+                domain: None,
             },
         };
 
@@ -425,6 +434,7 @@ ingress = "public"
                 version: Some("16".to_string()),
                 plan: None,
                 ingress: None,
+                domain: None,
             },
         );
         services_map.insert(
@@ -436,6 +446,7 @@ ingress = "public"
                 version: None,
                 plan: None,
                 ingress: None,
+                domain: None,
             },
         );
 
@@ -479,6 +490,7 @@ ingress = "public"
                 version: None,
                 plan: None,
                 ingress: None,
+                domain: None,
             },
         );
 
@@ -525,6 +537,7 @@ ingress = "public"
                 version: None,
                 plan: None,
                 ingress: None,
+                domain: None,
             },
         );
 
@@ -566,6 +579,7 @@ ingress = "public"
                 port: 8000,
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
+                domain: None,
             },
         };
 
@@ -588,6 +602,7 @@ ingress = "public"
                 version: None,
                 plan: None,
                 ingress: None,
+                domain: None,
             },
         );
 
@@ -626,6 +641,7 @@ ingress = "public"
                 version: Some("16".to_string()),
                 plan: None,
                 ingress: None,
+                domain: None,
             },
         );
 
@@ -671,6 +687,7 @@ ingress = "public"
                 version: None,
                 plan: None,
                 ingress: None,
+                domain: None,
             },
         );
 
@@ -704,6 +721,7 @@ ingress = "public"
                 path: "frontend".to_string(),
                 port: 3000,
                 ingress: ServiceIngress::Public,
+                domain: None,
             },
             ServiceConfig {
                 name: "api".to_string(),
@@ -711,6 +729,7 @@ ingress = "public"
                 path: "backend".to_string(),
                 port: 8000,
                 ingress: ServiceIngress::Public,
+                domain: None,
             },
         ];
 
@@ -727,6 +746,7 @@ ingress = "public"
                 path: "frontend".to_string(),
                 port: 3000,
                 ingress: ServiceIngress::Public,
+                domain: None,
             },
             ServiceConfig {
                 name: "api".to_string(),
@@ -734,6 +754,7 @@ ingress = "public"
                 path: "backend".to_string(),
                 port: 8000,
                 ingress: ServiceIngress::Public,
+                domain: None,
             },
         ];
 
@@ -751,6 +772,7 @@ ingress = "public"
                 path: "frontend".to_string(),
                 port: 3000,
                 ingress: ServiceIngress::Public,
+                domain: None,
             },
             ServiceConfig {
                 name: "api".to_string(),
@@ -758,6 +780,7 @@ ingress = "public"
                 path: "backend".to_string(),
                 port: 8000,
                 ingress: ServiceIngress::Public,
+                domain: None,
             },
         ];
 
@@ -793,6 +816,7 @@ ingress = "public"
                 port: 3000,
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
+                domain: None,
             },
         };
 
@@ -806,6 +830,7 @@ ingress = "public"
                 version: None,
                 plan: None,
                 ingress: Some(ServiceIngress::Internal),
+                domain: None,
             },
         );
 
@@ -877,6 +902,7 @@ ingress = "internal"
                 version: None,
                 plan: None,
                 ingress: None,
+                domain: None,
             },
         );
         services_map.insert(
@@ -888,6 +914,7 @@ ingress = "internal"
                 version: None,
                 plan: None,
                 ingress: None,
+                domain: None,
             },
         );
 

@@ -57,6 +57,8 @@ pub struct AppServiceEntry {
     pub plan: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ingress: Option<ServiceIngress>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]

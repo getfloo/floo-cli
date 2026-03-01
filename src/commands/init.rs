@@ -91,6 +91,7 @@ fn init_non_interactive(
             port,
             ingress: Some(ServiceIngress::Public),
             env_file,
+            domain: None,
         },
     };
 
@@ -225,6 +226,7 @@ fn init_interactive(
                         version: None,
                         plan: None,
                         ingress: None,
+                        domain: None,
                     },
                 );
             }
@@ -242,6 +244,7 @@ fn init_interactive(
                         port,
                         ingress: Some(ServiceIngress::Public),
                         env_file: env_file.clone(),
+                        domain: None,
                     },
                 });
             } else {
@@ -259,6 +262,7 @@ fn init_interactive(
                             port,
                             ingress: Some(ServiceIngress::Public),
                             env_file: env_file.clone(),
+                            domain: None,
                         },
                     };
                     if let Err(e) = project_config::write_service_config(&svc_dir, &svc_file) {
@@ -295,6 +299,7 @@ fn init_interactive(
                 port: detection.default_port(),
                 ingress: Some(ServiceIngress::Public),
                 env_file,
+                domain: None,
             },
         });
     }

@@ -556,6 +556,7 @@ fn prompt_first_deploy(detection: &crate::detection::DetectionResult) -> FirstDe
             path: ".".to_string(),
             port,
             ingress: ServiceIngress::Public,
+            domain: None,
         },
     }
 }
@@ -574,6 +575,7 @@ fn write_first_deploy_configs(project_path: &Path, app_name: &str, service: &Ser
             port: service.port,
             ingress: Some(service.ingress),
             env_file,
+            domain: None,
         },
     };
 
