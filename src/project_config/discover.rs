@@ -947,4 +947,121 @@ ingress = "internal"
         let err = discover_services(&resolved).unwrap_err();
         assert_eq!(err.code, ErrorCode::NoPublicServices);
     }
+
+    #[test]
+    fn test_app_toml_domain_overrides_service_toml() {
+        let dir = TempDir::new().unwrap();
+
+        // Sub-service declares domain = "svc.example.com"
+        let backend = dir.path().join("backend");
+        fs::create_dir(&backend).unwrap();
+        fs::write(
+            backend.join("floo.service.toml"),
+            r#"[app]
+name = "my-app"
+
+[service]
+name = "api"
+type = "api"
+port = 8000
+ingress = "public"
+domain = "svc.example.com"
+"#,
+        )
+        .unwrap();
+
+        let mut services_map = HashMap::new();
+        services_map.insert(
+            "api".to_string(),
+            AppServiceEntry {
+                service_type: AppServiceType::Api,
+                path: Some("./backend".to_string()),
+                repo: None,
+                version: None,
+                plan: None,
+                ingress: None,
+                domain: Some("app.example.com".to_string()),
+            },
+        );
+
+        let app_config = AppFileConfig {
+            app: AppFileAppSection {
+                name: "my-app".to_string(),
+                access_mode: None,
+            },
+            services: services_map,
+            environments: HashMap::new(),
+        };
+
+        let resolved = make_resolved(
+            dir.path(),
+            "my-app",
+            None,
+            Some(app_config),
+            AppSource::AppFile,
+        );
+
+        let services = discover_services(&resolved).unwrap();
+        let api = services.iter().find(|s| s.name == "api").unwrap();
+        // floo.app.toml domain should override floo.service.toml domain
+        assert_eq!(api.domain.as_deref(), Some("app.example.com"));
+    }
+
+    #[test]
+    fn test_service_toml_domain_preserved_when_no_app_override() {
+        let dir = TempDir::new().unwrap();
+
+        let backend = dir.path().join("backend");
+        fs::create_dir(&backend).unwrap();
+        fs::write(
+            backend.join("floo.service.toml"),
+            r#"[app]
+name = "my-app"
+
+[service]
+name = "api"
+type = "api"
+port = 8000
+ingress = "public"
+domain = "svc.example.com"
+"#,
+        )
+        .unwrap();
+
+        let mut services_map = HashMap::new();
+        services_map.insert(
+            "api".to_string(),
+            AppServiceEntry {
+                service_type: AppServiceType::Api,
+                path: Some("./backend".to_string()),
+                repo: None,
+                version: None,
+                plan: None,
+                ingress: None,
+                domain: None,
+            },
+        );
+
+        let app_config = AppFileConfig {
+            app: AppFileAppSection {
+                name: "my-app".to_string(),
+                access_mode: None,
+            },
+            services: services_map,
+            environments: HashMap::new(),
+        };
+
+        let resolved = make_resolved(
+            dir.path(),
+            "my-app",
+            None,
+            Some(app_config),
+            AppSource::AppFile,
+        );
+
+        let services = discover_services(&resolved).unwrap();
+        let api = services.iter().find(|s| s.name == "api").unwrap();
+        // Domain from floo.service.toml should be preserved
+        assert_eq!(api.domain.as_deref(), Some("svc.example.com"));
+    }
 }
