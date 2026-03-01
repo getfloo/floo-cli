@@ -17,19 +17,7 @@ pub fn list(app: Option<&str>) {
         }
     };
 
-    let deploys = match result.get("deploys").and_then(|v| v.as_array()) {
-        Some(arr) => arr.clone(),
-        None => {
-            output::error(
-                "Unexpected response format from the API.",
-                "PARSE_ERROR",
-                Some("Try updating the CLI: curl -fsSL https://getfloo.com/install.sh | bash"),
-            );
-            process::exit(1);
-        }
-    };
-
-    if deploys.is_empty() {
+    if result.deploys.is_empty() {
         if output::is_json_mode() {
             output::success(
                 "No deploys found.",
@@ -41,26 +29,15 @@ pub fn list(app: Option<&str>) {
         return;
     }
 
-    let rows: Vec<Vec<String>> = deploys
+    let rows: Vec<Vec<String>> = result
+        .deploys
         .iter()
         .map(|d| {
             vec![
-                d.get("id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("-")
-                    .to_string(),
-                d.get("status")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("-")
-                    .to_string(),
-                d.get("runtime")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("\u{2014}")
-                    .to_string(),
-                d.get("created_at")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("-")
-                    .to_string(),
+                d.id.clone(),
+                d.status.as_deref().unwrap_or("-").to_string(),
+                d.runtime.as_deref().unwrap_or("\u{2014}").to_string(),
+                d.created_at.as_deref().unwrap_or("-").to_string(),
             ]
         })
         .collect();
@@ -68,7 +45,7 @@ pub fn list(app: Option<&str>) {
     output::table(
         &["Deploy ID", "Status", "Runtime", "Created"],
         &rows,
-        Some(serde_json::json!({"deploys": deploys})),
+        Some(output::to_value(&result)),
     );
 }
 
@@ -77,11 +54,8 @@ pub fn rollback(app_name: &str, deploy_id: &str, force: bool) {
     let client = super::init_client(None);
 
     let app_data = super::resolve_app_or_exit(&client, app_name);
-    let name = app_data
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or(app_name);
-    let app_id = super::expect_str_field(&app_data, "id");
+    let name = &app_data.name;
+    let app_id = &app_data.id;
 
     if !force
         && !output::confirm(&format!(

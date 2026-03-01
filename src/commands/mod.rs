@@ -1,6 +1,7 @@
 use std::process;
 
 use crate::api_client::FlooClient;
+use crate::api_types::App;
 use crate::config::{load_config, FlooConfig};
 use crate::output;
 
@@ -48,27 +49,7 @@ pub(crate) fn require_auth() {
     }
 }
 
-pub(crate) fn expect_str_field<'a>(data: &'a serde_json::Value, field: &str) -> &'a str {
-    let value = data.get(field).and_then(|v| v.as_str()).unwrap_or_else(|| {
-        output::error(
-            &format!("Response missing '{field}' field."),
-            "PARSE_ERROR",
-            Some("This is a bug. Please report it."),
-        );
-        process::exit(1);
-    });
-    if value.is_empty() {
-        output::error(
-            &format!("Response field '{field}' is empty."),
-            "PARSE_ERROR",
-            Some("This may indicate a CLI/API version mismatch. Try `floo update`."),
-        );
-        process::exit(1);
-    }
-    value
-}
-
-pub(crate) fn resolve_app_or_exit(client: &FlooClient, app_name: &str) -> serde_json::Value {
+pub(crate) fn resolve_app_or_exit(client: &FlooClient, app_name: &str) -> App {
     match crate::resolve::resolve_app(client, app_name) {
         Ok(a) => a,
         Err(e) => {
@@ -105,14 +86,8 @@ pub(crate) fn resolve_app_from_config(
             process::exit(1);
         }
     };
-    let app_data = resolve_app_or_exit(client, &resolved.app_name);
-    let app_id = expect_str_field(&app_data, "id").to_string();
-    let app_name = app_data
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or(&resolved.app_name)
-        .to_string();
-    (app_id, app_name)
+    let app = resolve_app_or_exit(client, &resolved.app_name);
+    (app.id.clone(), app.name.clone())
 }
 
 /// Detect the deploy env file in a directory: prefers .floo.env, falls back to .env.
