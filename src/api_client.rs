@@ -214,6 +214,14 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    // --- Billing ---
+
+    pub fn set_spend_cap(&self, spend_cap: u64) -> Result<Value, FlooApiError> {
+        let body = serde_json::json!({"spend_cap": spend_cap});
+        let resp = self.post_json("/v1/billing/spend-cap", &body)?;
+        self.handle_response(resp)
+    }
+
     // --- Apps ---
 
     pub fn create_app(&self, name: &str, runtime: Option<&str>) -> Result<Value, FlooApiError> {

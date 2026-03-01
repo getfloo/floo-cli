@@ -7,6 +7,7 @@ use crate::output;
 pub mod analytics;
 pub mod apps;
 pub mod auth;
+pub mod billing;
 pub mod check;
 pub mod deploy;
 pub mod domains;
