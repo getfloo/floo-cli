@@ -28,13 +28,13 @@ pub fn promote(app: Option<&str>, tag: Option<&str>) {
         }
     };
 
-    let result_tag = super::expect_str_field(&result, "tag");
-    let release_url = super::expect_str_field(&result, "release_url");
+    let result_tag = &result.tag;
+    let release_url = &result.release_url;
 
     if output::is_json_mode() {
         output::success(
             &format!("Promoted {name} \u{2192} prod ({result_tag})"),
-            Some(result),
+            Some(output::to_value(&result)),
         );
     } else {
         output::success(
@@ -67,20 +67,7 @@ pub fn list(app: Option<&str>) {
         }
     };
 
-    let releases = result
-        .get("releases")
-        .and_then(|v| v.as_array())
-        .unwrap_or_else(|| {
-            output::error(
-                "Failed to parse releases from API response.",
-                "PARSE_ERROR",
-                Some("This is a bug. Please report it."),
-            );
-            process::exit(1);
-        })
-        .clone();
-
-    if releases.is_empty() {
+    if result.releases.is_empty() {
         if output::is_json_mode() {
             output::success("No releases.", Some(serde_json::json!({"releases": []})));
         } else {
@@ -89,33 +76,24 @@ pub fn list(app: Option<&str>) {
         return;
     }
 
-    let rows: Vec<Vec<String>> = releases
+    let rows: Vec<Vec<String>> = result
+        .releases
         .iter()
         .map(|r| {
-            let sha = r.get("commit_sha").and_then(|v| v.as_str()).unwrap_or("-");
+            let sha = r.commit_sha.as_deref().unwrap_or("-");
             let short_sha = if sha.len() > 7 && sha.is_ascii() {
                 &sha[..7]
             } else {
                 sha
             };
             vec![
-                r.get("release_number")
-                    .and_then(|v| v.as_u64())
+                r.release_number
                     .map(|n| format!("#{n}"))
                     .unwrap_or_else(|| "-".to_string()),
-                r.get("tag")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("-")
-                    .to_string(),
+                r.tag.as_deref().unwrap_or("-").to_string(),
                 short_sha.to_string(),
-                r.get("promoted_by")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("-")
-                    .to_string(),
-                r.get("created_at")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("-")
-                    .to_string(),
+                r.promoted_by.as_deref().unwrap_or("-").to_string(),
+                r.created_at.as_deref().unwrap_or("-").to_string(),
             ]
         })
         .collect();
@@ -123,7 +101,7 @@ pub fn list(app: Option<&str>) {
     output::table(
         &["#", "Tag", "Commit", "Promoted By", "Created"],
         &rows,
-        Some(result),
+        Some(output::to_value(&result)),
     );
 }
 
@@ -151,38 +129,19 @@ pub fn show(release_id: &str, app: Option<&str>) {
     };
 
     if output::is_json_mode() {
-        let tag = release
-            .get("tag")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-        output::success(&format!("Release {tag}"), Some(release));
+        let tag = release.tag.as_deref().unwrap_or("unknown");
+        output::success(&format!("Release {tag}"), Some(output::to_value(&release)));
     } else {
-        let tag = release.get("tag").and_then(|v| v.as_str()).unwrap_or("-");
+        let tag = release.tag.as_deref().unwrap_or("-");
         let number = release
-            .get("release_number")
-            .and_then(|v| v.as_u64())
+            .release_number
             .map(|n| format!("#{n}"))
             .unwrap_or_else(|| "-".to_string());
-        let sha = release
-            .get("commit_sha")
-            .and_then(|v| v.as_str())
-            .unwrap_or("-");
-        let promoted_by = release
-            .get("promoted_by")
-            .and_then(|v| v.as_str())
-            .unwrap_or("-");
-        let created = release
-            .get("created_at")
-            .and_then(|v| v.as_str())
-            .unwrap_or("-");
-        let deploy_id = release
-            .get("deploy_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("-");
-        let image = release
-            .get("image_digest")
-            .and_then(|v| v.as_str())
-            .unwrap_or("-");
+        let sha = release.commit_sha.as_deref().unwrap_or("-");
+        let promoted_by = release.promoted_by.as_deref().unwrap_or("-");
+        let created = release.created_at.as_deref().unwrap_or("-");
+        let deploy_id = release.deploy_id.as_deref().unwrap_or("-");
+        let image = release.image_digest.as_deref().unwrap_or("-");
 
         output::info(&format!("Release {tag} ({number})"), None);
         output::info(&format!("  Tag:         {tag}"), None);

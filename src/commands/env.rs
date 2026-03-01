@@ -37,32 +37,17 @@ fn resolve_service_ids(
         }
     };
 
-    let services = match result.get("services").and_then(|v| v.as_array()) {
-        Some(arr) => arr.clone(),
-        None => {
-            output::error(
-                "Response missing 'services' field.",
-                "PARSE_ERROR",
-                Some("This is a bug. Please report it."),
-            );
-            process::exit(1);
-        }
-    };
+    let services = &result.services;
 
     if service_names.is_empty() {
         match services.len() {
             0 => return vec![(None, None)],
             1 => {
                 let svc = &services[0];
-                let sid = super::expect_str_field(svc, "id").to_string();
-                let sname = super::expect_str_field(svc, "name").to_string();
-                return vec![(Some(sid), Some(sname))];
+                return vec![(Some(svc.id.clone()), Some(svc.name.clone()))];
             }
             _ => {
-                let names: Vec<String> = services
-                    .iter()
-                    .filter_map(|s| s.get("name").and_then(|v| v.as_str()).map(String::from))
-                    .collect();
+                let names: Vec<&str> = services.iter().map(|s| s.name.as_str()).collect();
                 output::error(
                     &format!(
                         "App '{app_name}' has multiple services. Specify which with --services."
@@ -78,19 +63,11 @@ fn resolve_service_ids(
     service_names
         .iter()
         .map(|name| {
-            let found = services
-                .iter()
-                .find(|s| s.get("name").and_then(|v| v.as_str()) == Some(name.as_str()));
+            let found = services.iter().find(|s| s.name == *name);
             match found {
-                Some(svc) => {
-                    let sid = super::expect_str_field(svc, "id").to_string();
-                    (Some(sid), Some(name.clone()))
-                }
+                Some(svc) => (Some(svc.id.clone()), Some(name.clone())),
                 None => {
-                    let available: Vec<String> = services
-                        .iter()
-                        .filter_map(|s| s.get("name").and_then(|v| v.as_str()).map(String::from))
-                        .collect();
+                    let available: Vec<&str> = services.iter().map(|s| s.name.as_str()).collect();
                     output::error(
                         &format!("Service '{name}' not found on app '{app_name}'."),
                         "SERVICE_NOT_FOUND",
@@ -230,9 +207,12 @@ pub fn set(key_value: &str, app_flag: Option<&str>, service_names: &[String], re
         match client.set_env_var(&app_id, &key, value, service_id.as_deref()) {
             Ok(result) => {
                 let target = format_target(&app_name, service_name.as_deref());
-                last_env_result = result.clone();
+                last_env_result = output::to_value(&result);
                 if !restart || !output::is_json_mode() {
-                    output::success(&format!("Set {key} on {target}."), Some(result));
+                    output::success(
+                        &format!("Set {key} on {target}."),
+                        Some(output::to_value(&result)),
+                    );
                 }
             }
             Err(e) => {
@@ -310,21 +290,9 @@ pub fn list(app_flag: Option<&str>, service_names: &[String]) {
             }
         };
 
-        let env_vars = match result.get("env_vars").and_then(|v| v.as_array()) {
-            Some(arr) => arr.clone(),
-            None => {
-                output::error(
-                    "Response missing 'env_vars' field.",
-                    "PARSE_ERROR",
-                    Some("This is a bug. Please report it."),
-                );
-                process::exit(1);
-            }
-        };
-
         let target = format_target(&app_name, service_name.as_deref());
 
-        if env_vars.is_empty() {
+        if result.env_vars.is_empty() {
             if output::is_json_mode() {
                 output::success("No env vars.", Some(serde_json::json!({"env_vars": []})));
             } else {
@@ -333,27 +301,18 @@ pub fn list(app_flag: Option<&str>, service_names: &[String]) {
             continue;
         }
 
-        let rows: Vec<Vec<String>> = env_vars
+        let rows: Vec<Vec<String>> = result
+            .env_vars
             .iter()
             .map(|ev| {
                 vec![
-                    ev.get("key")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("-")
-                        .to_string(),
-                    ev.get("masked_value")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("-")
-                        .to_string(),
+                    ev.key.clone(),
+                    ev.masked_value.as_deref().unwrap_or("-").to_string(),
                 ]
             })
             .collect();
 
-        output::table(
-            &["Key", "Value"],
-            &rows,
-            Some(serde_json::json!({"env_vars": env_vars})),
-        );
+        output::table(&["Key", "Value"], &rows, Some(output::to_value(&result)));
     }
 }
 
@@ -396,7 +355,14 @@ pub fn get(key: &str, app_flag: Option<&str>, service_flag: Option<&str>) {
         }
     };
 
-    let value = super::expect_str_field(&result, "value");
+    let value = result.value.as_deref().unwrap_or_else(|| {
+        output::error(
+            "Response missing 'value' field.",
+            "PARSE_ERROR",
+            Some("This is a bug. Please report it."),
+        );
+        process::exit(1);
+    });
 
     if output::is_json_mode() {
         output::success(
@@ -453,14 +419,8 @@ pub fn import_vars(file_flag: Option<&Path>, app_flag: Option<&str>, service_nam
     let client = super::init_client(None);
     let (app_id, app_name) = match &resolved {
         Some(r) => {
-            let app_data = super::resolve_app_or_exit(&client, &r.app_name);
-            let app_id = super::expect_str_field(&app_data, "id").to_string();
-            let app_name = app_data
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or(&r.app_name)
-                .to_string();
-            (app_id, app_name)
+            let app = super::resolve_app_or_exit(&client, &r.app_name);
+            (app.id.clone(), app.name.clone())
         }
         None => super::resolve_app_from_config(&client, app_flag),
     };
@@ -569,27 +529,13 @@ pub fn import_all_services(app_flag: Option<&str>) {
     }
 
     let client = super::init_client(None);
-    let app_data = super::resolve_app_or_exit(&client, &resolved.app_name);
-    let app_id = super::expect_str_field(&app_data, "id").to_string();
-    let app_name = app_data
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or(&resolved.app_name)
-        .to_string();
+    let app = super::resolve_app_or_exit(&client, &resolved.app_name);
+    let app_id = app.id.clone();
+    let app_name = app.name.clone();
 
     // Resolve all service IDs from server
     let server_services = match client.list_services(&app_id) {
-        Ok(r) => match r.get("services").and_then(|v| v.as_array()) {
-            Some(arr) => arr.clone(),
-            None => {
-                output::error(
-                    "Response missing 'services' field.",
-                    "PARSE_ERROR",
-                    Some("This is a bug. Please report it."),
-                );
-                process::exit(1);
-            }
-        },
+        Ok(r) => r.services,
         Err(e) => {
             output::error(&e.message, &e.code, None);
             process::exit(1);
@@ -604,11 +550,10 @@ pub fn import_all_services(app_flag: Option<&str>) {
         let count = vars.len();
 
         // Find service ID on server
-        let server_svc = server_services
+        let service_id = server_services
             .iter()
-            .find(|s| s.get("name").and_then(|v| v.as_str()) == Some(svc_name));
-
-        let service_id = server_svc.and_then(|s| s.get("id").and_then(|v| v.as_str()));
+            .find(|s| s.name == *svc_name)
+            .map(|s| s.id.as_str());
 
         match client.import_env_vars(&app_id, &vars, service_id) {
             Ok(result) => {

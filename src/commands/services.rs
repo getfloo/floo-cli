@@ -18,20 +18,7 @@ pub fn list(app: Option<&str>) {
         }
     };
 
-    let services = result
-        .get("services")
-        .and_then(|v| v.as_array())
-        .unwrap_or_else(|| {
-            output::error(
-                "Failed to parse services from API response.",
-                "PARSE_ERROR",
-                Some("This is a bug. Please report it."),
-            );
-            process::exit(1);
-        })
-        .clone();
-
-    if services.is_empty() {
+    if result.services.is_empty() {
         if output::is_json_mode() {
             output::success(
                 &format!("No services on {app_name}."),
@@ -43,17 +30,15 @@ pub fn list(app: Option<&str>) {
         return;
     }
 
-    let rows: Vec<Vec<String>> = services
+    let rows: Vec<Vec<String>> = result
+        .services
         .iter()
         .map(|s| {
             vec![
-                super::expect_str_field(s, "name").to_string(),
-                super::expect_str_field(s, "type").to_string(),
-                super::expect_str_field(s, "status").to_string(),
-                s.get("cloud_run_url")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("-")
-                    .to_string(),
+                s.name.clone(),
+                s.service_type.as_deref().unwrap_or("-").to_string(),
+                s.status.as_deref().unwrap_or("-").to_string(),
+                s.cloud_run_url.as_deref().unwrap_or("-").to_string(),
             ]
         })
         .collect();
@@ -61,7 +46,7 @@ pub fn list(app: Option<&str>) {
     output::table(
         &["Name", "Type", "Status", "URL"],
         &rows,
-        Some(serde_json::json!({"services": services})),
+        Some(output::to_value(&result)),
     );
 }
 
@@ -73,7 +58,7 @@ pub fn info(service_name: &str, app: Option<&str>) {
     let app_id = app_id.as_str();
     let app_name = app_name.as_str();
 
-    let services_result = match client.list_services(app_id) {
+    let result = match client.list_services(app_id) {
         Ok(r) => r,
         Err(e) => {
             output::error(&e.message, &e.code, None);
@@ -81,43 +66,24 @@ pub fn info(service_name: &str, app: Option<&str>) {
         }
     };
 
-    let services = services_result
-        .get("services")
-        .and_then(|v| v.as_array())
-        .unwrap_or_else(|| {
-            output::error(
-                "Failed to parse services from API response.",
-                "PARSE_ERROR",
-                Some("This is a bug. Please report it."),
-            );
-            process::exit(1);
-        })
-        .clone();
-
     // Check if any user-managed service matches the given name
-    let matched = services
-        .iter()
-        .find(|s| s.get("name").and_then(|v| v.as_str()) == Some(service_name));
+    let matched = result.services.iter().find(|s| s.name == service_name);
 
     if let Some(svc) = matched {
         // User-managed service found — display its details
         if output::is_json_mode() {
             output::success(
                 &format!("Service {service_name} on {app_name}"),
-                Some(svc.clone()),
+                Some(output::to_value(svc)),
             );
             return;
         }
 
-        let svc_type = svc.get("type").and_then(|v| v.as_str()).unwrap_or("-");
-        let status = svc.get("status").and_then(|v| v.as_str()).unwrap_or("-");
-        let url = svc
-            .get("cloud_run_url")
-            .and_then(|v| v.as_str())
-            .unwrap_or("-");
+        let svc_type = svc.service_type.as_deref().unwrap_or("-");
+        let status = svc.status.as_deref().unwrap_or("-");
+        let url = svc.cloud_run_url.as_deref().unwrap_or("-");
         let port = svc
-            .get("port")
-            .and_then(|v| v.as_u64())
+            .port
             .map(|p| p.to_string())
             .unwrap_or_else(|| "-".to_string());
 
@@ -131,11 +97,8 @@ pub fn info(service_name: &str, app: Option<&str>) {
 
     // No user-managed service found with that name.
     // If the app has user-managed services, the name is simply wrong.
-    if !services.is_empty() {
-        let names: Vec<&str> = services
-            .iter()
-            .filter_map(|s| s.get("name").and_then(|v| v.as_str()))
-            .collect();
+    if !result.services.is_empty() {
+        let names: Vec<&str> = result.services.iter().map(|s| s.name.as_str()).collect();
         let suggestion = format!(
             "Available services: {}. Run 'floo services list' for details.",
             names.join(", ")
@@ -168,36 +131,25 @@ pub fn info(service_name: &str, app: Option<&str>) {
     if output::is_json_mode() {
         output::success(
             &format!("Service {service_name} on {app_name}"),
-            Some(db_data),
+            Some(output::to_value(&db_data)),
         );
         return;
     }
 
-    let host = super::expect_str_field(&db_data, "host");
-    let port = db_data
-        .get("port")
-        .and_then(|v| v.as_u64())
-        .map(|p| p.to_string())
-        .unwrap_or_else(|| {
-            output::error(
-                "Response missing 'port' field.",
-                "PARSE_ERROR",
-                Some("This is a bug. Please report it."),
-            );
-            process::exit(1);
-        });
-    let database = super::expect_str_field(&db_data, "database");
-    let status = super::expect_str_field(&db_data, "status");
+    let host = &db_data.host;
+    let port = db_data.port.to_string();
+    let database = &db_data.database;
+    let status = db_data.status.as_deref().unwrap_or("-");
 
     output::info(&format!("Service {service_name} ({app_name}):"), None);
     output::info(&format!("  Host:     {host}"), None);
     output::info(&format!("  Port:     {port}"), None);
     output::info(&format!("  Database: {database}"), None);
     output::info(&format!("  Status:   {status}"), None);
-    if let Some(username) = db_data.get("username").and_then(|v| v.as_str()) {
+    if let Some(username) = db_data.username.as_deref() {
         output::info(&format!("  Username: {username}"), None);
     }
-    if let Some(schema) = db_data.get("schema_name").and_then(|v| v.as_str()) {
+    if let Some(schema) = db_data.schema_name.as_deref() {
         output::info(&format!("  Schema:   {schema}"), None);
     }
     output::info("", None);

@@ -4,6 +4,7 @@ use std::time::Duration;
 use reqwest::blocking::{multipart, Client};
 use serde_json::Value;
 
+use crate::api_types::*;
 use crate::config::{load_config, FlooConfig};
 use crate::errors::FlooApiError;
 use crate::project_config::ServiceConfig;
@@ -43,41 +44,52 @@ impl FlooClient {
         self.api_key.as_ref().map(|k| format!("Bearer {k}"))
     }
 
-    fn handle_response(
+    fn handle_error(&self, response: reqwest::blocking::Response) -> FlooApiError {
+        let status = response.status().as_u16();
+        let text = response.text().unwrap_or_default();
+        let (code, message) = if let Ok(body) = serde_json::from_str::<Value>(&text) {
+            let detail = body.get("detail").unwrap_or(&body);
+            if let Some(obj) = detail.as_object() {
+                (
+                    obj.get("code")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("API_ERROR")
+                        .to_string(),
+                    obj.get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(&text)
+                        .to_string(),
+                )
+            } else {
+                (
+                    "API_ERROR".to_string(),
+                    detail.to_string().trim_matches('"').to_string(),
+                )
+            }
+        } else {
+            ("API_ERROR".to_string(), text)
+        };
+        FlooApiError::new(status, code, message)
+    }
+
+    fn handle_response<T: serde::de::DeserializeOwned>(
+        &self,
+        response: reqwest::blocking::Response,
+    ) -> Result<T, FlooApiError> {
+        let status = response.status().as_u16();
+        if status >= 400 {
+            return Err(self.handle_error(response));
+        }
+        response.json::<T>().map_err(|e| {
+            FlooApiError::new(500, "PARSE_ERROR", format!("Failed to parse response: {e}"))
+        })
+    }
+
+    fn handle_response_value(
         &self,
         response: reqwest::blocking::Response,
     ) -> Result<Value, FlooApiError> {
-        let status = response.status().as_u16();
-        if status >= 400 {
-            let text = response.text().unwrap_or_default();
-            let (code, message) = if let Ok(body) = serde_json::from_str::<Value>(&text) {
-                let detail = body.get("detail").unwrap_or(&body);
-                if let Some(obj) = detail.as_object() {
-                    (
-                        obj.get("code")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("API_ERROR")
-                            .to_string(),
-                        obj.get("message")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or(&text)
-                            .to_string(),
-                    )
-                } else {
-                    (
-                        "API_ERROR".to_string(),
-                        detail.to_string().trim_matches('"').to_string(),
-                    )
-                }
-            } else {
-                ("API_ERROR".to_string(), text)
-            };
-            return Err(FlooApiError::new(status, code, message));
-        }
-        let body: Value = response.json().map_err(|e| {
-            FlooApiError::new(500, "PARSE_ERROR", format!("Failed to parse response: {e}"))
-        })?;
-        Ok(body)
+        self.handle_response(response)
     }
 
     fn get(&self, path: &str) -> Result<reqwest::blocking::Response, FlooApiError> {
@@ -139,18 +151,18 @@ impl FlooClient {
 
     // --- Auth ---
 
-    pub fn register(&self, email: &str) -> Result<Value, FlooApiError> {
+    pub fn register(&self, email: &str) -> Result<AuthTokenResponse, FlooApiError> {
         let body = serde_json::json!({"email": email});
         let resp = self.post_json("/v1/auth/register", &body)?;
         self.handle_response(resp)
     }
 
-    pub fn device_authorize(&self) -> Result<Value, FlooApiError> {
+    pub fn device_authorize(&self) -> Result<DeviceAuthorizeResponse, FlooApiError> {
         let resp = self.post_json("/v1/auth/device", &serde_json::json!({}))?;
         self.handle_response(resp)
     }
 
-    pub fn device_token(&self, device_code: &str) -> Result<Value, FlooApiError> {
+    pub fn device_token(&self, device_code: &str) -> Result<AuthTokenResponse, FlooApiError> {
         let body = serde_json::json!({"device_code": device_code});
         let resp = self.post_json("/v1/auth/device/token", &body)?;
         let status = resp.status().as_u16();
@@ -180,12 +192,12 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
-    pub fn whoami(&self) -> Result<Value, FlooApiError> {
+    pub fn whoami(&self) -> Result<WhoamiResponse, FlooApiError> {
         let resp = self.get("/v1/auth/whoami")?;
         self.handle_response(resp)
     }
 
-    pub fn update_profile(&self, name: &str) -> Result<Value, FlooApiError> {
+    pub fn update_profile(&self, name: &str) -> Result<ProfileResponse, FlooApiError> {
         let body = serde_json::json!({"name": name});
         let resp = self.patch_json("/v1/auth/me", &body)?;
         self.handle_response(resp)
@@ -193,12 +205,12 @@ impl FlooClient {
 
     // --- Org ---
 
-    pub fn get_org_me(&self) -> Result<Value, FlooApiError> {
+    pub fn get_org_me(&self) -> Result<OrgResponse, FlooApiError> {
         let resp = self.get("/v1/orgs/me")?;
         self.handle_response(resp)
     }
 
-    pub fn list_members(&self, org_id: &str) -> Result<Value, FlooApiError> {
+    pub fn list_members(&self, org_id: &str) -> Result<ListMembersResponse, FlooApiError> {
         let resp = self.get(&format!("/v1/orgs/{org_id}/members"))?;
         self.handle_response(resp)
     }
@@ -208,7 +220,7 @@ impl FlooClient {
         org_id: &str,
         user_id: &str,
         role: &str,
-    ) -> Result<Value, FlooApiError> {
+    ) -> Result<MemberRoleResponse, FlooApiError> {
         let body = serde_json::json!({"role": role});
         let resp = self.patch_json(&format!("/v1/orgs/{org_id}/members/{user_id}"), &body)?;
         self.handle_response(resp)
@@ -224,7 +236,7 @@ impl FlooClient {
 
     // --- Apps ---
 
-    pub fn create_app(&self, name: &str, runtime: Option<&str>) -> Result<Value, FlooApiError> {
+    pub fn create_app(&self, name: &str, runtime: Option<&str>) -> Result<App, FlooApiError> {
         let mut body = serde_json::json!({"name": name});
         if let Some(rt) = runtime {
             body.as_object_mut()
@@ -235,12 +247,12 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
-    pub fn list_apps(&self, page: u32, per_page: u32) -> Result<Value, FlooApiError> {
+    pub fn list_apps(&self, page: u32, per_page: u32) -> Result<ListAppsResponse, FlooApiError> {
         let resp = self.get(&format!("/v1/apps?page={page}&per_page={per_page}"))?;
         self.handle_response(resp)
     }
 
-    pub fn get_app(&self, app_id: &str) -> Result<Value, FlooApiError> {
+    pub fn get_app(&self, app_id: &str) -> Result<App, FlooApiError> {
         let resp = self.get(&format!("/v1/apps/{app_id}"))?;
         self.handle_response(resp)
     }
@@ -250,7 +262,7 @@ impl FlooClient {
         if resp.status().as_u16() == 204 {
             return Ok(());
         }
-        self.handle_response(resp)?;
+        self.handle_response_value(resp)?;
         Ok(())
     }
 
@@ -264,7 +276,7 @@ impl FlooClient {
         framework: Option<&str>,
         services: Option<&[ServiceConfig]>,
         access_mode: Option<&str>,
-    ) -> Result<Value, FlooApiError> {
+    ) -> Result<Deploy, FlooApiError> {
         let file_bytes = std::fs::read(tarball_path).map_err(|e| {
             FlooApiError::new(0, "FILE_ERROR", format!("Failed to read archive: {e}"))
         })?;
@@ -313,12 +325,12 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
-    pub fn list_deploys(&self, app_id: &str) -> Result<Value, FlooApiError> {
+    pub fn list_deploys(&self, app_id: &str) -> Result<ListDeploysResponse, FlooApiError> {
         let resp = self.get(&format!("/v1/apps/{app_id}/deploys"))?;
         self.handle_response(resp)
     }
 
-    pub fn get_deploy(&self, app_id: &str, deploy_id: &str) -> Result<Value, FlooApiError> {
+    pub fn get_deploy(&self, app_id: &str, deploy_id: &str) -> Result<Deploy, FlooApiError> {
         let resp = self.get(&format!("/v1/apps/{app_id}/deploys/{deploy_id}"))?;
         self.handle_response(resp)
     }
@@ -378,7 +390,7 @@ impl FlooClient {
         key: &str,
         value: &str,
         service_id: Option<&str>,
-    ) -> Result<Value, FlooApiError> {
+    ) -> Result<SetEnvVarResponse, FlooApiError> {
         let mut body = serde_json::json!({"key": key, "value": value});
         if let Some(sid) = service_id {
             body.as_object_mut()
@@ -393,7 +405,7 @@ impl FlooClient {
         &self,
         app_id: &str,
         service_id: Option<&str>,
-    ) -> Result<Value, FlooApiError> {
+    ) -> Result<ListEnvVarsResponse, FlooApiError> {
         let mut path = format!("/v1/apps/{app_id}/env");
         if let Some(sid) = service_id {
             path.push_str(&format!("?service_id={sid}"));
@@ -416,7 +428,7 @@ impl FlooClient {
         if resp.status().as_u16() == 204 {
             return Ok(());
         }
-        self.handle_response(resp)?;
+        self.handle_response_value(resp)?;
         Ok(())
     }
 
@@ -425,7 +437,7 @@ impl FlooClient {
         app_id: &str,
         key: &str,
         service_id: Option<&str>,
-    ) -> Result<Value, FlooApiError> {
+    ) -> Result<EnvVar, FlooApiError> {
         let mut path = format!("/v1/apps/{app_id}/env/{key}");
         if let Some(sid) = service_id {
             path.push_str(&format!("?service_id={sid}"));
@@ -454,35 +466,50 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
-    pub fn list_services(&self, app_id: &str) -> Result<Value, FlooApiError> {
+    pub fn list_services(&self, app_id: &str) -> Result<ListServicesResponse, FlooApiError> {
         let resp = self.get(&format!("/v1/apps/{app_id}/services?page=1&per_page=100"))?;
         self.handle_response(resp)
     }
 
     // --- Databases ---
 
-    fn parse_database_response(&self, response: &Value) -> Result<Value, FlooApiError> {
-        if response.get("host").is_some()
+    fn parse_database_response(&self, response: &Value) -> Result<DatabaseInfo, FlooApiError> {
+        let target = if response.get("host").is_some()
             && response.get("port").is_some()
             && response.get("database").is_some()
         {
-            return Ok(response.clone());
-        }
-
-        if let Some(database) = response.get("database") {
+            response.clone()
+        } else if let Some(database) = response.get("database") {
             if database.is_object() {
-                return Ok(database.clone());
+                database.clone()
+            } else {
+                return Err(FlooApiError::new(
+                    500,
+                    "PARSE_ERROR",
+                    "Failed to parse database info response from API.",
+                ));
             }
-        }
+        } else {
+            return Err(FlooApiError::new(
+                500,
+                "PARSE_ERROR",
+                "Failed to parse database info response from API.",
+            ));
+        };
 
-        Err(FlooApiError::new(
-            500,
-            "PARSE_ERROR",
-            "Failed to parse database info response from API.",
-        ))
+        serde_json::from_value(target).map_err(|e| {
+            FlooApiError::new(
+                500,
+                "PARSE_ERROR",
+                format!("Failed to parse database info: {e}"),
+            )
+        })
     }
 
-    fn parse_database_from_list_response(&self, response: &Value) -> Result<Value, FlooApiError> {
+    fn parse_database_from_list_response(
+        &self,
+        response: &Value,
+    ) -> Result<DatabaseInfo, FlooApiError> {
         let databases = response
             .get("databases")
             .and_then(|value| value.as_array())
@@ -506,16 +533,22 @@ impl FlooClient {
                 )
             })?;
 
-        Ok(database.clone())
+        serde_json::from_value(database.clone()).map_err(|e| {
+            FlooApiError::new(
+                500,
+                "PARSE_ERROR",
+                format!("Failed to parse database info: {e}"),
+            )
+        })
     }
 
-    pub fn get_database_info(&self, app_id: &str) -> Result<Value, FlooApiError> {
+    pub fn get_database_info(&self, app_id: &str) -> Result<DatabaseInfo, FlooApiError> {
         let db_info_response = self.get(&format!("/v1/apps/{app_id}/db"))?;
-        match self.handle_response(db_info_response) {
+        match self.handle_response_value(db_info_response) {
             Ok(response) => self.parse_database_response(&response),
             Err(error) if error.status_code == 404 => {
                 let list_response = self.get(&format!("/v1/apps/{app_id}/databases"))?;
-                let list_body = self.handle_response(list_response)?;
+                let list_body = self.handle_response_value(list_response)?;
                 self.parse_database_from_list_response(&list_body)
             }
             Err(error) => Err(error),
@@ -524,13 +557,17 @@ impl FlooClient {
 
     // --- Domains ---
 
-    pub fn add_domain(&self, app_id: &str, hostname: &str) -> Result<Value, FlooApiError> {
+    pub fn add_domain(
+        &self,
+        app_id: &str,
+        hostname: &str,
+    ) -> Result<AddDomainResponse, FlooApiError> {
         let body = serde_json::json!({"hostname": hostname});
         let resp = self.post_json(&format!("/v1/apps/{app_id}/domains"), &body)?;
         self.handle_response(resp)
     }
 
-    pub fn list_domains(&self, app_id: &str) -> Result<Value, FlooApiError> {
+    pub fn list_domains(&self, app_id: &str) -> Result<ListDomainsResponse, FlooApiError> {
         let resp = self.get(&format!("/v1/apps/{app_id}/domains"))?;
         self.handle_response(resp)
     }
@@ -540,13 +577,13 @@ impl FlooClient {
         if resp.status().as_u16() == 204 {
             return Ok(());
         }
-        self.handle_response(resp)?;
+        self.handle_response_value(resp)?;
         Ok(())
     }
 
     // --- Rollbacks ---
 
-    pub fn rollback_deploy(&self, app_id: &str, deploy_id: &str) -> Result<Value, FlooApiError> {
+    pub fn rollback_deploy(&self, app_id: &str, deploy_id: &str) -> Result<Deploy, FlooApiError> {
         let body = serde_json::json!({"deploy_id": deploy_id});
         let mut req = self
             .client
@@ -571,7 +608,7 @@ impl FlooClient {
         since: Option<&str>,
         severity: Option<&str>,
         service: Option<&str>,
-    ) -> Result<Value, FlooApiError> {
+    ) -> Result<LogsResponse, FlooApiError> {
         let limit_str = limit.to_string();
         let mut params: Vec<(&str, &str)> = vec![("limit", &limit_str)];
         if let Some(s) = since {
@@ -614,7 +651,7 @@ impl FlooClient {
         installation_id: u64,
         branch: Option<&str>,
         skip_env_var_check: bool,
-    ) -> Result<Value, FlooApiError> {
+    ) -> Result<GitHubConnectResponse, FlooApiError> {
         let mut body = serde_json::json!({
             "repo_full_name": repo_full_name,
             "installation_id": installation_id,
@@ -635,13 +672,17 @@ impl FlooClient {
 
     pub fn github_disconnect(&self, app_id: &str) -> Result<(), FlooApiError> {
         let resp = self.delete(&format!("/v1/apps/{app_id}/github/disconnect"))?;
-        self.handle_response(resp)?;
+        self.handle_response_value(resp)?;
         Ok(())
     }
 
     // --- Releases ---
 
-    pub fn promote_app(&self, app_id: &str, tag: Option<&str>) -> Result<Value, FlooApiError> {
+    pub fn promote_app(
+        &self,
+        app_id: &str,
+        tag: Option<&str>,
+    ) -> Result<PromoteResponse, FlooApiError> {
         let mut body = serde_json::json!({});
         if let Some(t) = tag {
             body.as_object_mut()
@@ -670,21 +711,25 @@ impl FlooClient {
         app_id: &str,
         page: u32,
         per_page: u32,
-    ) -> Result<Value, FlooApiError> {
+    ) -> Result<ListReleasesResponse, FlooApiError> {
         let resp = self.get(&format!(
             "/v1/apps/{app_id}/releases?page={page}&per_page={per_page}"
         ))?;
         self.handle_response(resp)
     }
 
-    pub fn get_release(&self, app_id: &str, release_id: &str) -> Result<Value, FlooApiError> {
+    pub fn get_release(&self, app_id: &str, release_id: &str) -> Result<Release, FlooApiError> {
         let resp = self.get(&format!("/v1/apps/{app_id}/releases/{release_id}"))?;
         self.handle_response(resp)
     }
 
     // --- Analytics ---
 
-    pub fn get_app_analytics(&self, app_id: &str, period: &str) -> Result<Value, FlooApiError> {
+    pub fn get_app_analytics(
+        &self,
+        app_id: &str,
+        period: &str,
+    ) -> Result<AppAnalyticsResponse, FlooApiError> {
         let resp = self.get_with_query(
             &format!("/v1/apps/{app_id}/analytics"),
             &[("period", period)],
@@ -692,7 +737,7 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
-    pub fn get_org_analytics(&self, period: &str) -> Result<Value, FlooApiError> {
+    pub fn get_org_analytics(&self, period: &str) -> Result<AppAnalyticsResponse, FlooApiError> {
         let resp = self.get_with_query("/v1/orgs/analytics", &[("period", period)])?;
         self.handle_response(resp)
     }
