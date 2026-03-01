@@ -979,3 +979,89 @@ fn test_env_import_all_conflicts_with_services() {
         .failure()
         .stderr(predicate::str::contains("cannot be used with"));
 }
+
+// --- Deploy --sync-env ---
+
+#[test]
+fn test_deploy_sync_env_help() {
+    floo()
+        .args(["deploy", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--sync-env"));
+}
+
+// --- Init env file detection ---
+
+#[test]
+fn test_init_detects_floo_env() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(project.path().join("package.json"), r#"{"name":"test"}"#).unwrap();
+    std::fs::write(project.path().join(".floo.env"), "SECRET=abc\n").unwrap();
+
+    floo()
+        .args([
+            "--json",
+            "init",
+            "myapp",
+            "--path",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let svc_toml = std::fs::read_to_string(project.path().join("floo.service.toml")).unwrap();
+    assert!(
+        svc_toml.contains(r#"env_file = ".floo.env""#),
+        "Expected env_file = \".floo.env\" in service config, got:\n{svc_toml}"
+    );
+}
+
+#[test]
+fn test_init_falls_back_to_dot_env() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(project.path().join("package.json"), r#"{"name":"test"}"#).unwrap();
+    std::fs::write(project.path().join(".env"), "KEY=value\n").unwrap();
+
+    floo()
+        .args([
+            "--json",
+            "init",
+            "myapp",
+            "--path",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let svc_toml = std::fs::read_to_string(project.path().join("floo.service.toml")).unwrap();
+    assert!(
+        svc_toml.contains(r#"env_file = ".env""#),
+        "Expected env_file = \".env\" in service config, got:\n{svc_toml}"
+    );
+}
+
+#[test]
+fn test_init_prefers_floo_env_over_dot_env() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(project.path().join("package.json"), r#"{"name":"test"}"#).unwrap();
+    std::fs::write(project.path().join(".env"), "LOCAL=dev\n").unwrap();
+    std::fs::write(project.path().join(".floo.env"), "CLOUD=prod\n").unwrap();
+
+    floo()
+        .args([
+            "--json",
+            "init",
+            "myapp",
+            "--path",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let svc_toml = std::fs::read_to_string(project.path().join("floo.service.toml")).unwrap();
+    assert!(
+        svc_toml.contains(r#"env_file = ".floo.env""#),
+        "Expected .floo.env to win over .env, got:\n{svc_toml}"
+    );
+}

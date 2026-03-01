@@ -56,3 +56,15 @@ pub(crate) fn expect_str_field<'a>(data: &'a serde_json::Value, field: &str) -> 
         process::exit(1);
     })
 }
+
+/// Detect the deploy env file in a directory: prefers .floo.env, falls back to .env.
+/// Used at config creation time (init, service add) to populate env_file in floo.service.toml.
+pub(crate) fn detect_env_file(dir: &std::path::Path) -> Option<String> {
+    if dir.join(".floo.env").exists() {
+        Some(".floo.env".to_string())
+    } else if dir.join(".env").exists() {
+        Some(".env".to_string())
+    } else {
+        None
+    }
+}

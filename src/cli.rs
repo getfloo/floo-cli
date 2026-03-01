@@ -67,6 +67,10 @@ pub enum Commands {
         /// Restart the app without re-uploading source (redeploy existing images with fresh env vars).
         #[arg(long)]
         restart: bool,
+
+        /// Re-sync env vars from configured env_file before deploying.
+        #[arg(long)]
+        sync_env: bool,
     },
 
     /// Authenticate and manage your account.
@@ -495,7 +499,8 @@ pub fn run() {
             app,
             services,
             restart,
-        } => commands::deploy::deploy(path, app, services, restart),
+            sync_env,
+        } => commands::deploy::deploy(path, app, services, restart, sync_env),
         Commands::Auth(sub) => match sub {
             AuthCommands::Login { api_key, force } => {
                 commands::auth::login(api_key.as_deref(), force)

@@ -45,7 +45,13 @@ fn required_response_id<'a>(value: &'a serde_json::Value, object_name: &str) -> 
     }
 }
 
-pub fn deploy(path: PathBuf, app: Option<String>, services_filter: Vec<String>, restart: bool) {
+pub fn deploy(
+    path: PathBuf,
+    app: Option<String>,
+    services_filter: Vec<String>,
+    restart: bool,
+    sync_env: bool,
+) {
     let config = load_config();
     if config.api_key.is_none() {
         output::error(
@@ -425,9 +431,9 @@ pub fn deploy(path: PathBuf, app: Option<String>, services_filter: Vec<String>, 
     };
     let app_id = required_response_id(&app_data, "app").to_string();
 
-    // Warn about missing env vars (best-effort, warning only)
+    // Auto-import env vars on first deploy (or force with --sync-env)
     if let Some(ref r) = resolved {
-        warn_missing_env_vars(&client, &app_id, r);
+        sync_env_vars_if_needed(&client, &app_id, r, sync_env);
     }
 
     // Extract access_mode from config: app_config wins over service_config
@@ -587,11 +593,7 @@ fn prompt_first_deploy(detection: &crate::detection::DetectionResult) -> FirstDe
 }
 
 fn write_first_deploy_configs(project_path: &Path, app_name: &str, service: &ServiceConfig) {
-    let env_file = if project_path.join(".env").exists() {
-        Some(".env".to_string())
-    } else {
-        None
-    };
+    let env_file = super::detect_env_file(project_path);
 
     let service_file = ServiceFileConfig {
         app: ServiceFileAppSection {
@@ -859,23 +861,61 @@ fn poll_deploy(
     deploy_data
 }
 
-/// Best-effort check: warn when services have `env_file` configured but 0 env vars on server.
-/// Silently skips on any API error (e.g., first deploy where services don't exist yet).
-fn warn_missing_env_vars(
-    client: &FlooClient,
-    app_id: &str,
-    resolved: &project_config::ResolvedApp,
-) {
-    let mut services_with_env_file: Vec<String> = Vec::new();
+/// Non-fatal .env parser for the deploy path. Returns None on errors instead of exiting.
+/// Separate from env.rs::parse_env_file because the deploy path is best-effort.
+fn parse_env_file_soft(path: &Path) -> Option<Vec<(String, String)>> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return None,
+    };
 
-    // Check root service
-    if let Some(ref svc_config) = resolved.service_config {
-        if svc_config.service.env_file.is_some() {
-            services_with_env_file.push(svc_config.service.name.clone());
+    let mut vars = Vec::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let trimmed = trimmed.strip_prefix("export ").unwrap_or(trimmed);
+        if let Some((key, value)) = trimmed.split_once('=') {
+            let key = key.trim().to_uppercase();
+            let mut value = value.trim().to_string();
+            if (value.starts_with('"') && value.ends_with('"'))
+                || (value.starts_with('\'') && value.ends_with('\''))
+            {
+                value = value[1..value.len() - 1].to_string();
+            }
+            vars.push((key, value));
         }
     }
 
-    // Check sub-services
+    if vars.is_empty() {
+        return None;
+    }
+
+    Some(vars)
+}
+
+/// Auto-import env vars from configured env_file on first deploy (server has 0 vars),
+/// or when --sync-env is passed. Reads env_file from service configs (source of truth).
+fn sync_env_vars_if_needed(
+    client: &FlooClient,
+    app_id: &str,
+    resolved: &project_config::ResolvedApp,
+    force_sync: bool,
+) {
+    // Collect (service_name, env_file_path) from env_file field in service configs
+    let mut env_file_entries: Vec<(String, PathBuf)> = Vec::new();
+
+    // Check root service
+    if let Some(ref svc_config) = resolved.service_config {
+        if let Some(ref env_file) = svc_config.service.env_file {
+            let path = resolved.config_dir.join(env_file);
+            env_file_entries.push((svc_config.service.name.clone(), path));
+        }
+    }
+
+    // Check sub-services from app config
     if let Some(ref app_config) = resolved.app_config {
         for entry in app_config.services.values() {
             if let Some(ref path_str) = entry.path {
@@ -886,19 +926,20 @@ fn warn_missing_env_vars(
                 }
                 let svc_dir = resolved.config_dir.join(normalized);
                 if let Ok(Some(svc_config)) = project_config::load_service_config(&svc_dir) {
-                    if svc_config.service.env_file.is_some() {
-                        services_with_env_file.push(svc_config.service.name.clone());
+                    if let Some(ref env_file) = svc_config.service.env_file {
+                        let path = svc_dir.join(env_file);
+                        env_file_entries.push((svc_config.service.name.clone(), path));
                     }
                 }
             }
         }
     }
 
-    if services_with_env_file.is_empty() {
+    if env_file_entries.is_empty() {
         return;
     }
 
-    // Get server-side services
+    // Get server-side services — silently return on API error (services may not exist on first deploy)
     let server_services = match client.list_services(app_id) {
         Ok(r) => match r.get("services").and_then(|v| v.as_array()) {
             Some(arr) => arr.clone(),
@@ -907,7 +948,7 @@ fn warn_missing_env_vars(
         Err(_) => return,
     };
 
-    for svc_name in &services_with_env_file {
+    for (svc_name, env_file_path) in &env_file_entries {
         let server_svc = server_services
             .iter()
             .find(|s| s.get("name").and_then(|v| v.as_str()) == Some(svc_name));
@@ -917,6 +958,7 @@ fn warn_missing_env_vars(
             continue;
         };
 
+        // Check env var count on server
         let env_count = match client.list_env_vars(app_id, Some(svc_id)) {
             Ok(r) => r
                 .get("env_vars")
@@ -926,12 +968,101 @@ fn warn_missing_env_vars(
             Err(_) => continue,
         };
 
-        if env_count == 0 {
+        // Skip if already has vars and not force-syncing
+        if !force_sync && env_count > 0 {
+            continue;
+        }
+
+        if !env_file_path.exists() {
+            let file_name = env_file_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("env file");
             output::warn(&format!(
-                "Service '{svc_name}' has env_file configured but 0 env vars on server. \
-                 Run `floo env import` first."
+                "Service '{svc_name}' has env_file configured but {file_name} not found on disk."
+            ));
+            continue;
+        }
+
+        let vars = match parse_env_file_soft(env_file_path) {
+            Some(v) => v,
+            None => continue,
+        };
+
+        let count = vars.len();
+        let file_name = env_file_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("env file");
+
+        if !output::is_json_mode() {
+            output::info(
+                &format!(
+                    "Importing {count} env var(s) for service '{svc_name}' from {file_name}..."
+                ),
+                None,
+            );
+        }
+
+        if let Err(e) = client.import_env_vars(app_id, &vars, Some(svc_id)) {
+            output::warn(&format!(
+                "Failed to import env vars for service '{svc_name}': {}",
+                e.message
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use tempfile::TempDir;
+
+    use super::*;
+
+    #[test]
+    fn test_parse_env_file_soft_basic() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join(".floo.env");
+        fs::write(&path, "KEY=value\nOTHER=123\n").unwrap();
+        let vars = parse_env_file_soft(&path).unwrap();
+        assert_eq!(
+            vars,
+            vec![
+                ("KEY".to_string(), "value".to_string()),
+                ("OTHER".to_string(), "123".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_env_file_soft_missing_file() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("nonexistent.env");
+        assert!(parse_env_file_soft(&path).is_none());
+    }
+
+    #[test]
+    fn test_parse_env_file_soft_empty_file() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join(".env");
+        fs::write(&path, "").unwrap();
+        assert!(parse_env_file_soft(&path).is_none());
+    }
+
+    #[test]
+    fn test_parse_env_file_soft_skips_malformed() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join(".env");
+        fs::write(&path, "GOOD=value\nBADLINE\n# comment\nALSO_GOOD=123\n").unwrap();
+        let vars = parse_env_file_soft(&path).unwrap();
+        assert_eq!(
+            vars,
+            vec![
+                ("GOOD".to_string(), "value".to_string()),
+                ("ALSO_GOOD".to_string(), "123".to_string()),
+            ]
+        );
     }
 }
 

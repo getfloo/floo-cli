@@ -74,11 +74,7 @@ fn init_non_interactive(
         _ => ServiceType::Web,
     };
 
-    let env_file = if project_path.join(".env").exists() {
-        Some(".env".to_string())
-    } else {
-        None
-    };
+    let env_file = super::detect_env_file(project_path);
 
     let service_name = default_type.to_string();
     let port = detection.default_port();
@@ -197,15 +193,18 @@ fn init_interactive(
                 }
             };
 
-            let env_file = if project_path.join(&svc_path).join(".env").exists() {
-                let use_env = output::confirm("  .env file detected. Use it?");
-                if use_env {
-                    Some(".env".to_string())
-                } else {
-                    None
+            let svc_dir = project_path.join(&svc_path);
+            let env_file = match super::detect_env_file(&svc_dir) {
+                Some(name) => {
+                    let use_it =
+                        output::confirm(&format!("  {name} detected. Use it for cloud deploy?"));
+                    if use_it {
+                        Some(name)
+                    } else {
+                        None
+                    }
                 }
-            } else {
-                None
+                None => None,
             };
 
             let app_service_type = match service_type {
@@ -282,11 +281,7 @@ fn init_interactive(
             "api" => ServiceType::Api,
             _ => ServiceType::Web,
         };
-        let env_file = if project_path.join(".env").exists() {
-            Some(".env".to_string())
-        } else {
-            None
-        };
+        let env_file = super::detect_env_file(project_path);
         first_service_file = Some(ServiceFileConfig {
             app: ServiceFileAppSection {
                 name: app_name.clone(),
