@@ -716,21 +716,21 @@ pub fn run() {
             live,
             output,
         } => {
-            let sev = if error {
-                Some("ERROR")
+            let severity = if error {
+                Some("ERROR".to_string())
             } else {
-                severity.as_deref()
+                severity
             };
-            commands::logs::logs(
-                app.as_deref(),
+            commands::logs::logs(commands::logs::LogsArgs {
+                app_flag: app,
                 tail,
-                since.as_deref(),
-                sev,
-                &services,
-                search.as_deref(),
+                since,
+                severity,
+                services,
+                search,
                 live,
-                output.as_deref(),
-            );
+                output_path: output,
+            });
         }
         Commands::Version => commands::update::version(),
         Commands::Update { version } => commands::update::update(version.as_deref()),

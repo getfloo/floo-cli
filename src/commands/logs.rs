@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::thread;
 use std::time::Duration;
@@ -13,6 +13,17 @@ use crate::resolve::resolve_app;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_TRANSIENT_RETRIES: u32 = 3;
+
+pub struct LogsArgs {
+    pub app_flag: Option<String>,
+    pub tail: u32,
+    pub since: Option<String>,
+    pub severity: Option<String>,
+    pub services: Vec<String>,
+    pub search: Option<String>,
+    pub live: bool,
+    pub output_path: Option<PathBuf>,
+}
 
 struct LogsFilter<'a> {
     since: Option<&'a str>,
@@ -186,17 +197,7 @@ fn update_last_timestamp(last: &mut Option<String>, entry: &LogEntry) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn logs(
-    app_flag: Option<&str>,
-    tail: u32,
-    since: Option<&str>,
-    severity: Option<&str>,
-    services: &[String],
-    search: Option<&str>,
-    live: bool,
-    output_path: Option<&Path>,
-) {
+pub fn logs(args: LogsArgs) {
     super::require_auth();
     let client = super::init_client(None);
 
@@ -209,7 +210,7 @@ pub fn logs(
         process::exit(1);
     });
 
-    let resolved = match project_config::resolve_app_context(&cwd, app_flag) {
+    let resolved = match project_config::resolve_app_context(&cwd, args.app_flag.as_deref()) {
         Ok(r) => r,
         Err(e) => {
             output::error(&e.message, &e.code, e.suggestion.as_deref());
@@ -237,35 +238,34 @@ pub fn logs(
     };
 
     let app_id = &app_data.id;
-    let show_service_prefix = services.len() != 1;
+    let show_service_prefix = args.services.len() != 1;
 
     let filter = LogsFilter {
-        since,
-        severity,
-        services,
-        search,
+        since: args.since.as_deref(),
+        severity: args.severity.as_deref(),
+        services: &args.services,
+        search: args.search.as_deref(),
     };
 
     if !output::is_json_mode() {
         print_context_header(app_name, &src_label, &filter);
     }
 
-    if live {
-        live_logs(&client, app_id, tail, &filter, show_service_prefix);
+    if args.live {
+        live_logs(&client, app_id, args.tail, &filter, show_service_prefix);
     } else {
         batch_logs(
             &client,
             app_id,
             app_name,
-            tail,
+            args.tail,
             &filter,
             show_service_prefix,
-            output_path,
+            args.output_path.as_deref(),
         );
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn batch_logs(
     client: &crate::api_client::FlooClient,
     app_id: &str,
