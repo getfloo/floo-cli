@@ -115,6 +115,19 @@ impl FlooClient {
             .map_err(|e| FlooApiError::new(0, "CONNECTION_ERROR", e.to_string()))
     }
 
+    fn patch_json(
+        &self,
+        path: &str,
+        body: &Value,
+    ) -> Result<reqwest::blocking::Response, FlooApiError> {
+        let mut req = self.client.patch(self.url(path)).json(body);
+        if let Some(auth) = self.auth_header() {
+            req = req.header("Authorization", auth);
+        }
+        req.send()
+            .map_err(|e| FlooApiError::new(0, "CONNECTION_ERROR", e.to_string()))
+    }
+
     fn delete(&self, path: &str) -> Result<reqwest::blocking::Response, FlooApiError> {
         let mut req = self.client.delete(self.url(path));
         if let Some(auth) = self.auth_header() {
@@ -169,6 +182,35 @@ impl FlooClient {
 
     pub fn whoami(&self) -> Result<Value, FlooApiError> {
         let resp = self.get("/v1/auth/whoami")?;
+        self.handle_response(resp)
+    }
+
+    pub fn update_profile(&self, name: &str) -> Result<Value, FlooApiError> {
+        let body = serde_json::json!({"name": name});
+        let resp = self.patch_json("/v1/auth/me", &body)?;
+        self.handle_response(resp)
+    }
+
+    // --- Org ---
+
+    pub fn get_org_me(&self) -> Result<Value, FlooApiError> {
+        let resp = self.get("/v1/orgs/me")?;
+        self.handle_response(resp)
+    }
+
+    pub fn list_members(&self, org_id: &str) -> Result<Value, FlooApiError> {
+        let resp = self.get(&format!("/v1/orgs/{org_id}/members"))?;
+        self.handle_response(resp)
+    }
+
+    pub fn update_member_role(
+        &self,
+        org_id: &str,
+        user_id: &str,
+        role: &str,
+    ) -> Result<Value, FlooApiError> {
+        let body = serde_json::json!({"role": role});
+        let resp = self.patch_json(&format!("/v1/orgs/{org_id}/members/{user_id}"), &body)?;
         self.handle_response(resp)
     }
 
@@ -549,13 +591,8 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
-    pub fn github_installation_repos(
-        &self,
-        installation_id: u64,
-    ) -> Result<Value, FlooApiError> {
-        let resp = self.get(&format!(
-            "/v1/github/installations/{installation_id}/repos"
-        ))?;
+    pub fn github_installation_repos(&self, installation_id: u64) -> Result<Value, FlooApiError> {
+        let resp = self.get(&format!("/v1/github/installations/{installation_id}/repos"))?;
         self.handle_response(resp)
     }
 
@@ -630,13 +667,11 @@ impl FlooClient {
 
     // --- Analytics ---
 
-    pub fn get_app_analytics(
-        &self,
-        app_id: &str,
-        period: &str,
-    ) -> Result<Value, FlooApiError> {
-        let resp =
-            self.get_with_query(&format!("/v1/apps/{app_id}/analytics"), &[("period", period)])?;
+    pub fn get_app_analytics(&self, app_id: &str, period: &str) -> Result<Value, FlooApiError> {
+        let resp = self.get_with_query(
+            &format!("/v1/apps/{app_id}/analytics"),
+            &[("period", period)],
+        )?;
         self.handle_response(resp)
     }
 

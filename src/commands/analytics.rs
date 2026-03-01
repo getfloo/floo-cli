@@ -217,11 +217,7 @@ fn render_org_analytics(period: &str, data: &Value) {
                 })
                 .collect();
 
-            output::table(
-                &["App", "Requests", "Errors", "Error Rate"],
-                &rows,
-                None,
-            );
+            output::table(&["App", "Requests", "Errors", "Error Rate"], &rows, None);
         }
     }
 
