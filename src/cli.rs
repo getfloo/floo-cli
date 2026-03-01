@@ -81,6 +81,10 @@ pub enum Commands {
     #[command(subcommand)]
     Orgs(OrgsCommands),
 
+    /// Manage billing and spend caps.
+    #[command(subcommand)]
+    Billing(BillingCommands),
+
     /// Manage your apps.
     #[command(subcommand)]
     Apps(AppsCommands),
@@ -211,6 +215,24 @@ pub enum AuthCommands {
         /// New display name.
         #[arg(long)]
         name: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum BillingCommands {
+    /// Manage your org's compute spend cap.
+    #[command(subcommand)]
+    SpendCap(SpendCapCommands),
+}
+
+#[derive(Subcommand)]
+pub enum SpendCapCommands {
+    /// Show current spend cap and usage.
+    Get,
+    /// Set the monthly spend cap (in dollars). 0 = no cap.
+    Set {
+        /// Spend cap amount in dollars (e.g., 20.00). Use 0 for no cap.
+        amount: f64,
     },
 }
 
@@ -540,6 +562,13 @@ pub fn run() {
             AuthCommands::Token => commands::auth::token(),
             AuthCommands::Register { email } => commands::auth::register(&email),
             AuthCommands::UpdateProfile { name } => commands::auth::update_profile(&name),
+        },
+
+        Commands::Billing(sub) => match sub {
+            BillingCommands::SpendCap(cap_sub) => match cap_sub {
+                SpendCapCommands::Get => commands::billing::spend_cap_get(),
+                SpendCapCommands::Set { amount } => commands::billing::spend_cap_set(amount),
+            },
         },
 
         Commands::Orgs(sub) => match sub {
