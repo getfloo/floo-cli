@@ -980,6 +980,33 @@ fn test_env_import_all_conflicts_with_services() {
         .stderr(predicate::str::contains("cannot be used with"));
 }
 
+// --- Version check disabled in JSON mode ---
+
+#[test]
+fn test_json_mode_no_version_check_output() {
+    // In JSON mode, no version check messages should appear on stderr
+    floo()
+        .args(["--json", "version"])
+        .env("HOME", "/tmp/floo-test-version-check-json")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Update").not())
+        .stderr(predicate::str::contains("downloaded").not());
+}
+
+#[test]
+fn test_no_update_check_env_var() {
+    // With FLOO_NO_UPDATE_CHECK set, no version check messages should appear
+    floo()
+        .args(["version"])
+        .env("HOME", "/tmp/floo-test-no-update-check")
+        .env("FLOO_NO_UPDATE_CHECK", "1")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Update").not())
+        .stderr(predicate::str::contains("downloaded").not());
+}
+
 // --- Deploy --sync-env ---
 
 #[test]

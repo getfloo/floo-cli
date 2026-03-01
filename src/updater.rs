@@ -13,11 +13,11 @@ use crate::errors::{ErrorCode, FlooError};
 const DEFAULT_RELEASES_API_BASE: &str = "https://api.github.com/repos/getfloo/floo-cli/releases";
 
 #[derive(Debug, Clone)]
-struct ReleaseAsset {
-    version: String,
-    asset_name: String,
-    binary_url: String,
-    checksum_url: String,
+pub(crate) struct ReleaseAsset {
+    pub(crate) version: String,
+    pub(crate) asset_name: String,
+    pub(crate) binary_url: String,
+    pub(crate) checksum_url: String,
 }
 
 #[derive(Debug, Clone)]
@@ -26,11 +26,11 @@ pub struct UpdateResult {
     pub install_path: PathBuf,
 }
 
-fn releases_api_base() -> String {
+pub(crate) fn releases_api_base() -> String {
     env::var("FLOO_UPDATE_API_BASE").unwrap_or_else(|_| DEFAULT_RELEASES_API_BASE.to_string())
 }
 
-fn target_asset_name() -> Result<String, FlooError> {
+pub(crate) fn target_asset_name() -> Result<String, FlooError> {
     let os = env::consts::OS;
     let arch = env::consts::ARCH;
 
@@ -73,7 +73,7 @@ fn build_http_client() -> Result<Client, FlooError> {
     })
 }
 
-fn fetch_release_json(
+pub(crate) fn fetch_release_json(
     client: &Client,
     api_base: &str,
     version: Option<&str>,
@@ -109,7 +109,10 @@ fn fetch_release_json(
     })
 }
 
-fn release_asset_from_json(release: &Value, asset_name: &str) -> Result<ReleaseAsset, FlooError> {
+pub(crate) fn release_asset_from_json(
+    release: &Value,
+    asset_name: &str,
+) -> Result<ReleaseAsset, FlooError> {
     let version = release
         .get("tag_name")
         .and_then(Value::as_str)
@@ -164,7 +167,7 @@ fn release_asset_from_json(release: &Value, asset_name: &str) -> Result<ReleaseA
     })
 }
 
-fn download_bytes(client: &Client, url: &str) -> Result<Vec<u8>, FlooError> {
+pub(crate) fn download_bytes(client: &Client, url: &str) -> Result<Vec<u8>, FlooError> {
     let response = client
         .get(url)
         .header(USER_AGENT, "floo-cli-updater")
@@ -194,7 +197,7 @@ fn download_bytes(client: &Client, url: &str) -> Result<Vec<u8>, FlooError> {
     })
 }
 
-fn parse_checksum(checksum_contents: &str) -> Result<String, FlooError> {
+pub(crate) fn parse_checksum(checksum_contents: &str) -> Result<String, FlooError> {
     for line in checksum_contents.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -216,14 +219,14 @@ fn parse_checksum(checksum_contents: &str) -> Result<String, FlooError> {
     ))
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
 }
 
 #[cfg(unix)]
-fn set_executable(path: &Path) -> Result<(), FlooError> {
+pub(crate) fn set_executable(path: &Path) -> Result<(), FlooError> {
     use std::os::unix::fs::PermissionsExt;
 
     let mut permissions = fs::metadata(path)
@@ -244,7 +247,7 @@ fn set_executable(path: &Path) -> Result<(), FlooError> {
 }
 
 #[cfg(not(unix))]
-fn set_executable(_path: &Path) -> Result<(), FlooError> {
+pub(crate) fn set_executable(_path: &Path) -> Result<(), FlooError> {
     Ok(())
 }
 
@@ -252,7 +255,7 @@ fn install_path_override() -> Option<PathBuf> {
     env::var("FLOO_UPDATE_TARGET_PATH").ok().map(PathBuf::from)
 }
 
-fn resolve_install_path() -> Result<PathBuf, FlooError> {
+pub(crate) fn resolve_install_path() -> Result<PathBuf, FlooError> {
     if let Some(path) = install_path_override() {
         return Ok(path);
     }
@@ -266,7 +269,7 @@ fn resolve_install_path() -> Result<PathBuf, FlooError> {
     })
 }
 
-fn install_binary(binary_bytes: &[u8], destination: &Path) -> Result<(), FlooError> {
+pub(crate) fn install_binary(binary_bytes: &[u8], destination: &Path) -> Result<(), FlooError> {
     let destination_dir = destination.parent().ok_or_else(|| {
         FlooError::new(
             ErrorCode::UpdateInstallFailed,

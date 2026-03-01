@@ -48,7 +48,7 @@ fn config_path() -> PathBuf {
     dirs_home().join(CONFIG_DIR_NAME).join(CONFIG_FILE_NAME)
 }
 
-fn dirs_home() -> PathBuf {
+pub(crate) fn dirs_home() -> PathBuf {
     // HOME on Unix, USERPROFILE on Windows
     env::var("HOME")
         .or_else(|_| env::var("USERPROFILE"))
