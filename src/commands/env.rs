@@ -2,6 +2,7 @@ use std::path::Path;
 use std::process;
 
 use crate::api_client::FlooClient;
+use crate::errors::ErrorCode;
 use crate::output;
 use crate::project_config;
 
@@ -32,7 +33,7 @@ fn resolve_service_ids(
     let result = match client.list_services(app_id) {
         Ok(r) => r,
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
@@ -52,7 +53,7 @@ fn resolve_service_ids(
                     &format!(
                         "App '{app_name}' has multiple services. Specify which with --services."
                     ),
-                    "MULTIPLE_SERVICES",
+                    &ErrorCode::MultipleServices,
                     Some(&format!("Available services: {}", names.join(", "))),
                 );
                 process::exit(1);
@@ -70,7 +71,7 @@ fn resolve_service_ids(
                     let available: Vec<&str> = services.iter().map(|s| s.name.as_str()).collect();
                     output::error(
                         &format!("Service '{name}' not found on app '{app_name}'."),
-                        "SERVICE_NOT_FOUND",
+                        &ErrorCode::ServiceNotFound,
                         Some(&format!("Available services: {}", available.join(", "))),
                     );
                     process::exit(1);
@@ -94,7 +95,7 @@ fn resolve_single_service(
     ids.into_iter().next().unwrap_or_else(|| {
         output::error(
             "Service resolution returned no results.",
-            "INTERNAL_ERROR",
+            &ErrorCode::InternalError,
             Some("This is a bug. Please report it."),
         );
         process::exit(1);
@@ -105,21 +106,20 @@ fn parse_env_file(path: &Path) -> Vec<(String, String)> {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) => {
-            let (code, msg) = match e.kind() {
-                std::io::ErrorKind::NotFound => (
-                    "ENV_FILE_NOT_FOUND",
-                    format!("File not found: {}", path.display()),
-                ),
-                std::io::ErrorKind::PermissionDenied => (
-                    "ENV_FILE_NOT_FOUND",
-                    format!("Permission denied reading: {}", path.display()),
-                ),
-                _ => (
-                    "ENV_FILE_NOT_FOUND",
-                    format!("Failed to read {}: {e}", path.display()),
-                ),
+            let msg = match e.kind() {
+                std::io::ErrorKind::NotFound => {
+                    format!("File not found: {}", path.display())
+                }
+                std::io::ErrorKind::PermissionDenied => {
+                    format!("Permission denied reading: {}", path.display())
+                }
+                _ => format!("Failed to read {}: {e}", path.display()),
             };
-            output::error(&msg, code, Some("Check the file path and permissions."));
+            output::error(
+                &msg,
+                &ErrorCode::EnvFileNotFound,
+                Some("Check the file path and permissions."),
+            );
             process::exit(1);
         }
     };
@@ -161,7 +161,7 @@ fn parse_env_file(path: &Path) -> Vec<(String, String)> {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
-            "ENV_PARSE_ERROR",
+            &ErrorCode::EnvParseError,
             Some("Each non-comment line must be in KEY=VALUE format."),
         );
         process::exit(1);
@@ -170,7 +170,7 @@ fn parse_env_file(path: &Path) -> Vec<(String, String)> {
     if vars.is_empty() {
         output::error(
             &format!("No valid KEY=VALUE pairs found in {}.", path.display()),
-            "ENV_PARSE_ERROR",
+            &ErrorCode::EnvParseError,
             Some("Ensure the file contains lines in KEY=VALUE format."),
         );
         process::exit(1);
@@ -189,7 +189,7 @@ pub fn set(key_value: &str, app_flag: Option<&str>, service_names: &[String], re
     if !key_value.contains('=') {
         output::error(
             "Invalid format. Use KEY=VALUE.",
-            "INVALID_FORMAT",
+            &ErrorCode::InvalidFormat,
             Some("Example: floo env set DATABASE_URL=postgres://..."),
         );
         process::exit(1);
@@ -216,7 +216,7 @@ pub fn set(key_value: &str, app_flag: Option<&str>, service_names: &[String], re
                 }
             }
             Err(e) => {
-                output::error(&e.message, &e.code, None);
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
                 process::exit(1);
             }
         }
@@ -237,22 +237,15 @@ pub fn set(key_value: &str, app_flag: Option<&str>, service_names: &[String], re
             }
             Err(e) => {
                 spinner.finish();
-                output::error(&e.message, &e.code, None);
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
                 process::exit(1);
             }
         };
 
-        let final_status = match deploy_data.get("status").and_then(|v| v.as_str()) {
-            Some(s) => s,
-            None => {
-                output::error(
-                    "API response missing 'status' field.",
-                    "INVALID_RESPONSE",
-                    Some("This may indicate a CLI/API version mismatch. Try `floo update`."),
-                );
-                process::exit(1);
-            }
-        };
+        let final_status = deploy_data
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let url = deploy_data
             .get("url")
             .and_then(|v| v.as_str())
@@ -261,7 +254,7 @@ pub fn set(key_value: &str, app_flag: Option<&str>, service_names: &[String], re
         if final_status == "failed" {
             output::error_with_data(
                 "Restart failed.",
-                "RESTART_FAILED",
+                &ErrorCode::RestartFailed,
                 Some("Run `floo logs` for details."),
                 Some(serde_json::json!({"env": last_env_result, "deploy": deploy_data})),
             );
@@ -285,7 +278,7 @@ pub fn list(app_flag: Option<&str>, service_names: &[String]) {
         let result = match client.list_env_vars(&app_id, service_id.as_deref()) {
             Ok(r) => r,
             Err(e) => {
-                output::error(&e.message, &e.code, None);
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
                 process::exit(1);
             }
         };
@@ -326,7 +319,7 @@ pub fn remove(key: &str, app_flag: Option<&str>, service_names: &[String]) {
 
     for (service_id, service_name) in &targets {
         if let Err(e) = client.delete_env_var(&app_id, &key, service_id.as_deref()) {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
 
@@ -350,7 +343,7 @@ pub fn get(key: &str, app_flag: Option<&str>, service_flag: Option<&str>) {
     let result = match client.get_env_var(&app_id, &key, service_id.as_deref()) {
         Ok(r) => r,
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
@@ -358,7 +351,7 @@ pub fn get(key: &str, app_flag: Option<&str>, service_flag: Option<&str>) {
     let value = result.value.as_deref().unwrap_or_else(|| {
         output::error(
             "Response missing 'value' field.",
-            "PARSE_ERROR",
+            &ErrorCode::ParseError,
             Some("This is a bug. Please report it."),
         );
         process::exit(1);
@@ -380,7 +373,7 @@ pub fn import_vars(file_flag: Option<&Path>, app_flag: Option<&str>, service_nam
     let cwd = std::env::current_dir().unwrap_or_else(|e| {
         output::error(
             &format!("Failed to read current directory: {e}"),
-            "FILE_ERROR",
+            &ErrorCode::FileError,
             None,
         );
         process::exit(1);
@@ -391,7 +384,7 @@ pub fn import_vars(file_flag: Option<&Path>, app_flag: Option<&str>, service_nam
     // but all other errors (LEGACY_CONFIG, INVALID_PROJECT_CONFIG) must surface.
     let resolved = match project_config::resolve_app_context(&cwd, app_flag) {
         Ok(r) => Some(r),
-        Err(e) if e.code == "NO_CONFIG_FOUND" => None,
+        Err(e) if e.code == ErrorCode::NoConfigFound => None,
         Err(e) => {
             output::error(&e.message, &e.code, e.suggestion.as_deref());
             process::exit(1);
@@ -437,7 +430,7 @@ pub fn import_vars(file_flag: Option<&Path>, app_flag: Option<&str>, service_nam
                 );
             }
             Err(e) => {
-                output::error(&e.message, &e.code, None);
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
                 process::exit(1);
             }
         }
@@ -450,7 +443,7 @@ pub fn import_all_services(app_flag: Option<&str>) {
     let cwd = std::env::current_dir().unwrap_or_else(|e| {
         output::error(
             &format!("Failed to read current directory: {e}"),
-            "FILE_ERROR",
+            &ErrorCode::FileError,
             None,
         );
         process::exit(1);
@@ -522,7 +515,7 @@ pub fn import_all_services(app_flag: Option<&str>) {
     if env_file_entries.is_empty() {
         output::error(
             "No services with env_file configured.",
-            "NO_ENV_FILES",
+            &ErrorCode::NoEnvFiles,
             Some("Add env_file to your service configs, e.g. env_file = \".env\""),
         );
         process::exit(1);
@@ -537,7 +530,7 @@ pub fn import_all_services(app_flag: Option<&str>) {
     let server_services = match client.list_services(&app_id) {
         Ok(r) => r.services,
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
@@ -566,7 +559,7 @@ pub fn import_all_services(app_flag: Option<&str>) {
                 services_imported += 1;
             }
             Err(e) => {
-                output::error(&e.message, &e.code, None);
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
                 process::exit(1);
             }
         }

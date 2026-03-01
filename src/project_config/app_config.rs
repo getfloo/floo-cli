@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::errors::FlooError;
+use crate::errors::{ErrorCode, FlooError};
 
 use super::service_config::ServiceIngress;
 use super::SCHEMA_URL;
@@ -77,7 +77,7 @@ pub fn load_app_config(dir: &Path) -> Result<Option<AppFileConfig>, FlooError> {
 
     let content = std::fs::read_to_string(&config_path).map_err(|e| {
         FlooError::with_suggestion(
-            "INVALID_PROJECT_CONFIG",
+            ErrorCode::InvalidProjectConfig,
             format!("Failed to read {}: {e}", super::APP_CONFIG_FILE),
             format!("See {SCHEMA_URL} for the schema reference."),
         )
@@ -85,7 +85,7 @@ pub fn load_app_config(dir: &Path) -> Result<Option<AppFileConfig>, FlooError> {
 
     let config: AppFileConfig = toml::from_str(&content).map_err(|e| {
         FlooError::with_suggestion(
-            "INVALID_PROJECT_CONFIG",
+            ErrorCode::InvalidProjectConfig,
             format!("Invalid {}: {e}", super::APP_CONFIG_FILE),
             format!("See {SCHEMA_URL} for the schema reference."),
         )
@@ -100,7 +100,7 @@ fn validate_app_config(config: &AppFileConfig) -> Result<(), FlooError> {
     for (name, entry) in &config.services {
         if entry.path.is_some() && entry.repo.is_some() {
             return Err(FlooError::with_suggestion(
-                "INVALID_PROJECT_CONFIG",
+                ErrorCode::InvalidProjectConfig,
                 format!(
                     "Service '{name}' in {} has both 'path' and 'repo' — these are mutually exclusive.",
                     super::APP_CONFIG_FILE
@@ -116,13 +116,13 @@ pub fn write_app_config(dir: &Path, config: &AppFileConfig) -> Result<(), FlooEr
     let config_path = dir.join(super::APP_CONFIG_FILE);
     let content = toml::to_string_pretty(config).map_err(|e| {
         FlooError::new(
-            "CONFIG_WRITE_ERROR",
+            ErrorCode::ConfigWriteError,
             format!("Failed to serialize {}: {e}", super::APP_CONFIG_FILE),
         )
     })?;
     std::fs::write(&config_path, content).map_err(|e| {
         FlooError::new(
-            "CONFIG_WRITE_ERROR",
+            ErrorCode::ConfigWriteError,
             format!("Failed to write {}: {e}", super::APP_CONFIG_FILE),
         )
     })?;
@@ -240,7 +240,7 @@ repo = "myorg/my-api"
         .unwrap();
 
         let err = load_app_config(dir.path()).unwrap_err();
-        assert_eq!(err.code, "INVALID_PROJECT_CONFIG");
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
         assert!(err.message.contains("mutually exclusive"));
     }
 
@@ -265,7 +265,7 @@ unknown = "bad"
         .unwrap();
 
         let err = load_app_config(dir.path()).unwrap_err();
-        assert_eq!(err.code, "INVALID_PROJECT_CONFIG");
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
     }
 
     #[test]
@@ -284,7 +284,7 @@ type = "mysql"
         .unwrap();
 
         let err = load_app_config(dir.path()).unwrap_err();
-        assert_eq!(err.code, "INVALID_PROJECT_CONFIG");
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
     }
 
     #[test]
@@ -450,6 +450,6 @@ access_mode = "private"
         .unwrap();
 
         let err = load_app_config(dir.path()).unwrap_err();
-        assert_eq!(err.code, "INVALID_PROJECT_CONFIG");
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
     }
 }

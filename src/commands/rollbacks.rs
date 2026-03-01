@@ -1,5 +1,6 @@
 use std::process;
 
+use crate::errors::ErrorCode;
 use crate::output;
 
 pub fn list(app: Option<&str>) {
@@ -12,7 +13,7 @@ pub fn list(app: Option<&str>) {
     let result = match client.list_deploys(app_id) {
         Ok(r) => r,
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
@@ -76,7 +77,7 @@ pub fn rollback(app_name: &str, deploy_id: &str, force: bool) {
         Ok(r) => r,
         Err(e) => {
             spinner.finish();
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };

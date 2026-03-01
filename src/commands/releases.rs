@@ -1,5 +1,6 @@
 use std::process;
 
+use crate::errors::ErrorCode;
 use crate::output;
 
 pub fn promote(app: Option<&str>, tag: Option<&str>) {
@@ -23,7 +24,7 @@ pub fn promote(app: Option<&str>, tag: Option<&str>) {
                 "RELEASE_TAG_EXISTS" => Some("Use a different tag with --tag <tag>"),
                 _ => None,
             };
-            output::error(&e.message, &e.code, suggestion);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), suggestion);
             process::exit(1);
         }
     };
@@ -62,7 +63,7 @@ pub fn list(app: Option<&str>) {
     let result = match client.list_releases(app_id, 1, 20) {
         Ok(r) => r,
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
@@ -118,11 +119,11 @@ pub fn show(release_id: &str, app: Option<&str>) {
             if e.code == "RELEASE_NOT_FOUND" {
                 output::error(
                     &format!("Release '{release_id}' not found."),
-                    "RELEASE_NOT_FOUND",
+                    &ErrorCode::ReleaseNotFound,
                     Some("Check the release ID and try again."),
                 );
             } else {
-                output::error(&e.message, &e.code, None);
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             }
             process::exit(1);
         }

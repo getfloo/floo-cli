@@ -3,6 +3,7 @@ use std::process;
 use crate::api_client::FlooClient;
 use crate::api_types::App;
 use crate::config::{load_config, FlooConfig};
+use crate::errors::ErrorCode;
 use crate::output;
 
 pub mod analytics;
@@ -29,7 +30,7 @@ pub(crate) fn init_client(config: Option<FlooConfig>) -> FlooClient {
         Err(error) => {
             output::error(
                 &error.message,
-                &error.code,
+                &ErrorCode::from_api(&error.code),
                 Some("Check your network/TLS setup and try again."),
             );
             process::exit(1);
@@ -42,7 +43,7 @@ pub(crate) fn require_auth() {
     if config.api_key.is_none() {
         output::error(
             "Not logged in.",
-            "NOT_AUTHENTICATED",
+            &ErrorCode::NotAuthenticated,
             Some("Run 'floo login' to authenticate."),
         );
         process::exit(1);
@@ -56,11 +57,11 @@ pub(crate) fn resolve_app_or_exit(client: &FlooClient, app_name: &str) -> App {
             if e.code == "APP_NOT_FOUND" {
                 output::error(
                     &format!("App '{app_name}' not found."),
-                    "APP_NOT_FOUND",
+                    &ErrorCode::AppNotFound,
                     Some("Check the app name or ID and try again."),
                 );
             } else {
-                output::error(&e.message, &e.code, None);
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             }
             process::exit(1);
         }
@@ -74,7 +75,7 @@ pub(crate) fn resolve_app_from_config(
     let cwd = std::env::current_dir().unwrap_or_else(|e| {
         output::error(
             &format!("Failed to read current directory: {e}"),
-            "CWD_ERROR",
+            &ErrorCode::CwdError,
             Some("Ensure the current directory exists and you have read permission."),
         );
         process::exit(1);

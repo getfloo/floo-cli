@@ -1,5 +1,6 @@
 use std::process;
 
+use crate::errors::ErrorCode;
 use crate::output;
 
 pub fn spend_cap_get() {
@@ -9,7 +10,7 @@ pub fn spend_cap_get() {
     let org = match client.get_org_me() {
         Ok(o) => o,
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
@@ -18,7 +19,7 @@ pub fn spend_cap_get() {
     let current_spend = org.current_period_spend_cents.unwrap_or_else(|| {
         output::error(
             "Response missing 'current_period_spend_cents' field.",
-            "PARSE_ERROR",
+            &ErrorCode::ParseError,
             Some("This is a bug. Please report it."),
         );
         process::exit(1);
@@ -26,7 +27,7 @@ pub fn spend_cap_get() {
     let exceeded = org.spend_cap_exceeded.unwrap_or_else(|| {
         output::error(
             "Response missing 'spend_cap_exceeded' field.",
-            "PARSE_ERROR",
+            &ErrorCode::ParseError,
             Some("This is a bug. Please report it."),
         );
         process::exit(1);
@@ -62,7 +63,7 @@ pub fn spend_cap_set(amount: f64) {
     if !amount.is_finite() || !(0.0..=1_000_000.0).contains(&amount) {
         output::error(
             "Spend cap must be between $0 and $1,000,000.",
-            "INVALID_AMOUNT",
+            &ErrorCode::InvalidAmount,
             Some("Use a positive dollar amount, or 0 for no cap."),
         );
         process::exit(1);
@@ -82,7 +83,7 @@ pub fn spend_cap_set(amount: f64) {
             }
         }
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     }

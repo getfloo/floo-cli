@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::process;
 
 use crate::api_types::{AppAnalyticsResponse, TimeSeriesPoint};
+use crate::errors::ErrorCode;
 use crate::output;
 
 pub fn analytics(app: Option<String>, period: &str) {
@@ -23,7 +24,7 @@ fn app_analytics(client: &crate::api_client::FlooClient, app_name: &str, period:
     let data = match client.get_app_analytics(app_id, period) {
         Ok(d) => d,
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
@@ -43,7 +44,7 @@ fn org_analytics(client: &crate::api_client::FlooClient, period: &str) {
     let data = match client.get_org_analytics(period) {
         Ok(d) => d,
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };

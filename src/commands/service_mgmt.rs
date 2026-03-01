@@ -1,5 +1,6 @@
 use std::process;
 
+use crate::errors::ErrorCode;
 use crate::output;
 use crate::project_config::{
     self, validate_service_name, AppServiceEntry, AppServiceType, ServiceFileAppSection,
@@ -17,7 +18,7 @@ pub fn add(
     let cwd = std::env::current_dir().unwrap_or_else(|e| {
         output::error(
             &format!("Failed to read current directory: {e}"),
-            "FILE_ERROR",
+            &ErrorCode::FileError,
             None,
         );
         process::exit(1);
@@ -25,7 +26,7 @@ pub fn add(
 
     // Validate service name
     if let Err(msg) = validate_service_name(name) {
-        output::error(&msg, "INVALID_SERVICE_NAME", None);
+        output::error(&msg, &ErrorCode::InvalidServiceName, None);
         process::exit(1);
     }
 
@@ -35,7 +36,7 @@ pub fn add(
         Ok(None) => {
             output::error(
                 &format!("{} not found.", project_config::APP_CONFIG_FILE),
-                "NO_CONFIG_FOUND",
+                &ErrorCode::NoConfigFound,
                 Some("Run `floo init` first to create config files."),
             );
             process::exit(1);
@@ -53,7 +54,7 @@ pub fn add(
                 "Service '{name}' already exists in {}.",
                 project_config::APP_CONFIG_FILE
             ),
-            "DUPLICATE_SERVICE",
+            &ErrorCode::DuplicateService,
             Some("Choose a different name or use `floo service rm` first."),
         );
         process::exit(1);
@@ -67,7 +68,7 @@ pub fn add(
                     "Service '{name}' already defined in root {}.",
                     project_config::SERVICE_CONFIG_FILE
                 ),
-                "DUPLICATE_SERVICE",
+                &ErrorCode::DuplicateService,
                 Some("Choose a different name."),
             );
             process::exit(1);
@@ -81,7 +82,7 @@ pub fn add(
             if !output::is_interactive() {
                 output::error(
                     "--port is required in non-interactive mode.",
-                    "MISSING_PORT",
+                    &ErrorCode::MissingPort,
                     Some("Usage: floo service add <name> <path> --port N --type T"),
                 );
                 process::exit(1);
@@ -92,7 +93,7 @@ pub fn add(
             port_str.parse().unwrap_or_else(|_| {
                 output::error(
                     &format!("Invalid port number: '{port_str}'."),
-                    "INVALID_FORMAT",
+                    &ErrorCode::InvalidFormat,
                     Some("Port must be a number between 1 and 65535."),
                 );
                 process::exit(1);
@@ -106,7 +107,7 @@ pub fn add(
             if !output::is_interactive() {
                 output::error(
                     "--type is required in non-interactive mode.",
-                    "MISSING_TYPE",
+                    &ErrorCode::MissingType,
                     Some("Usage: floo service add <name> <path> --port N --type T"),
                 );
                 process::exit(1);
@@ -124,7 +125,7 @@ pub fn add(
         other => {
             output::error(
                 &format!("Unknown service type '{other}'."),
-                "INVALID_TYPE",
+                &ErrorCode::InvalidType,
                 Some("Valid types: web, api, worker."),
             );
             process::exit(1);
@@ -143,7 +144,7 @@ pub fn add(
         Some(other) => {
             output::error(
                 &format!("Unknown ingress mode '{other}'."),
-                "INVALID_INGRESS",
+                &ErrorCode::InvalidIngress,
                 Some("Valid modes: public, internal."),
             );
             process::exit(1);
@@ -187,7 +188,7 @@ pub fn add(
     if let Err(e) = std::fs::create_dir_all(&svc_dir) {
         output::error(
             &format!("Failed to create directory '{}': {e}", path),
-            "FILE_ERROR",
+            &ErrorCode::FileError,
             None,
         );
         process::exit(1);
@@ -239,7 +240,7 @@ pub fn rm(name: &str, delete_config: bool) {
     let cwd = std::env::current_dir().unwrap_or_else(|e| {
         output::error(
             &format!("Failed to read current directory: {e}"),
-            "FILE_ERROR",
+            &ErrorCode::FileError,
             None,
         );
         process::exit(1);
@@ -250,7 +251,7 @@ pub fn rm(name: &str, delete_config: bool) {
         Ok(None) => {
             output::error(
                 &format!("{} not found.", project_config::APP_CONFIG_FILE),
-                "NO_CONFIG_FOUND",
+                &ErrorCode::NoConfigFound,
                 Some("No config to modify."),
             );
             process::exit(1);
@@ -281,7 +282,7 @@ pub fn rm(name: &str, delete_config: bool) {
                                 "Failed to delete {}: {e}",
                                 project_config::SERVICE_CONFIG_FILE
                             ),
-                            "FILE_ERROR",
+                            &ErrorCode::FileError,
                             None,
                         );
                         process::exit(1);
@@ -297,7 +298,7 @@ pub fn rm(name: &str, delete_config: bool) {
                 "Service '{name}' not found in {}.",
                 project_config::APP_CONFIG_FILE
             ),
-            "SERVICE_NOT_FOUND",
+            &ErrorCode::ServiceNotFound,
             None,
         );
         process::exit(1);
@@ -321,7 +322,7 @@ pub fn rm(name: &str, delete_config: bool) {
                             svc_path,
                             project_config::SERVICE_CONFIG_FILE
                         ),
-                        "FILE_ERROR",
+                        &ErrorCode::FileError,
                         None,
                     );
                     process::exit(1);

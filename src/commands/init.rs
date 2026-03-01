@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::process;
 
 use crate::detection::detect;
+use crate::errors::ErrorCode;
 use crate::names::generate_name;
 use crate::output;
 use crate::project_config::{
@@ -16,7 +17,7 @@ pub fn init(name: Option<String>, path: PathBuf) {
         Err(_) => {
             output::error(
                 &format!("Path '{}' does not exist.", path.display()),
-                "INVALID_PATH",
+                &ErrorCode::InvalidPath,
                 Some("Provide a valid project directory."),
             );
             process::exit(1);
@@ -26,7 +27,7 @@ pub fn init(name: Option<String>, path: PathBuf) {
     if !project_path.is_dir() {
         output::error(
             &format!("Path '{}' is not a directory.", path.display()),
-            "INVALID_PATH",
+            &ErrorCode::InvalidPath,
             Some("Provide a valid project directory."),
         );
         process::exit(1);
@@ -36,7 +37,7 @@ pub fn init(name: Option<String>, path: PathBuf) {
     if project_path.join(project_config::APP_CONFIG_FILE).exists() {
         output::error(
             &format!("{} already exists.", project_config::APP_CONFIG_FILE),
-            "CONFIG_EXISTS",
+            &ErrorCode::ConfigExists,
             Some("Use `floo service add` to add services to the existing config."),
         );
         process::exit(1);
@@ -61,7 +62,7 @@ fn init_non_interactive(
         None => {
             output::error(
                 "App name required in non-interactive mode.",
-                "MISSING_APP_NAME",
+                &ErrorCode::MissingAppName,
                 Some("Usage: floo init <name> [--json]"),
             );
             process::exit(1);
@@ -171,7 +172,7 @@ fn init_interactive(
             let port: u16 = port_str.parse().unwrap_or_else(|_| {
                 output::error(
                     &format!("Invalid port number: '{port_str}'."),
-                    "INVALID_FORMAT",
+                    &ErrorCode::InvalidFormat,
                     Some("Port must be a number between 1 and 65535."),
                 );
                 process::exit(1);
@@ -186,7 +187,7 @@ fn init_interactive(
                 other => {
                     output::error(
                         &format!("Unknown service type '{other}'."),
-                        "INVALID_TYPE",
+                        &ErrorCode::InvalidType,
                         Some("Valid types: web, api, worker."),
                     );
                     process::exit(1);

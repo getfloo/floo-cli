@@ -1,5 +1,6 @@
 use std::process;
 
+use crate::errors::ErrorCode;
 use crate::output;
 
 pub fn list(app: Option<&str>) {
@@ -13,7 +14,7 @@ pub fn list(app: Option<&str>) {
     let result = match client.list_services(app_id) {
         Ok(r) => r,
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
@@ -62,7 +63,7 @@ pub fn info(service_name: &str, app: Option<&str>) {
     let result = match client.list_services(app_id) {
         Ok(r) => r,
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
@@ -108,7 +109,7 @@ pub fn info(service_name: &str, app: Option<&str>) {
         );
         output::error(
             &format!("Service '{service_name}' not found on {app_name}."),
-            "SERVICE_NOT_FOUND",
+            &ErrorCode::ServiceNotFound,
             Some(&suggestion),
         );
         process::exit(1);
@@ -121,11 +122,11 @@ pub fn info(service_name: &str, app: Option<&str>) {
             if e.code == "DATABASE_NOT_FOUND" {
                 output::error(
                     &format!("Service '{service_name}' not found on {app_name}."),
-                    "SERVICE_NOT_FOUND",
+                    &ErrorCode::ServiceNotFound,
                     Some("Run 'floo services list' to see available services."),
                 );
             } else {
-                output::error(&e.message, &e.code, None);
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             }
             process::exit(1);
         }

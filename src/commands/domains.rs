@@ -1,13 +1,14 @@
 use std::process;
 
 use crate::api_client::FlooClient;
+use crate::errors::ErrorCode;
 use crate::output;
 
 fn check_services_flag(client: &FlooClient, app_id: &str, services: Option<&str>) {
     let result = match client.list_services(app_id) {
         Ok(r) => r,
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
@@ -15,7 +16,7 @@ fn check_services_flag(client: &FlooClient, app_id: &str, services: Option<&str>
     if result.services.len() > 1 && services.is_none() {
         output::error(
             "Multiple services found. Specify --services.",
-            "MULTIPLE_SERVICES_NO_TARGET",
+            &ErrorCode::MultipleServicesNoTarget,
             Some("Use --services <name> to target a specific service."),
         );
         process::exit(1);
@@ -26,7 +27,7 @@ fn check_services_flag(client: &FlooClient, app_id: &str, services: Option<&str>
         if !exists {
             output::error(
                 &format!("Service '{svc_name}' not found."),
-                "SERVICE_NOT_FOUND",
+                &ErrorCode::ServiceNotFound,
                 Some("Run 'floo services list' to see available services."),
             );
             process::exit(1);
@@ -44,7 +45,7 @@ pub fn add(hostname: &str, app: Option<&str>, services: Option<&str>) {
     let result = match client.add_domain(&app_id, hostname) {
         Ok(r) => r,
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
@@ -77,7 +78,7 @@ pub fn list(app: Option<&str>, services: Option<&str>) {
     let result = match client.list_domains(&app_id) {
         Ok(r) => r,
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
@@ -126,7 +127,7 @@ pub fn remove(hostname: &str, app: Option<&str>, services: Option<&str>) {
     check_services_flag(&client, &app_id, services);
 
     if let Err(e) = client.delete_domain(&app_id, hostname) {
-        output::error(&e.message, &e.code, None);
+        output::error(&e.message, &ErrorCode::from_api(&e.code), None);
         process::exit(1);
     }
 

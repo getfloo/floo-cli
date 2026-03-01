@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::errors::FlooError;
+use crate::errors::{ErrorCode, FlooError};
 
 use super::app_config::{load_app_config, AppFileConfig};
 use super::service_config::{load_service_config, ServiceFileConfig};
@@ -42,7 +42,7 @@ pub fn resolve_app_context(cwd: &Path, app_flag: Option<&str>) -> Result<Resolve
         // Check for legacy floo.toml first
         if current.join(LEGACY_CONFIG_FILE).exists() {
             return Err(FlooError::with_suggestion(
-                "LEGACY_CONFIG",
+                ErrorCode::LegacyConfig,
                 format!(
                     "Found legacy {} in '{}'. This format is no longer supported.",
                     LEGACY_CONFIG_FILE,
@@ -88,7 +88,7 @@ pub fn resolve_app_context(cwd: &Path, app_flag: Option<&str>) -> Result<Resolve
     }
 
     Err(FlooError::with_suggestion(
-        "NO_CONFIG_FOUND",
+        ErrorCode::NoConfigFound,
         format!("No {} or {} found.", SERVICE_CONFIG_FILE, APP_CONFIG_FILE),
         format!(
             "Run 'floo deploy' interactively to create config files, or write {} manually.",
@@ -254,7 +254,7 @@ ingress = "public"
         .unwrap();
 
         let err = resolve_app_context(dir.path(), None).unwrap_err();
-        assert_eq!(err.code, "LEGACY_CONFIG");
+        assert_eq!(err.code, ErrorCode::LegacyConfig);
         assert!(err.message.contains("no longer supported"));
     }
 
@@ -267,14 +267,14 @@ ingress = "public"
         fs::create_dir(&child).unwrap();
 
         let err = resolve_app_context(&child, None).unwrap_err();
-        assert_eq!(err.code, "LEGACY_CONFIG");
+        assert_eq!(err.code, ErrorCode::LegacyConfig);
     }
 
     #[test]
     fn test_resolve_no_config_errors() {
         let dir = TempDir::new().unwrap();
         let err = resolve_app_context(dir.path(), None).unwrap_err();
-        assert_eq!(err.code, "NO_CONFIG_FOUND");
+        assert_eq!(err.code, ErrorCode::NoConfigFound);
     }
 
     #[test]

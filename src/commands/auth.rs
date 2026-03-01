@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use colored::Colorize;
 
 use crate::config::{clear_config, load_config, save_config};
+use crate::errors::ErrorCode;
 use crate::output;
 
 pub fn login(api_key: Option<&str>, force: bool) {
@@ -15,7 +16,7 @@ pub fn login(api_key: Option<&str>, force: bool) {
         if let Err(e) = save_config(&config) {
             output::error(
                 &format!("Failed to save credentials: {e}"),
-                "CONFIG_ERROR",
+                &ErrorCode::ConfigError,
                 None,
             );
             process::exit(1);
@@ -37,7 +38,11 @@ pub fn login(api_key: Option<&str>, force: bool) {
             Err(e) => {
                 // Key is invalid — clear it
                 clear_config();
-                output::error(&e.message, &e.code, Some("The API key is invalid."));
+                output::error(
+                    &e.message,
+                    &ErrorCode::from_api(&e.code),
+                    Some("The API key is invalid."),
+                );
                 process::exit(1);
             }
         }
@@ -77,7 +82,11 @@ pub fn login(api_key: Option<&str>, force: bool) {
         }
         Err(e) => {
             spinner.finish();
-            output::error(&e.message, &e.code, Some("Check your network connection."));
+            output::error(
+                &e.message,
+                &ErrorCode::from_api(&e.code),
+                Some("Check your network connection."),
+            );
             process::exit(1);
         }
     };
@@ -114,7 +123,7 @@ pub fn login(api_key: Option<&str>, force: bool) {
             spinner.finish();
             output::error(
                 "Device code expired. Please try again.",
-                "DEVICE_CODE_EXPIRED",
+                &ErrorCode::DeviceCodeExpired,
                 Some("Run 'floo auth login' to start a new session."),
             );
             process::exit(1);
@@ -131,7 +140,7 @@ pub fn login(api_key: Option<&str>, force: bool) {
                 if let Err(e) = save_config(&config) {
                     output::error(
                         &format!("Failed to save credentials: {e}"),
-                        "CONFIG_ERROR",
+                        &ErrorCode::ConfigError,
                         None,
                     );
                     process::exit(1);
@@ -161,21 +170,25 @@ pub fn login(api_key: Option<&str>, force: bool) {
                 spinner.finish();
                 output::error(
                     "Device code expired. Please try again.",
-                    "DEVICE_CODE_EXPIRED",
+                    &ErrorCode::DeviceCodeExpired,
                     Some("Run 'floo auth login' to start a new session."),
                 );
                 process::exit(1);
             }
             Err(e) if e.code == "DEVICE_AUTH_DENIED" => {
                 spinner.finish();
-                output::error("Authorization was denied.", "DEVICE_AUTH_DENIED", None);
+                output::error(
+                    "Authorization was denied.",
+                    &ErrorCode::DeviceAuthDenied,
+                    None,
+                );
                 process::exit(1);
             }
             Err(e) if e.code == "SIGNUP_DISABLED" => {
                 spinner.finish();
                 output::error(
                     &e.message,
-                    "SIGNUP_DISABLED",
+                    &ErrorCode::SignupDisabled,
                     Some("Join the waitlist at https://getfloo.com to request access."),
                 );
                 process::exit(1);
@@ -185,14 +198,18 @@ pub fn login(api_key: Option<&str>, force: bool) {
                 network_retries += 1;
                 if network_retries >= 3 {
                     spinner.finish();
-                    output::error(&e.message, &e.code, Some("Check your network connection."));
+                    output::error(
+                        &e.message,
+                        &ErrorCode::from_api(&e.code),
+                        Some("Check your network connection."),
+                    );
                     process::exit(1);
                 }
                 continue;
             }
             Err(e) => {
                 spinner.finish();
-                output::error(&e.message, &e.code, None);
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
                 process::exit(1);
             }
         }
@@ -205,7 +222,7 @@ pub fn token() {
         None => {
             output::error(
                 "Not logged in.",
-                "NOT_AUTHENTICATED",
+                &ErrorCode::NotAuthenticated,
                 Some("Run 'floo auth login' to authenticate."),
             );
             process::exit(1);
@@ -238,7 +255,7 @@ pub fn register(email: &str) {
             if let Err(e) = save_config(&config) {
                 output::error(
                     &format!("Failed to save credentials: {e}"),
-                    "CONFIG_ERROR",
+                    &ErrorCode::ConfigError,
                     None,
                 );
                 process::exit(1);
@@ -252,14 +269,14 @@ pub fn register(email: &str) {
             spinner.finish();
             output::error(
                 "This email is already registered.",
-                "EMAIL_TAKEN",
+                &ErrorCode::EmailTaken,
                 Some("Use 'floo auth login' to sign in."),
             );
             process::exit(1);
         }
         Err(e) => {
             spinner.finish();
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     }
@@ -278,7 +295,7 @@ pub fn update_profile(name: &str) {
             );
         }
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     }
@@ -295,7 +312,7 @@ pub fn whoami() {
         None => {
             output::error(
                 "Not logged in.",
-                "NOT_AUTHENTICATED",
+                &ErrorCode::NotAuthenticated,
                 Some("Run 'floo auth login' to authenticate."),
             );
             process::exit(1);
@@ -334,7 +351,7 @@ pub fn whoami() {
                 Err(e) => {
                     output::error(
                         &e.message,
-                        &e.code,
+                        &ErrorCode::from_api(&e.code),
                         Some("Your API key may be invalid. Try 'floo auth login'."),
                     );
                     process::exit(1);

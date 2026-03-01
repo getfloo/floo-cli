@@ -6,6 +6,7 @@ use std::time::Duration;
 use colored::Colorize;
 
 use crate::api_types::LogEntry;
+use crate::errors::ErrorCode;
 use crate::output;
 use crate::project_config::{self, AppSource};
 use crate::resolve::resolve_app;
@@ -79,7 +80,7 @@ fn fetch_logs(
         let result = match client.get_logs(app_id, tail, filter.since, filter.severity, service) {
             Ok(r) => r,
             Err(e) => {
-                output::error(&e.message, &e.code, None);
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
                 process::exit(1);
             }
         };
@@ -93,7 +94,7 @@ fn fetch_logs(
                     Err(e) => {
                         output::error(
                             &format!("Failed to fetch logs for service '{}': {}", svc, e.message),
-                            &e.code,
+                            &ErrorCode::from_api(&e.code),
                             None,
                         );
                         process::exit(1);
@@ -202,7 +203,7 @@ pub fn logs(
     let cwd = std::env::current_dir().unwrap_or_else(|e| {
         output::error(
             &format!("Failed to read current directory: {e}"),
-            "FILE_ERROR",
+            &ErrorCode::FileError,
             None,
         );
         process::exit(1);
@@ -225,11 +226,11 @@ pub fn logs(
             if e.code == "APP_NOT_FOUND" {
                 output::error(
                     &format!("App '{app_name}' not found."),
-                    "APP_NOT_FOUND",
+                    &ErrorCode::AppNotFound,
                     Some("Check the app name or ID and try again."),
                 );
             } else {
-                output::error(&e.message, &e.code, None);
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             }
             process::exit(1);
         }
@@ -334,7 +335,7 @@ fn write_logs_to_file(path: &Path, logs: &[LogEntry], app_name: &str, show_servi
             Err(e) => {
                 output::error(
                     &format!("Failed to serialize logs to JSON: {e}"),
-                    "PARSE_ERROR",
+                    &ErrorCode::ParseError,
                     None,
                 );
                 process::exit(1);
@@ -350,7 +351,7 @@ fn write_logs_to_file(path: &Path, logs: &[LogEntry], app_name: &str, show_servi
     if let Err(e) = std::fs::write(path, &content) {
         output::error(
             &format!("Failed to write logs to {}: {e}", path.display()),
-            "FILE_ERROR",
+            &ErrorCode::FileError,
             None,
         );
         process::exit(1);
@@ -431,7 +432,7 @@ fn live_logs(
                             "Live polling failed after {} consecutive errors: {}",
                             MAX_TRANSIENT_RETRIES, e.message
                         ),
-                        &e.code,
+                        &ErrorCode::from_api(&e.code),
                         Some("Check your network connection and try again."),
                     );
                     process::exit(1);

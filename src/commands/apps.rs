@@ -3,6 +3,7 @@ use std::process;
 
 use crate::archive::create_archive;
 use crate::detection::detect;
+use crate::errors::ErrorCode;
 use crate::output;
 use crate::project_config::{self, AppAccessMode};
 
@@ -12,7 +13,7 @@ pub fn list(page: u32, per_page: u32) {
     let result = match client.list_apps(page, per_page) {
         Ok(r) => r,
         Err(e) => {
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
@@ -122,7 +123,7 @@ pub fn delete(app_name: &str, force: bool) {
     }
 
     if let Err(e) = client.delete_app(&app.id) {
-        output::error(&e.message, &e.code, None);
+        output::error(&e.message, &ErrorCode::from_api(&e.code), None);
         process::exit(1);
     }
 
@@ -151,7 +152,7 @@ pub fn connect(
     let cwd = std::env::current_dir().unwrap_or_else(|e| {
         output::error(
             &format!("Failed to read current directory: {e}"),
-            "FILE_ERROR",
+            &ErrorCode::FileError,
             None,
         );
         process::exit(1);
@@ -180,7 +181,7 @@ pub fn connect(
                 }
                 _ => None,
             };
-            output::error(&e.message, &e.code, suggestion);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), suggestion);
             process::exit(1);
         }
     };
@@ -273,7 +274,7 @@ fn trigger_initial_deploy(
         Err(e) => {
             spinner.finish();
             super::deploy::cleanup(&archive_path);
-            output::error(&e.message, &e.code, None);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
@@ -286,7 +287,7 @@ fn trigger_initial_deploy(
         if deploy_data.id.is_empty() {
             output::error(
                 "Unexpected API response: deploy is missing required 'id'.",
-                "INVALID_RESPONSE",
+                &ErrorCode::InvalidResponse,
                 Some("This may indicate a CLI/API mismatch. Check for updates with `floo update`."),
             );
             process::exit(1);
@@ -311,7 +312,7 @@ fn trigger_initial_deploy(
     if final_status == "failed" {
         output::error_with_data(
             "Deploy failed.",
-            "DEPLOY_FAILED",
+            &ErrorCode::DeployFailed,
             Some("Check build output above, or run `floo logs` for details."),
             Some(output::to_value(&deploy_data)),
         );
@@ -332,7 +333,7 @@ pub fn disconnect(app_name: &str) {
     let app = super::resolve_app_or_exit(&client, app_name);
 
     if let Err(e) = client.github_disconnect(&app.id) {
-        output::error(&e.message, &e.code, None);
+        output::error(&e.message, &ErrorCode::from_api(&e.code), None);
         process::exit(1);
     }
 
