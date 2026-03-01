@@ -602,6 +602,7 @@ impl FlooClient {
         repo_full_name: &str,
         installation_id: u64,
         branch: Option<&str>,
+        skip_env_var_check: bool,
     ) -> Result<Value, FlooApiError> {
         let mut body = serde_json::json!({
             "repo_full_name": repo_full_name,
@@ -611,6 +612,11 @@ impl FlooClient {
             body.as_object_mut()
                 .unwrap()
                 .insert("default_branch".to_string(), Value::String(b.to_string()));
+        }
+        if skip_env_var_check {
+            body.as_object_mut()
+                .unwrap()
+                .insert("skip_env_var_check".to_string(), Value::Bool(true));
         }
         let resp = self.post_json(&format!("/v1/apps/{app_id}/github/connect"), &body)?;
         self.handle_response(resp)

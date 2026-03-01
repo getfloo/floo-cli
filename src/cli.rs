@@ -280,6 +280,14 @@ pub enum AppsCommands {
         /// Default branch (defaults to "main").
         #[arg(short, long)]
         branch: Option<String>,
+
+        /// Skip env var check for webhook deploys.
+        #[arg(long)]
+        skip_env_check: bool,
+
+        /// Skip triggering a deploy after connecting.
+        #[arg(long)]
+        no_deploy: bool,
     },
 
     /// Disconnect a GitHub repo from an app.
@@ -560,7 +568,16 @@ pub fn run() {
                 installation_id,
                 app,
                 branch,
-            } => commands::apps::connect(&repo, installation_id, &app, branch.as_deref()),
+                skip_env_check,
+                no_deploy,
+            } => commands::apps::connect(
+                &repo,
+                installation_id,
+                &app,
+                branch.as_deref(),
+                skip_env_check,
+                no_deploy,
+            ),
             AppsCommands::Disconnect { app } => commands::apps::disconnect(&app),
         },
 
