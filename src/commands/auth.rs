@@ -7,7 +7,71 @@ use colored::Colorize;
 use crate::config::{clear_config, load_config, save_config};
 use crate::output;
 
-pub fn login() {
+pub fn login(api_key: Option<&str>, force: bool) {
+    // Path 1: --api-key flag — save directly and validate
+    if let Some(key) = api_key {
+        let mut config = load_config();
+        config.api_key = Some(key.to_string());
+        if let Err(e) = save_config(&config) {
+            output::error(
+                &format!("Failed to save credentials: {e}"),
+                "CONFIG_ERROR",
+                None,
+            );
+            process::exit(1);
+        }
+
+        let client = super::init_client(Some(config));
+        match client.whoami() {
+            Ok(result) => {
+                let email = result
+                    .get("email")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                // Save the email too
+                let mut config = load_config();
+                config.user_email = Some(email.to_string());
+                let _ = save_config(&config);
+                output::success(
+                    &format!("Logged in as {email}"),
+                    Some(serde_json::json!({"email": email})),
+                );
+            }
+            Err(e) => {
+                // Key is invalid — clear it
+                clear_config();
+                output::error(&e.message, &e.code, Some("The API key is invalid."));
+                process::exit(1);
+            }
+        }
+        return;
+    }
+
+    // Path 2: Pre-check existing key (unless --force)
+    if !force {
+        let config = load_config();
+        if config.api_key.is_some() {
+            let client = super::init_client(Some(config));
+            match client.whoami() {
+                Ok(result) => {
+                    let email = result
+                        .get("email")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    output::success(
+                        &format!("Already logged in as {email}"),
+                        Some(serde_json::json!({"email": email, "already_authenticated": true})),
+                    );
+                    return;
+                }
+                Err(_) => {
+                    // Key is invalid — proceed to device code flow
+                }
+            }
+        }
+    }
+
+    // Path 3: Device code flow
     let client = super::init_client(None);
 
     // Step 1: Initiate device code flow
@@ -190,6 +254,31 @@ pub fn login() {
                 spinner.finish();
                 output::error(&e.message, &e.code, None);
                 process::exit(1);
+            }
+        }
+    }
+}
+
+pub fn token() {
+    let config = load_config();
+    match &config.api_key {
+        None => {
+            output::error(
+                "Not logged in.",
+                "NOT_AUTHENTICATED",
+                Some("Run 'floo auth login' to authenticate."),
+            );
+            process::exit(1);
+        }
+        Some(key) => {
+            if output::is_json_mode() {
+                output::success(
+                    "API key retrieved",
+                    Some(serde_json::json!({"api_key": key})),
+                );
+            } else {
+                // Print raw key to stdout for piping
+                println!("{key}");
             }
         }
     }

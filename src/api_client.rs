@@ -167,6 +167,11 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn whoami(&self) -> Result<Value, FlooApiError> {
+        let resp = self.get("/v1/auth/whoami")?;
+        self.handle_response(resp)
+    }
+
     // --- Apps ---
 
     pub fn create_app(&self, name: &str, runtime: Option<&str>) -> Result<Value, FlooApiError> {

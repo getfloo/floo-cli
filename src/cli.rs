@@ -161,11 +161,21 @@ pub enum Commands {
 #[derive(Subcommand)]
 pub enum AuthCommands {
     /// Authenticate with the Floo API (opens browser).
-    Login,
+    Login {
+        /// Use an existing API key instead of browser auth.
+        #[arg(long)]
+        api_key: Option<String>,
+
+        /// Skip existing key validation and force re-authentication.
+        #[arg(long)]
+        force: bool,
+    },
     /// Clear stored credentials.
     Logout,
     /// Show the currently authenticated user.
     Whoami,
+    /// Print the current API key to stdout.
+    Token,
     /// Create a new Floo account.
     Register {
         /// Account email address.
@@ -426,9 +436,12 @@ pub fn run() {
             restart,
         } => commands::deploy::deploy(path, app, services, restart),
         Commands::Auth(sub) => match sub {
-            AuthCommands::Login => commands::auth::login(),
+            AuthCommands::Login { api_key, force } => {
+                commands::auth::login(api_key.as_deref(), force)
+            }
             AuthCommands::Logout => commands::auth::logout(),
             AuthCommands::Whoami => commands::auth::whoami(),
+            AuthCommands::Token => commands::auth::token(),
             AuthCommands::Register { email } => commands::auth::register(&email),
         },
 
