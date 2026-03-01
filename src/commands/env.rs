@@ -547,6 +547,173 @@ pub fn import_vars(file_flag: Option<&Path>, app_flag: Option<&str>, service_nam
     }
 }
 
+pub fn import_all_services(app_flag: Option<&str>) {
+    super::require_auth();
+
+    let cwd = std::env::current_dir().unwrap_or_else(|e| {
+        output::error(
+            &format!("Failed to read current directory: {e}"),
+            "FILE_ERROR",
+            None,
+        );
+        process::exit(1);
+    });
+
+    let resolved = match project_config::resolve_app_context(&cwd, app_flag) {
+        Ok(r) => r,
+        Err(e) => {
+            output::error(&e.message, &e.code, e.suggestion.as_deref());
+            process::exit(1);
+        }
+    };
+
+    // Collect (service_name, env_file_path) pairs from all service configs
+    let mut env_file_entries: Vec<(String, std::path::PathBuf)> = Vec::new();
+
+    // Check root service
+    if let Some(ref svc_config) = resolved.service_config {
+        if let Some(ref env_file) = svc_config.service.env_file {
+            let path = resolved.config_dir.join(env_file);
+            env_file_entries.push((svc_config.service.name.clone(), path));
+        }
+    }
+
+    // Check sub-services from app config
+    if let Some(ref app_config) = resolved.app_config {
+        for entry in app_config.services.values() {
+            let Some(ref path_str) = entry.path else {
+                continue;
+            };
+            let normalized = path_str.strip_prefix("./").unwrap_or(path_str);
+            let normalized = normalized.strip_suffix('/').unwrap_or(normalized);
+            if normalized.is_empty() || normalized == "." {
+                continue;
+            }
+            let svc_dir = resolved.config_dir.join(normalized);
+            match project_config::load_service_config(&svc_dir) {
+                Ok(Some(svc_config)) => {
+                    if let Some(ref env_file) = svc_config.service.env_file {
+                        let path = svc_dir.join(env_file);
+                        env_file_entries.push((svc_config.service.name.clone(), path));
+                    } else if !output::is_json_mode() {
+                        output::info(
+                            &format!(
+                                "Skipping service '{}' (no env_file configured).",
+                                svc_config.service.name
+                            ),
+                            None,
+                        );
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    output::error(
+                        &format!(
+                            "Failed to load service config at '{}': {}",
+                            svc_dir.display(),
+                            e.message
+                        ),
+                        &e.code,
+                        e.suggestion.as_deref(),
+                    );
+                    process::exit(1);
+                }
+            }
+        }
+    }
+
+    if env_file_entries.is_empty() {
+        output::error(
+            "No services with env_file configured.",
+            "NO_ENV_FILES",
+            Some("Add env_file to your service configs, e.g. env_file = \".env\""),
+        );
+        process::exit(1);
+    }
+
+    let client = super::init_client(None);
+    let app_data = match resolve_app(&client, &resolved.app_name) {
+        Ok(a) => a,
+        Err(e) => {
+            if e.code == "APP_NOT_FOUND" {
+                output::error(
+                    &format!("App '{}' not found.", resolved.app_name),
+                    "APP_NOT_FOUND",
+                    Some("Check the app name or ID and try again."),
+                );
+            } else {
+                output::error(&e.message, &e.code, None);
+            }
+            process::exit(1);
+        }
+    };
+    let app_id = super::expect_str_field(&app_data, "id").to_string();
+    let app_name = app_data
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&resolved.app_name)
+        .to_string();
+
+    // Resolve all service IDs from server
+    let server_services = match client.list_services(&app_id) {
+        Ok(r) => match r.get("services").and_then(|v| v.as_array()) {
+            Some(arr) => arr.clone(),
+            None => {
+                output::error(
+                    "Response missing 'services' field.",
+                    "PARSE_ERROR",
+                    Some("This is a bug. Please report it."),
+                );
+                process::exit(1);
+            }
+        },
+        Err(e) => {
+            output::error(&e.message, &e.code, None);
+            process::exit(1);
+        }
+    };
+
+    let mut total_imported: usize = 0;
+    let mut services_imported: usize = 0;
+
+    for (svc_name, env_path) in &env_file_entries {
+        let vars = parse_env_file(env_path);
+        let count = vars.len();
+
+        // Find service ID on server
+        let server_svc = server_services
+            .iter()
+            .find(|s| s.get("name").and_then(|v| v.as_str()) == Some(svc_name));
+
+        let service_id = server_svc.and_then(|s| s.get("id").and_then(|v| v.as_str()));
+
+        match client.import_env_vars(&app_id, &vars, service_id) {
+            Ok(result) => {
+                let target = format!("{app_name}/{svc_name}");
+                output::success(
+                    &format!("Imported {count} variable(s) to {target}."),
+                    Some(result),
+                );
+                total_imported += count;
+                services_imported += 1;
+            }
+            Err(e) => {
+                output::error(&e.message, &e.code, None);
+                process::exit(1);
+            }
+        }
+    }
+
+    if !output::is_json_mode() && services_imported > 1 {
+        output::info(
+            &format!(
+                "Imported {total_imported} total variable(s) across {services_imported} service(s)."
+            ),
+            None,
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------

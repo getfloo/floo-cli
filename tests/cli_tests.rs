@@ -654,3 +654,414 @@ fn test_top_level_whoami_removed() {
         .failure()
         .stderr(predicate::str::contains("unrecognized subcommand"));
 }
+
+// --- Deploy non-interactive (piped stdin) ---
+
+#[test]
+fn test_deploy_no_config_piped_errors() {
+    let home = tempfile::TempDir::new().unwrap();
+    let config_dir = home.path().join(".floo");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("config.json"),
+        r#"{"api_key": "floo_test123", "api_url": "https://api.test.local"}"#,
+    )
+    .unwrap();
+
+    // Empty project dir with a recognizable file but no floo config
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(project.path().join("package.json"), r#"{"name":"test"}"#).unwrap();
+
+    // assert_cmd pipes stdin (no TTY), so this should error with NO_CONFIG_FOUND
+    floo()
+        .args(["deploy", project.path().to_str().unwrap()])
+        .env("HOME", home.path().to_str().unwrap())
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("NO_CONFIG_FOUND").or(predicate::str::contains("floo init")),
+        );
+}
+
+#[test]
+fn test_deploy_no_config_piped_json_errors() {
+    let home = tempfile::TempDir::new().unwrap();
+    let config_dir = home.path().join(".floo");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("config.json"),
+        r#"{"api_key": "floo_test123", "api_url": "https://api.test.local"}"#,
+    )
+    .unwrap();
+
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(project.path().join("package.json"), r#"{"name":"test"}"#).unwrap();
+
+    floo()
+        .args(["--json", "deploy", project.path().to_str().unwrap()])
+        .env("HOME", home.path().to_str().unwrap())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"NO_CONFIG_FOUND"#));
+}
+
+// --- Init command ---
+
+#[test]
+fn test_init_help() {
+    floo()
+        .args(["init", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Initialize a new Floo project"));
+}
+
+#[test]
+fn test_init_creates_config_json() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("package.json"),
+        r#"{"dependencies": {"next": "^14.0.0"}}"#,
+    )
+    .unwrap();
+
+    floo()
+        .args([
+            "--json",
+            "init",
+            "myapp",
+            "--path",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""app_name":"myapp"#))
+        .stdout(predicate::str::contains(r#""success":true"#));
+
+    // Verify files were created
+    assert!(project.path().join("floo.app.toml").exists());
+    assert!(project.path().join("floo.service.toml").exists());
+}
+
+#[test]
+fn test_init_requires_name_in_json_mode() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(project.path().join("package.json"), r#"{"name":"test"}"#).unwrap();
+
+    floo()
+        .args(["--json", "init", "--path", project.path().to_str().unwrap()])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"MISSING_APP_NAME"#));
+}
+
+#[test]
+fn test_init_refuses_existing_config() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(project.path().join("package.json"), r#"{"name":"test"}"#).unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        "[app]\nname = \"existing\"\n",
+    )
+    .unwrap();
+
+    floo()
+        .args([
+            "--json",
+            "init",
+            "myapp",
+            "--path",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"CONFIG_EXISTS"#));
+}
+
+// --- Service add/rm ---
+
+#[test]
+fn test_service_add_help() {
+    floo()
+        .args(["services", "add", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Add a service"));
+}
+
+#[test]
+fn test_service_add_creates_files() {
+    let project = tempfile::TempDir::new().unwrap();
+    // Create app config first (required)
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        "[app]\nname = \"myapp\"\n",
+    )
+    .unwrap();
+    // Create the service subdirectory
+    std::fs::create_dir(project.path().join("api")).unwrap();
+    std::fs::write(
+        project.path().join("api").join("package.json"),
+        r#"{"name":"api"}"#,
+    )
+    .unwrap();
+
+    floo()
+        .args([
+            "--json", "services", "add", "api", "api", "--port", "8000", "--type", "api",
+        ])
+        .current_dir(project.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""name":"api"#));
+
+    // Verify service toml was created
+    assert!(project.path().join("api/floo.service.toml").exists());
+}
+
+#[test]
+fn test_service_add_requires_port_in_json() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        "[app]\nname = \"myapp\"\n",
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "services", "add", "web", ".", "--type", "web"])
+        .current_dir(project.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"MISSING_PORT"#));
+}
+
+#[test]
+fn test_service_add_duplicate_name() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[services.api]
+type = "api"
+path = "./api"
+"#,
+    )
+    .unwrap();
+
+    floo()
+        .args([
+            "--json", "services", "add", "api", "api2", "--port", "8000", "--type", "api",
+        ])
+        .current_dir(project.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"DUPLICATE_SERVICE"#));
+}
+
+// --- Check command ---
+
+#[test]
+fn test_check_help() {
+    floo()
+        .args(["check", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Validate project config"));
+}
+
+#[test]
+fn test_check_valid_config() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        "[app]\nname = \"myapp\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project.path().join("floo.service.toml"),
+        r#"[app]
+name = "myapp"
+
+[service]
+name = "web"
+type = "web"
+port = 3000
+ingress = "public"
+"#,
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "check", project.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""valid":true"#));
+}
+
+#[test]
+fn test_check_missing_service_toml() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[services.api]
+type = "api"
+path = "./api"
+"#,
+    )
+    .unwrap();
+    // Create the dir but NOT the service toml
+    std::fs::create_dir(project.path().join("api")).unwrap();
+
+    floo()
+        .args(["--json", "check", project.path().to_str().unwrap()])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""valid":false"#));
+}
+
+#[test]
+fn test_check_port_mismatch_warning() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        "[app]\nname = \"myapp\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project.path().join("floo.service.toml"),
+        r#"[app]
+name = "myapp"
+
+[service]
+name = "web"
+type = "web"
+port = 3000
+ingress = "public"
+"#,
+    )
+    .unwrap();
+    // Dockerfile with different EXPOSE
+    std::fs::write(
+        project.path().join("Dockerfile"),
+        "FROM node:18\nEXPOSE 8080\n",
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "check", project.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("EXPOSE 8080"));
+}
+
+// --- Env Import --all ---
+
+#[test]
+fn test_env_import_all_conflicts_with_file() {
+    floo()
+        .args(["env", "import", ".env", "--all"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"));
+}
+
+#[test]
+fn test_env_import_all_conflicts_with_services() {
+    floo()
+        .args(["env", "import", "--all", "--services", "web"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"));
+}
+
+// --- Deploy --sync-env ---
+
+#[test]
+fn test_deploy_sync_env_help() {
+    floo()
+        .args(["deploy", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--sync-env"));
+}
+
+// --- Init env file detection ---
+
+#[test]
+fn test_init_detects_floo_env() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(project.path().join("package.json"), r#"{"name":"test"}"#).unwrap();
+    std::fs::write(project.path().join(".floo.env"), "SECRET=abc\n").unwrap();
+
+    floo()
+        .args([
+            "--json",
+            "init",
+            "myapp",
+            "--path",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let svc_toml = std::fs::read_to_string(project.path().join("floo.service.toml")).unwrap();
+    assert!(
+        svc_toml.contains(r#"env_file = ".floo.env""#),
+        "Expected env_file = \".floo.env\" in service config, got:\n{svc_toml}"
+    );
+}
+
+#[test]
+fn test_init_falls_back_to_dot_env() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(project.path().join("package.json"), r#"{"name":"test"}"#).unwrap();
+    std::fs::write(project.path().join(".env"), "KEY=value\n").unwrap();
+
+    floo()
+        .args([
+            "--json",
+            "init",
+            "myapp",
+            "--path",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let svc_toml = std::fs::read_to_string(project.path().join("floo.service.toml")).unwrap();
+    assert!(
+        svc_toml.contains(r#"env_file = ".env""#),
+        "Expected env_file = \".env\" in service config, got:\n{svc_toml}"
+    );
+}
+
+#[test]
+fn test_init_prefers_floo_env_over_dot_env() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(project.path().join("package.json"), r#"{"name":"test"}"#).unwrap();
+    std::fs::write(project.path().join(".env"), "LOCAL=dev\n").unwrap();
+    std::fs::write(project.path().join(".floo.env"), "CLOUD=prod\n").unwrap();
+
+    floo()
+        .args([
+            "--json",
+            "init",
+            "myapp",
+            "--path",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let svc_toml = std::fs::read_to_string(project.path().join("floo.service.toml")).unwrap();
+    assert!(
+        svc_toml.contains(r#"env_file = ".floo.env""#),
+        "Expected .floo.env to win over .env, got:\n{svc_toml}"
+    );
+}

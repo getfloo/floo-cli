@@ -33,6 +33,23 @@ pub enum Commands {
         period: String,
     },
 
+    /// Initialize a new Floo project (creates config files).
+    Init {
+        /// App name (required in non-interactive/JSON mode).
+        name: Option<String>,
+
+        /// Project directory.
+        #[arg(short, long, default_value = ".")]
+        path: PathBuf,
+    },
+
+    /// Validate project config before deploying.
+    Check {
+        /// Project directory.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
+
     /// Deploy a project to Floo.
     Deploy {
         /// Project directory to deploy.
@@ -50,6 +67,10 @@ pub enum Commands {
         /// Restart the app without re-uploading source (redeploy existing images with fresh env vars).
         #[arg(long)]
         restart: bool,
+
+        /// Re-sync env vars from configured env_file before deploying.
+        #[arg(long)]
+        sync_env: bool,
     },
 
     /// Authenticate and manage your account.
@@ -301,6 +322,7 @@ pub enum EnvCommands {
     /// Import environment variables from a .env file.
     Import {
         /// Path to .env file (defaults to env_file from config or .env).
+        #[arg(conflicts_with = "all")]
         file: Option<PathBuf>,
 
         /// App name or ID (reads from config if omitted).
@@ -308,8 +330,12 @@ pub enum EnvCommands {
         app: Option<String>,
 
         /// Target specific services (repeatable).
-        #[arg(long)]
+        #[arg(long, conflicts_with = "all")]
         services: Vec<String>,
+
+        /// Import env vars for all services using their configured env_file paths.
+        #[arg(long)]
+        all: bool,
     },
 }
 
@@ -330,6 +356,41 @@ pub enum ServicesCommands {
         /// App name or ID (uses config file if omitted).
         #[arg(short, long)]
         app: Option<String>,
+    },
+
+    /// Add a service to the project config.
+    Add {
+        /// Service name (DNS-safe: lowercase, digits, hyphens).
+        name: String,
+
+        /// Relative path to the service directory.
+        path: String,
+
+        /// Port the service listens on.
+        #[arg(long)]
+        port: Option<u16>,
+
+        /// Service type: web, api, or worker.
+        #[arg(long = "type")]
+        service_type: Option<String>,
+
+        /// Ingress mode: public or internal.
+        #[arg(long)]
+        ingress: Option<String>,
+
+        /// Path to .env file relative to service directory.
+        #[arg(long)]
+        env_file: Option<String>,
+    },
+
+    /// Remove a service from the project config.
+    Rm {
+        /// Service name to remove.
+        name: String,
+
+        /// Also delete the service's floo.service.toml file.
+        #[arg(long)]
+        delete_config: bool,
     },
 }
 
@@ -429,12 +490,17 @@ pub fn run() {
     match cli.command {
         Commands::Analytics { app, period } => commands::analytics::analytics(app, &period),
 
+        Commands::Init { name, path } => commands::init::init(name, path),
+
+        Commands::Check { path } => commands::check::check(path),
+
         Commands::Deploy {
             path,
             app,
             services,
             restart,
-        } => commands::deploy::deploy(path, app, services, restart),
+            sync_env,
+        } => commands::deploy::deploy(path, app, services, restart, sync_env),
         Commands::Auth(sub) => match sub {
             AuthCommands::Login { api_key, force } => {
                 commands::auth::login(api_key.as_deref(), force)
@@ -476,7 +542,14 @@ pub fn run() {
                 file,
                 app,
                 services,
-            } => commands::env::import_vars(file.as_deref(), app.as_deref(), &services),
+                all,
+            } => {
+                if all {
+                    commands::env::import_all_services(app.as_deref());
+                } else {
+                    commands::env::import_vars(file.as_deref(), app.as_deref(), &services);
+                }
+            }
         },
 
         Commands::Services(sub) => match sub {
@@ -484,6 +557,25 @@ pub fn run() {
             ServicesCommands::Info { service_name, app } => {
                 commands::services::info(&service_name, app.as_deref())
             }
+            ServicesCommands::Add {
+                name,
+                path,
+                port,
+                service_type,
+                ingress,
+                env_file,
+            } => commands::service_mgmt::add(
+                &name,
+                &path,
+                port,
+                service_type.as_deref(),
+                ingress.as_deref(),
+                env_file.as_deref(),
+            ),
+            ServicesCommands::Rm {
+                name,
+                delete_config,
+            } => commands::service_mgmt::rm(&name, delete_config),
         },
 
         Commands::Domains(sub) => match sub {
