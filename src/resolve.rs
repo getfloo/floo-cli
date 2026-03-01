@@ -1,19 +1,18 @@
-use serde_json::Value;
-
 use crate::api_client::FlooClient;
+use crate::api_types::{App, ListAppsResponse};
 use crate::errors::FlooApiError;
 
 trait AppResolverClient {
-    fn get_app(&self, app_id: &str) -> Result<Value, FlooApiError>;
-    fn list_apps(&self, page: u32, per_page: u32) -> Result<Value, FlooApiError>;
+    fn get_app(&self, app_id: &str) -> Result<App, FlooApiError>;
+    fn list_apps(&self, page: u32, per_page: u32) -> Result<ListAppsResponse, FlooApiError>;
 }
 
 impl AppResolverClient for FlooClient {
-    fn get_app(&self, app_id: &str) -> Result<Value, FlooApiError> {
+    fn get_app(&self, app_id: &str) -> Result<App, FlooApiError> {
         FlooClient::get_app(self, app_id)
     }
 
-    fn list_apps(&self, page: u32, per_page: u32) -> Result<Value, FlooApiError> {
+    fn list_apps(&self, page: u32, per_page: u32) -> Result<ListAppsResponse, FlooApiError> {
         FlooClient::list_apps(self, page, per_page)
     }
 }
@@ -42,22 +41,11 @@ fn is_uuid_identifier(identifier: &str) -> bool {
 }
 
 fn match_app_from_list_response(
-    list_response: &Value,
+    list_response: &ListAppsResponse,
     identifier: &str,
-) -> Result<Value, FlooApiError> {
-    let apps = list_response
-        .get("apps")
-        .and_then(|value| value.as_array())
-        .ok_or_else(|| {
-            FlooApiError::new(
-                500,
-                "PARSE_ERROR",
-                "Failed to parse app list response from API.",
-            )
-        })?;
-
-    for app in apps {
-        if app.get("name").and_then(|value| value.as_str()) == Some(identifier) {
+) -> Result<App, FlooApiError> {
+    for app in &list_response.apps {
+        if app.name == identifier {
             return Ok(app.clone());
         }
     }
@@ -68,7 +56,7 @@ fn match_app_from_list_response(
 fn resolve_app_with_client<C: AppResolverClient>(
     client: &C,
     identifier: &str,
-) -> Result<Value, FlooApiError> {
+) -> Result<App, FlooApiError> {
     // Only hit the /apps/{id} endpoint for UUID identifiers.
     if is_uuid_identifier(identifier) {
         return client.get_app(identifier);
@@ -79,7 +67,7 @@ fn resolve_app_with_client<C: AppResolverClient>(
     match_app_from_list_response(&response, identifier)
 }
 
-pub fn resolve_app(client: &FlooClient, identifier: &str) -> Result<Value, FlooApiError> {
+pub fn resolve_app(client: &FlooClient, identifier: &str) -> Result<App, FlooApiError> {
     resolve_app_with_client(client, identifier)
 }
 
@@ -87,21 +75,19 @@ pub fn resolve_app(client: &FlooClient, identifier: &str) -> Result<Value, FlooA
 mod tests {
     use std::cell::{Cell, RefCell};
 
-    use serde_json::json;
-
     use super::*;
 
     struct FakeClient {
-        app_lookup_result: Result<Value, (u16, String, String)>,
-        list_lookup_result: Result<Value, (u16, String, String)>,
+        app_lookup_result: Result<App, (u16, String, String)>,
+        list_lookup_result: Result<ListAppsResponse, (u16, String, String)>,
         app_lookup_calls: RefCell<Vec<String>>,
         list_lookup_calls: Cell<u32>,
     }
 
     impl FakeClient {
         fn new(
-            app_lookup_result: Result<Value, (u16, String, String)>,
-            list_lookup_result: Result<Value, (u16, String, String)>,
+            app_lookup_result: Result<App, (u16, String, String)>,
+            list_lookup_result: Result<ListAppsResponse, (u16, String, String)>,
         ) -> Self {
             Self {
                 app_lookup_result,
@@ -111,24 +97,36 @@ mod tests {
             }
         }
 
-        fn ok_app(app: Value) -> Result<Value, (u16, String, String)> {
+        fn ok_app(app: App) -> Result<App, (u16, String, String)> {
             Ok(app)
         }
 
-        fn err(
+        fn ok_list(response: ListAppsResponse) -> Result<ListAppsResponse, (u16, String, String)> {
+            Ok(response)
+        }
+
+        fn err_app(
             status_code: u16,
             code: &str,
             message: &str,
-        ) -> Result<Value, (u16, String, String)> {
+        ) -> Result<App, (u16, String, String)> {
+            Err((status_code, code.to_string(), message.to_string()))
+        }
+
+        fn err_list(
+            status_code: u16,
+            code: &str,
+            message: &str,
+        ) -> Result<ListAppsResponse, (u16, String, String)> {
             Err((status_code, code.to_string(), message.to_string()))
         }
     }
 
     impl AppResolverClient for FakeClient {
-        fn get_app(&self, app_id: &str) -> Result<Value, FlooApiError> {
+        fn get_app(&self, app_id: &str) -> Result<App, FlooApiError> {
             self.app_lookup_calls.borrow_mut().push(app_id.to_string());
             match &self.app_lookup_result {
-                Ok(value) => Ok(value.clone()),
+                Ok(app) => Ok(app.clone()),
                 Err((status_code, code, message)) => Err(FlooApiError::new(
                     *status_code,
                     code.clone(),
@@ -137,10 +135,10 @@ mod tests {
             }
         }
 
-        fn list_apps(&self, _page: u32, _per_page: u32) -> Result<Value, FlooApiError> {
+        fn list_apps(&self, _page: u32, _per_page: u32) -> Result<ListAppsResponse, FlooApiError> {
             self.list_lookup_calls.set(self.list_lookup_calls.get() + 1);
             match &self.list_lookup_result {
-                Ok(value) => Ok(value.clone()),
+                Ok(response) => Ok(response.clone()),
                 Err((status_code, code, message)) => Err(FlooApiError::new(
                     *status_code,
                     code.clone(),
@@ -150,13 +148,29 @@ mod tests {
         }
     }
 
+    fn make_app(id: &str, name: &str) -> App {
+        App {
+            id: id.to_string(),
+            name: name.to_string(),
+            status: None,
+            url: None,
+            runtime: None,
+            created_at: None,
+        }
+    }
+
+    fn make_list(apps: Vec<App>) -> ListAppsResponse {
+        ListAppsResponse { apps, total: None }
+    }
+
     #[test]
     fn non_uuid_identifier_skips_id_endpoint_lookup() {
         let client = FakeClient::new(
-            FakeClient::err(404, "APP_NOT_FOUND", "App not found."),
-            FakeClient::ok_app(
-                json!({"apps":[{"id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","name":"my-app"}]}),
-            ),
+            FakeClient::err_app(404, "APP_NOT_FOUND", "App not found."),
+            FakeClient::ok_list(make_list(vec![make_app(
+                "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "my-app",
+            )])),
         );
 
         let resolved = resolve_app_with_client(&client, "my-app");
@@ -170,10 +184,11 @@ mod tests {
     fn uuid_identifier_uses_id_endpoint_first() {
         let app_id = "11111111-1111-1111-1111-111111111111";
         let client = FakeClient::new(
-            FakeClient::ok_app(json!({"id":app_id,"name":"uuid-app"})),
-            FakeClient::ok_app(
-                json!({"apps":[{"id":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","name":"fallback-app"}]}),
-            ),
+            FakeClient::ok_app(make_app(app_id, "uuid-app")),
+            FakeClient::ok_list(make_list(vec![make_app(
+                "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                "fallback-app",
+            )])),
         );
 
         let resolved = resolve_app_with_client(&client, app_id);
@@ -190,8 +205,8 @@ mod tests {
     fn uuid_identifier_does_not_fall_back_when_id_lookup_fails() {
         let identifier = "22222222-2222-2222-2222-222222222222";
         let client = FakeClient::new(
-            FakeClient::err(404, "APP_NOT_FOUND", "App not found."),
-            FakeClient::ok_app(json!({"apps":[{"id":identifier,"name":identifier}]})),
+            FakeClient::err_app(404, "APP_NOT_FOUND", "App not found."),
+            FakeClient::ok_list(make_list(vec![make_app(identifier, identifier)])),
         );
 
         let error = resolve_app_with_client(&client, identifier).unwrap_err();
@@ -209,8 +224,8 @@ mod tests {
     fn uuid_identifier_propagates_non_404_lookup_errors() {
         let identifier = "33333333-3333-3333-3333-333333333333";
         let client = FakeClient::new(
-            FakeClient::err(500, "INTERNAL_ERROR", "Server error"),
-            FakeClient::ok_app(json!({"apps":[{"id":identifier,"name":identifier}]})),
+            FakeClient::err_app(500, "INTERNAL_ERROR", "Server error"),
+            FakeClient::ok_list(make_list(vec![make_app(identifier, identifier)])),
         );
 
         let error = resolve_app_with_client(&client, identifier).unwrap_err();
@@ -224,8 +239,8 @@ mod tests {
     fn uuid_identifier_propagates_validation_errors_without_fallback() {
         let identifier = "44444444-4444-4444-4444-444444444444";
         let client = FakeClient::new(
-            FakeClient::err(422, "VALIDATION_ERROR", "Invalid UUID"),
-            FakeClient::ok_app(json!({"apps":[{"id":identifier,"name":"uuid-app"}]})),
+            FakeClient::err_app(422, "VALIDATION_ERROR", "Invalid UUID"),
+            FakeClient::ok_list(make_list(vec![make_app(identifier, "uuid-app")])),
         );
 
         let error = resolve_app_with_client(&client, identifier).unwrap_err();
@@ -238,8 +253,8 @@ mod tests {
     #[test]
     fn non_uuid_identifier_propagates_list_errors() {
         let client = FakeClient::new(
-            FakeClient::err(404, "APP_NOT_FOUND", "App not found."),
-            FakeClient::err(401, "UNAUTHORIZED", "Unauthorized"),
+            FakeClient::err_app(404, "APP_NOT_FOUND", "App not found."),
+            FakeClient::err_list(401, "UNAUTHORIZED", "Unauthorized"),
         );
 
         let error = resolve_app_with_client(&client, "my-app").unwrap_err();
@@ -251,26 +266,13 @@ mod tests {
     #[test]
     fn returns_app_not_found_when_name_lookup_misses() {
         let client = FakeClient::new(
-            FakeClient::err(404, "APP_NOT_FOUND", "App not found."),
-            FakeClient::ok_app(json!({"apps":[{"id":"id-1","name":"other-app"}]})),
+            FakeClient::err_app(404, "APP_NOT_FOUND", "App not found."),
+            FakeClient::ok_list(make_list(vec![make_app("id-1", "other-app")])),
         );
 
         let error = resolve_app_with_client(&client, "my-app").unwrap_err();
 
         assert_eq!(error.status_code, 404);
         assert_eq!(error.code, "APP_NOT_FOUND");
-    }
-
-    #[test]
-    fn returns_parse_error_when_list_response_is_malformed() {
-        let client = FakeClient::new(
-            FakeClient::err(404, "APP_NOT_FOUND", "App not found."),
-            FakeClient::ok_app(json!({"unexpected":"payload"})),
-        );
-
-        let error = resolve_app_with_client(&client, "my-app").unwrap_err();
-
-        assert_eq!(error.status_code, 500);
-        assert_eq!(error.code, "PARSE_ERROR");
     }
 }

@@ -1,58 +1,14 @@
-use std::env;
 use std::process;
 
 use crate::errors::ErrorCode;
 use crate::output;
-use crate::project_config::resolve_app_context;
-use crate::resolve::resolve_app;
 
 pub fn list(app: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);
 
-    let cwd = env::current_dir().unwrap_or_else(|e| {
-        output::error(
-            &format!("Failed to read current directory: {e}"),
-            &ErrorCode::CwdError,
-            Some("Ensure the current directory exists and you have read permission."),
-        );
-        process::exit(1);
-    });
-    let resolved = match resolve_app_context(&cwd, app) {
-        Ok(r) => r,
-        Err(e) => {
-            output::error(&e.message, &e.code, e.suggestion.as_deref());
-            process::exit(1);
-        }
-    };
-
-    let app_data = match resolve_app(&client, &resolved.app_name) {
-        Ok(a) => a,
-        Err(e) => {
-            if e.code == "APP_NOT_FOUND" {
-                output::error(
-                    &format!("App '{}' not found.", resolved.app_name),
-                    &ErrorCode::AppNotFound,
-                    Some("Check the app name or ID and try again."),
-                );
-            } else {
-                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-            }
-            process::exit(1);
-        }
-    };
-
-    let app_id = match app_data.get("id").and_then(|v| v.as_str()) {
-        Some(id) if !id.is_empty() => id,
-        _ => {
-            output::error(
-                "Failed to read app ID from API response.",
-                &ErrorCode::ParseError,
-                Some("This may indicate a CLI/API version mismatch. Try updating the CLI."),
-            );
-            process::exit(1);
-        }
-    };
+    let (app_id, _app_name) = super::resolve_app_from_config(&client, app);
+    let app_id = app_id.as_str();
 
     let result = match client.list_deploys(app_id) {
         Ok(r) => r,
@@ -62,19 +18,7 @@ pub fn list(app: Option<&str>) {
         }
     };
 
-    let deploys = match result.get("deploys").and_then(|v| v.as_array()) {
-        Some(arr) => arr.clone(),
-        None => {
-            output::error(
-                "Unexpected response format from the API.",
-                &ErrorCode::ParseError,
-                Some("Try updating the CLI: curl -fsSL https://getfloo.com/install.sh | bash"),
-            );
-            process::exit(1);
-        }
-    };
-
-    if deploys.is_empty() {
+    if result.deploys.is_empty() {
         if output::is_json_mode() {
             output::success(
                 "No deploys found.",
@@ -86,26 +30,15 @@ pub fn list(app: Option<&str>) {
         return;
     }
 
-    let rows: Vec<Vec<String>> = deploys
+    let rows: Vec<Vec<String>> = result
+        .deploys
         .iter()
         .map(|d| {
             vec![
-                d.get("id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("-")
-                    .to_string(),
-                d.get("status")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("-")
-                    .to_string(),
-                d.get("runtime")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("\u{2014}")
-                    .to_string(),
-                d.get("created_at")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("-")
-                    .to_string(),
+                d.id.clone(),
+                d.status.as_deref().unwrap_or("-").to_string(),
+                d.runtime.as_deref().unwrap_or("\u{2014}").to_string(),
+                d.created_at.as_deref().unwrap_or("-").to_string(),
             ]
         })
         .collect();
@@ -113,7 +46,7 @@ pub fn list(app: Option<&str>) {
     output::table(
         &["Deploy ID", "Status", "Runtime", "Created"],
         &rows,
-        Some(serde_json::json!({"deploys": deploys})),
+        Some(output::to_value(&result)),
     );
 }
 
@@ -121,38 +54,9 @@ pub fn rollback(app_name: &str, deploy_id: &str, force: bool) {
     super::require_auth();
     let client = super::init_client(None);
 
-    let app_data = match resolve_app(&client, app_name) {
-        Ok(a) => a,
-        Err(e) => {
-            if e.code == "APP_NOT_FOUND" {
-                output::error(
-                    &format!("App '{app_name}' not found."),
-                    &ErrorCode::AppNotFound,
-                    Some("Check the app name or ID and try again."),
-                );
-            } else {
-                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-            }
-            process::exit(1);
-        }
-    };
-
-    let name = app_data
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or(app_name);
-
-    let app_id = match app_data.get("id").and_then(|v| v.as_str()) {
-        Some(id) if !id.is_empty() => id,
-        _ => {
-            output::error(
-                "Failed to read app ID from API response.",
-                &ErrorCode::ParseError,
-                Some("This may indicate a CLI/API version mismatch. Try updating the CLI."),
-            );
-            process::exit(1);
-        }
-    };
+    let app_data = super::resolve_app_or_exit(&client, app_name);
+    let name = &app_data.name;
+    let app_id = &app_data.id;
 
     if !force
         && !output::confirm(&format!(

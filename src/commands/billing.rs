@@ -15,39 +15,23 @@ pub fn spend_cap_get() {
         }
     };
 
-    let spend_cap = match org.get("spend_cap") {
-        Some(v) => v.as_u64(),
-        None => {
-            output::error(
-                "Response missing 'spend_cap' field.",
-                &ErrorCode::ParseError,
-                Some("This is a bug. Please report it."),
-            );
-            process::exit(1);
-        }
-    };
-    let current_spend = org
-        .get("current_period_spend_cents")
-        .and_then(|v| v.as_u64())
-        .unwrap_or_else(|| {
-            output::error(
-                "Response missing 'current_period_spend_cents' field.",
-                &ErrorCode::ParseError,
-                Some("This is a bug. Please report it."),
-            );
-            process::exit(1);
-        });
-    let exceeded = org
-        .get("spend_cap_exceeded")
-        .and_then(|v| v.as_bool())
-        .unwrap_or_else(|| {
-            output::error(
-                "Response missing 'spend_cap_exceeded' field.",
-                &ErrorCode::ParseError,
-                Some("This is a bug. Please report it."),
-            );
-            process::exit(1);
-        });
+    let spend_cap = org.spend_cap;
+    let current_spend = org.current_period_spend_cents.unwrap_or_else(|| {
+        output::error(
+            "Response missing 'current_period_spend_cents' field.",
+            &ErrorCode::ParseError,
+            Some("This is a bug. Please report it."),
+        );
+        process::exit(1);
+    });
+    let exceeded = org.spend_cap_exceeded.unwrap_or_else(|| {
+        output::error(
+            "Response missing 'spend_cap_exceeded' field.",
+            &ErrorCode::ParseError,
+            Some("This is a bug. Please report it."),
+        );
+        process::exit(1);
+    });
 
     let data = serde_json::json!({
         "spend_cap": spend_cap,

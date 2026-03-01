@@ -185,15 +185,13 @@ pub fn add(
 
     // Write floo.service.toml in the service's directory
     let svc_dir = cwd.join(path);
-    if !svc_dir.exists() {
-        if let Err(e) = std::fs::create_dir_all(&svc_dir) {
-            output::error(
-                &format!("Failed to create directory '{}': {e}", path),
-                &ErrorCode::FileError,
-                None,
-            );
-            process::exit(1);
-        }
+    if let Err(e) = std::fs::create_dir_all(&svc_dir) {
+        output::error(
+            &format!("Failed to create directory '{}': {e}", path),
+            &ErrorCode::FileError,
+            None,
+        );
+        process::exit(1);
     }
 
     let svc_file = ServiceFileConfig {

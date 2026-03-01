@@ -14,9 +14,8 @@ pub fn list_members() {
             process::exit(1);
         }
     };
-    let org_id = super::expect_str_field(&org, "id");
 
-    let result = match client.list_members(org_id) {
+    let result = match client.list_members(&org.id) {
         Ok(r) => r,
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
@@ -24,44 +23,22 @@ pub fn list_members() {
         }
     };
 
-    let members = result
-        .get("members")
-        .and_then(|v| v.as_array())
-        .unwrap_or_else(|| {
-            output::error(
-                "Failed to parse members from API response.",
-                &ErrorCode::ParseError,
-                Some("This is a bug. Please report it."),
-            );
-            process::exit(1);
-        });
-
-    if members.is_empty() {
+    if result.members.is_empty() {
         output::info("No members found.", None);
         return;
     }
 
-    let rows: Vec<Vec<String>> = members
+    let rows: Vec<Vec<String>> = result
+        .members
         .iter()
-        .map(|m| {
-            vec![
-                m.get("user_id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("-")
-                    .to_string(),
-                m.get("email")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("-")
-                    .to_string(),
-                m.get("role")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("-")
-                    .to_string(),
-            ]
-        })
+        .map(|m| vec![m.user_id.clone(), m.email.clone(), m.role.clone()])
         .collect();
 
-    output::table(&["USER ID", "EMAIL", "ROLE"], &rows, Some(result));
+    output::table(
+        &["USER ID", "EMAIL", "ROLE"],
+        &rows,
+        Some(output::to_value(&result)),
+    );
 }
 
 pub fn set_role(user_id: &str, role: &str) {
@@ -85,18 +62,12 @@ pub fn set_role(user_id: &str, role: &str) {
             process::exit(1);
         }
     };
-    let org_id = super::expect_str_field(&org, "id");
 
-    match client.update_member_role(org_id, user_id, role) {
+    match client.update_member_role(&org.id, user_id, role) {
         Ok(result) => {
-            let email = result
-                .get("email")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            let new_role = result.get("role").and_then(|v| v.as_str()).unwrap_or(role);
             output::success(
-                &format!("Updated {email} to role '{new_role}'."),
-                Some(result),
+                &format!("Updated {} to role '{}'.", result.email, result.role),
+                Some(output::to_value(&result)),
             );
         }
         Err(e) => {

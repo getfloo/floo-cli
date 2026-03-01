@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use colored::Colorize;
 
+use crate::api_types::LogEntry;
 use crate::errors::ErrorCode;
 use crate::output;
 use crate::project_config::{self, AppSource};
@@ -20,14 +21,10 @@ struct LogsFilter<'a> {
     search: Option<&'a str>,
 }
 
-fn extract_field<'a>(entry: &'a serde_json::Value, key: &str) -> Option<&'a str> {
-    entry.get(key).and_then(|v| v.as_str())
-}
-
-fn format_log_line(entry: &serde_json::Value, show_service_prefix: bool) -> String {
-    let ts = extract_field(entry, "timestamp").unwrap_or("");
-    let sev = extract_field(entry, "severity").unwrap_or("DEFAULT");
-    let msg = extract_field(entry, "message").unwrap_or("");
+fn format_log_line(entry: &LogEntry, show_service_prefix: bool) -> String {
+    let ts = entry.timestamp.as_deref().unwrap_or("");
+    let sev = entry.severity.as_deref().unwrap_or("DEFAULT");
+    let msg = entry.message.as_deref().unwrap_or("");
     let colored_sev = match sev {
         "ERROR" | "CRITICAL" => sev.red().bold().to_string(),
         "WARNING" => sev.yellow().to_string(),
@@ -37,7 +34,7 @@ fn format_log_line(entry: &serde_json::Value, show_service_prefix: bool) -> Stri
     };
 
     if show_service_prefix {
-        let service = extract_field(entry, "service_name").unwrap_or("unknown");
+        let service = entry.service_name.as_deref().unwrap_or("unknown");
         let colored_service = format!("[{}]", service).blue().bold().to_string();
         format!("{colored_service} {ts} [{colored_sev}] {msg}")
     } else {
@@ -45,25 +42,27 @@ fn format_log_line(entry: &serde_json::Value, show_service_prefix: bool) -> Stri
     }
 }
 
-fn format_log_line_plain(entry: &serde_json::Value, show_service_prefix: bool) -> String {
-    let ts = extract_field(entry, "timestamp").unwrap_or("");
-    let sev = extract_field(entry, "severity").unwrap_or("DEFAULT");
-    let msg = extract_field(entry, "message").unwrap_or("");
+fn format_log_line_plain(entry: &LogEntry, show_service_prefix: bool) -> String {
+    let ts = entry.timestamp.as_deref().unwrap_or("");
+    let sev = entry.severity.as_deref().unwrap_or("DEFAULT");
+    let msg = entry.message.as_deref().unwrap_or("");
 
     if show_service_prefix {
-        let svc = extract_field(entry, "service_name").unwrap_or("unknown");
+        let svc = entry.service_name.as_deref().unwrap_or("unknown");
         format!("[{svc}] {ts} [{sev}] {msg}")
     } else {
         format!("{ts} [{sev}] {msg}")
     }
 }
 
-fn apply_search_filter(entries: Vec<serde_json::Value>, search: &str) -> Vec<serde_json::Value> {
+fn apply_search_filter(entries: Vec<LogEntry>, search: &str) -> Vec<LogEntry> {
     let needle = search.to_lowercase();
     entries
         .into_iter()
         .filter(|entry| {
-            extract_field(entry, "message")
+            entry
+                .message
+                .as_deref()
                 .map(|msg| msg.to_lowercase().contains(&needle))
                 .unwrap_or(false)
         })
@@ -75,7 +74,7 @@ fn fetch_logs(
     app_id: &str,
     tail: u32,
     filter: &LogsFilter,
-) -> Vec<serde_json::Value> {
+) -> Vec<LogEntry> {
     if filter.services.len() <= 1 {
         let service = filter.services.first().map(|s| s.as_str());
         let result = match client.get_logs(app_id, tail, filter.since, filter.severity, service) {
@@ -85,7 +84,7 @@ fn fetch_logs(
                 process::exit(1);
             }
         };
-        parse_logs_array(&result)
+        result.logs
     } else {
         let mut all_logs = Vec::new();
         for svc in filter.services {
@@ -101,11 +100,11 @@ fn fetch_logs(
                         process::exit(1);
                     }
                 };
-            all_logs.extend(parse_logs_array(&result));
+            all_logs.extend(result.logs);
         }
         all_logs.sort_by(|a, b| {
-            let ts_a = extract_field(a, "timestamp").unwrap_or("");
-            let ts_b = extract_field(b, "timestamp").unwrap_or("");
+            let ts_a = a.timestamp.as_deref().unwrap_or("");
+            let ts_b = b.timestamp.as_deref().unwrap_or("");
             ts_a.cmp(ts_b)
         });
         all_logs
@@ -117,37 +116,23 @@ fn try_fetch_logs(
     app_id: &str,
     tail: u32,
     filter: &LogsFilter,
-) -> Result<Vec<serde_json::Value>, crate::errors::FlooApiError> {
+) -> Result<Vec<LogEntry>, crate::errors::FlooApiError> {
     if filter.services.len() <= 1 {
         let service = filter.services.first().map(|s| s.as_str());
         let result = client.get_logs(app_id, tail, filter.since, filter.severity, service)?;
-        Ok(parse_logs_array(&result))
+        Ok(result.logs)
     } else {
         let mut all_logs = Vec::new();
         for svc in filter.services {
             let result = client.get_logs(app_id, tail, filter.since, filter.severity, Some(svc))?;
-            all_logs.extend(parse_logs_array(&result));
+            all_logs.extend(result.logs);
         }
         all_logs.sort_by(|a, b| {
-            let ts_a = extract_field(a, "timestamp").unwrap_or("");
-            let ts_b = extract_field(b, "timestamp").unwrap_or("");
+            let ts_a = a.timestamp.as_deref().unwrap_or("");
+            let ts_b = b.timestamp.as_deref().unwrap_or("");
             ts_a.cmp(ts_b)
         });
         Ok(all_logs)
-    }
-}
-
-fn parse_logs_array(result: &serde_json::Value) -> Vec<serde_json::Value> {
-    match result.get("logs").and_then(|v| v.as_array()) {
-        Some(arr) => arr.clone(),
-        None => {
-            output::error(
-                "Unexpected response format from the API.",
-                &ErrorCode::ParseError,
-                Some("Try updating the CLI: curl -fsSL https://getfloo.com/install.sh | bash"),
-            );
-            process::exit(1);
-        }
     }
 }
 
@@ -189,8 +174,8 @@ fn source_label(source: &AppSource, config_dir: &Path) -> String {
     }
 }
 
-fn update_last_timestamp(last: &mut Option<String>, entry: &serde_json::Value) {
-    if let Some(ts) = extract_field(entry, "timestamp") {
+fn update_last_timestamp(last: &mut Option<String>, entry: &LogEntry) {
+    if let Some(ts) = entry.timestamp.as_deref() {
         let is_newer = match last.as_deref() {
             Some(prev) => ts > prev,
             None => true,
@@ -251,7 +236,7 @@ pub fn logs(
         }
     };
 
-    let app_id = super::expect_str_field(&app_data, "id");
+    let app_id = &app_data.id;
     let show_service_prefix = services.len() != 1;
 
     let filter = LogsFilter {
@@ -338,12 +323,7 @@ fn batch_logs(
     }
 }
 
-fn write_logs_to_file(
-    path: &Path,
-    logs: &[serde_json::Value],
-    app_name: &str,
-    show_service_prefix: bool,
-) {
+fn write_logs_to_file(path: &Path, logs: &[LogEntry], app_name: &str, show_service_prefix: bool) {
     let content = if output::is_json_mode() {
         let payload = serde_json::json!({
             "logs": logs,
@@ -413,7 +393,7 @@ fn live_logs(
 
     for entry in &logs {
         if is_json {
-            output::print_json(entry);
+            output::print_json(&output::to_value(entry));
         } else {
             output::dim_line(&format_log_line(entry, show_service_prefix));
         }
@@ -479,7 +459,9 @@ fn live_logs(
             Some(last_ts) => new_logs
                 .into_iter()
                 .filter(|entry| {
-                    extract_field(entry, "timestamp")
+                    entry
+                        .timestamp
+                        .as_deref()
                         .map(|ts| ts > last_ts.as_str())
                         .unwrap_or(false)
                 })
@@ -488,7 +470,7 @@ fn live_logs(
 
         for entry in &new_entries {
             if is_json {
-                output::print_json(entry);
+                output::print_json(&output::to_value(entry));
             } else {
                 output::dim_line(&format_log_line(entry, show_service_prefix));
             }
@@ -500,27 +482,44 @@ fn live_logs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+
+    fn make_log(ts: &str, sev: &str, msg: &str) -> LogEntry {
+        LogEntry {
+            timestamp: Some(ts.to_string()),
+            severity: Some(sev.to_string()),
+            message: Some(msg.to_string()),
+            service_name: None,
+        }
+    }
+
+    fn make_log_with_service(ts: &str, sev: &str, msg: &str, svc: &str) -> LogEntry {
+        LogEntry {
+            timestamp: Some(ts.to_string()),
+            severity: Some(sev.to_string()),
+            message: Some(msg.to_string()),
+            service_name: Some(svc.to_string()),
+        }
+    }
 
     #[test]
     fn test_apply_search_filter_matches_case_insensitive() {
         let entries = vec![
-            json!({"message": "Server started", "timestamp": "t1", "severity": "INFO"}),
-            json!({"message": "Error: connection failed", "timestamp": "t2", "severity": "ERROR"}),
-            json!({"message": "Request handled", "timestamp": "t3", "severity": "INFO"}),
+            make_log("t1", "INFO", "Server started"),
+            make_log("t2", "ERROR", "Error: connection failed"),
+            make_log("t3", "INFO", "Request handled"),
         ];
 
         let result = apply_search_filter(entries, "error");
         assert_eq!(result.len(), 1);
         assert_eq!(
-            result[0].get("message").unwrap().as_str().unwrap(),
+            result[0].message.as_deref().unwrap(),
             "Error: connection failed"
         );
     }
 
     #[test]
     fn test_apply_search_filter_empty_query_matches_all() {
-        let entries = vec![json!({"message": "Hello", "timestamp": "t1", "severity": "INFO"})];
+        let entries = vec![make_log("t1", "INFO", "Hello")];
 
         let result = apply_search_filter(entries, "");
         assert_eq!(result.len(), 1);
@@ -528,8 +527,7 @@ mod tests {
 
     #[test]
     fn test_apply_search_filter_no_match() {
-        let entries =
-            vec![json!({"message": "Hello world", "timestamp": "t1", "severity": "INFO"})];
+        let entries = vec![make_log("t1", "INFO", "Hello world")];
 
         let result = apply_search_filter(entries, "zzz_nonexistent");
         assert!(result.is_empty());
@@ -537,7 +535,12 @@ mod tests {
 
     #[test]
     fn test_apply_search_filter_missing_message_field() {
-        let entries = vec![json!({"timestamp": "t1", "severity": "INFO"})];
+        let entries = vec![LogEntry {
+            timestamp: Some("t1".to_string()),
+            severity: Some("INFO".to_string()),
+            message: None,
+            service_name: None,
+        }];
 
         let result = apply_search_filter(entries, "anything");
         assert!(result.is_empty());
@@ -545,12 +548,7 @@ mod tests {
 
     #[test]
     fn test_format_log_line_without_prefix() {
-        let entry = json!({
-            "timestamp": "2024-01-01T00:00:00Z",
-            "severity": "INFO",
-            "message": "Server started",
-            "service_name": "api"
-        });
+        let entry = make_log_with_service("2024-01-01T00:00:00Z", "INFO", "Server started", "api");
 
         let line = format_log_line(&entry, false);
         assert!(line.contains("2024-01-01T00:00:00Z"));
@@ -560,12 +558,7 @@ mod tests {
 
     #[test]
     fn test_format_log_line_with_prefix() {
-        let entry = json!({
-            "timestamp": "2024-01-01T00:00:00Z",
-            "severity": "INFO",
-            "message": "Server started",
-            "service_name": "api"
-        });
+        let entry = make_log_with_service("2024-01-01T00:00:00Z", "INFO", "Server started", "api");
 
         let line = format_log_line(&entry, true);
         assert!(line.contains("2024-01-01T00:00:00Z"));
@@ -575,11 +568,12 @@ mod tests {
 
     #[test]
     fn test_format_log_line_with_prefix_missing_service_name() {
-        let entry = json!({
-            "timestamp": "2024-01-01T00:00:00Z",
-            "severity": "ERROR",
-            "message": "something broke"
-        });
+        let entry = LogEntry {
+            timestamp: Some("2024-01-01T00:00:00Z".to_string()),
+            severity: Some("ERROR".to_string()),
+            message: Some("something broke".to_string()),
+            service_name: None,
+        };
 
         let line = format_log_line(&entry, true);
         assert!(line.contains("[unknown]"));

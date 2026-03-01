@@ -99,7 +99,7 @@ fn mock_services_single(server: &mut Server) -> Mock {
         ]))
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"services":[{"name":"web","type":"web","status":"live","cloud_run_url":"https://web.floo.app","port":3000}]}"#)
+        .with_body(r#"{"services":[{"id":"svc-web-1","name":"web","type":"web","status":"live","cloud_run_url":"https://web.floo.app","port":3000}]}"#)
         .create()
 }
 
@@ -116,7 +116,7 @@ fn mock_services_multi(server: &mut Server) -> Mock {
         ]))
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"services":[{"name":"api","type":"api","status":"live","cloud_run_url":"https://api.floo.app","port":8000},{"name":"web","type":"web","status":"live","cloud_run_url":"https://web.floo.app","port":3000}]}"#)
+        .with_body(r#"{"services":[{"id":"svc-api-1","name":"api","type":"api","status":"live","cloud_run_url":"https://api.floo.app","port":8000},{"id":"svc-web-1","name":"web","type":"web","status":"live","cloud_run_url":"https://web.floo.app","port":3000}]}"#)
         .create()
 }
 
@@ -1295,8 +1295,8 @@ fn test_deploy_fails_with_invalid_response_when_app_id_missing() {
         .env("HOME", home.path())
         .assert()
         .failure()
-        .stdout(predicate::str::contains(r#""code":"INVALID_RESPONSE""#))
-        .stdout(predicate::str::contains("missing required 'id'"));
+        .stdout(predicate::str::contains(r#""code":"PARSE_ERROR""#))
+        .stdout(predicate::str::contains("Failed to parse response"));
 }
 
 #[test]
