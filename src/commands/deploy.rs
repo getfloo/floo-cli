@@ -416,11 +416,16 @@ pub fn deploy(
         sync_env_vars_if_needed(&client, &app_id, r, sync_env);
     }
 
-    // Extract access_mode from config: app_config wins over service_config
+    // Extract access_mode: [environments.dev] override > [app] level > service_config
     let access_mode: Option<AppAccessMode> = resolved.as_ref().and_then(|r| {
         r.app_config
             .as_ref()
-            .and_then(|c| c.app.access_mode)
+            .and_then(|c| {
+                c.environments
+                    .get("dev")
+                    .and_then(|env| env.access_mode)
+                    .or(c.app.access_mode)
+            })
             .or_else(|| r.service_config.as_ref().and_then(|c| c.app.access_mode))
     });
 
@@ -442,7 +447,13 @@ pub fn deploy(
         Err(e) => {
             spinner.finish();
             cleanup(&archive_path);
-            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            let suggestion = match e.code.as_str() {
+                "PLAN_FEATURE_PASSWORD" | "PLAN_FEATURE_FLOO_ACCOUNTS" => {
+                    Some("Upgrade your plan at https://app.getfloo.com/settings/billing")
+                }
+                _ => None,
+            };
+            output::error(&e.message, &ErrorCode::from_api(&e.code), suggestion);
             process::exit(1);
         }
     };
@@ -505,6 +516,16 @@ pub fn deploy(
     }
 
     let url = deploy_data.url.as_deref().unwrap_or("");
+
+    if !output::is_json_mode() {
+        if let Some(ref password) = deploy_data.generated_password {
+            output::info(&format!("  Generated password: {password}"), None);
+            output::info("  To retrieve later: floo apps password <name>", None);
+        }
+        if let Some(ref mode) = access_mode {
+            output::info(&format!("  Access: {}", mode.as_str()), None);
+        }
+    }
 
     let service_names: Vec<&str> = services
         .as_ref()
@@ -575,7 +596,7 @@ fn write_first_deploy_configs(project_path: &Path, app_name: &str, service: &Ser
             port: service.port,
             ingress: Some(service.ingress),
             env_file,
-            domain: None,
+            domain: service.domain.clone(),
         },
     };
 
@@ -585,6 +606,7 @@ fn write_first_deploy_configs(project_path: &Path, app_name: &str, service: &Ser
             access_mode: None,
         },
         services: HashMap::new(),
+        environments: HashMap::new(),
     };
 
     if let Err(e) = project_config::write_app_config(project_path, &app_file) {

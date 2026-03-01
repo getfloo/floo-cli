@@ -101,6 +101,7 @@ fn init_non_interactive(
             access_mode: None,
         },
         services: HashMap::new(),
+        environments: HashMap::new(),
     };
 
     let mut files_written = Vec::new();
@@ -311,6 +312,7 @@ fn init_interactive(
             access_mode: None,
         },
         services: services_map,
+        environments: HashMap::new(),
     };
 
     if let Err(e) = project_config::write_app_config(project_path, &app_file) {

@@ -318,6 +318,12 @@ pub enum AppsCommands {
         #[arg(short, long)]
         app: String,
     },
+
+    /// Show the shared password for a password-protected app.
+    Password {
+        /// App name or ID.
+        app_name: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -608,6 +614,7 @@ pub fn run() {
                 no_deploy,
             ),
             AppsCommands::Disconnect { app } => commands::apps::disconnect(&app),
+            AppsCommands::Password { app_name } => commands::apps::show_password(&app_name),
         },
 
         Commands::Env(sub) => match sub {

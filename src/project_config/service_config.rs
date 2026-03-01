@@ -438,4 +438,114 @@ port = 8000
         assert!(config.service.ingress.is_none());
         assert_eq!(config.service.resolved_ingress(), ServiceIngress::Public);
     }
+
+    #[test]
+    fn test_load_service_config_with_domain() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::SERVICE_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[service]
+name = "web"
+type = "web"
+port = 3000
+ingress = "public"
+domain = "getfloo.com"
+"#,
+        )
+        .unwrap();
+
+        let config = load_service_config(dir.path()).unwrap().unwrap();
+        assert_eq!(config.service.domain.as_deref(), Some("getfloo.com"));
+    }
+
+    #[test]
+    fn test_load_service_config_without_domain() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::SERVICE_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[service]
+name = "api"
+type = "api"
+port = 8000
+"#,
+        )
+        .unwrap();
+
+        let config = load_service_config(dir.path()).unwrap().unwrap();
+        assert!(config.service.domain.is_none());
+    }
+
+    #[test]
+    fn test_to_api_service_config_passes_domain() {
+        let section = ServiceSection {
+            name: "web".to_string(),
+            service_type: ServiceType::Web,
+            port: 3000,
+            ingress: Some(ServiceIngress::Public),
+            env_file: None,
+            domain: Some("getfloo.com".to_string()),
+        };
+
+        let api_config = section.to_api_service_config(".");
+        assert_eq!(api_config.domain.as_deref(), Some("getfloo.com"));
+    }
+
+    #[test]
+    fn test_service_config_json_domain_omitted_when_none() {
+        let config = ServiceConfig {
+            name: "api".to_string(),
+            service_type: ServiceType::Api,
+            path: "backend".to_string(),
+            port: 8000,
+            ingress: ServiceIngress::Public,
+            domain: None,
+        };
+        let json = serde_json::to_value(&config).unwrap();
+        assert!(json.get("domain").is_none());
+    }
+
+    #[test]
+    fn test_service_config_json_domain_included_when_set() {
+        let config = ServiceConfig {
+            name: "web".to_string(),
+            service_type: ServiceType::Web,
+            path: ".".to_string(),
+            port: 3000,
+            ingress: ServiceIngress::Public,
+            domain: Some("getfloo.com".to_string()),
+        };
+        let json = serde_json::to_value(&config).unwrap();
+        assert_eq!(json["domain"], "getfloo.com");
+    }
+
+    #[test]
+    fn test_write_and_reload_service_config_with_domain() {
+        let dir = TempDir::new().unwrap();
+        let config = ServiceFileConfig {
+            app: ServiceFileAppSection {
+                name: "my-app".to_string(),
+                access_mode: None,
+            },
+            service: ServiceSection {
+                name: "web".to_string(),
+                service_type: ServiceType::Web,
+                port: 3000,
+                ingress: Some(ServiceIngress::Public),
+                env_file: None,
+                domain: Some("getfloo.com".to_string()),
+            },
+        };
+
+        write_service_config(dir.path(), &config).unwrap();
+        let loaded = load_service_config(dir.path()).unwrap().unwrap();
+        assert_eq!(loaded.service.domain.as_deref(), Some("getfloo.com"));
+    }
 }

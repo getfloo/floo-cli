@@ -88,6 +88,12 @@ pub struct Deploy {
     pub build_logs: Option<String>,
     pub runtime: Option<String>,
     pub created_at: Option<String>,
+    pub generated_password: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppPasswordResponse {
+    pub password: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
