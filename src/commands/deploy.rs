@@ -20,7 +20,7 @@ use crate::resolve::resolve_app;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 const POLL_TIMEOUT: Duration = Duration::from_secs(600); // 10 minutes
-const TERMINAL_STATUSES: &[&str] = &["live", "failed"];
+pub(crate) const TERMINAL_STATUSES: &[&str] = &["live", "failed"];
 
 fn status_label(status: &str) -> &str {
     match status {
@@ -638,7 +638,7 @@ fn write_first_deploy_configs(project_path: &Path, app_name: &str, service: &Ser
 }
 
 /// Stream deploy logs via SSE and return the final deploy state.
-fn stream_deploy(
+pub(crate) fn stream_deploy(
     client: &FlooClient,
     app_id: &str,
     deploy_id: &str,
@@ -712,7 +712,7 @@ fn stream_deploy(
 }
 
 /// Stream deploy events via SSE and emit NDJSON to stdout for JSON mode.
-fn stream_deploy_json(
+pub(crate) fn stream_deploy_json(
     client: &FlooClient,
     app_id: &str,
     deploy_id: &str,
@@ -785,7 +785,7 @@ fn stream_deploy_json(
 }
 
 /// Poll the deploy endpoint until it reaches a terminal status.
-fn poll_deploy(
+pub(crate) fn poll_deploy(
     client: &FlooClient,
     app_id: &str,
     initial_data: &serde_json::Value,
@@ -898,7 +898,7 @@ fn parse_env_file_soft(path: &Path) -> Option<Vec<(String, String)>> {
 
 /// Auto-import env vars from configured env_file on first deploy (server has 0 vars),
 /// or when --sync-env is passed. Reads env_file from service configs (source of truth).
-fn sync_env_vars_if_needed(
+pub(crate) fn sync_env_vars_if_needed(
     client: &FlooClient,
     app_id: &str,
     resolved: &project_config::ResolvedApp,
@@ -1066,7 +1066,7 @@ mod tests {
     }
 }
 
-fn cleanup(path: &PathBuf) {
+pub(crate) fn cleanup(path: &PathBuf) {
     if path.exists() {
         if let Err(error) = std::fs::remove_file(path) {
             if !output::is_json_mode() {
