@@ -118,9 +118,17 @@ pub fn add(
     };
 
     let svc_type = match resolved_type_str.as_str() {
+        "web" => ServiceType::Web,
         "api" => ServiceType::Api,
         "worker" => ServiceType::Worker,
-        _ => ServiceType::Web,
+        other => {
+            output::error(
+                &format!("Unknown service type '{other}'."),
+                "INVALID_TYPE",
+                Some("Valid types: web, api, worker."),
+            );
+            process::exit(1);
+        }
     };
 
     let app_svc_type = match svc_type {
@@ -131,7 +139,15 @@ pub fn add(
 
     let svc_ingress = match ingress {
         Some("internal") => ServiceIngress::Internal,
-        _ => ServiceIngress::Public,
+        Some("public") | None => ServiceIngress::Public,
+        Some(other) => {
+            output::error(
+                &format!("Unknown ingress mode '{other}'."),
+                "INVALID_INGRESS",
+                Some("Valid modes: public, internal."),
+            );
+            process::exit(1);
+        }
     };
 
     let env_file_val = env_file.map(|s| s.to_string());

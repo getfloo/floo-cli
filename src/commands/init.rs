@@ -184,9 +184,17 @@ fn init_interactive(
             let default_type = detection.default_service_type();
             let type_str = output::prompt_with_default("Type (web/api/worker)", default_type);
             let service_type = match type_str.as_str() {
+                "web" => ServiceType::Web,
                 "api" => ServiceType::Api,
                 "worker" => ServiceType::Worker,
-                _ => ServiceType::Web,
+                other => {
+                    output::error(
+                        &format!("Unknown service type '{other}'."),
+                        "INVALID_TYPE",
+                        Some("Valid types: web, api, worker."),
+                    );
+                    process::exit(1);
+                }
             };
 
             let env_file = if project_path.join(&svc_path).join(".env").exists() {

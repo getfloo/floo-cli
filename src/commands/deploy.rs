@@ -877,7 +877,7 @@ fn warn_missing_env_vars(
 
     // Check sub-services
     if let Some(ref app_config) = resolved.app_config {
-        for (_, entry) in &app_config.services {
+        for entry in app_config.services.values() {
             if let Some(ref path_str) = entry.path {
                 let normalized = path_str.strip_prefix("./").unwrap_or(path_str);
                 let normalized = normalized.strip_suffix('/').unwrap_or(normalized);

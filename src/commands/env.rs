@@ -580,7 +580,7 @@ pub fn import_all_services(app_flag: Option<&str>) {
 
     // Check sub-services from app config
     if let Some(ref app_config) = resolved.app_config {
-        for (_, entry) in &app_config.services {
+        for entry in app_config.services.values() {
             let Some(ref path_str) = entry.path else {
                 continue;
             };
@@ -590,18 +590,33 @@ pub fn import_all_services(app_flag: Option<&str>) {
                 continue;
             }
             let svc_dir = resolved.config_dir.join(normalized);
-            if let Ok(Some(svc_config)) = project_config::load_service_config(&svc_dir) {
-                if let Some(ref env_file) = svc_config.service.env_file {
-                    let path = svc_dir.join(env_file);
-                    env_file_entries.push((svc_config.service.name.clone(), path));
-                } else if !output::is_json_mode() {
-                    output::info(
+            match project_config::load_service_config(&svc_dir) {
+                Ok(Some(svc_config)) => {
+                    if let Some(ref env_file) = svc_config.service.env_file {
+                        let path = svc_dir.join(env_file);
+                        env_file_entries.push((svc_config.service.name.clone(), path));
+                    } else if !output::is_json_mode() {
+                        output::info(
+                            &format!(
+                                "Skipping service '{}' (no env_file configured).",
+                                svc_config.service.name
+                            ),
+                            None,
+                        );
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    output::error(
                         &format!(
-                            "Skipping service '{}' (no env_file configured).",
-                            svc_config.service.name
+                            "Failed to load service config at '{}': {}",
+                            svc_dir.display(),
+                            e.message
                         ),
-                        None,
+                        &e.code,
+                        e.suggestion.as_deref(),
                     );
+                    process::exit(1);
                 }
             }
         }
@@ -641,11 +656,17 @@ pub fn import_all_services(app_flag: Option<&str>) {
 
     // Resolve all service IDs from server
     let server_services = match client.list_services(&app_id) {
-        Ok(r) => r
-            .get("services")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default(),
+        Ok(r) => match r.get("services").and_then(|v| v.as_array()) {
+            Some(arr) => arr.clone(),
+            None => {
+                output::error(
+                    "Response missing 'services' field.",
+                    "PARSE_ERROR",
+                    Some("This is a bug. Please report it."),
+                );
+                process::exit(1);
+            }
+        },
         Err(e) => {
             output::error(&e.message, &e.code, None);
             process::exit(1);

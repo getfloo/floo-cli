@@ -251,25 +251,35 @@ fn validate_service(
     let svc_dir = project_path.join(path);
     let dockerfile = svc_dir.join("Dockerfile");
     if dockerfile.exists() {
-        if let Ok(content) = std::fs::read_to_string(&dockerfile) {
-            for line in content.lines() {
-                let trimmed = line.trim();
-                if let Some(expose_val) = trimmed.strip_prefix("EXPOSE ") {
-                    let expose_val = expose_val.trim();
-                    // Handle EXPOSE port/protocol format
-                    let port_str = expose_val.split('/').next().unwrap_or(expose_val);
-                    if let Ok(exposed_port) = port_str.parse::<u16>() {
-                        if exposed_port != service.port {
-                            warnings.push(serde_json::json!({
-                                "path": path,
-                                "message": format!(
-                                    "Service '{name}' Dockerfile EXPOSE {exposed_port} does not match configured port {}.",
-                                    service.port
-                                ),
-                            }));
+        match std::fs::read_to_string(&dockerfile) {
+            Ok(content) => {
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    if let Some(expose_val) = trimmed.strip_prefix("EXPOSE ") {
+                        let expose_val = expose_val.trim();
+                        // Handle EXPOSE port/protocol format
+                        let port_str = expose_val.split('/').next().unwrap_or(expose_val);
+                        if let Ok(exposed_port) = port_str.parse::<u16>() {
+                            if exposed_port != service.port {
+                                warnings.push(serde_json::json!({
+                                    "path": path,
+                                    "message": format!(
+                                        "Service '{name}' Dockerfile EXPOSE {exposed_port} does not match configured port {}.",
+                                        service.port
+                                    ),
+                                }));
+                            }
                         }
                     }
                 }
+            }
+            Err(e) => {
+                warnings.push(serde_json::json!({
+                    "path": path,
+                    "message": format!(
+                        "Service '{name}' Dockerfile exists but could not be read: {e}. Port check skipped."
+                    ),
+                }));
             }
         }
     }
