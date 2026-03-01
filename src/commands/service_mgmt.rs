@@ -173,6 +173,7 @@ pub fn add(
                 version: None,
                 plan: None,
                 ingress: None,
+                domain: None,
             },
         );
     }
@@ -205,6 +206,7 @@ pub fn add(
             port: resolved_port,
             ingress: Some(svc_ingress),
             env_file: env_file_val.clone(),
+            domain: None,
         },
     };
 

@@ -19,6 +19,8 @@ pub struct ServiceConfig {
     pub path: String,
     pub port: u16,
     pub ingress: ServiceIngress,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq)]
@@ -83,6 +85,8 @@ pub struct ServiceSection {
     pub ingress: Option<ServiceIngress>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub env_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
 }
 
 impl ServiceSection {
@@ -102,6 +106,7 @@ impl ServiceSection {
             path: path.to_string(),
             port: self.port,
             ingress: self.resolved_ingress(),
+            domain: self.domain.clone(),
         }
     }
 }
@@ -270,6 +275,7 @@ ingress = "internal"
                 port: 3000,
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
+                domain: None,
             },
         };
 
@@ -288,6 +294,7 @@ ingress = "internal"
             port: 8000,
             ingress: Some(ServiceIngress::Internal),
             env_file: None,
+            domain: None,
         };
 
         let api_config = section.to_api_service_config("backend");
@@ -306,6 +313,7 @@ ingress = "internal"
             path: "backend".to_string(),
             port: 8000,
             ingress: ServiceIngress::Internal,
+            domain: None,
         };
         let json = serde_json::to_value(&config).unwrap();
         assert_eq!(json["name"], "api");
