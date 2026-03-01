@@ -38,14 +38,19 @@ pub fn success(message: &str, data: Option<Value>) {
     }
 }
 
+fn build_error_json(code: &ErrorCode, message: &str, suggestion: Option<&str>) -> Value {
+    let mut err = serde_json::json!({"code": code.as_str(), "message": message});
+    if let Some(sug) = suggestion {
+        err.as_object_mut()
+            .unwrap()
+            .insert("suggestion".to_string(), Value::String(sug.to_string()));
+    }
+    err
+}
+
 pub fn error(message: &str, code: &ErrorCode, suggestion: Option<&str>) {
     if is_json_mode() {
-        let mut err = serde_json::json!({"code": code.as_str(), "message": message});
-        if let Some(sug) = suggestion {
-            err.as_object_mut()
-                .unwrap()
-                .insert("suggestion".to_string(), Value::String(sug.to_string()));
-        }
+        let err = build_error_json(code, message, suggestion);
         print_json(&serde_json::json!({"success": false, "error": err}));
     } else {
         eprintln!("{} {message}", "Error:".red());
@@ -62,12 +67,7 @@ pub fn error_with_data(
     data: Option<Value>,
 ) {
     if is_json_mode() {
-        let mut err = serde_json::json!({"code": code.as_str(), "message": message});
-        if let Some(sug) = suggestion {
-            err.as_object_mut()
-                .unwrap()
-                .insert("suggestion".to_string(), Value::String(sug.to_string()));
-        }
+        let err = build_error_json(code, message, suggestion);
         print_json(&serde_json::json!({"success": false, "error": err, "data": data}));
     } else {
         eprintln!("{} {message}", "Error:".red());

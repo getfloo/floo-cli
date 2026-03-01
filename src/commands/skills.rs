@@ -26,7 +26,7 @@ pub fn install(path: Option<PathBuf>, print: bool) {
                 .unwrap_or_else(|e| {
                     output::error(
                         &format!("Failed to write to stdout: {e}"),
-                        &ErrorCode::Other("IO_ERROR".into()),
+                        &ErrorCode::FileError,
                         None,
                     );
                     process::exit(1);
@@ -40,7 +40,7 @@ pub fn install(path: Option<PathBuf>, print: bool) {
         None => {
             output::error(
                 "No target specified.",
-                &ErrorCode::Other("MISSING_ARGUMENT".into()),
+                &ErrorCode::MissingArgument,
                 Some("Provide --path <dir> to install or --print to output to stdout."),
             );
             process::exit(1);
@@ -50,7 +50,7 @@ pub fn install(path: Option<PathBuf>, print: bool) {
     if let Err(e) = fs::create_dir_all(&dir) {
         output::error(
             &format!("Failed to create directory '{}': {e}", dir.display()),
-            &ErrorCode::Other("IO_ERROR".into()),
+            &ErrorCode::FileError,
             None,
         );
         process::exit(1);
@@ -66,7 +66,7 @@ pub fn install(path: Option<PathBuf>, print: bool) {
         Err(e) => {
             output::error(
                 &format!("Failed to resolve path '{}': {e}", file_path.display()),
-                &ErrorCode::Other("IO_ERROR".into()),
+                &ErrorCode::FileError,
                 None,
             );
             process::exit(1);
@@ -76,7 +76,7 @@ pub fn install(path: Option<PathBuf>, print: bool) {
     if let Err(e) = fs::write(&abs_path, SKILL_CONTENT) {
         output::error(
             &format!("Failed to write '{}': {e}", abs_path.display()),
-            &ErrorCode::Other("IO_ERROR".into()),
+            &ErrorCode::FileError,
             None,
         );
         process::exit(1);
@@ -91,7 +91,7 @@ pub fn install(path: Option<PathBuf>, print: bool) {
                     "Path '{}' contains invalid UTF-8 and cannot be tracked.",
                     abs_path.display()
                 ),
-                &ErrorCode::Other("IO_ERROR".into()),
+                &ErrorCode::FileError,
                 Some("Use a path containing only valid UTF-8 characters."),
             );
             process::exit(1);

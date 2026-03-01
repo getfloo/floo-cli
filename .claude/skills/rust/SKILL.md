@@ -451,6 +451,7 @@ New error codes must be `UPPER_SNAKE_CASE`, added to the `ErrorCode` enum in `sr
 | `INVALID_TYPE` | `InvalidType` | commands/service_mgmt | Service type is not a recognized value |
 | `LEGACY_CONFIG` | `LegacyConfig` | project_config/resolve.rs | Found old `floo.toml`, must migrate to new config files |
 | `MISSING_APP_NAME` | `MissingAppName` | project_config | App name is required but not set in config or flag |
+| `MISSING_ARGUMENT` | `MissingArgument` | commands/skills | Required CLI argument not provided (e.g. --path or --print) |
 | `MISSING_PORT` | `MissingPort` | commands/service_mgmt | Worker service definition missing required port |
 | `MISSING_TYPE` | `MissingType` | commands/service_mgmt | Service definition missing required type field |
 | `MULTIPLE_SERVICES` | `MultipleServices` | project_config | Multiple services exist but no target was specified |
@@ -490,11 +491,9 @@ These codes come from `FlooApiError.code` at runtime and are not enum variants. 
 | `DEVICE_AUTH_FAILED` | API (502) | Device code flow — WorkOS backend failure |
 | `DEVICE_PENDING` | api_client.rs | Device code flow — authorization still pending (HTTP 202) |
 | `INVALID_ROLLBACK_TARGET` | API (400) | Rollback target deploy is not LIVE |
-| `IO_ERROR` | commands/skills | File system operation failed (create dir, write file, resolve path) |
 | `LOGS_QUERY_ERROR` | API (400) | Logs query validation error (bad severity/since) |
 | `LOGS_SERVICE_ERROR` | API (502) | Cloud Logging backend failure |
 | `LOGS_UNAVAILABLE` | API (503) | GCP project not configured (logs require Cloud Run) |
-| `MISSING_ARGUMENT` | commands/skills | Required argument not provided (e.g. --path or --print) |
 | `PERMISSION_DENIED` | API (403) | User has VIEWER role; write action denied |
 | `ROLLBACK_IMAGE_MISSING` | API (400) | Rollback target missing stored image URI |
 | `SERIALIZATION_ERROR` | api_client.rs | Failed to serialize service definitions to JSON |
