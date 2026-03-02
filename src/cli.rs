@@ -14,7 +14,7 @@ use crate::output;
 )]
 pub struct Cli {
     /// Output JSON to stdout (for agents).
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub json: bool,
 
     #[command(subcommand)]
