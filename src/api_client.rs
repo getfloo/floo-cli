@@ -695,6 +695,11 @@ impl FlooClient {
         Ok(())
     }
 
+    pub fn github_status(&self, app_id: &str) -> Result<GitHubStatusResponse, FlooApiError> {
+        let resp = self.get(&format!("/v1/apps/{app_id}/github"))?;
+        self.handle_response(resp)
+    }
+
     // --- Releases ---
 
     pub fn promote_app(

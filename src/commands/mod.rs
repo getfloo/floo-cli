@@ -14,6 +14,7 @@ pub mod check;
 pub mod deploy;
 pub mod domains;
 pub mod env;
+pub mod github;
 pub mod init;
 pub mod logs;
 pub mod orgs;
