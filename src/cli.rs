@@ -285,15 +285,27 @@ pub enum AppsCommands {
         force: bool,
     },
 
+    /// Manage GitHub integration.
+    #[command(subcommand)]
+    Github(GitHubCommands),
+
+    /// Show the shared password for a password-protected app.
+    Password {
+        /// App name or ID.
+        app_name: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum GitHubCommands {
     /// Connect a GitHub repo to an app for auto-deploy.
     Connect {
         /// GitHub repo (owner/repo).
-        #[arg(long)]
         repo: String,
 
-        /// App name or ID.
+        /// App name or ID (uses config file if omitted).
         #[arg(short, long)]
-        app: String,
+        app: Option<String>,
 
         /// Default branch (defaults to "main").
         #[arg(short, long)]
@@ -310,15 +322,16 @@ pub enum AppsCommands {
 
     /// Disconnect a GitHub repo from an app.
     Disconnect {
-        /// App name or ID.
+        /// App name or ID (uses config file if omitted).
         #[arg(short, long)]
-        app: String,
+        app: Option<String>,
     },
 
-    /// Show the shared password for a password-protected app.
-    Password {
-        /// App name or ID.
-        app_name: String,
+    /// Show GitHub connection status for an app.
+    Status {
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
     },
 }
 
@@ -618,20 +631,23 @@ pub fn run() {
             AppsCommands::List { page, per_page } => commands::apps::list(page, per_page),
             AppsCommands::Status { app_name } => commands::apps::status(&app_name),
             AppsCommands::Delete { app_name, force } => commands::apps::delete(&app_name, force),
-            AppsCommands::Connect {
-                repo,
-                app,
-                branch,
-                skip_env_check,
-                no_deploy,
-            } => commands::apps::connect(
-                &repo,
-                &app,
-                branch.as_deref(),
-                skip_env_check,
-                no_deploy,
-            ),
-            AppsCommands::Disconnect { app } => commands::apps::disconnect(&app),
+            AppsCommands::Github(gh_sub) => match gh_sub {
+                GitHubCommands::Connect {
+                    repo,
+                    app,
+                    branch,
+                    skip_env_check,
+                    no_deploy,
+                } => commands::github::connect(
+                    &repo,
+                    app.as_deref(),
+                    branch.as_deref(),
+                    skip_env_check,
+                    no_deploy,
+                ),
+                GitHubCommands::Disconnect { app } => commands::github::disconnect(app.as_deref()),
+                GitHubCommands::Status { app } => commands::github::status(app.as_deref()),
+            },
             AppsCommands::Password { app_name } => commands::apps::show_password(&app_name),
         },
 

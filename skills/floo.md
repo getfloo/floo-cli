@@ -89,8 +89,9 @@ JSON output: `data.app`, `data.deploy`, `data.detection`
 floo apps list --json                    # list all apps (includes Org column)
 floo apps status <name> --json           # app details + org + services + deploy status
 floo apps delete <name> --json           # delete an app (--force to skip prompt)
-floo apps connect --repo owner/repo --installation-id <id> --app <name>  # GitHub auto-deploy
-floo apps disconnect --app <name>        # remove GitHub connection
+floo apps github connect owner/repo --app <name>  # GitHub auto-deploy
+floo apps github disconnect --app <name>           # remove GitHub connection
+floo apps github status --app <name>               # show GitHub connection info
 ```
 
 ### Environment Variables

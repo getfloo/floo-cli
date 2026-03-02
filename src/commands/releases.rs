@@ -17,9 +17,9 @@ pub fn promote(app: Option<&str>, tag: Option<&str>) {
         Ok(r) => r,
         Err(e) => {
             let suggestion = match e.code.as_str() {
-                "GITHUB_NOT_CONNECTED" => {
-                    Some("Connect a GitHub repo first: floo apps connect --repo org/repo --installation-id <id> --app <name>")
-                }
+                "GITHUB_NOT_CONNECTED" => Some(
+                    "Connect a GitHub repo first: floo apps github connect org/repo --app <name>",
+                ),
                 "NO_DEV_DEPLOY" => Some("Deploy to dev first: floo deploy --app <name>"),
                 "RELEASE_TAG_EXISTS" => Some("Use a different tag with --tag <tag>"),
                 _ => None,

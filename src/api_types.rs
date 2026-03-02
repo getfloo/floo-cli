@@ -217,6 +217,15 @@ pub struct GitHubConnectResponse {
     pub default_branch: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitHubStatusResponse {
+    pub repo_full_name: String,
+    pub default_branch: String,
+    pub installation_id: i64,
+    pub connected_at: String,
+    pub skip_env_var_check: bool,
+}
+
 // --- Database ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
