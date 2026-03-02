@@ -37,13 +37,29 @@ pub fn list(page: u32, per_page: u32) {
         return;
     }
 
+    // Resolve org display name once for the table (human mode only).
+    // All listed apps belong to the caller's org, so one lookup suffices.
+    let org_display: Option<String> = if !output::is_json_mode() {
+        client
+            .get_org_me()
+            .ok()
+            .and_then(|o| o.display_name().map(String::from))
+    } else {
+        None
+    };
+
     let rows: Vec<Vec<String>> = result
         .apps
         .iter()
         .map(|a| {
+            let org = org_display
+                .as_deref()
+                .or(a.org_id.as_deref())
+                .unwrap_or("\u{2014}");
             vec![
                 a.name.clone(),
                 a.status.as_deref().unwrap_or("-").to_string(),
+                org.to_string(),
                 a.url.as_deref().unwrap_or("\u{2014}").to_string(),
                 a.runtime.as_deref().unwrap_or("\u{2014}").to_string(),
                 a.created_at.as_deref().unwrap_or("-").to_string(),
@@ -52,7 +68,7 @@ pub fn list(page: u32, per_page: u32) {
         .collect();
 
     output::table(
-        &["Name", "Status", "URL", "Runtime", "Created"],
+        &["Name", "Status", "Org", "URL", "Runtime", "Created"],
         &rows,
         Some(
             serde_json::json!({"apps": output::to_value(&result.apps), "total": total, "page": page, "per_page": per_page}),
@@ -81,6 +97,7 @@ pub fn status(app_name: &str) {
     if output::is_json_mode() {
         output::success(&format!("App {}", app.name), Some(output::to_value(&app)));
     } else {
+        let org_display = resolve_org_display(&client, app.org_id.as_deref());
         output::info(&app.name, None);
         output::info(
             &format!("  Status:   {}", app.status.as_deref().unwrap_or("-")),
@@ -97,11 +114,25 @@ pub fn status(app_name: &str) {
             ),
             None,
         );
+        output::info(&format!("  Org:      {org_display}"), None);
         output::info(&format!("  ID:       {}", app.id), None);
         output::info(
             &format!("  Created:  {}", app.created_at.as_deref().unwrap_or("-")),
             None,
         );
+    }
+}
+
+fn resolve_org_display(client: &crate::api_client::FlooClient, org_id: Option<&str>) -> String {
+    let Some(org_id) = org_id else {
+        return "\u{2014}".to_string();
+    };
+    match client.get_org(org_id) {
+        Ok(org) => org
+            .display_name()
+            .map(String::from)
+            .unwrap_or_else(|| org_id.to_string()),
+        Err(_) => org_id.to_string(),
     }
 }
 

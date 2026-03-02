@@ -210,6 +210,11 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn get_org(&self, org_id: &str) -> Result<OrgResponse, FlooApiError> {
+        let resp = self.get(&format!("/v1/orgs/{org_id}"))?;
+        self.handle_response(resp)
+    }
+
     pub fn list_members(&self, org_id: &str) -> Result<ListMembersResponse, FlooApiError> {
         let resp = self.get(&format!("/v1/orgs/{org_id}/members"))?;
         self.handle_response(resp)

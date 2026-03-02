@@ -152,6 +152,7 @@ mod tests {
         App {
             id: id.to_string(),
             name: name.to_string(),
+            org_id: None,
             status: None,
             url: None,
             runtime: None,

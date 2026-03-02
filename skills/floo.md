@@ -81,11 +81,13 @@ floo deploy [path] --json
 
 JSON output: `data.app`, `data.deploy`, `data.detection`
 
+`apps status` human output shows `Org:` line with the org slug. `apps list` includes an `Org` column. JSON output for both commands includes `org_id` per app.
+
 ### Apps
 
 ```bash
-floo apps list --json                    # list all apps
-floo apps status <name> --json           # app details + services + deploy status
+floo apps list --json                    # list all apps (includes Org column)
+floo apps status <name> --json           # app details + org + services + deploy status
 floo apps delete <name> --json           # delete an app (--force to skip prompt)
 floo apps connect --repo owner/repo --installation-id <id> --app <name>  # GitHub auto-deploy
 floo apps disconnect --app <name>        # remove GitHub connection

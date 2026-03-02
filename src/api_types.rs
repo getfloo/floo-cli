@@ -36,9 +36,17 @@ pub struct ProfileResponse {
 pub struct OrgResponse {
     pub id: String,
     pub name: Option<String>,
+    pub slug: Option<String>,
     pub spend_cap: Option<u64>,
     pub current_period_spend_cents: Option<u64>,
     pub spend_cap_exceeded: Option<bool>,
+}
+
+impl OrgResponse {
+    /// Human-readable display name: prefers slug, falls back to name.
+    pub fn display_name(&self) -> Option<&str> {
+        self.slug.as_deref().or(self.name.as_deref())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +74,7 @@ pub struct MemberRoleResponse {
 pub struct App {
     pub id: String,
     pub name: String,
+    pub org_id: Option<String>,
     pub status: Option<String>,
     pub url: Option<String>,
     pub runtime: Option<String>,
