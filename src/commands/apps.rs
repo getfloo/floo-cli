@@ -166,7 +166,6 @@ pub fn delete(app_name: &str, force: bool) {
 
 pub fn connect(
     repo: &str,
-    installation_id: u64,
     app_name: &str,
     branch: Option<&str>,
     skip_env_check: bool,
@@ -198,10 +197,52 @@ pub fn connect(
         import_env_vars_for_connect(&client, &app_id, r);
     }
 
-    // Step 2: Connect to GitHub
-    let result = match client.github_connect(&app_id, repo, installation_id, branch, skip_env_check)
-    {
+    // Step 2: Connect to GitHub (installation_id auto-resolved by the API)
+    let result = match client.github_connect(&app_id, repo, branch, skip_env_check) {
         Ok(r) => r,
+        Err(e) if e.code == "GITHUB_APP_NOT_INSTALLED" => {
+            // App not installed — run browser install flow or exit in JSON mode
+            let install_url = e
+                .extra
+                .as_ref()
+                .and_then(|v| v.get("install_url"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("https://github.com/apps/getfloo/installations/new");
+
+            if output::is_json_mode() {
+                output::error_with_data(
+                    &e.message,
+                    &ErrorCode::from_api(&e.code),
+                    None,
+                    Some(serde_json::json!({
+                        "error": "github_app_not_installed",
+                        "install_url": install_url,
+                    })),
+                );
+                process::exit(1);
+            }
+
+            // Interactive: run browser install flow
+            let owner = repo.split('/').next().unwrap_or(repo);
+            output::warn(&format!(
+                "Floo GitHub App not installed on \"{owner}\""
+            ));
+
+            run_installation_flow(&client, install_url);
+
+            // Retry connect — API will auto-resolve the newly installed ID
+            match client.github_connect(&app_id, repo, branch, skip_env_check) {
+                Ok(r) => r,
+                Err(e2) => {
+                    output::error(
+                        &e2.message,
+                        &ErrorCode::from_api(&e2.code),
+                        None,
+                    );
+                    process::exit(1);
+                }
+            }
+        }
         Err(e) => {
             let suggestion = match e.code.as_str() {
                 "GITHUB_ALREADY_CONNECTED" => {
@@ -233,6 +274,89 @@ pub fn connect(
                 "No project config found. Run `floo deploy` to trigger the first deploy.",
                 None,
             );
+        }
+    }
+}
+
+fn run_installation_flow(
+    client: &crate::api_client::FlooClient,
+    install_url: &str,
+) {
+    // Begin the setup session (stores pending state in Redis)
+    if let Err(e) = client.github_setup_begin() {
+        // Permanent errors (4xx) mean the flow is doomed — abort early
+        if e.status_code > 0 && e.status_code < 500 {
+            output::error(
+                &format!("Failed to start setup session: {}", e.message),
+                &ErrorCode::from_api(&e.code),
+                Some("Check your authentication with: floo auth whoami"),
+            );
+            process::exit(1);
+        }
+        output::warn(&format!(
+            "Setup session may not have been created: {}. Continuing...",
+            e.message
+        ));
+    }
+
+    // Open browser for installation
+    if !output::is_json_mode() {
+        output::info("Opening browser to install...", None);
+    }
+    if let Err(e) = open::that(install_url) {
+        output::warn(&format!("Could not open browser: {e}"));
+        output::warn(&format!("Open this URL manually: {install_url}"));
+    }
+
+    // Poll for installation completion (3s interval, 5 min timeout)
+    let spinner = output::Spinner::new("Waiting for installation...");
+    let poll_interval = std::time::Duration::from_secs(3);
+    let timeout = std::time::Duration::from_secs(300);
+    let start = std::time::Instant::now();
+
+    loop {
+        std::thread::sleep(poll_interval);
+
+        if start.elapsed() > timeout {
+            spinner.finish();
+            output::error(
+                "Timed out waiting for GitHub App installation.",
+                &ErrorCode::Other("SETUP_TIMEOUT".into()),
+                Some("Install the app manually, then re-run: floo apps connect --repo <owner/repo> --app <name>"),
+            );
+            process::exit(1);
+        }
+
+        match client.github_setup_poll() {
+            Ok(resp) => {
+                let status = resp.get("status").and_then(|v| v.as_str()).unwrap_or("none");
+                if status == "ready" {
+                    spinner.finish();
+                    if resp.get("installation_id").and_then(|v| v.as_u64()).is_none() {
+                        output::error(
+                            "GitHub App was installed but the server did not return an installation ID.",
+                            &ErrorCode::InvalidResponse,
+                            Some("Try running the command again — the installation should be detected automatically."),
+                        );
+                        process::exit(1);
+                    }
+                    return;
+                }
+            }
+            Err(e) => {
+                // Only tolerate transient failures (network issues, 5xx).
+                // Permanent errors (4xx) should abort immediately.
+                let is_transient = e.status_code == 0 || e.status_code >= 500;
+                if !is_transient {
+                    spinner.finish();
+                    output::error(
+                        &format!("Poll failed: {}", e.message),
+                        &ErrorCode::from_api(&e.code),
+                        None,
+                    );
+                    process::exit(1);
+                }
+            }
         }
     }
 }

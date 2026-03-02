@@ -291,10 +291,6 @@ pub enum AppsCommands {
         #[arg(long)]
         repo: String,
 
-        /// GitHub App installation ID.
-        #[arg(long)]
-        installation_id: u64,
-
         /// App name or ID.
         #[arg(short, long)]
         app: String,
@@ -624,14 +620,12 @@ pub fn run() {
             AppsCommands::Delete { app_name, force } => commands::apps::delete(&app_name, force),
             AppsCommands::Connect {
                 repo,
-                installation_id,
                 app,
                 branch,
                 skip_env_check,
                 no_deploy,
             } => commands::apps::connect(
                 &repo,
-                installation_id,
                 &app,
                 branch.as_deref(),
                 skip_env_check,

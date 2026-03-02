@@ -47,29 +47,42 @@ impl FlooClient {
     fn handle_error(&self, response: reqwest::blocking::Response) -> FlooApiError {
         let status = response.status().as_u16();
         let text = response.text().unwrap_or_default();
-        let (code, message) = if let Ok(body) = serde_json::from_str::<Value>(&text) {
+        let (code, message, extra) = if let Ok(body) = serde_json::from_str::<Value>(&text) {
             let detail = body.get("detail").unwrap_or(&body);
             if let Some(obj) = detail.as_object() {
-                (
-                    obj.get("code")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("API_ERROR")
-                        .to_string(),
-                    obj.get("message")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or(&text)
-                        .to_string(),
-                )
+                let code = obj
+                    .get("code")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("API_ERROR")
+                    .to_string();
+                let message = obj
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&text)
+                    .to_string();
+                // Capture any extra fields beyond code/message
+                let mut extra_obj = obj.clone();
+                extra_obj.remove("code");
+                extra_obj.remove("message");
+                let extra = if extra_obj.is_empty() {
+                    None
+                } else {
+                    Some(Value::Object(extra_obj))
+                };
+                (code, message, extra)
             } else {
                 (
                     "API_ERROR".to_string(),
                     detail.to_string().trim_matches('"').to_string(),
+                    None,
                 )
             }
         } else {
-            ("API_ERROR".to_string(), text)
+            ("API_ERROR".to_string(), text, None)
         };
-        FlooApiError::new(status, code, message)
+        let mut err = FlooApiError::new(status, code, message);
+        err.extra = extra;
+        err
     }
 
     fn handle_response<T: serde::de::DeserializeOwned>(
@@ -636,13 +649,11 @@ impl FlooClient {
 
     // --- GitHub ---
 
-    #[allow(dead_code)]
     pub fn github_setup_begin(&self) -> Result<Value, FlooApiError> {
         let resp = self.post_json("/v1/github/setup/begin", &serde_json::json!({}))?;
         self.handle_response(resp)
     }
 
-    #[allow(dead_code)]
     pub fn github_setup_poll(&self) -> Result<Value, FlooApiError> {
         let resp = self.get("/v1/github/setup/poll")?;
         self.handle_response(resp)
@@ -658,13 +669,11 @@ impl FlooClient {
         &self,
         app_id: &str,
         repo_full_name: &str,
-        installation_id: u64,
         branch: Option<&str>,
         skip_env_var_check: bool,
     ) -> Result<GitHubConnectResponse, FlooApiError> {
         let mut body = serde_json::json!({
             "repo_full_name": repo_full_name,
-            "installation_id": installation_id,
         });
         if let Some(b) = branch {
             body.as_object_mut()

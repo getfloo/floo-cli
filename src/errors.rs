@@ -249,6 +249,7 @@ pub struct FlooApiError {
     pub status_code: u16,
     pub code: String,
     pub message: String,
+    pub extra: Option<serde_json::Value>,
 }
 
 impl FlooApiError {
@@ -257,6 +258,7 @@ impl FlooApiError {
             status_code,
             code: code.into(),
             message: message.into(),
+            extra: None,
         }
     }
 }
