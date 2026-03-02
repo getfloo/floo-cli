@@ -6,6 +6,9 @@ use crate::errors::ErrorCode;
 use crate::output;
 use crate::project_config;
 
+const DEPLOY_HINT: &str =
+    "Push a commit to trigger a deploy with the updated env vars, or run: floo deploy";
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -222,6 +225,13 @@ pub fn set(key_value: &str, app_flag: Option<&str>, service_names: &[String], re
         }
     }
 
+    if !restart && !output::is_json_mode() {
+        output::info(
+            DEPLOY_HINT,
+            None,
+        );
+    }
+
     if restart {
         let svcs = if service_names.is_empty() {
             None
@@ -435,6 +445,13 @@ pub fn import_vars(file_flag: Option<&Path>, app_flag: Option<&str>, service_nam
             }
         }
     }
+
+    if !output::is_json_mode() {
+        output::info(
+            DEPLOY_HINT,
+            None,
+        );
+    }
 }
 
 pub fn import_all_services(app_flag: Option<&str>) {
@@ -565,11 +582,17 @@ pub fn import_all_services(app_flag: Option<&str>) {
         }
     }
 
-    if !output::is_json_mode() && services_imported > 1 {
+    if !output::is_json_mode() {
+        if services_imported > 1 {
+            output::info(
+                &format!(
+                    "Imported {total_imported} total variable(s) across {services_imported} service(s)."
+                ),
+                None,
+            );
+        }
         output::info(
-            &format!(
-                "Imported {total_imported} total variable(s) across {services_imported} service(s)."
-            ),
+            DEPLOY_HINT,
             None,
         );
     }
