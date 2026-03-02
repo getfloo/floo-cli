@@ -6,6 +6,7 @@ use tempfile::TempDir;
 
 const TEST_APP_ID: &str = "app-uuid-1234";
 const TEST_APP_NAME: &str = "my-app";
+const TEST_ORG_ID: &str = "org-uuid-5678";
 
 fn floo() -> Command {
     Command::cargo_bin("floo").unwrap()
@@ -30,8 +31,25 @@ fn setup_config(server: &Server) -> TempDir {
 /// App JSON fixture used across resolve_app and list mocks.
 fn app_json() -> String {
     format!(
-        r#"{{"id":"{TEST_APP_ID}","name":"{TEST_APP_NAME}","status":"live","url":"https://test.floo.app","runtime":"nodejs","created_at":"2024-01-01T00:00:00Z"}}"#
+        r#"{{"id":"{TEST_APP_ID}","name":"{TEST_APP_NAME}","org_id":"{TEST_ORG_ID}","status":"live","url":"https://test.floo.app","runtime":"nodejs","created_at":"2024-01-01T00:00:00Z"}}"#
     )
+}
+
+/// Org JSON fixture for org lookup mocks.
+fn org_json() -> String {
+    format!(
+        r#"{{"id":"{TEST_ORG_ID}","name":"Test Org","slug":"test-org","spend_cap":null,"current_period_spend_cents":0,"spend_cap_exceeded":false}}"#
+    )
+}
+
+/// Mock GET /v1/orgs/me for human-mode list.
+fn mock_org_me(server: &mut Server) -> Mock {
+    server
+        .mock("GET", "/v1/orgs/me")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(org_json())
+        .create()
 }
 
 fn update_asset_name() -> Option<String> {
@@ -145,7 +163,8 @@ fn test_apps_list_json() {
         .success()
         .stdout(predicate::str::contains(r#""success":true"#))
         .stdout(predicate::str::contains(r#""apps":[{"#))
-        .stdout(predicate::str::contains(TEST_APP_NAME));
+        .stdout(predicate::str::contains(TEST_APP_NAME))
+        .stdout(predicate::str::contains(TEST_ORG_ID));
 }
 
 #[test]
@@ -164,6 +183,8 @@ fn test_apps_list_human() {
         .with_body(format!(r#"{{"apps":[{app}]}}"#, app = app_json()))
         .create();
 
+    let _m_org = mock_org_me(&mut server);
+
     floo()
         .args(["apps", "list"])
         .env("HOME", home.path())
@@ -171,7 +192,8 @@ fn test_apps_list_human() {
         .success()
         .stderr(predicate::str::contains(TEST_APP_NAME))
         .stderr(predicate::str::contains("Name"))
-        .stderr(predicate::str::contains("Status"));
+        .stderr(predicate::str::contains("Status"))
+        .stderr(predicate::str::contains("Org"));
 }
 
 #[test]
