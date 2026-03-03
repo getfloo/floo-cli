@@ -98,6 +98,8 @@ pub struct Deploy {
     pub runtime: Option<String>,
     pub created_at: Option<String>,
     pub generated_password: Option<String>,
+    pub triggered_by: Option<String>,
+    pub commit_sha: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

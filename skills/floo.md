@@ -136,6 +136,13 @@ floo services list --app <name> --json               # list all services
 floo services info <service-name> --app <name> --json # service details
 ```
 
+### Deploys
+
+```bash
+floo deploys list --app <name> --json                # list deploy history
+floo deploys logs <deploy-id> --app <name> --json    # show build logs for a deploy
+```
+
 ### Releases & Rollbacks
 
 ```bash
