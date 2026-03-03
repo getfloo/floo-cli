@@ -12,6 +12,7 @@ pub mod auth;
 pub mod billing;
 pub mod check;
 pub mod deploy;
+pub mod deploys;
 pub mod domains;
 pub mod env;
 pub mod github;

@@ -101,6 +101,10 @@ pub enum Commands {
     #[command(subcommand)]
     Domains(DomainsCommands),
 
+    /// View deploy history and build logs.
+    #[command(subcommand)]
+    Deploys(DeploysCommands),
+
     /// Manage releases.
     #[command(subcommand)]
     Releases(ReleasesCommands),
@@ -532,6 +536,26 @@ pub enum ReleasesCommands {
 }
 
 #[derive(Subcommand)]
+pub enum DeploysCommands {
+    /// List deploy history for an app.
+    List {
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+
+    /// Show build logs for a specific deploy.
+    Logs {
+        /// Deploy ID.
+        deploy_id: String,
+
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum RollbacksCommands {
     /// List deploys available for rollback.
     List {
@@ -719,6 +743,13 @@ pub fn run() {
                 app,
                 services,
             } => commands::domains::remove(&hostname, app.as_deref(), services.as_deref()),
+        },
+
+        Commands::Deploys(sub) => match sub {
+            DeploysCommands::List { app } => commands::deploys::list(app.as_deref()),
+            DeploysCommands::Logs { deploy_id, app } => {
+                commands::deploys::logs(&deploy_id, app.as_deref())
+            }
         },
 
         Commands::Releases(sub) => match sub {
