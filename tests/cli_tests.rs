@@ -216,6 +216,15 @@ fn test_deploy_help() {
 }
 
 #[test]
+fn test_releases_promote_help() {
+    floo()
+        .args(["releases", "promote", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Promote an app to prod"));
+}
+
+#[test]
 fn test_update_help() {
     floo()
         .args(["update", "--help"])
@@ -383,21 +392,21 @@ fn test_env_set_invalid_format_json() {
         .stdout(predicate::str::contains(r#""code":"INVALID_FORMAT"#));
 }
 
-// --- Rollbacks ---
+// --- Deploy subcommands ---
 
 #[test]
-fn test_rollbacks_help() {
+fn test_deploy_list_help() {
     floo()
-        .args(["rollbacks", "--help"])
+        .args(["deploy", "list", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("View deploy history"));
+        .stdout(predicate::str::contains("List deploy history"));
 }
 
 #[test]
-fn test_rollbacks_list_not_authenticated() {
+fn test_deploy_list_not_authenticated() {
     floo()
-        .args(["rollbacks", "list", "--app", "my-app"])
+        .args(["deploy", "list", "--app", "my-app"])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
@@ -405,30 +414,37 @@ fn test_rollbacks_list_not_authenticated() {
 }
 
 #[test]
-fn test_rollbacks_list_json_not_authenticated() {
+fn test_deploy_list_json_not_authenticated() {
     floo()
-        .args(["--json", "rollbacks", "list", "--app", "my-app"])
+        .args(["--json", "deploy", "list", "--app", "my-app"])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
         .stdout(predicate::str::contains(r#""code":"NOT_AUTHENTICATED"#));
 }
 
-// --- Rollback ---
+#[test]
+fn test_deploy_watch_help() {
+    floo()
+        .args(["deploy", "watch", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Stream deploy progress"));
+}
 
 #[test]
-fn test_rollback_help() {
+fn test_deploy_rollback_help() {
     floo()
-        .args(["rollback", "--help"])
+        .args(["deploy", "rollback", "--help"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Rollback to a previous deploy"));
 }
 
 #[test]
-fn test_rollback_not_authenticated() {
+fn test_deploy_rollback_not_authenticated() {
     floo()
-        .args(["rollback", "my-app", "some-deploy-id"])
+        .args(["deploy", "rollback", "my-app", "some-deploy-id"])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
@@ -436,9 +452,9 @@ fn test_rollback_not_authenticated() {
 }
 
 #[test]
-fn test_rollback_json_not_authenticated() {
+fn test_deploy_rollback_json_not_authenticated() {
     floo()
-        .args(["--json", "rollback", "my-app", "some-deploy-id"])
+        .args(["--json", "deploy", "rollback", "my-app", "some-deploy-id"])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()

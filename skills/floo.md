@@ -77,6 +77,13 @@ floo deploy [path] --json
 # --app <name>        deploy to existing app
 # --services <name>   deploy specific services (repeatable)
 # --restart           restart without re-uploading source
+# --sync-env          re-sync env vars from configured env_file
+
+floo deploy list --app <name> --json                # list deploy history
+floo deploy logs <deploy-id> --app <name> --json    # show build logs for a deploy
+floo deploy watch --app <name> --json               # stream latest deploy progress
+floo deploy watch --commit <sha> --app <name> --json  # wait for + stream deploy by commit
+floo deploy rollback <app> <deploy-id> --json       # rollback to a previous deploy (--force to skip prompt)
 ```
 
 JSON output: `data.app`, `data.deploy`, `data.detection`
@@ -136,21 +143,12 @@ floo services list --app <name> --json               # list all services
 floo services info <service-name> --app <name> --json # service details
 ```
 
-### Deploys
-
-```bash
-floo deploys list --app <name> --json                # list deploy history
-floo deploys logs <deploy-id> --app <name> --json    # show build logs for a deploy
-```
-
-### Releases & Rollbacks
+### Releases
 
 ```bash
 floo releases list --app <name> --json               # list releases
 floo releases show <release-id> --app <name> --json  # release details
-floo promote --app <name> --json                     # promote to prod (GitHub release)
-floo rollbacks list --app <name> --json              # list deploys for rollback
-floo rollback <app> <deploy-id> --json               # rollback to a previous deploy
+floo releases promote --app <name> --json            # promote to prod (GitHub release)
 ```
 
 ### CLI Management
@@ -199,6 +197,12 @@ floo apps status <app-name> --json
 floo logs --app <app-name> --json --since 1m --severity ERROR
 ```
 
+### Watch a deploy after git push
+
+```bash
+floo deploy watch --commit $(git rev-parse HEAD) --app <name> --json
+```
+
 ### Set env var and restart
 
 ```bash
@@ -215,8 +219,8 @@ floo logs --app <app-name> --json --since 5m --error
 ### Rollback a bad deploy
 
 ```bash
-floo rollbacks list --app <name> --json          # find the deploy ID
-floo rollback <app-name> <deploy-id> --force --json
+floo deploy list --app <name> --json              # find the deploy ID
+floo deploy rollback <app-name> <deploy-id> --force --json
 ```
 
 ### Add a custom domain

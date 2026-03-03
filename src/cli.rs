@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 
 use crate::commands;
 use crate::constants::VERSION;
@@ -50,28 +50,8 @@ pub enum Commands {
         path: PathBuf,
     },
 
-    /// Deploy a project to Floo.
-    Deploy {
-        /// Project directory to deploy.
-        #[arg(default_value = ".")]
-        path: PathBuf,
-
-        /// Existing app ID or name to deploy to.
-        #[arg(short, long)]
-        app: Option<String>,
-
-        /// Deploy only these services (repeatable: --services api --services web).
-        #[arg(short, long = "services")]
-        services: Vec<String>,
-
-        /// Restart the app without re-uploading source (redeploy existing images with fresh env vars).
-        #[arg(long)]
-        restart: bool,
-
-        /// Re-sync env vars from configured env_file before deploying.
-        #[arg(long)]
-        sync_env: bool,
-    },
+    /// Deploy a project to Floo, or manage deploy history.
+    Deploy(DeployArgs),
 
     /// Authenticate and manage your account.
     #[command(subcommand)]
@@ -101,41 +81,9 @@ pub enum Commands {
     #[command(subcommand)]
     Domains(DomainsCommands),
 
-    /// View deploy history and build logs.
-    #[command(subcommand)]
-    Deploys(DeploysCommands),
-
-    /// Manage releases.
+    /// Manage releases and promote to prod.
     #[command(subcommand)]
     Releases(ReleasesCommands),
-
-    /// Promote an app to prod by creating a GitHub release.
-    Promote {
-        /// App name or ID (uses config file if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-
-        /// Release tag (auto-generated if omitted).
-        #[arg(short, long)]
-        tag: Option<String>,
-    },
-
-    /// View deploy history for rollback.
-    #[command(subcommand)]
-    Rollbacks(RollbacksCommands),
-
-    /// Rollback to a previous deploy.
-    Rollback {
-        /// App name or ID.
-        app: String,
-
-        /// Deploy ID to rollback to.
-        deploy_id: String,
-
-        /// Skip confirmation prompt.
-        #[arg(short, long)]
-        force: bool,
-    },
 
     /// View runtime logs for an app.
     Logs {
@@ -533,10 +481,31 @@ pub enum ReleasesCommands {
         #[arg(short, long)]
         app: Option<String>,
     },
+
+    /// Promote an app to prod by creating a GitHub release.
+    Promote {
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Release tag (auto-generated if omitted).
+        #[arg(short, long)]
+        tag: Option<String>,
+    },
+}
+
+#[derive(Args)]
+#[command(args_conflicts_with_subcommands = true)]
+pub struct DeployArgs {
+    #[command(subcommand)]
+    pub sub: Option<DeploySubcommands>,
+
+    #[command(flatten)]
+    pub run: DeployRunArgs,
 }
 
 #[derive(Subcommand)]
-pub enum DeploysCommands {
+pub enum DeploySubcommands {
     /// List deploy history for an app.
     List {
         /// App name or ID (uses config file if omitted).
@@ -553,16 +522,53 @@ pub enum DeploysCommands {
         #[arg(short, long)]
         app: Option<String>,
     },
-}
 
-#[derive(Subcommand)]
-pub enum RollbacksCommands {
-    /// List deploys available for rollback.
-    List {
+    /// Stream deploy progress in real-time.
+    Watch {
         /// App name or ID (uses config file if omitted).
         #[arg(short, long)]
         app: Option<String>,
+
+        /// Match a deploy by commit SHA prefix (waits up to 120s for it to appear).
+        #[arg(short, long)]
+        commit: Option<String>,
     },
+
+    /// Rollback to a previous deploy.
+    Rollback {
+        /// App name or ID.
+        app: String,
+
+        /// Deploy ID to rollback to.
+        deploy_id: String,
+
+        /// Skip confirmation prompt.
+        #[arg(short, long)]
+        force: bool,
+    },
+}
+
+#[derive(Args)]
+pub struct DeployRunArgs {
+    /// Project directory to deploy.
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+
+    /// Existing app ID or name to deploy to.
+    #[arg(short, long)]
+    pub app: Option<String>,
+
+    /// Deploy only these services (repeatable: --services api --services web).
+    #[arg(short, long = "services")]
+    pub services: Vec<String>,
+
+    /// Restart the app without re-uploading source (redeploy existing images with fresh env vars).
+    #[arg(long)]
+    pub restart: bool,
+
+    /// Re-sync env vars from configured env_file before deploying.
+    #[arg(long)]
+    pub sync_env: bool,
 }
 
 #[derive(Subcommand)]
@@ -617,13 +623,27 @@ pub fn run() {
 
         Commands::Check { path } => commands::check::check(path),
 
-        Commands::Deploy {
-            path,
-            app,
-            services,
-            restart,
-            sync_env,
-        } => commands::deploy::deploy(path, app, services, restart, sync_env),
+        Commands::Deploy(args) => {
+            if let Some(sub) = args.sub {
+                match sub {
+                    DeploySubcommands::List { app } => commands::deploys::list(app.as_deref()),
+                    DeploySubcommands::Logs { deploy_id, app } => {
+                        commands::deploys::logs(&deploy_id, app.as_deref())
+                    }
+                    DeploySubcommands::Watch { app, commit } => {
+                        commands::deploys::watch(app.as_deref(), commit.as_deref())
+                    }
+                    DeploySubcommands::Rollback {
+                        app,
+                        deploy_id,
+                        force,
+                    } => commands::rollbacks::rollback(&app, &deploy_id, force),
+                }
+            } else {
+                let r = args.run;
+                commands::deploy::deploy(r.path, r.app, r.services, r.restart, r.sync_env)
+            }
+        }
         Commands::Auth(sub) => match sub {
             AuthCommands::Login { api_key, force } => {
                 commands::auth::login(api_key.as_deref(), force)
@@ -745,33 +765,15 @@ pub fn run() {
             } => commands::domains::remove(&hostname, app.as_deref(), services.as_deref()),
         },
 
-        Commands::Deploys(sub) => match sub {
-            DeploysCommands::List { app } => commands::deploys::list(app.as_deref()),
-            DeploysCommands::Logs { deploy_id, app } => {
-                commands::deploys::logs(&deploy_id, app.as_deref())
-            }
-        },
-
         Commands::Releases(sub) => match sub {
             ReleasesCommands::List { app } => commands::releases::list(app.as_deref()),
             ReleasesCommands::Show { release_id, app } => {
                 commands::releases::show(&release_id, app.as_deref())
             }
+            ReleasesCommands::Promote { app, tag } => {
+                commands::releases::promote(app.as_deref(), tag.as_deref())
+            }
         },
-
-        Commands::Promote { app, tag } => {
-            commands::releases::promote(app.as_deref(), tag.as_deref())
-        }
-
-        Commands::Rollbacks(sub) => match sub {
-            RollbacksCommands::List { app } => commands::rollbacks::list(app.as_deref()),
-        },
-
-        Commands::Rollback {
-            app,
-            deploy_id,
-            force,
-        } => commands::rollbacks::rollback(&app, &deploy_id, force),
 
         Commands::Skills(sub) => match sub {
             SkillsCommands::Install { path, print } => commands::skills::install(path, print),

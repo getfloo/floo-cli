@@ -3,53 +3,6 @@ use std::process;
 use crate::errors::ErrorCode;
 use crate::output;
 
-pub fn list(app: Option<&str>) {
-    super::require_auth();
-    let client = super::init_client(None);
-
-    let (app_id, _app_name) = super::resolve_app_from_config(&client, app);
-    let app_id = app_id.as_str();
-
-    let result = match client.list_deploys(app_id) {
-        Ok(r) => r,
-        Err(e) => {
-            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-            process::exit(1);
-        }
-    };
-
-    if result.deploys.is_empty() {
-        if output::is_json_mode() {
-            output::success(
-                "No deploys found.",
-                Some(serde_json::json!({"deploys": []})),
-            );
-        } else {
-            output::info("No deploys found.", None);
-        }
-        return;
-    }
-
-    let rows: Vec<Vec<String>> = result
-        .deploys
-        .iter()
-        .map(|d| {
-            vec![
-                d.id.clone(),
-                d.status.as_deref().unwrap_or("-").to_string(),
-                d.runtime.as_deref().unwrap_or("\u{2014}").to_string(),
-                d.created_at.as_deref().unwrap_or("-").to_string(),
-            ]
-        })
-        .collect();
-
-    output::table(
-        &["Deploy ID", "Status", "Runtime", "Created"],
-        &rows,
-        Some(output::to_value(&result)),
-    );
-}
-
 pub fn rollback(app_name: &str, deploy_id: &str, force: bool) {
     super::require_auth();
     let client = super::init_client(None);

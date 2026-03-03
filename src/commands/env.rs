@@ -226,10 +226,7 @@ pub fn set(key_value: &str, app_flag: Option<&str>, service_names: &[String], re
     }
 
     if !restart && !output::is_json_mode() {
-        output::info(
-            DEPLOY_HINT,
-            None,
-        );
+        output::info(DEPLOY_HINT, None);
     }
 
     if restart {
@@ -447,10 +444,7 @@ pub fn import_vars(file_flag: Option<&Path>, app_flag: Option<&str>, service_nam
     }
 
     if !output::is_json_mode() {
-        output::info(
-            DEPLOY_HINT,
-            None,
-        );
+        output::info(DEPLOY_HINT, None);
     }
 }
 
@@ -591,10 +585,7 @@ pub fn import_all_services(app_flag: Option<&str>) {
                 None,
             );
         }
-        output::info(
-            DEPLOY_HINT,
-            None,
-        );
+        output::info(DEPLOY_HINT, None);
     }
 }
 
