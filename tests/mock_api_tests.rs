@@ -638,7 +638,7 @@ fn test_domains_list_multi_service_with_services_flag() {
 // ───────────────────────── Rollbacks ─────────────────────────
 
 #[test]
-fn test_rollbacks_list_json() {
+fn test_deploy_list_json() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
@@ -656,7 +656,7 @@ fn test_rollbacks_list_json() {
         .create();
 
     floo()
-        .args(["--json", "rollbacks", "list", "--app", TEST_APP_NAME])
+        .args(["--json", "deploy", "list", "--app", TEST_APP_NAME])
         .env("HOME", home.path())
         .assert()
         .success()
@@ -666,7 +666,7 @@ fn test_rollbacks_list_json() {
 }
 
 #[test]
-fn test_rollback_json() {
+fn test_deploy_rollback_json() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
@@ -685,7 +685,7 @@ fn test_rollback_json() {
 
     // --json auto-confirms via output::confirm()
     floo()
-        .args(["--json", "rollback", TEST_APP_NAME, "deploy-456"])
+        .args(["--json", "deploy", "rollback", TEST_APP_NAME, "deploy-456"])
         .env("HOME", home.path())
         .assert()
         .success()
@@ -1137,7 +1137,7 @@ fn test_releases_list_from_config() {
 }
 
 #[test]
-fn test_rollbacks_list_from_config() {
+fn test_deploy_list_from_config() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
@@ -1155,7 +1155,7 @@ fn test_rollbacks_list_from_config() {
         .create();
 
     floo()
-        .args(["--json", "rollbacks", "list"])
+        .args(["--json", "deploy", "list"])
         .current_dir(project.path())
         .env("HOME", home.path())
         .assert()

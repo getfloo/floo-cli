@@ -93,6 +93,15 @@ pub(crate) fn resolve_app_from_config(
     (app.id.clone(), app.name.clone())
 }
 
+/// Truncate a commit SHA to 7 characters for display.
+pub(crate) fn short_sha(sha: &str) -> &str {
+    if sha.len() > 7 && sha.is_ascii() {
+        &sha[..7]
+    } else {
+        sha
+    }
+}
+
 /// Detect the deploy env file in a directory: prefers .floo.env, falls back to .env.
 /// Used at config creation time (init, service add) to populate env_file in floo.service.toml.
 pub(crate) fn detect_env_file(dir: &std::path::Path) -> Option<String> {
