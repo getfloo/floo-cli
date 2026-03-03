@@ -42,7 +42,7 @@ pub fn add(hostname: &str, app: Option<&str>, services: Option<&str>) {
     let (app_id, app_name) = super::resolve_app_from_config(&client, app);
     check_services_flag(&client, &app_id, services);
 
-    let result = match client.add_domain(&app_id, hostname) {
+    let result = match client.add_domain(&app_id, hostname, services) {
         Ok(r) => r,
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);

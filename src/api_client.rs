@@ -584,8 +584,12 @@ impl FlooClient {
         &self,
         app_id: &str,
         hostname: &str,
+        service: Option<&str>,
     ) -> Result<AddDomainResponse, FlooApiError> {
-        let body = serde_json::json!({"hostname": hostname});
+        let mut body = serde_json::json!({"hostname": hostname});
+        if let Some(svc) = service {
+            body["service"] = serde_json::Value::String(svc.to_string());
+        }
         let resp = self.post_json(&format!("/v1/apps/{app_id}/domains"), &body)?;
         self.handle_response(resp)
     }
