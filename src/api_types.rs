@@ -30,6 +30,13 @@ pub struct ProfileResponse {
     pub name: String,
 }
 
+// --- Billing ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BillingCheckoutResponse {
+    pub url: String,
+}
+
 // --- Org ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,6 +44,7 @@ pub struct OrgResponse {
     pub id: String,
     pub name: Option<String>,
     pub slug: Option<String>,
+    pub plan: Option<String>,
     pub spend_cap: Option<u64>,
     pub current_period_spend_cents: Option<u64>,
     pub spend_cap_exceeded: Option<bool>,

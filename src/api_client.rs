@@ -252,6 +252,18 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn create_billing_checkout(
+        &self,
+        plan: Option<&str>,
+    ) -> Result<BillingCheckoutResponse, FlooApiError> {
+        let body = match plan {
+            Some(p) => serde_json::json!({"plan": p}),
+            None => serde_json::json!({}),
+        };
+        let resp = self.post_json("/v1/billing/checkout", &body)?;
+        self.handle_response(resp)
+    }
+
     // --- Apps ---
 
     pub fn create_app(&self, name: &str, runtime: Option<&str>) -> Result<App, FlooApiError> {
@@ -689,18 +701,18 @@ impl FlooClient {
                 .unwrap()
                 .insert("skip_env_var_check".to_string(), Value::Bool(true));
         }
-        let resp = self.post_json(&format!("/v1/apps/{app_id}/github/connect"), &body)?;
+        let resp = self.post_json(&format!("/v1/apps/{app_id}/github/connection"), &body)?;
         self.handle_response(resp)
     }
 
     pub fn github_disconnect(&self, app_id: &str) -> Result<(), FlooApiError> {
-        let resp = self.delete(&format!("/v1/apps/{app_id}/github/disconnect"))?;
+        let resp = self.delete(&format!("/v1/apps/{app_id}/github/connection"))?;
         self.handle_response_value(resp)?;
         Ok(())
     }
 
     pub fn github_status(&self, app_id: &str) -> Result<GitHubStatusResponse, FlooApiError> {
-        let resp = self.get(&format!("/v1/apps/{app_id}/github"))?;
+        let resp = self.get(&format!("/v1/apps/{app_id}/github/connection"))?;
         self.handle_response(resp)
     }
 

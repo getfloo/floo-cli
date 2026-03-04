@@ -175,6 +175,16 @@ pub enum BillingCommands {
     /// Manage your org's compute spend cap.
     #[command(subcommand)]
     SpendCap(SpendCapCommands),
+
+    /// Upgrade your plan via Stripe Checkout or Billing Portal.
+    Upgrade {
+        /// Plan to upgrade to: growth or team. Omit to open billing portal.
+        #[arg(long, value_parser = ["growth", "team"])]
+        plan: Option<String>,
+    },
+
+    /// Print enterprise contact information.
+    Contact,
 }
 
 #[derive(Subcommand)]
@@ -660,6 +670,8 @@ pub fn run() {
                 SpendCapCommands::Get => commands::billing::spend_cap_get(),
                 SpendCapCommands::Set { amount } => commands::billing::spend_cap_set(amount),
             },
+            BillingCommands::Upgrade { plan } => commands::billing::upgrade(plan),
+            BillingCommands::Contact => commands::billing::contact(),
         },
 
         Commands::Orgs(sub) => match sub {

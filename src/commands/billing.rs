@@ -3,6 +3,43 @@ use std::process;
 use crate::errors::ErrorCode;
 use crate::output;
 
+pub fn upgrade(plan: Option<String>) {
+    super::require_auth();
+    let client = super::init_client(None);
+
+    match client.create_billing_checkout(plan.as_deref()) {
+        Ok(result) => {
+            if output::is_json_mode() {
+                output::success("", Some(serde_json::json!({"url": result.url})));
+            } else {
+                output::info("Opening billing page in browser...", None);
+                if open::that(&result.url).is_err() {
+                    output::warn(&format!("Open this URL manually: {}", result.url));
+                }
+            }
+        }
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    }
+}
+
+pub fn contact() {
+    if output::is_json_mode() {
+        output::success(
+            "",
+            Some(serde_json::json!({
+                "email": "solutions@getfloo.com",
+                "subject": "Enterprise inquiry",
+            })),
+        );
+    } else {
+        eprintln!("  Enterprise & custom plans: solutions@getfloo.com");
+        eprintln!("  Subject: Enterprise inquiry");
+    }
+}
+
 pub fn spend_cap_get() {
     super::require_auth();
     let client = super::init_client(None);
@@ -53,6 +90,9 @@ pub fn spend_cap_get() {
     eprintln!("  Current spend: ${:.2}", current_spend as f64 / 100.0);
     if exceeded {
         output::warn("Spend cap exceeded — deploys are blocked.");
+    }
+    if org.plan.as_deref() == Some("free") {
+        eprintln!("  Upgrade: floo billing upgrade --plan growth");
     }
 }
 
