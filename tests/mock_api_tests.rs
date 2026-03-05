@@ -883,11 +883,14 @@ fn test_logs_search_filter() {
             "GET",
             format!("/v1/apps/{TEST_APP_ID}/logs").as_str(),
         )
-        .match_query(Matcher::UrlEncoded("limit".into(), "100".into()))
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("limit".into(), "100".into()),
+            Matcher::UrlEncoded("search".into(), "error".into()),
+        ]))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
-            r#"{"logs":[{"timestamp":"2024-01-01T00:00:00Z","severity":"INFO","message":"Server started","service_name":"web"},{"timestamp":"2024-01-01T00:00:01Z","severity":"ERROR","message":"Connection error occurred","service_name":"web"}],"app_name":"my-app"}"#,
+            r#"{"logs":[{"timestamp":"2024-01-01T00:00:01Z","severity":"ERROR","message":"Connection error occurred","service_name":"web"}],"app_name":"my-app"}"#,
         )
         .create();
 
