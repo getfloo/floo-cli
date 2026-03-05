@@ -428,6 +428,7 @@ New error codes must be `UPPER_SNAKE_CASE`, added to the `ErrorCode` enum in `sr
 | `CWD_ERROR` | `CwdError` | commands | Failed to determine the current working directory |
 | `DATABASE_NOT_FOUND` | `DatabaseNotFound` | commands | Named database service not found in config or API |
 | `DEPLOY_FAILED` | `DeployFailed` | commands/deploy | Deploy completed but status is FAILED |
+| `DEPLOY_NOT_FOUND` | `DeployNotFound` | commands/deploys | No deploy found matching criteria (watch command) |
 | `DEPLOY_TIMEOUT` | `DeployTimeout` | commands/deploy | Deploy polling exceeded 10-minute timeout |
 | `DEVICE_AUTH_DENIED` | `DeviceAuthDenied` | API (403) | Device code flow — user denied authorization |
 | `DEVICE_CODE_EXPIRED` | `DeviceCodeExpired` | API (410) | Device code flow — device code timed out |
