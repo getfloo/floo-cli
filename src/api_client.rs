@@ -647,6 +647,7 @@ impl FlooClient {
         since: Option<&str>,
         severity: Option<&str>,
         service: Option<&str>,
+        search: Option<&str>,
     ) -> Result<LogsResponse, FlooApiError> {
         let limit_str = limit.to_string();
         let mut params: Vec<(&str, &str)> = vec![("limit", &limit_str)];
@@ -658,6 +659,9 @@ impl FlooClient {
         }
         if let Some(svc) = service {
             params.push(("service", svc));
+        }
+        if let Some(q) = search {
+            params.push(("search", q));
         }
         let resp = self.get_with_query(&format!("/v1/apps/{app_id}/logs"), &params)?;
         self.handle_response(resp)

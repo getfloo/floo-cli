@@ -66,20 +66,6 @@ fn format_log_line_plain(entry: &LogEntry, show_service_prefix: bool) -> String 
     }
 }
 
-fn apply_search_filter(entries: Vec<LogEntry>, search: &str) -> Vec<LogEntry> {
-    let needle = search.to_lowercase();
-    entries
-        .into_iter()
-        .filter(|entry| {
-            entry
-                .message
-                .as_deref()
-                .map(|msg| msg.to_lowercase().contains(&needle))
-                .unwrap_or(false)
-        })
-        .collect()
-}
-
 fn fetch_logs(
     client: &crate::api_client::FlooClient,
     app_id: &str,
@@ -88,7 +74,7 @@ fn fetch_logs(
 ) -> Vec<LogEntry> {
     if filter.services.len() <= 1 {
         let service = filter.services.first().map(|s| s.as_str());
-        let result = match client.get_logs(app_id, tail, filter.since, filter.severity, service) {
+        let result = match client.get_logs(app_id, tail, filter.since, filter.severity, service, filter.search) {
             Ok(r) => r,
             Err(e) => {
                 output::error(&e.message, &ErrorCode::from_api(&e.code), None);
@@ -100,7 +86,7 @@ fn fetch_logs(
         let mut all_logs = Vec::new();
         for svc in filter.services {
             let result =
-                match client.get_logs(app_id, tail, filter.since, filter.severity, Some(svc)) {
+                match client.get_logs(app_id, tail, filter.since, filter.severity, Some(svc), filter.search) {
                     Ok(r) => r,
                     Err(e) => {
                         output::error(
@@ -130,12 +116,12 @@ fn try_fetch_logs(
 ) -> Result<Vec<LogEntry>, crate::errors::FlooApiError> {
     if filter.services.len() <= 1 {
         let service = filter.services.first().map(|s| s.as_str());
-        let result = client.get_logs(app_id, tail, filter.since, filter.severity, service)?;
+        let result = client.get_logs(app_id, tail, filter.since, filter.severity, service, filter.search)?;
         Ok(result.logs)
     } else {
         let mut all_logs = Vec::new();
         for svc in filter.services {
-            let result = client.get_logs(app_id, tail, filter.since, filter.severity, Some(svc))?;
+            let result = client.get_logs(app_id, tail, filter.since, filter.severity, Some(svc), filter.search)?;
             all_logs.extend(result.logs);
         }
         all_logs.sort_by(|a, b| {
@@ -275,11 +261,7 @@ fn batch_logs(
     show_service_prefix: bool,
     output_path: Option<&Path>,
 ) {
-    let mut logs = fetch_logs(client, app_id, tail, filter);
-
-    if let Some(q) = filter.search {
-        logs = apply_search_filter(logs, q);
-    }
+    let logs = fetch_logs(client, app_id, tail, filter);
 
     if logs.is_empty() {
         if output::is_json_mode() {
@@ -384,10 +366,7 @@ fn live_logs(
 ) {
     let is_json = output::is_json_mode();
 
-    let mut logs = fetch_logs(client, app_id, tail, filter);
-    if let Some(q) = filter.search {
-        logs = apply_search_filter(logs, q);
-    }
+    let logs = fetch_logs(client, app_id, tail, filter);
 
     let mut last_timestamp: Option<String> = None;
 
@@ -415,11 +394,11 @@ fn live_logs(
             since: since_filter,
             severity: filter.severity,
             services: filter.services,
-            search: None,
+            search: filter.search,
         };
 
         let poll_result = try_fetch_logs(client, app_id, tail, &poll_filter);
-        let mut new_logs = match poll_result {
+        let new_logs = match poll_result {
             Ok(logs) => {
                 consecutive_errors = 0;
                 logs
@@ -450,10 +429,6 @@ fn live_logs(
             }
         };
 
-        if let Some(q) = filter.search {
-            new_logs = apply_search_filter(new_logs, q);
-        }
-
         let new_entries: Vec<_> = match &last_timestamp {
             None => new_logs,
             Some(last_ts) => new_logs
@@ -483,15 +458,6 @@ fn live_logs(
 mod tests {
     use super::*;
 
-    fn make_log(ts: &str, sev: &str, msg: &str) -> LogEntry {
-        LogEntry {
-            timestamp: Some(ts.to_string()),
-            severity: Some(sev.to_string()),
-            message: Some(msg.to_string()),
-            service_name: None,
-        }
-    }
-
     fn make_log_with_service(ts: &str, sev: &str, msg: &str, svc: &str) -> LogEntry {
         LogEntry {
             timestamp: Some(ts.to_string()),
@@ -499,51 +465,6 @@ mod tests {
             message: Some(msg.to_string()),
             service_name: Some(svc.to_string()),
         }
-    }
-
-    #[test]
-    fn test_apply_search_filter_matches_case_insensitive() {
-        let entries = vec![
-            make_log("t1", "INFO", "Server started"),
-            make_log("t2", "ERROR", "Error: connection failed"),
-            make_log("t3", "INFO", "Request handled"),
-        ];
-
-        let result = apply_search_filter(entries, "error");
-        assert_eq!(result.len(), 1);
-        assert_eq!(
-            result[0].message.as_deref().unwrap(),
-            "Error: connection failed"
-        );
-    }
-
-    #[test]
-    fn test_apply_search_filter_empty_query_matches_all() {
-        let entries = vec![make_log("t1", "INFO", "Hello")];
-
-        let result = apply_search_filter(entries, "");
-        assert_eq!(result.len(), 1);
-    }
-
-    #[test]
-    fn test_apply_search_filter_no_match() {
-        let entries = vec![make_log("t1", "INFO", "Hello world")];
-
-        let result = apply_search_filter(entries, "zzz_nonexistent");
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_apply_search_filter_missing_message_field() {
-        let entries = vec![LogEntry {
-            timestamp: Some("t1".to_string()),
-            severity: Some("INFO".to_string()),
-            message: None,
-            service_name: None,
-        }];
-
-        let result = apply_search_filter(entries, "anything");
-        assert!(result.is_empty());
     }
 
     #[test]
