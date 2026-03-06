@@ -635,7 +635,7 @@ pub struct DeployRunArgs {
 pub enum SkillsCommands {
     /// Install the floo agent skill file to a directory.
     Install {
-        /// Directory to write floo.md into (e.g. ~/.claude/commands/).
+        /// Directory to write SKILL.md into (e.g. .claude/skills/floo/).
         #[arg(long)]
         path: Option<PathBuf>,
 

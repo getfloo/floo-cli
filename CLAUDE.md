@@ -77,10 +77,10 @@ Packs source into `.tar.gz`, respects `.flooignore`. 500MB size limit.
 
 ## Agent Skill Maintenance
 
-The skill file (`skills/floo.md`) is a tiny intro (~30 lines). Platform knowledge lives in
+The skill file (`skills/floo/SKILL.md`) is a tiny intro (~30 lines). Platform knowledge lives in
 `floo docs` (`src/commands/docs.rs`). Command metadata lives in `floo commands`
 (`src/commands/command_tree.rs`). When adding new commands, update `command_tree.rs` and add
-`after_help` examples in `cli.rs`. Only update `skills/floo.md` if the getting-started flow changes.
+`after_help` examples in `cli.rs`. Only update `skills/floo/SKILL.md` if the getting-started flow changes.
 
 ## Release Flow
 

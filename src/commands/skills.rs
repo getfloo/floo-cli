@@ -8,7 +8,7 @@ use crate::constants::VERSION;
 use crate::errors::ErrorCode;
 use crate::output;
 
-const SKILL_CONTENT: &str = include_str!("../../skills/floo.md");
+const SKILL_CONTENT: &str = include_str!("../../skills/floo/SKILL.md");
 
 pub fn install(path: Option<PathBuf>, print: bool) {
     if print {
@@ -56,11 +56,11 @@ pub fn install(path: Option<PathBuf>, print: bool) {
         process::exit(1);
     }
 
-    let file_path = dir.join("floo.md");
+    let file_path = dir.join("SKILL.md");
 
     let abs_path = match file_path.canonicalize().or_else(|_| {
         // Directory exists but file doesn't yet — canonicalize the parent and append filename
-        dir.canonicalize().map(|d| d.join("floo.md"))
+        dir.canonicalize().map(|d| d.join("SKILL.md"))
     }) {
         Ok(p) => p,
         Err(e) => {
