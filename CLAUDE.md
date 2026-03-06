@@ -4,43 +4,6 @@
 
 This is the **open-source Rust CLI** for [Floo](https://getfloo.com) — deploy, manage, and observe web apps from the terminal. The CLI is a thin HTTP client that calls the Floo API. Licensed under MIT.
 
-## Repository Structure
-
-```
-floo-cli/
-├── Cargo.toml                   # Package manifest (MIT license)
-├── Cargo.lock                   # Dependency lockfile
-├── build.rs                     # Build script (sets FLOO_VERSION)
-├── src/
-│   ├── main.rs                  # Entry point, calls cli::run()
-│   ├── cli.rs                   # clap App with --json and --version flags
-│   ├── commands/
-│   │   ├── mod.rs               # Command module exports
-│   │   ├── auth.rs              # login, logout, whoami
-│   │   ├── deploy.rs            # deploy command
-│   │   ├── apps.rs              # list, status, delete
-│   │   ├── env.rs               # set, list, remove
-│   │   └── domains.rs           # add, list, remove
-│   ├── output.rs                # Dual-mode output (critical — see below)
-│   ├── api_client.rs            # FlooClient wrapping reqwest
-│   ├── config.rs                # ~/.floo/config.json management
-│   ├── detection.rs             # Runtime/framework auto-detection
-│   ├── archive.rs               # .tar.gz packing with .flooignore
-│   ├── names.rs                 # Random app name generation
-│   ├── resolve.rs               # resolve_app() — lookup by UUID or name
-│   ├── errors.rs                # FlooError + FlooApiError
-│   └── constants.rs             # Shared constants
-├── tests/
-│   ├── cli_tests.rs             # Integration tests (assert_cmd)
-│   └── fixtures/                # Test fixtures
-├── install.sh                   # curl installer
-├── LICENSE                      # MIT
-└── .github/
-    └── workflows/
-        ├── ci.yml               # Test + clippy + fmt on push/PR
-        └── release.yml          # Build binaries on v* tags
-```
-
 ## Development Commands
 
 ```bash
