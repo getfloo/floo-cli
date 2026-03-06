@@ -1,7 +1,6 @@
-use std::path::Path;
 use std::time::Duration;
 
-use reqwest::blocking::{multipart, Client};
+use reqwest::blocking::Client;
 use serde_json::Value;
 
 use crate::api_types::*;
@@ -311,57 +310,30 @@ impl FlooClient {
     pub fn create_deploy(
         &self,
         app_id: &str,
-        tarball_path: &Path,
         runtime: &str,
         framework: Option<&str>,
         services: Option<&[ServiceConfig]>,
         access_mode: Option<&str>,
     ) -> Result<Deploy, FlooApiError> {
-        let file_bytes = std::fs::read(tarball_path).map_err(|e| {
-            FlooApiError::new(0, "FILE_ERROR", format!("Failed to read archive: {e}"))
-        })?;
-        let file_name = tarball_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("source.tar.gz")
-            .to_string();
-
-        let file_part = multipart::Part::bytes(file_bytes)
-            .file_name(file_name)
-            .mime_str("application/gzip")
-            .unwrap();
-
-        let mut form = multipart::Form::new()
-            .part("file", file_part)
-            .text("runtime", runtime.to_string())
-            .text("framework", framework.unwrap_or("").to_string());
-
+        let mut body = serde_json::json!({
+            "runtime": runtime,
+        });
+        if let Some(fw) = framework {
+            body["framework"] = Value::String(fw.to_string());
+        }
         if let Some(svcs) = services {
-            let json = serde_json::to_string(svcs).map_err(|e| {
+            body["services"] = serde_json::to_value(svcs).map_err(|e| {
                 FlooApiError::new(
                     0,
                     "SERIALIZATION_ERROR",
                     format!("Failed to serialize services: {e}"),
                 )
             })?;
-            form = form.text("services", json);
         }
-
         if let Some(mode) = access_mode {
-            form = form.text("access_mode", mode.to_string());
+            body["access_mode"] = Value::String(mode.to_string());
         }
-
-        let mut req = self
-            .client
-            .post(self.url(&format!("/v1/apps/{app_id}/deploys")))
-            .multipart(form)
-            .timeout(Duration::from_secs(300));
-        if let Some(auth) = self.auth_header() {
-            req = req.header("Authorization", auth);
-        }
-        let resp = req
-            .send()
-            .map_err(|e| FlooApiError::new(0, "CONNECTION_ERROR", e.to_string()))?;
+        let resp = self.post_json(&format!("/v1/apps/{app_id}/deploys"), &body)?;
         self.handle_response(resp)
     }
 

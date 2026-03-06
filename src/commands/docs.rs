@@ -16,7 +16,7 @@ managing, and observing your apps.
 
   1. `floo init <name>` — scaffold config files for your project
   2. `floo check` — validate config before deploying
-  3. `floo deploy` — detect runtime, archive source, upload, build, deploy
+  3. `floo deploy` — detect runtime, trigger build via GitHub, deploy
   4. `floo apps status <name>` — see your app's URL and status
 
 ## Learn More
@@ -113,11 +113,13 @@ Floo Deploy Flow
 ## What Happens When You Run `floo deploy`
 
   1. **Detect runtime** — scans project files to determine language/framework
-  2. **Archive source** — creates .tar.gz of project (respects .flooignore)
-  3. **Upload** — sends archive to Floo API
-  4. **Build** — builds container image from source
-  5. **Deploy** — deploys container to cloud infrastructure
-  6. **URL** — returns the live URL for your app
+  2. **Create deploy** — sends deploy request to Floo API (source pulled from GitHub)
+  3. **Build** — builds container image from source
+  4. **Deploy** — deploys container to cloud infrastructure
+  5. **URL** — returns the live URL for your app
+
+  Your app must be connected to GitHub (`floo apps github connect <repo>`) so the
+  API can pull source code directly.
 
 ## Runtime Detection Priority
 
@@ -128,23 +130,12 @@ Floo Deploy Flow
   go.mod           — Go
   index.html       — Static site (lowest priority)
 
-## .flooignore
-
-  Works like .gitignore. Add patterns to exclude files from the archive:
-
-    node_modules/
-    .git/
-    *.log
-    .env
-
-  Max archive size: 500MB.
-
 ## Deploy Options
 
   floo deploy [path]                — deploy from directory (default: current)
   floo deploy --app <name>         — deploy to existing app
   floo deploy --services <name>    — deploy specific services only
-  floo deploy --restart            — restart without re-uploading source
+  floo deploy --restart            — restart without rebuilding
   floo deploy --sync-env           — re-sync env vars from env_file before deploy
   floo deploy --dry-run            — preview what would be deployed without deploying
 

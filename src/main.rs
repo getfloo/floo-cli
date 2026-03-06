@@ -1,6 +1,5 @@
 mod api_client;
 mod api_types;
-mod archive;
 mod cli;
 mod commands;
 mod config;
