@@ -981,6 +981,126 @@ ingress = "public"
         .stdout(predicate::str::contains("EXPOSE 8080"));
 }
 
+// --- Dry-run ---
+
+#[test]
+fn test_dry_run_env_set() {
+    floo()
+        .args([
+            "--json",
+            "--dry-run",
+            "env",
+            "set",
+            "KEY=value",
+            "--app",
+            "test",
+        ])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""action":"env_set"#))
+        .stdout(predicate::str::contains(r#""success":true"#));
+}
+
+#[test]
+fn test_dry_run_env_remove() {
+    floo()
+        .args([
+            "--json",
+            "--dry-run",
+            "env",
+            "remove",
+            "KEY",
+            "--app",
+            "test",
+        ])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""action":"env_remove"#));
+}
+
+#[test]
+fn test_dry_run_apps_delete() {
+    floo()
+        .args(["--json", "--dry-run", "apps", "delete", "my-app"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""action":"delete"#));
+}
+
+#[test]
+fn test_dry_run_domains_add() {
+    floo()
+        .args([
+            "--json",
+            "--dry-run",
+            "domains",
+            "add",
+            "example.com",
+            "--app",
+            "test",
+        ])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""action":"domain_add"#));
+}
+
+#[test]
+fn test_dry_run_domains_remove() {
+    floo()
+        .args([
+            "--json",
+            "--dry-run",
+            "domains",
+            "remove",
+            "example.com",
+            "--app",
+            "test",
+        ])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""action":"domain_remove"#));
+}
+
+#[test]
+fn test_dry_run_rollback() {
+    floo()
+        .args([
+            "--json",
+            "--dry-run",
+            "deploy",
+            "rollback",
+            "my-app",
+            "deploy-123",
+        ])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""action":"rollback"#));
+}
+
+#[test]
+fn test_dry_run_unsupported_init() {
+    floo()
+        .args(["--json", "--dry-run", "init", "my-app"])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("not supported"));
+}
+
+#[test]
+fn test_dry_run_unsupported_service_add() {
+    floo()
+        .args(["--json", "--dry-run", "services", "add", "web", "."])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("not supported"));
+}
+
 // --- Env Import --all ---
 
 #[test]

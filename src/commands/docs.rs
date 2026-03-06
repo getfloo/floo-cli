@@ -156,20 +156,27 @@ Floo Deploy Flow
   floo deploy rollback <app> <id>  — rollback to a previous deploy
 ";
 
+const TOPICS: &[(&str, &str)] = &[
+    ("services", SERVICES),
+    ("config", CONFIG),
+    ("deploy", DEPLOY),
+];
+
 pub fn docs(topic: Option<&str>) {
     let (topic_name, content) = match topic {
         None => ("overview", OVERVIEW),
-        Some("services") => ("services", SERVICES),
-        Some("config") => ("config", CONFIG),
-        Some("deploy") => ("deploy", DEPLOY),
-        Some(other) => {
-            output::error(
-                &format!("Unknown docs topic: '{other}'."),
-                &crate::errors::ErrorCode::InvalidFormat,
-                Some("Available topics: services, config, deploy"),
-            );
-            std::process::exit(1);
-        }
+        Some(t) => match TOPICS.iter().find(|(name, _)| *name == t) {
+            Some((name, content)) => (*name, *content),
+            None => {
+                let available: Vec<&str> = TOPICS.iter().map(|(n, _)| *n).collect();
+                output::error(
+                    &format!("Unknown docs topic: '{t}'."),
+                    &crate::errors::ErrorCode::InvalidFormat,
+                    Some(&format!("Available topics: {}", available.join(", "))),
+                );
+                std::process::exit(1);
+            }
+        },
     };
 
     if output::is_json_mode() {

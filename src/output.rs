@@ -29,6 +29,11 @@ pub fn is_dry_run_mode() -> bool {
     DRY_RUN.load(Ordering::SeqCst)
 }
 
+/// Emit a dry-run success response with the given structured data.
+pub fn dry_run_success(data: Value) {
+    success("Dry run — no changes made.", Some(data));
+}
+
 /// Returns true when stdin is a TTY and JSON mode is off — i.e. a human is
 /// at the keyboard and can answer prompts.
 pub fn is_interactive() -> bool {

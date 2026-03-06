@@ -5,14 +5,11 @@ use crate::output;
 
 pub fn rollback(app_name: &str, deploy_id: &str, force: bool) {
     if output::is_dry_run_mode() {
-        output::success(
-            "Dry run — no changes made.",
-            Some(serde_json::json!({
-                "action": "rollback",
-                "app": app_name,
-                "to_deploy": deploy_id,
-            })),
-        );
+        output::dry_run_success(serde_json::json!({
+            "action": "rollback",
+            "app": app_name,
+            "to_deploy": deploy_id,
+        }));
         return;
     }
 

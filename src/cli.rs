@@ -655,6 +655,30 @@ fn should_check_version(cli: &Cli) -> bool {
     )
 }
 
+/// Reject `--dry-run` for mutating commands that don't implement it yet.
+/// Read-only commands silently ignore the flag; unsupported mutators error early.
+fn reject_unsupported_dry_run(command: &Commands) {
+    let unsupported = matches!(
+        command,
+        Commands::Init { .. }
+            | Commands::Apps(AppsCommands::Github(
+                GitHubCommands::Connect { .. } | GitHubCommands::Disconnect { .. },
+            ))
+            | Commands::Releases(ReleasesCommands::Promote { .. })
+            | Commands::Services(ServicesCommands::Add { .. } | ServicesCommands::Rm { .. })
+            | Commands::Orgs(OrgsCommands::Members(MembersCommands::SetRole { .. }))
+            | Commands::Billing(BillingCommands::SpendCap(SpendCapCommands::Set { .. }))
+    );
+    if unsupported {
+        output::error(
+            "--dry-run is not supported for this command.",
+            &crate::errors::ErrorCode::InvalidFormat,
+            Some("Supported commands: deploy, env set/remove/import, apps delete, domains add/remove, deploy rollback."),
+        );
+        std::process::exit(1);
+    }
+}
+
 pub fn run() {
     let cli = Cli::parse();
 
@@ -663,6 +687,7 @@ pub fn run() {
     }
     if cli.dry_run {
         output::set_dry_run_mode(true);
+        reject_unsupported_dry_run(&cli.command);
     }
 
     let do_version_check = should_check_version(&cli);

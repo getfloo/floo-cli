@@ -51,7 +51,6 @@ pub fn deploy(
 
     // --- Restart path: skip detection/archive, call restart API ---
     if restart {
-        let client = super::init_client(Some(config));
         let app_ident = match app.as_deref() {
             Some(a) => a.to_string(),
             None => {
@@ -73,6 +72,17 @@ pub fn deploy(
             }
         };
 
+        if output::is_dry_run_mode() {
+            let service_names: Vec<&str> = services_filter.iter().map(|s| s.as_str()).collect();
+            output::dry_run_success(serde_json::json!({
+                "action": "restart",
+                "app": app_ident,
+                "services": service_names,
+            }));
+            return;
+        }
+
+        let client = super::init_client(Some(config));
         let app_data = match resolve_app(&client, &app_ident) {
             Ok(a) => a,
             Err(e) => {
@@ -89,19 +99,6 @@ pub fn deploy(
             }
         };
         let app_id = app_data.id.clone();
-
-        if output::is_dry_run_mode() {
-            let service_names: Vec<&str> = services_filter.iter().map(|s| s.as_str()).collect();
-            output::success(
-                "Dry run — no changes made.",
-                Some(serde_json::json!({
-                    "action": "restart",
-                    "app": app_data.name,
-                    "services": service_names,
-                })),
-            );
-            return;
-        }
 
         let svcs = if services_filter.is_empty() {
             None
@@ -340,18 +337,15 @@ pub fn deploy(
             .map(|svcs| svcs.iter().map(|s| s.name.as_str()).collect())
             .unwrap_or_default();
 
-        output::success(
-            "Dry run — no changes made.",
-            Some(serde_json::json!({
-                "action": "deploy",
-                "app": app_name,
-                "services": service_names,
-                "runtime": detection.runtime,
-                "framework": detection.framework,
-                "confidence": detection.confidence,
-                "path": project_path.display().to_string(),
-            })),
-        );
+        output::dry_run_success(serde_json::json!({
+            "action": "deploy",
+            "app": app_name,
+            "services": service_names,
+            "runtime": detection.runtime,
+            "framework": detection.framework,
+            "confidence": detection.confidence,
+            "path": project_path.display().to_string(),
+        }));
         return;
     }
 

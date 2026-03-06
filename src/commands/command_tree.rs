@@ -436,6 +436,9 @@ pub fn commands() {
             eprintln!("  {:<14}{}", cmd.name, cmd.description);
             for sub in &cmd.subcommands {
                 eprintln!("    {:<12}{}", sub.name, sub.description);
+                for sub2 in &sub.subcommands {
+                    eprintln!("      {:<10}{}", sub2.name, sub2.description);
+                }
             }
         }
         eprintln!();
@@ -444,13 +447,9 @@ pub fn commands() {
 }
 
 #[cfg(test)]
-fn command_count() -> usize {
-    command_tree().len()
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
 
     #[test]
     fn test_command_tree_not_empty() {
@@ -475,10 +474,35 @@ mod tests {
     }
 
     #[test]
-    fn test_command_count_matches_cli_enum() {
-        // Commands enum has: Analytics, Init, Check, Deploy, Auth, Orgs, Billing,
-        // Apps, Env, Services, Domains, Releases, Logs, Skills, Version, Update,
-        // Docs, Commands = 18
-        assert_eq!(command_count(), 18);
+    fn test_command_names_match_cli_enum() {
+        // Must match top-level Commands enum variants in cli.rs.
+        let expected: BTreeSet<&str> = [
+            "analytics",
+            "apps",
+            "auth",
+            "billing",
+            "check",
+            "commands",
+            "deploy",
+            "docs",
+            "domains",
+            "env",
+            "init",
+            "logs",
+            "orgs",
+            "releases",
+            "services",
+            "skills",
+            "update",
+            "version",
+        ]
+        .into_iter()
+        .collect();
+
+        let actual: BTreeSet<&str> = command_tree().iter().map(|c| c.name).collect();
+        assert_eq!(
+            expected, actual,
+            "command_tree and Commands enum are out of sync"
+        );
     }
 }
