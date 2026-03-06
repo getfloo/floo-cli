@@ -2,80 +2,94 @@ use std::collections::HashSet;
 
 use crate::errors::{ErrorCode, FlooError};
 
-use super::app_config::AppServiceType;
+use super::app_config::{AppServiceEntry, AppServiceType};
 use super::resolve::ResolvedApp;
-use super::service_config::{load_service_config, ServiceConfig, ServiceIngress};
+use super::service_config::{
+    load_service_config, ResourceConfig, ServiceConfig, ServiceIngress, ServiceType,
+};
 
 /// Discover all deployable services from resolved config files.
 ///
 /// Three branches:
-/// 1. `floo.app.toml` has user-managed services with `path` entries -> read each sub-service's
-///    `floo.service.toml` and include root service if present
-/// 2. Single `floo.service.toml` only (no app_config path entries) -> single service at "."
-/// 3. `floo.app.toml` only with no deployable services -> error
+/// 1. Inline mode: `floo.app.toml` has user-managed services with `port` fields —
+///    build ServiceConfig directly from app.toml entries (no floo.service.toml in subdirs)
+/// 2. Delegated mode (legacy): `floo.app.toml` has user-managed services with `path` but no `port` —
+///    read each sub-service's `floo.service.toml`
+/// 3. Single `floo.service.toml` only (no app_config user-managed entries) -> single service at "."
+/// 4. `floo.app.toml` only with no deployable services -> error
 pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, FlooError> {
-    let path_entries = user_managed_path_entries(resolved);
+    let inline_entries = inline_service_entries(resolved);
 
-    let services = if !path_entries.is_empty() {
-        // Branch 1: app.toml has user-managed services with path fields
-        let mut services = Vec::new();
-        let mut seen_names = HashSet::new();
-
-        // Include root floo.service.toml if present
-        if let Some(ref svc_file) = resolved.service_config {
-            let svc = svc_file.service.to_api_service_config(".");
-            seen_names.insert(svc.name.clone());
-            services.push(svc);
-        }
-
-        for (name, normalized_path) in &path_entries {
+    let services = if !inline_entries.is_empty() {
+        // Branch 1: Inline mode — build ServiceConfig directly from app.toml
+        // Error if floo.service.toml files exist in subdirs (enforce either/or)
+        for (name, normalized_path, _) in &inline_entries {
             let sub_dir = resolved.config_dir.join(normalized_path);
-            let svc_file = load_service_config(&sub_dir)?.ok_or_else(|| {
-                FlooError::with_suggestion(
-                    ErrorCode::ServiceConfigMissing,
-                    format!(
-                        "No {} found at '{normalized_path}/' (declared as service '{name}' in {}).",
-                        super::SERVICE_CONFIG_FILE,
-                        super::APP_CONFIG_FILE,
-                    ),
-                    format!(
-                        "Create {normalized_path}/{} with [app] and [service] sections.",
-                        super::SERVICE_CONFIG_FILE,
-                    ),
-                )
-            })?;
-
-            if svc_file.app.name != resolved.app_name {
+            if sub_dir.join(super::SERVICE_CONFIG_FILE).exists() {
                 return Err(FlooError::with_suggestion(
-                    ErrorCode::AppNameMismatch,
+                    ErrorCode::InvalidProjectConfig,
                     format!(
-                        "Service '{name}' at '{normalized_path}/{}' declares app name '{}', but {} declares '{}'.",
-                        super::SERVICE_CONFIG_FILE,
-                        svc_file.app.name,
+                        "Service '{name}' is defined inline in {} but '{normalized_path}/{}' also exists.",
                         super::APP_CONFIG_FILE,
-                        resolved.app_name,
+                        super::SERVICE_CONFIG_FILE,
                     ),
                     format!(
-                        "Set [app].name = \"{}\" in {normalized_path}/{}.",
-                        resolved.app_name,
+                        "Remove {normalized_path}/{} — inline services in {} don't use separate service files.",
                         super::SERVICE_CONFIG_FILE,
+                        super::APP_CONFIG_FILE,
                     ),
                 ));
             }
+        }
 
-            let mut svc = svc_file.service.to_api_service_config(normalized_path);
+        let global_resources = resolved
+            .app_config
+            .as_ref()
+            .and_then(|c| c.resources.as_ref());
 
-            // Let floo.app.toml override floo.service.toml values
-            if let Some(ref app_cfg) = resolved.app_config {
-                if let Some(entry) = app_cfg.services.get(name) {
-                    if let Some(override_ingress) = entry.ingress {
-                        svc.ingress = override_ingress;
-                    }
-                    if entry.domain.is_some() {
-                        svc.domain = entry.domain.clone();
-                    }
-                }
-            }
+        let mut services = Vec::new();
+        let mut seen_names = HashSet::new();
+
+        for (name, normalized_path, entry) in &inline_entries {
+            let service_type = match entry.service_type {
+                AppServiceType::Api => ServiceType::Api,
+                AppServiceType::Web => ServiceType::Web,
+                AppServiceType::Worker => ServiceType::Worker,
+                _ => continue,
+            };
+
+            let ingress = entry.ingress.unwrap_or(match service_type {
+                ServiceType::Worker => ServiceIngress::Internal,
+                _ => ServiceIngress::Public,
+            });
+
+            // port is guaranteed by validation
+            let port = entry.port.unwrap();
+
+            // Merge resources: per-service > global
+            let cpu = entry
+                .cpu
+                .clone()
+                .or_else(|| global_resources.and_then(|r| r.cpu.clone()));
+            let memory = entry
+                .memory
+                .clone()
+                .or_else(|| global_resources.and_then(|r| r.memory.clone()));
+            let max_instances = entry
+                .max_instances
+                .or_else(|| global_resources.and_then(|r| r.max_instances));
+
+            let svc = ServiceConfig {
+                name: name.clone(),
+                service_type,
+                path: normalized_path.clone(),
+                port,
+                ingress,
+                domain: entry.domain.clone(),
+                cpu,
+                memory,
+                max_instances,
+            };
 
             if !seen_names.insert(svc.name.clone()) {
                 return Err(FlooError::new(
@@ -91,22 +105,111 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
         }
 
         services
-    } else if let Some(ref svc_file) = resolved.service_config {
-        // Branch 2: single floo.service.toml only
-        vec![svc_file.service.to_api_service_config(".")]
     } else {
-        // Branch 3: app.toml only with no deployable services
-        return Err(FlooError::with_suggestion(
-            ErrorCode::NoDeployableServices,
-            format!(
-                "{} has no deployable services (only Floo-managed services like postgres/redis).",
-                super::APP_CONFIG_FILE,
-            ),
-            format!(
-                "Add a user-managed service with a 'path' field, or create a {} in your project root.",
-                super::SERVICE_CONFIG_FILE,
-            ),
-        ));
+        let delegated_entries = delegated_path_entries(resolved);
+        if !delegated_entries.is_empty() {
+            // Branch 2: Delegated mode (legacy) — read floo.service.toml from subdirs
+            let mut services = Vec::new();
+            let mut seen_names = HashSet::new();
+
+            // Include root floo.service.toml if present
+            if let Some(ref svc_file) = resolved.service_config {
+                let mut svc = svc_file.service.to_api_service_config(".");
+                apply_service_file_resources(&mut svc, &svc_file.resources, None);
+                seen_names.insert(svc.name.clone());
+                services.push(svc);
+            }
+
+            for (name, normalized_path) in &delegated_entries {
+                let sub_dir = resolved.config_dir.join(normalized_path);
+                let svc_file = load_service_config(&sub_dir)?.ok_or_else(|| {
+                    FlooError::with_suggestion(
+                        ErrorCode::ServiceConfigMissing,
+                        format!(
+                            "No {} found at '{normalized_path}/' (declared as service '{name}' in {}).",
+                            super::SERVICE_CONFIG_FILE,
+                            super::APP_CONFIG_FILE,
+                        ),
+                        format!(
+                            "Create {normalized_path}/{} with [app] and [service] sections, or add port/type fields inline in {}.",
+                            super::SERVICE_CONFIG_FILE,
+                            super::APP_CONFIG_FILE,
+                        ),
+                    )
+                })?;
+
+                if svc_file.app.name != resolved.app_name {
+                    return Err(FlooError::with_suggestion(
+                        ErrorCode::AppNameMismatch,
+                        format!(
+                            "Service '{name}' at '{normalized_path}/{}' declares app name '{}', but {} declares '{}'.",
+                            super::SERVICE_CONFIG_FILE,
+                            svc_file.app.name,
+                            super::APP_CONFIG_FILE,
+                            resolved.app_name,
+                        ),
+                        format!(
+                            "Set [app].name = \"{}\" in {normalized_path}/{}.",
+                            resolved.app_name,
+                            super::SERVICE_CONFIG_FILE,
+                        ),
+                    ));
+                }
+
+                let mut svc = svc_file.service.to_api_service_config(normalized_path);
+
+                // Let floo.app.toml override floo.service.toml values
+                if let Some(ref app_cfg) = resolved.app_config {
+                    if let Some(entry) = app_cfg.services.get(name) {
+                        if let Some(override_ingress) = entry.ingress {
+                            svc.ingress = override_ingress;
+                        }
+                        if entry.domain.is_some() {
+                            svc.domain = entry.domain.clone();
+                        }
+                    }
+                }
+
+                // Apply resources from floo.service.toml [resources]
+                let global_resources = resolved
+                    .app_config
+                    .as_ref()
+                    .and_then(|c| c.resources.as_ref());
+                apply_service_file_resources(&mut svc, &svc_file.resources, global_resources);
+
+                if !seen_names.insert(svc.name.clone()) {
+                    return Err(FlooError::new(
+                        ErrorCode::DuplicateServiceNames,
+                        format!(
+                            "Multiple services named '{}'. Service names must be unique.",
+                            svc.name,
+                        ),
+                    ));
+                }
+
+                services.push(svc);
+            }
+
+            services
+        } else if let Some(ref svc_file) = resolved.service_config {
+            // Branch 3: single floo.service.toml only
+            let mut svc = svc_file.service.to_api_service_config(".");
+            apply_service_file_resources(&mut svc, &svc_file.resources, None);
+            vec![svc]
+        } else {
+            // Branch 4: app.toml only with no deployable services
+            return Err(FlooError::with_suggestion(
+                ErrorCode::NoDeployableServices,
+                format!(
+                    "{} has no deployable services (only Floo-managed services like postgres/redis).",
+                    super::APP_CONFIG_FILE,
+                ),
+                format!(
+                    "Add a user-managed service with port/type/path fields, or create a {} in your project root.",
+                    super::SERVICE_CONFIG_FILE,
+                ),
+            ));
+        }
     };
 
     // Multi-service apps must have at least one public service
@@ -114,11 +217,36 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
         return Err(FlooError::with_suggestion(
             ErrorCode::NoPublicServices,
             "At least one service must have ingress 'public'. All services are currently set to 'internal'.",
-            "Set ingress = \"public\" on at least one service in its floo.service.toml, or override it in floo.app.toml.",
+            "Set ingress = \"public\" on at least one service in floo.app.toml or floo.service.toml.",
         ));
     }
 
     Ok(services)
+}
+
+/// Apply resources from floo.service.toml [resources], with optional global fallback.
+fn apply_service_file_resources(
+    svc: &mut ServiceConfig,
+    svc_resources: &Option<ResourceConfig>,
+    global_resources: Option<&ResourceConfig>,
+) {
+    if let Some(res) = svc_resources {
+        svc.cpu = res.cpu.clone();
+        svc.memory = res.memory.clone();
+        svc.max_instances = res.max_instances;
+    }
+    // Fall back to global for any fields still None
+    if let Some(global) = global_resources {
+        if svc.cpu.is_none() {
+            svc.cpu = global.cpu.clone();
+        }
+        if svc.memory.is_none() {
+            svc.memory = global.memory.clone();
+        }
+        if svc.max_instances.is_none() {
+            svc.max_instances = global.max_instances;
+        }
+    }
 }
 
 /// Filter services by name. Empty filter returns all.
@@ -149,9 +277,9 @@ pub fn filter_services(
         .collect())
 }
 
-/// Extract user-managed service entries with `path` fields from app_config, returning
-/// (service_name, normalized_path) pairs.
-fn user_managed_path_entries(resolved: &ResolvedApp) -> Vec<(String, String)> {
+/// Extract user-managed inline service entries (have `port` set) from app_config.
+/// Returns (service_name, normalized_path, &AppServiceEntry) triples.
+fn inline_service_entries(resolved: &ResolvedApp) -> Vec<(String, String, &AppServiceEntry)> {
     let Some(ref app_cfg) = resolved.app_config else {
         return Vec::new();
     };
@@ -160,11 +288,40 @@ fn user_managed_path_entries(resolved: &ResolvedApp) -> Vec<(String, String)> {
         .services
         .iter()
         .filter_map(|(name, entry)| {
+            // Inline mode: user-managed + has port
+            if !entry.service_type.is_user_managed() {
+                return None;
+            }
+            entry.port?; // must have port for inline mode
+            let raw = entry.path.as_deref().unwrap_or(".");
+            let normalized = normalize_path(raw);
+            let path = if normalized.is_empty() { ".".to_string() } else { normalized };
+            Some((name.clone(), path, entry))
+        })
+        .collect()
+}
+
+/// Extract user-managed service entries with `path` but no `port` (delegated/legacy mode).
+fn delegated_path_entries(resolved: &ResolvedApp) -> Vec<(String, String)> {
+    let Some(ref app_cfg) = resolved.app_config else {
+        return Vec::new();
+    };
+
+    // If any entry has port (inline mode), don't use delegated mode
+    let has_inline = app_cfg
+        .services
+        .values()
+        .any(|e| e.port.is_some() && e.service_type.is_user_managed());
+    if has_inline {
+        return Vec::new();
+    }
+
+    app_cfg
+        .services
+        .iter()
+        .filter_map(|(name, entry)| {
             let raw = entry.path.as_deref()?;
-            if !matches!(
-                entry.service_type,
-                AppServiceType::Web | AppServiceType::Api | AppServiceType::Worker
-            ) {
+            if !entry.service_type.is_user_managed() {
                 return None;
             }
             let normalized = normalize_path(raw);
@@ -240,6 +397,7 @@ ingress = "public"
                 env_file: None,
                 domain: None,
             },
+            resources: None,
         };
         let resolved = make_resolved(
             dir.path(),
@@ -285,8 +443,13 @@ ingress = "public"
                 repo: None,
                 version: None,
                 plan: None,
+                port: None,
                 ingress: None,
+                env_file: None,
                 domain: None,
+                cpu: None,
+                memory: None,
+                max_instances: None,
             },
         );
         services_map.insert(
@@ -297,8 +460,13 @@ ingress = "public"
                 repo: None,
                 version: None,
                 plan: None,
+                port: None,
                 ingress: None,
+                env_file: None,
                 domain: None,
+                cpu: None,
+                memory: None,
+                max_instances: None,
             },
         );
 
@@ -307,6 +475,7 @@ ingress = "public"
                 name: "my-app".to_string(),
                 access_mode: None,
             },
+            resources: None,
             services: services_map,
             environments: HashMap::new(),
         };
@@ -353,6 +522,7 @@ ingress = "public"
                 env_file: None,
                 domain: None,
             },
+            resources: None,
         };
 
         // Sub-service
@@ -373,8 +543,13 @@ ingress = "public"
                 repo: None,
                 version: None,
                 plan: None,
+                port: None,
                 ingress: None,
+                env_file: None,
                 domain: None,
+                cpu: None,
+                memory: None,
+                max_instances: None,
             },
         );
 
@@ -383,6 +558,7 @@ ingress = "public"
                 name: "my-app".to_string(),
                 access_mode: None,
             },
+            resources: None,
             services: services_map,
             environments: HashMap::new(),
         };
@@ -424,6 +600,7 @@ ingress = "public"
                 env_file: None,
                 domain: None,
             },
+            resources: None,
         };
 
         let mut services_map = HashMap::new();
@@ -435,8 +612,13 @@ ingress = "public"
                 repo: None,
                 version: Some("16".to_string()),
                 plan: None,
+                port: None,
                 ingress: None,
+                env_file: None,
                 domain: None,
+                cpu: None,
+                memory: None,
+                max_instances: None,
             },
         );
         services_map.insert(
@@ -447,8 +629,13 @@ ingress = "public"
                 repo: None,
                 version: None,
                 plan: None,
+                port: None,
                 ingress: None,
+                env_file: None,
                 domain: None,
+                cpu: None,
+                memory: None,
+                max_instances: None,
             },
         );
 
@@ -457,6 +644,7 @@ ingress = "public"
                 name: "my-app".to_string(),
                 access_mode: None,
             },
+            resources: None,
             services: services_map,
             environments: HashMap::new(),
         };
@@ -492,8 +680,13 @@ ingress = "public"
                 repo: None,
                 version: None,
                 plan: None,
+                port: None,
                 ingress: None,
+                env_file: None,
                 domain: None,
+                cpu: None,
+                memory: None,
+                max_instances: None,
             },
         );
 
@@ -502,6 +695,7 @@ ingress = "public"
                 name: "my-app".to_string(),
                 access_mode: None,
             },
+            resources: None,
             services: services_map,
             environments: HashMap::new(),
         };
@@ -540,8 +734,13 @@ ingress = "public"
                 repo: None,
                 version: None,
                 plan: None,
+                port: None,
                 ingress: None,
+                env_file: None,
                 domain: None,
+                cpu: None,
+                memory: None,
+                max_instances: None,
             },
         );
 
@@ -550,6 +749,7 @@ ingress = "public"
                 name: "my-app".to_string(),
                 access_mode: None,
             },
+            resources: None,
             services: services_map,
             environments: HashMap::new(),
         };
@@ -586,6 +786,7 @@ ingress = "public"
                 env_file: None,
                 domain: None,
             },
+            resources: None,
         };
 
         // Sub-service also named "api"
@@ -606,8 +807,13 @@ ingress = "public"
                 repo: None,
                 version: None,
                 plan: None,
+                port: None,
                 ingress: None,
+                env_file: None,
                 domain: None,
+                cpu: None,
+                memory: None,
+                max_instances: None,
             },
         );
 
@@ -616,6 +822,7 @@ ingress = "public"
                 name: "my-app".to_string(),
                 access_mode: None,
             },
+            resources: None,
             services: services_map,
             environments: HashMap::new(),
         };
@@ -646,8 +853,13 @@ ingress = "public"
                 repo: None,
                 version: Some("16".to_string()),
                 plan: None,
+                port: None,
                 ingress: None,
+                env_file: None,
                 domain: None,
+                cpu: None,
+                memory: None,
+                max_instances: None,
             },
         );
 
@@ -656,6 +868,7 @@ ingress = "public"
                 name: "my-app".to_string(),
                 access_mode: None,
             },
+            resources: None,
             services: services_map,
             environments: HashMap::new(),
         };
@@ -693,8 +906,13 @@ ingress = "public"
                 repo: None,
                 version: None,
                 plan: None,
+                port: None,
                 ingress: None,
+                env_file: None,
                 domain: None,
+                cpu: None,
+                memory: None,
+                max_instances: None,
             },
         );
 
@@ -703,6 +921,7 @@ ingress = "public"
                 name: "my-app".to_string(),
                 access_mode: None,
             },
+            resources: None,
             services: services_map,
             environments: HashMap::new(),
         };
@@ -730,6 +949,9 @@ ingress = "public"
                 port: 3000,
                 ingress: ServiceIngress::Public,
                 domain: None,
+                cpu: None,
+                memory: None,
+                max_instances: None,
             },
             ServiceConfig {
                 name: "api".to_string(),
@@ -738,6 +960,9 @@ ingress = "public"
                 port: 8000,
                 ingress: ServiceIngress::Public,
                 domain: None,
+                cpu: None,
+                memory: None,
+                max_instances: None,
             },
         ];
 
@@ -755,6 +980,9 @@ ingress = "public"
                 port: 3000,
                 ingress: ServiceIngress::Public,
                 domain: None,
+                cpu: None,
+                memory: None,
+                max_instances: None,
             },
             ServiceConfig {
                 name: "api".to_string(),
@@ -763,6 +991,9 @@ ingress = "public"
                 port: 8000,
                 ingress: ServiceIngress::Public,
                 domain: None,
+                cpu: None,
+                memory: None,
+                max_instances: None,
             },
         ];
 
@@ -781,6 +1012,9 @@ ingress = "public"
                 port: 3000,
                 ingress: ServiceIngress::Public,
                 domain: None,
+                cpu: None,
+                memory: None,
+                max_instances: None,
             },
             ServiceConfig {
                 name: "api".to_string(),
@@ -789,6 +1023,9 @@ ingress = "public"
                 port: 8000,
                 ingress: ServiceIngress::Public,
                 domain: None,
+                cpu: None,
+                memory: None,
+                max_instances: None,
             },
         ];
 
@@ -826,6 +1063,7 @@ ingress = "public"
                 env_file: None,
                 domain: None,
             },
+            resources: None,
         };
 
         let mut services_map = HashMap::new();
@@ -837,8 +1075,13 @@ ingress = "public"
                 repo: None,
                 version: None,
                 plan: None,
+                port: None,
                 ingress: Some(ServiceIngress::Internal),
+                env_file: None,
                 domain: None,
+                cpu: None,
+                memory: None,
+                max_instances: None,
             },
         );
 
@@ -847,6 +1090,7 @@ ingress = "public"
                 name: "my-app".to_string(),
                 access_mode: None,
             },
+            resources: None,
             services: services_map,
             environments: HashMap::new(),
         };
@@ -910,8 +1154,13 @@ ingress = "internal"
                 repo: None,
                 version: None,
                 plan: None,
+                port: None,
                 ingress: None,
+                env_file: None,
                 domain: None,
+                cpu: None,
+                memory: None,
+                max_instances: None,
             },
         );
         services_map.insert(
@@ -922,8 +1171,13 @@ ingress = "internal"
                 repo: None,
                 version: None,
                 plan: None,
+                port: None,
                 ingress: None,
+                env_file: None,
                 domain: None,
+                cpu: None,
+                memory: None,
+                max_instances: None,
             },
         );
 
@@ -932,6 +1186,7 @@ ingress = "internal"
                 name: "my-app".to_string(),
                 access_mode: None,
             },
+            resources: None,
             services: services_map,
             environments: HashMap::new(),
         };
@@ -979,8 +1234,13 @@ domain = "svc.example.com"
                 repo: None,
                 version: None,
                 plan: None,
+                port: None,
                 ingress: None,
+                env_file: None,
                 domain: Some("app.example.com".to_string()),
+                cpu: None,
+                memory: None,
+                max_instances: None,
             },
         );
 
@@ -989,6 +1249,7 @@ domain = "svc.example.com"
                 name: "my-app".to_string(),
                 access_mode: None,
             },
+            resources: None,
             services: services_map,
             environments: HashMap::new(),
         };
@@ -1037,8 +1298,13 @@ domain = "svc.example.com"
                 repo: None,
                 version: None,
                 plan: None,
+                port: None,
                 ingress: None,
+                env_file: None,
                 domain: None,
+                cpu: None,
+                memory: None,
+                max_instances: None,
             },
         );
 
@@ -1047,6 +1313,7 @@ domain = "svc.example.com"
                 name: "my-app".to_string(),
                 access_mode: None,
             },
+            resources: None,
             services: services_map,
             environments: HashMap::new(),
         };
@@ -1063,5 +1330,306 @@ domain = "svc.example.com"
         let api = services.iter().find(|s| s.name == "api").unwrap();
         // Domain from floo.service.toml should be preserved
         assert_eq!(api.domain.as_deref(), Some("svc.example.com"));
+    }
+
+    // --- Inline mode tests ---
+
+    #[test]
+    fn test_discover_inline_services_from_app_config() {
+        let dir = TempDir::new().unwrap();
+
+        let backend = dir.path().join("backend");
+        let frontend = dir.path().join("frontend");
+        fs::create_dir(&backend).unwrap();
+        fs::create_dir(&frontend).unwrap();
+
+        let mut services_map = HashMap::new();
+        services_map.insert(
+            "api".to_string(),
+            AppServiceEntry {
+                service_type: AppServiceType::Api,
+                path: Some("./backend".to_string()),
+                repo: None,
+                version: None,
+                plan: None,
+                port: Some(8000),
+                ingress: Some(ServiceIngress::Public),
+                env_file: None,
+                domain: None,
+                cpu: Some("2".to_string()),
+                memory: Some("4Gi".to_string()),
+                max_instances: Some(5),
+            },
+        );
+        services_map.insert(
+            "web".to_string(),
+            AppServiceEntry {
+                service_type: AppServiceType::Web,
+                path: Some("./frontend".to_string()),
+                repo: None,
+                version: None,
+                plan: None,
+                port: Some(3000),
+                ingress: None,
+                env_file: None,
+                domain: None,
+                cpu: None,
+                memory: None,
+                max_instances: None,
+            },
+        );
+
+        let app_config = AppFileConfig {
+            app: AppFileAppSection {
+                name: "my-app".to_string(),
+                access_mode: None,
+            },
+            resources: None,
+            services: services_map,
+            environments: HashMap::new(),
+        };
+
+        let resolved = make_resolved(
+            dir.path(),
+            "my-app",
+            None,
+            Some(app_config),
+            AppSource::AppFile,
+        );
+
+        let services = discover_services(&resolved).unwrap();
+        assert_eq!(services.len(), 2);
+
+        let api = services.iter().find(|s| s.name == "api").unwrap();
+        assert_eq!(api.path, "backend");
+        assert_eq!(api.port, 8000);
+        assert_eq!(api.cpu.as_deref(), Some("2"));
+        assert_eq!(api.memory.as_deref(), Some("4Gi"));
+        assert_eq!(api.max_instances, Some(5));
+
+        let web = services.iter().find(|s| s.name == "web").unwrap();
+        assert_eq!(web.path, "frontend");
+        assert_eq!(web.port, 3000);
+        assert!(web.cpu.is_none());
+    }
+
+    #[test]
+    fn test_discover_inline_with_global_resources() {
+        let dir = TempDir::new().unwrap();
+
+        let backend = dir.path().join("backend");
+        fs::create_dir(&backend).unwrap();
+
+        let mut services_map = HashMap::new();
+        services_map.insert(
+            "api".to_string(),
+            AppServiceEntry {
+                service_type: AppServiceType::Api,
+                path: Some("./backend".to_string()),
+                repo: None,
+                version: None,
+                plan: None,
+                port: Some(8000),
+                ingress: None,
+                env_file: None,
+                domain: None,
+                cpu: Some("4".to_string()), // per-service override
+                memory: None,               // will inherit global
+                max_instances: None,
+            },
+        );
+
+        let app_config = AppFileConfig {
+            app: AppFileAppSection {
+                name: "my-app".to_string(),
+                access_mode: None,
+            },
+            resources: Some(super::super::service_config::ResourceConfig {
+                cpu: Some("1".to_string()),
+                memory: Some("2Gi".to_string()),
+                max_instances: Some(3),
+            }),
+            services: services_map,
+            environments: HashMap::new(),
+        };
+
+        let resolved = make_resolved(
+            dir.path(),
+            "my-app",
+            None,
+            Some(app_config),
+            AppSource::AppFile,
+        );
+
+        let services = discover_services(&resolved).unwrap();
+        let api = &services[0];
+        assert_eq!(api.cpu.as_deref(), Some("4"));       // per-service wins
+        assert_eq!(api.memory.as_deref(), Some("2Gi"));   // global fallback
+        assert_eq!(api.max_instances, Some(3));            // global fallback
+    }
+
+    #[test]
+    fn test_discover_inline_errors_when_service_toml_exists() {
+        let dir = TempDir::new().unwrap();
+
+        let backend = dir.path().join("backend");
+        fs::create_dir(&backend).unwrap();
+        // Create conflicting floo.service.toml in subdir
+        fs::write(
+            backend.join("floo.service.toml"),
+            make_service_toml("api", "my-app", "api", 8000),
+        )
+        .unwrap();
+
+        let mut services_map = HashMap::new();
+        services_map.insert(
+            "api".to_string(),
+            AppServiceEntry {
+                service_type: AppServiceType::Api,
+                path: Some("./backend".to_string()),
+                repo: None,
+                version: None,
+                plan: None,
+                port: Some(8000),
+                ingress: None,
+                env_file: None,
+                domain: None,
+                cpu: None,
+                memory: None,
+                max_instances: None,
+            },
+        );
+
+        let app_config = AppFileConfig {
+            app: AppFileAppSection {
+                name: "my-app".to_string(),
+                access_mode: None,
+            },
+            resources: None,
+            services: services_map,
+            environments: HashMap::new(),
+        };
+
+        let resolved = make_resolved(
+            dir.path(),
+            "my-app",
+            None,
+            Some(app_config),
+            AppSource::AppFile,
+        );
+
+        let err = discover_services(&resolved).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+        assert!(err.message.contains("inline"));
+    }
+
+    #[test]
+    fn test_discover_inline_worker_defaults_internal() {
+        let dir = TempDir::new().unwrap();
+
+        let worker_dir = dir.path().join("worker");
+        let web_dir = dir.path().join("web");
+        fs::create_dir(&worker_dir).unwrap();
+        fs::create_dir(&web_dir).unwrap();
+
+        let mut services_map = HashMap::new();
+        services_map.insert(
+            "bg".to_string(),
+            AppServiceEntry {
+                service_type: AppServiceType::Worker,
+                path: Some("./worker".to_string()),
+                repo: None,
+                version: None,
+                plan: None,
+                port: Some(9000),
+                ingress: None, // should default to internal for workers
+                env_file: None,
+                domain: None,
+                cpu: None,
+                memory: None,
+                max_instances: None,
+            },
+        );
+        services_map.insert(
+            "web".to_string(),
+            AppServiceEntry {
+                service_type: AppServiceType::Web,
+                path: Some("./web".to_string()),
+                repo: None,
+                version: None,
+                plan: None,
+                port: Some(3000),
+                ingress: None, // should default to public
+                env_file: None,
+                domain: None,
+                cpu: None,
+                memory: None,
+                max_instances: None,
+            },
+        );
+
+        let app_config = AppFileConfig {
+            app: AppFileAppSection {
+                name: "my-app".to_string(),
+                access_mode: None,
+            },
+            resources: None,
+            services: services_map,
+            environments: HashMap::new(),
+        };
+
+        let resolved = make_resolved(
+            dir.path(),
+            "my-app",
+            None,
+            Some(app_config),
+            AppSource::AppFile,
+        );
+
+        let services = discover_services(&resolved).unwrap();
+        let worker = services.iter().find(|s| s.name == "bg").unwrap();
+        assert_eq!(worker.ingress, ServiceIngress::Internal);
+
+        let web = services.iter().find(|s| s.name == "web").unwrap();
+        assert_eq!(web.ingress, ServiceIngress::Public);
+    }
+
+    #[test]
+    fn test_single_service_with_resources() {
+        let dir = TempDir::new().unwrap();
+
+        let svc_file = ServiceFileConfig {
+            app: ServiceFileAppSection {
+                name: "my-app".to_string(),
+                access_mode: None,
+            },
+            service: ServiceSection {
+                name: "api".to_string(),
+                service_type: ServiceType::Api,
+                port: 8000,
+                ingress: Some(ServiceIngress::Public),
+                env_file: None,
+                domain: None,
+            },
+            resources: Some(super::super::service_config::ResourceConfig {
+                cpu: Some("2".to_string()),
+                memory: Some("4Gi".to_string()),
+                max_instances: Some(5),
+            }),
+        };
+
+        let resolved = make_resolved(
+            dir.path(),
+            "my-app",
+            Some(svc_file),
+            None,
+            AppSource::ServiceFile,
+        );
+
+        let services = discover_services(&resolved).unwrap();
+        assert_eq!(services.len(), 1);
+        assert_eq!(services[0].cpu.as_deref(), Some("2"));
+        assert_eq!(services[0].memory.as_deref(), Some("4Gi"));
+        assert_eq!(services[0].max_instances, Some(5));
     }
 }

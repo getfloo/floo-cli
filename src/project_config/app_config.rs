@@ -5,13 +5,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::errors::{ErrorCode, FlooError};
 
-use super::service_config::ServiceIngress;
+use super::service_config::{ResourceConfig, ServiceIngress};
 use super::SCHEMA_URL;
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppFileConfig {
     pub app: AppFileAppSection,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resources: Option<ResourceConfig>,
     #[serde(default)]
     pub services: HashMap<String, AppServiceEntry>,
     #[serde(default)]
@@ -65,9 +67,19 @@ pub struct AppServiceEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plan: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub ingress: Option<ServiceIngress>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub env_file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpu: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_instances: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
@@ -78,6 +90,12 @@ pub enum AppServiceType {
     Worker,
     Postgres,
     Redis,
+}
+
+impl AppServiceType {
+    pub fn is_user_managed(&self) -> bool {
+        matches!(self, Self::Web | Self::Api | Self::Worker)
+    }
 }
 
 pub fn load_app_config(dir: &Path) -> Result<Option<AppFileConfig>, FlooError> {
@@ -108,6 +126,9 @@ pub fn load_app_config(dir: &Path) -> Result<Option<AppFileConfig>, FlooError> {
 }
 
 fn validate_app_config(config: &AppFileConfig) -> Result<(), FlooError> {
+    // Detect inline mode: any user-managed service has `port` set
+    let has_inline = config.services.values().any(|e| e.port.is_some());
+
     for (name, entry) in &config.services {
         if entry.path.is_some() && entry.repo.is_some() {
             return Err(FlooError::with_suggestion(
@@ -118,6 +139,32 @@ fn validate_app_config(config: &AppFileConfig) -> Result<(), FlooError> {
                 ),
                 "Use 'path' for monorepo services or 'repo' for multi-repo services, not both.",
             ));
+        }
+
+        let is_user_managed = entry.service_type.is_user_managed();
+
+        // In inline mode, user-managed services require port and path
+        if has_inline && is_user_managed {
+            if entry.port.is_none() {
+                return Err(FlooError::with_suggestion(
+                    ErrorCode::InvalidProjectConfig,
+                    format!(
+                        "Service '{name}' in {} is missing 'port'. All user-managed services must declare a port in inline mode.",
+                        super::APP_CONFIG_FILE
+                    ),
+                    format!("Add port = <number> to [services.{name}]."),
+                ));
+            }
+            if entry.path.is_none() {
+                return Err(FlooError::with_suggestion(
+                    ErrorCode::InvalidProjectConfig,
+                    format!(
+                        "Service '{name}' in {} is missing 'path'. All user-managed services must declare a path in inline mode.",
+                        super::APP_CONFIG_FILE
+                    ),
+                    format!("Add path = \"./subdir\" to [services.{name}]."),
+                ));
+            }
         }
     }
     Ok(())
@@ -306,6 +353,7 @@ type = "mysql"
                 name: "roundtrip-app".to_string(),
                 access_mode: None,
             },
+            resources: None,
             services: HashMap::new(),
             environments: HashMap::new(),
         };
@@ -463,5 +511,81 @@ access_mode = "private"
 
         let err = load_app_config(dir.path()).unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+    }
+
+    #[test]
+    fn test_load_app_config_inline_services_with_port() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[resources]
+cpu = "1"
+memory = "2Gi"
+
+[services.api]
+type = "api"
+path = "./backend"
+port = 8000
+ingress = "public"
+env_file = ".env"
+cpu = "2"
+max_instances = 5
+
+[services.web]
+type = "web"
+path = "./frontend"
+port = 3000
+"#,
+        )
+        .unwrap();
+
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        assert_eq!(config.services.len(), 2);
+
+        let api = &config.services["api"];
+        assert_eq!(api.port, Some(8000));
+        assert_eq!(api.env_file.as_deref(), Some(".env"));
+        assert_eq!(api.cpu.as_deref(), Some("2"));
+        assert_eq!(api.max_instances, Some(5));
+
+        let web = &config.services["web"];
+        assert_eq!(web.port, Some(3000));
+        assert!(web.cpu.is_none());
+
+        let res = config.resources.unwrap();
+        assert_eq!(res.cpu.as_deref(), Some("1"));
+        assert_eq!(res.memory.as_deref(), Some("2Gi"));
+    }
+
+    #[test]
+    fn test_load_app_config_inline_requires_port_for_all_user_managed() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[services.api]
+type = "api"
+path = "./backend"
+port = 8000
+
+[services.web]
+type = "web"
+path = "./frontend"
+"#,
+        )
+        .unwrap();
+
+        // api has port, web doesn't — error
+        let err = load_app_config(dir.path()).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+        assert!(err.message.contains("web"));
+        assert!(err.message.contains("port"));
     }
 }

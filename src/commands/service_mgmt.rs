@@ -3,8 +3,7 @@ use std::process;
 use crate::errors::ErrorCode;
 use crate::output;
 use crate::project_config::{
-    self, validate_service_name, AppServiceEntry, AppServiceType, ServiceFileAppSection,
-    ServiceFileConfig, ServiceIngress, ServiceSection, ServiceType,
+    self, validate_service_name, AppServiceEntry, AppServiceType, ServiceIngress, ServiceType,
 };
 
 pub fn add(
@@ -153,73 +152,38 @@ pub fn add(
 
     let env_file_val = env_file.map(|s| s.to_string());
 
-    let app_name = app_config.app.name.clone();
+    // Add inline service entry to floo.app.toml
+    let path_str = if path == "." {
+        ".".to_string()
+    } else if path.starts_with("./") {
+        path.to_string()
+    } else {
+        format!("./{path}")
+    };
 
-    // Add to floo.app.toml services map (only for non-root paths)
-    let normalized_path = if path == "." { None } else { Some(path) };
-
-    if let Some(p) = normalized_path {
-        let path_str = if p.starts_with("./") {
-            p.to_string()
-        } else {
-            format!("./{p}")
-        };
-        app_config.services.insert(
-            name.to_string(),
-            AppServiceEntry {
-                service_type: app_svc_type,
-                path: Some(path_str),
-                repo: None,
-                version: None,
-                plan: None,
-                ingress: None,
-                domain: None,
-            },
-        );
-    }
+    app_config.services.insert(
+        name.to_string(),
+        AppServiceEntry {
+            service_type: app_svc_type,
+            path: Some(path_str),
+            repo: None,
+            version: None,
+            plan: None,
+            port: Some(resolved_port),
+            ingress: Some(svc_ingress),
+            env_file: env_file_val.clone(),
+            domain: None,
+            cpu: None,
+            memory: None,
+            max_instances: None,
+        },
+    );
 
     // Write updated app config
     if let Err(e) = project_config::write_app_config(&cwd, &app_config) {
         output::error(&e.message, &e.code, None);
         process::exit(1);
     }
-
-    // Write floo.service.toml in the service's directory
-    let svc_dir = cwd.join(path);
-    if let Err(e) = std::fs::create_dir_all(&svc_dir) {
-        output::error(
-            &format!("Failed to create directory '{}': {e}", path),
-            &ErrorCode::FileError,
-            None,
-        );
-        process::exit(1);
-    }
-
-    let svc_file = ServiceFileConfig {
-        app: ServiceFileAppSection {
-            name: app_name,
-            access_mode: None,
-        },
-        service: ServiceSection {
-            name: name.to_string(),
-            service_type: svc_type,
-            port: resolved_port,
-            ingress: Some(svc_ingress),
-            env_file: env_file_val.clone(),
-            domain: None,
-        },
-    };
-
-    if let Err(e) = project_config::write_service_config(&svc_dir, &svc_file) {
-        output::error(&e.message, &e.code, None);
-        process::exit(1);
-    }
-
-    let svc_toml_path = if path == "." {
-        project_config::SERVICE_CONFIG_FILE.to_string()
-    } else {
-        format!("{path}/{}", project_config::SERVICE_CONFIG_FILE)
-    };
 
     output::success(
         &format!("Added service '{name}'."),
@@ -232,7 +196,6 @@ pub fn add(
             "env_file": env_file_val,
             "files_written": [
                 project_config::APP_CONFIG_FILE,
-                svc_toml_path,
             ],
         })),
     );

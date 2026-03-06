@@ -8,6 +8,19 @@ use crate::errors::{ErrorCode, FlooError};
 use super::app_config::AppAccessMode;
 use super::SCHEMA_URL;
 
+// --- Resource limits ---
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_instances: Option<u32>,
+}
+
 // --- API wire format (sent to the API as JSON) ---
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -21,6 +34,12 @@ pub struct ServiceConfig {
     pub ingress: ServiceIngress,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpu: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_instances: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq)]
@@ -64,6 +83,8 @@ impl fmt::Display for ServiceIngress {
 pub struct ServiceFileConfig {
     pub app: ServiceFileAppSection,
     pub service: ServiceSection,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resources: Option<ResourceConfig>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -107,6 +128,9 @@ impl ServiceSection {
             port: self.port,
             ingress: self.resolved_ingress(),
             domain: self.domain.clone(),
+            cpu: None,
+            memory: None,
+            max_instances: None,
         }
     }
 }
@@ -277,6 +301,7 @@ ingress = "internal"
                 env_file: None,
                 domain: None,
             },
+            resources: None,
         };
 
         write_service_config(dir.path(), &config).unwrap();
@@ -314,6 +339,9 @@ ingress = "internal"
             port: 8000,
             ingress: ServiceIngress::Internal,
             domain: None,
+            cpu: None,
+            memory: None,
+            max_instances: None,
         };
         let json = serde_json::to_value(&config).unwrap();
         assert_eq!(json["name"], "api");
@@ -507,6 +535,9 @@ port = 8000
             port: 8000,
             ingress: ServiceIngress::Public,
             domain: None,
+            cpu: None,
+            memory: None,
+            max_instances: None,
         };
         let json = serde_json::to_value(&config).unwrap();
         assert!(json.get("domain").is_none());
@@ -521,6 +552,9 @@ port = 8000
             port: 3000,
             ingress: ServiceIngress::Public,
             domain: Some("getfloo.com".to_string()),
+            cpu: None,
+            memory: None,
+            max_instances: None,
         };
         let json = serde_json::to_value(&config).unwrap();
         assert_eq!(json["domain"], "getfloo.com");
@@ -542,10 +576,99 @@ port = 8000
                 env_file: None,
                 domain: Some("getfloo.com".to_string()),
             },
+            resources: None,
         };
 
         write_service_config(dir.path(), &config).unwrap();
         let loaded = load_service_config(dir.path()).unwrap().unwrap();
         assert_eq!(loaded.service.domain.as_deref(), Some("getfloo.com"));
+    }
+
+    #[test]
+    fn test_load_service_config_with_resources() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::SERVICE_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[service]
+name = "api"
+type = "api"
+port = 8000
+
+[resources]
+cpu = "2"
+memory = "4Gi"
+max_instances = 5
+"#,
+        )
+        .unwrap();
+
+        let config = load_service_config(dir.path()).unwrap().unwrap();
+        let res = config.resources.unwrap();
+        assert_eq!(res.cpu.as_deref(), Some("2"));
+        assert_eq!(res.memory.as_deref(), Some("4Gi"));
+        assert_eq!(res.max_instances, Some(5));
+    }
+
+    #[test]
+    fn test_load_service_config_without_resources() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::SERVICE_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[service]
+name = "api"
+type = "api"
+port = 8000
+"#,
+        )
+        .unwrap();
+
+        let config = load_service_config(dir.path()).unwrap().unwrap();
+        assert!(config.resources.is_none());
+    }
+
+    #[test]
+    fn test_service_config_json_resources_omitted_when_none() {
+        let config = ServiceConfig {
+            name: "api".to_string(),
+            service_type: ServiceType::Api,
+            path: ".".to_string(),
+            port: 8000,
+            ingress: ServiceIngress::Public,
+            domain: None,
+            cpu: None,
+            memory: None,
+            max_instances: None,
+        };
+        let json = serde_json::to_value(&config).unwrap();
+        assert!(json.get("cpu").is_none());
+        assert!(json.get("memory").is_none());
+        assert!(json.get("max_instances").is_none());
+    }
+
+    #[test]
+    fn test_service_config_json_resources_included_when_set() {
+        let config = ServiceConfig {
+            name: "api".to_string(),
+            service_type: ServiceType::Api,
+            path: ".".to_string(),
+            port: 8000,
+            ingress: ServiceIngress::Public,
+            domain: None,
+            cpu: Some("2".to_string()),
+            memory: Some("4Gi".to_string()),
+            max_instances: Some(5),
+        };
+        let json = serde_json::to_value(&config).unwrap();
+        assert_eq!(json["cpu"], "2");
+        assert_eq!(json["memory"], "4Gi");
+        assert_eq!(json["max_instances"], 5);
     }
 }

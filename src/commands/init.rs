@@ -93,6 +93,7 @@ fn init_non_interactive(
             env_file,
             domain: None,
         },
+        resources: None,
     };
 
     let app_file = AppFileConfig {
@@ -100,6 +101,7 @@ fn init_non_interactive(
             name: app_name.clone(),
             access_mode: None,
         },
+        resources: None,
         services: HashMap::new(),
         environments: HashMap::new(),
     };
@@ -216,66 +218,28 @@ fn init_interactive(
                 ServiceType::Web => AppServiceType::Web,
             };
 
-            // Only add to app.toml services map if path != "."
-            if svc_path != "." {
-                services_map.insert(
-                    svc_name.clone(),
-                    AppServiceEntry {
-                        service_type: app_service_type,
-                        path: Some(format!("./{svc_path}")),
-                        repo: None,
-                        version: None,
-                        plan: None,
-                        ingress: None,
-                        domain: None,
+            // Add inline service entry to app.toml
+            services_map.insert(
+                svc_name.clone(),
+                AppServiceEntry {
+                    service_type: app_service_type,
+                    path: if svc_path == "." {
+                        Some(".".to_string())
+                    } else {
+                        Some(format!("./{svc_path}"))
                     },
-                );
-            }
-
-            // Write floo.service.toml for first service (or root service)
-            if first_service_file.is_none() && svc_path == "." {
-                first_service_file = Some(ServiceFileConfig {
-                    app: ServiceFileAppSection {
-                        name: app_name.clone(),
-                        access_mode: None,
-                    },
-                    service: ServiceSection {
-                        name: svc_name.clone(),
-                        service_type,
-                        port,
-                        ingress: Some(ServiceIngress::Public),
-                        env_file: env_file.clone(),
-                        domain: None,
-                    },
-                });
-            } else {
-                // Write floo.service.toml in subdirectory
-                let svc_dir = project_path.join(&svc_path);
-                if svc_dir.is_dir() {
-                    let svc_file = ServiceFileConfig {
-                        app: ServiceFileAppSection {
-                            name: app_name.clone(),
-                            access_mode: None,
-                        },
-                        service: ServiceSection {
-                            name: svc_name.clone(),
-                            service_type,
-                            port,
-                            ingress: Some(ServiceIngress::Public),
-                            env_file: env_file.clone(),
-                            domain: None,
-                        },
-                    };
-                    if let Err(e) = project_config::write_service_config(&svc_dir, &svc_file) {
-                        output::error(&e.message, &e.code, None);
-                        process::exit(1);
-                    }
-                    output::info(
-                        &format!("Wrote {svc_path}/{}", project_config::SERVICE_CONFIG_FILE),
-                        None,
-                    );
-                }
-            }
+                    repo: None,
+                    version: None,
+                    plan: None,
+                    port: Some(port),
+                    ingress: Some(ServiceIngress::Public),
+                    env_file: env_file.clone(),
+                    domain: None,
+                    cpu: None,
+                    memory: None,
+                    max_instances: None,
+                },
+            );
 
             if !output::confirm("Add another service?") {
                 break;
@@ -302,6 +266,7 @@ fn init_interactive(
                 env_file,
                 domain: None,
             },
+            resources: None,
         });
     }
 
@@ -311,6 +276,7 @@ fn init_interactive(
             name: app_name.clone(),
             access_mode: None,
         },
+        resources: None,
         services: services_map,
         environments: HashMap::new(),
     };
