@@ -295,7 +295,11 @@ fn inline_service_entries(resolved: &ResolvedApp) -> Vec<(String, String, &AppSe
             entry.port?; // must have port for inline mode
             let raw = entry.path.as_deref().unwrap_or(".");
             let normalized = normalize_path(raw);
-            let path = if normalized.is_empty() { ".".to_string() } else { normalized };
+            let path = if normalized.is_empty() {
+                ".".to_string()
+            } else {
+                normalized
+            };
             Some((name.clone(), path, entry))
         })
         .collect()
@@ -1463,9 +1467,9 @@ domain = "svc.example.com"
 
         let services = discover_services(&resolved).unwrap();
         let api = &services[0];
-        assert_eq!(api.cpu.as_deref(), Some("4"));       // per-service wins
-        assert_eq!(api.memory.as_deref(), Some("2Gi"));   // global fallback
-        assert_eq!(api.max_instances, Some(3));            // global fallback
+        assert_eq!(api.cpu.as_deref(), Some("4")); // per-service wins
+        assert_eq!(api.memory.as_deref(), Some("2Gi")); // global fallback
+        assert_eq!(api.max_instances, Some(3)); // global fallback
     }
 
     #[test]

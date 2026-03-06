@@ -106,7 +106,7 @@ Packs source into `.tar.gz`, respects `.flooignore`. 500MB size limit.
 - All HTTP calls via `FlooClient`, never direct `reqwest`
 - No hardcoded API URLs — use config or `FLOO_API_URL` env var
 - Unit tests inline (`#[cfg(test)] mod tests`), integration tests in `tests/`
-- Reset `output::set_json_mode(false)` at the start of every test (global state leaks)
+- Reset `output::set_json_mode(false)` and `output::set_dry_run_mode(false)` at the start of every test (global state leaks)
 - Issue tracker: CLI issues live in `getfloo/floo-cli` (this repo). API/infra issues live in `getfloo/floo`.
 - PR closure language is mandatory for issue-driven work:
   - CLI issues: `Closes #N` (same-repo reference)
@@ -114,9 +114,10 @@ Packs source into `.tar.gz`, respects `.flooignore`. 500MB size limit.
 
 ## Agent Skill Maintenance
 
-The file `skills/floo.md` is the agent playbook embedded in the binary via `include_str!`.
-When adding new commands, changing flags, or modifying error codes, update `skills/floo.md`
-to reflect the changes. The skill is the primary way agents learn to use floo.
+The skill file (`skills/floo.md`) is a tiny intro (~30 lines). Platform knowledge lives in
+`floo docs` (`src/commands/docs.rs`). Command metadata lives in `floo commands`
+(`src/commands/command_tree.rs`). When adding new commands, update `command_tree.rs` and add
+`after_help` examples in `cli.rs`. Only update `skills/floo.md` if the getting-started flow changes.
 
 ## Release Flow
 

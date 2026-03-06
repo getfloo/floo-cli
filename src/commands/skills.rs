@@ -180,9 +180,9 @@ mod tests {
 
     #[test]
     fn test_skill_content_has_key_sections() {
-        assert!(SKILL_CONTENT.contains("## Authentication"));
-        assert!(SKILL_CONTENT.contains("## Command Reference"));
-        assert!(SKILL_CONTENT.contains("## Error Codes"));
+        assert!(SKILL_CONTENT.contains("## Getting Started"));
+        assert!(SKILL_CONTENT.contains("## Self-Discovery"));
+        assert!(SKILL_CONTENT.contains("floo docs"));
         assert!(SKILL_CONTENT.contains("--json"));
     }
 }

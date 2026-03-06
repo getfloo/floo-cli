@@ -36,6 +36,15 @@ fn check_services_flag(client: &FlooClient, app_id: &str, services: Option<&str>
 }
 
 pub fn add(hostname: &str, app: Option<&str>, services: Option<&str>) {
+    if output::is_dry_run_mode() {
+        output::dry_run_success(serde_json::json!({
+            "action": "domain_add",
+            "hostname": hostname,
+            "service": services,
+        }));
+        return;
+    }
+
     super::require_auth();
     let client = super::init_client(None);
 
@@ -120,6 +129,14 @@ pub fn list(app: Option<&str>, services: Option<&str>) {
 }
 
 pub fn remove(hostname: &str, app: Option<&str>, services: Option<&str>) {
+    if output::is_dry_run_mode() {
+        output::dry_run_success(serde_json::json!({
+            "action": "domain_remove",
+            "hostname": hostname,
+        }));
+        return;
+    }
+
     super::require_auth();
     let client = super::init_client(None);
 

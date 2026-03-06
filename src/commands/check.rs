@@ -164,7 +164,11 @@ pub fn check(path: PathBuf) {
     } else {
         // Architecture display
         eprintln!();
-        eprintln!("  App: {app_name} ({} service{})", services.len(), if services.len() == 1 { "" } else { "s" });
+        eprintln!(
+            "  App: {app_name} ({} service{})",
+            services.len(),
+            if services.len() == 1 { "" } else { "s" }
+        );
         eprintln!();
 
         for svc in &services {
@@ -195,7 +199,8 @@ pub fn check(path: PathBuf) {
         // Show global [resources] if present
         if let Some(ref app_cfg) = resolved.app_config {
             if let Some(ref res) = app_cfg.resources {
-                let has_any = res.cpu.is_some() || res.memory.is_some() || res.max_instances.is_some();
+                let has_any =
+                    res.cpu.is_some() || res.memory.is_some() || res.max_instances.is_some();
                 if has_any {
                     eprintln!("  [resources] (global defaults)");
                     let mut parts = Vec::new();
