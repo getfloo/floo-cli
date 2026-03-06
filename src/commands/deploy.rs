@@ -90,6 +90,19 @@ pub fn deploy(
         };
         let app_id = app_data.id.clone();
 
+        if output::is_dry_run_mode() {
+            let service_names: Vec<&str> = services_filter.iter().map(|s| s.as_str()).collect();
+            output::success(
+                "Dry run — no changes made.",
+                Some(serde_json::json!({
+                    "action": "restart",
+                    "app": app_data.name,
+                    "services": service_names,
+                })),
+            );
+            return;
+        }
+
         let svcs = if services_filter.is_empty() {
             None
         } else {
@@ -318,6 +331,28 @@ pub fn deploy(
                 );
             }
         }
+    }
+
+    // Dry-run: preview what would be deployed without uploading
+    if output::is_dry_run_mode() {
+        let service_names: Vec<&str> = services
+            .as_ref()
+            .map(|svcs| svcs.iter().map(|s| s.name.as_str()).collect())
+            .unwrap_or_default();
+
+        output::success(
+            "Dry run — no changes made.",
+            Some(serde_json::json!({
+                "action": "deploy",
+                "app": app_name,
+                "services": service_names,
+                "runtime": detection.runtime,
+                "framework": detection.framework,
+                "confidence": detection.confidence,
+                "path": project_path.display().to_string(),
+            })),
+        );
+        return;
     }
 
     // Create archive

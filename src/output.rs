@@ -11,6 +11,7 @@ use serde_json::Value;
 use crate::errors::ErrorCode;
 
 static JSON_MODE: AtomicBool = AtomicBool::new(false);
+static DRY_RUN: AtomicBool = AtomicBool::new(false);
 
 pub fn set_json_mode(enabled: bool) {
     JSON_MODE.store(enabled, Ordering::SeqCst);
@@ -18,6 +19,14 @@ pub fn set_json_mode(enabled: bool) {
 
 pub fn is_json_mode() -> bool {
     JSON_MODE.load(Ordering::SeqCst)
+}
+
+pub fn set_dry_run_mode(enabled: bool) {
+    DRY_RUN.store(enabled, Ordering::SeqCst);
+}
+
+pub fn is_dry_run_mode() -> bool {
+    DRY_RUN.load(Ordering::SeqCst)
 }
 
 /// Returns true when stdin is a TTY and JSON mode is off — i.e. a human is
@@ -221,5 +230,14 @@ mod tests {
         set_json_mode(true);
         assert!(!is_interactive());
         set_json_mode(false);
+    }
+
+    #[test]
+    fn test_dry_run_mode_toggle() {
+        set_dry_run_mode(false);
+        assert!(!is_dry_run_mode());
+        set_dry_run_mode(true);
+        assert!(is_dry_run_mode());
+        set_dry_run_mode(false);
     }
 }

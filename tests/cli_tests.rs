@@ -941,7 +941,9 @@ path = "./api"
         .args(["--json", "check", project.path().to_str().unwrap()])
         .assert()
         .failure()
-        .stdout(predicate::str::contains(r#""code":"SERVICE_CONFIG_MISSING""#));
+        .stdout(predicate::str::contains(
+            r#""code":"SERVICE_CONFIG_MISSING""#,
+        ));
 }
 
 #[test]

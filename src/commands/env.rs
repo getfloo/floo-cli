@@ -201,6 +201,18 @@ pub fn set(key_value: &str, app_flag: Option<&str>, service_names: &[String], re
     let (key, value) = key_value.split_once('=').unwrap();
     let key = key.to_uppercase();
 
+    if output::is_dry_run_mode() {
+        output::success(
+            "Dry run — no changes made.",
+            Some(serde_json::json!({
+                "action": "env_set",
+                "key": key,
+                "will_restart": restart,
+            })),
+        );
+        return;
+    }
+
     let client = super::init_client(None);
     let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
     let targets = resolve_service_ids(&client, &app_id, &app_name, service_names);
@@ -318,6 +330,18 @@ pub fn list(app_flag: Option<&str>, service_names: &[String]) {
 
 pub fn remove(key: &str, app_flag: Option<&str>, service_names: &[String]) {
     let key = key.to_uppercase();
+
+    if output::is_dry_run_mode() {
+        output::success(
+            "Dry run — no changes made.",
+            Some(serde_json::json!({
+                "action": "env_remove",
+                "key": key,
+            })),
+        );
+        return;
+    }
+
     super::require_auth();
 
     let client = super::init_client(None);
@@ -414,6 +438,20 @@ pub fn import_vars(file_flag: Option<&Path>, app_flag: Option<&str>, service_nam
 
     let vars = parse_env_file(&env_file_path);
     let count = vars.len();
+
+    if output::is_dry_run_mode() {
+        let keys: Vec<&str> = vars.iter().map(|(k, _)| k.as_str()).collect();
+        output::success(
+            "Dry run — no changes made.",
+            Some(serde_json::json!({
+                "action": "env_import",
+                "file": env_file_path.display().to_string(),
+                "keys": keys,
+                "count": count,
+            })),
+        );
+        return;
+    }
 
     // Use resolved app name if available, otherwise fall back to resolving from config.
     let client = super::init_client(None);

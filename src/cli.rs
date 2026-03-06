@@ -17,6 +17,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
 
+    /// Preview what a command would do without executing it.
+    #[arg(long, global = true)]
+    pub dry_run: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -34,6 +38,10 @@ pub enum Commands {
     },
 
     /// Initialize a new Floo project (creates config files).
+    #[command(after_help = "\
+Examples:
+  floo init my-app                         Scaffold config in current directory
+  floo init my-app --path ./project        Scaffold config in ./project")]
     Init {
         /// App name (required in non-interactive/JSON mode).
         name: Option<String>,
@@ -51,6 +59,14 @@ pub enum Commands {
     },
 
     /// Deploy a project to Floo, or manage deploy history.
+    #[command(after_help = "\
+Examples:
+  floo deploy                              Deploy current directory
+  floo deploy ./app --json                 Deploy ./app with JSON output
+  floo deploy --app my-app --restart       Restart without re-uploading source
+  floo deploy --dry-run --json             Preview what would be deployed
+  floo deploy list --app my-app            Show deploy history
+  floo deploy rollback my-app abc123       Rollback to a previous deploy")]
     Deploy(DeployArgs),
 
     /// Authenticate and manage your account.
@@ -66,11 +82,26 @@ pub enum Commands {
     Billing(BillingCommands),
 
     /// Manage your apps.
-    #[command(subcommand)]
+    #[command(
+        subcommand,
+        after_help = "\
+Examples:
+  floo apps list --json                    List all apps
+  floo apps status my-app --json           App details and service info
+  floo apps delete my-app --force          Delete without confirmation"
+    )]
     Apps(AppsCommands),
 
     /// Manage environment variables.
-    #[command(subcommand)]
+    #[command(
+        subcommand,
+        after_help = "\
+Examples:
+  floo env set API_KEY=secret --app my-app           Set an env var
+  floo env set API_KEY=secret --app my-app --restart  Set and restart
+  floo env list --app my-app --json                   List all env vars
+  floo env import .env --app my-app                   Import from .env file"
+    )]
     Env(EnvCommands),
 
     /// Manage services for an app.
@@ -86,6 +117,12 @@ pub enum Commands {
     Releases(ReleasesCommands),
 
     /// View runtime logs for an app.
+    #[command(after_help = "\
+Examples:
+  floo logs --app my-app                   Last 100 log lines
+  floo logs --app my-app --since 1h --error  Errors in the last hour
+  floo logs --app my-app --live            Stream logs in real-time
+  floo logs --app my-app --json            Structured JSON output")]
     Logs {
         /// App name or ID (overrides config file).
         #[arg(short, long)]
@@ -127,6 +164,16 @@ pub enum Commands {
     /// Install agent skills for AI coding assistants.
     #[command(subcommand)]
     Skills(SkillsCommands),
+
+    /// Built-in platform documentation.
+    Docs {
+        /// Topic: services, config, deploy. Omit for overview.
+        topic: Option<String>,
+    },
+
+    /// List all commands (structured for agents in --json mode).
+    #[command(name = "commands")]
+    Discover,
 
     /// Print installed CLI version.
     Version,
@@ -602,7 +649,10 @@ fn should_check_version(cli: &Cli) -> bool {
     if std::env::var("FLOO_NO_UPDATE_CHECK").is_ok() {
         return false;
     }
-    !matches!(cli.command, Commands::Update { .. } | Commands::Version)
+    !matches!(
+        cli.command,
+        Commands::Update { .. } | Commands::Version | Commands::Docs { .. } | Commands::Discover
+    )
 }
 
 pub fn run() {
@@ -610,6 +660,9 @@ pub fn run() {
 
     if cli.json {
         output::set_json_mode(true);
+    }
+    if cli.dry_run {
+        output::set_dry_run_mode(true);
     }
 
     let do_version_check = should_check_version(&cli);
@@ -790,6 +843,10 @@ pub fn run() {
         Commands::Skills(sub) => match sub {
             SkillsCommands::Install { path, print } => commands::skills::install(path, print),
         },
+
+        Commands::Docs { topic } => commands::docs::docs(topic.as_deref()),
+
+        Commands::Discover => commands::command_tree::commands(),
 
         Commands::Logs {
             app,

@@ -133,6 +133,18 @@ fn resolve_org_display(client: &crate::api_client::FlooClient, org_id: Option<&s
 }
 
 pub fn delete(app_name: &str, force: bool) {
+    if output::is_dry_run_mode() {
+        output::success(
+            "Dry run — no changes made.",
+            Some(serde_json::json!({
+                "action": "delete",
+                "app": app_name,
+                "warning": "This cannot be undone",
+            })),
+        );
+        return;
+    }
+
     super::require_auth();
     let client = super::init_client(None);
     let app = super::resolve_app_or_exit(&client, app_name);

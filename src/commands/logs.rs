@@ -74,7 +74,14 @@ fn fetch_logs(
 ) -> Vec<LogEntry> {
     if filter.services.len() <= 1 {
         let service = filter.services.first().map(|s| s.as_str());
-        let result = match client.get_logs(app_id, tail, filter.since, filter.severity, service, filter.search) {
+        let result = match client.get_logs(
+            app_id,
+            tail,
+            filter.since,
+            filter.severity,
+            service,
+            filter.search,
+        ) {
             Ok(r) => r,
             Err(e) => {
                 output::error(&e.message, &ErrorCode::from_api(&e.code), None);
@@ -85,18 +92,24 @@ fn fetch_logs(
     } else {
         let mut all_logs = Vec::new();
         for svc in filter.services {
-            let result =
-                match client.get_logs(app_id, tail, filter.since, filter.severity, Some(svc), filter.search) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        output::error(
-                            &format!("Failed to fetch logs for service '{}': {}", svc, e.message),
-                            &ErrorCode::from_api(&e.code),
-                            None,
-                        );
-                        process::exit(1);
-                    }
-                };
+            let result = match client.get_logs(
+                app_id,
+                tail,
+                filter.since,
+                filter.severity,
+                Some(svc),
+                filter.search,
+            ) {
+                Ok(r) => r,
+                Err(e) => {
+                    output::error(
+                        &format!("Failed to fetch logs for service '{}': {}", svc, e.message),
+                        &ErrorCode::from_api(&e.code),
+                        None,
+                    );
+                    process::exit(1);
+                }
+            };
             all_logs.extend(result.logs);
         }
         all_logs.sort_by(|a, b| {
@@ -116,12 +129,26 @@ fn try_fetch_logs(
 ) -> Result<Vec<LogEntry>, crate::errors::FlooApiError> {
     if filter.services.len() <= 1 {
         let service = filter.services.first().map(|s| s.as_str());
-        let result = client.get_logs(app_id, tail, filter.since, filter.severity, service, filter.search)?;
+        let result = client.get_logs(
+            app_id,
+            tail,
+            filter.since,
+            filter.severity,
+            service,
+            filter.search,
+        )?;
         Ok(result.logs)
     } else {
         let mut all_logs = Vec::new();
         for svc in filter.services {
-            let result = client.get_logs(app_id, tail, filter.since, filter.severity, Some(svc), filter.search)?;
+            let result = client.get_logs(
+                app_id,
+                tail,
+                filter.since,
+                filter.severity,
+                Some(svc),
+                filter.search,
+            )?;
             all_logs.extend(result.logs);
         }
         all_logs.sort_by(|a, b| {
