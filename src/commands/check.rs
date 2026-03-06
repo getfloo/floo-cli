@@ -18,140 +18,136 @@ pub fn check(path: PathBuf) {
         }
     };
 
-    let mut errors: Vec<serde_json::Value> = Vec::new();
-    let mut warnings: Vec<serde_json::Value> = Vec::new();
-    let mut services_info: Vec<serde_json::Value> = Vec::new();
-
-    // 1. Check floo.app.toml exists and parses
-    let app_config = match project_config::load_app_config(&project_path) {
-        Ok(Some(cfg)) => cfg,
-        Ok(None) => {
-            output::error(
-                &format!("{} not found.", project_config::APP_CONFIG_FILE),
-                &ErrorCode::ConfigInvalid,
-                Some("Run `floo init` to create config files."),
-            );
-            process::exit(1);
-        }
+    // Resolve config context
+    let resolved = match project_config::resolve_app_context(&project_path, None) {
+        Ok(r) => r,
         Err(e) => {
             output::error(&e.message, &e.code, e.suggestion.as_deref());
             process::exit(1);
         }
     };
 
-    let app_name = &app_config.app.name;
+    let app_name = &resolved.app_name;
 
-    // 2. Check root floo.service.toml if present
-    let root_service = match project_config::load_service_config(&project_path) {
-        Ok(svc) => svc,
+    let mut errors: Vec<serde_json::Value> = Vec::new();
+    let mut warnings: Vec<serde_json::Value> = Vec::new();
+
+    // Discover services using the same logic as deploy
+    let services = match project_config::discover_services(&resolved) {
+        Ok(svcs) => svcs,
         Err(e) => {
-            errors.push(serde_json::json!({
-                "path": ".",
-                "message": e.message,
-            }));
-            None
+            output::error(&e.message, &e.code, e.suggestion.as_deref());
+            process::exit(1);
         }
     };
 
-    // Track seen names for duplicate detection
+    // Validate each discovered service
     let mut seen_names: Vec<String> = Vec::new();
+    let mut services_info: Vec<serde_json::Value> = Vec::new();
 
-    if let Some(ref svc) = root_service {
-        // Validate app name match
-        if svc.app.name != *app_name {
+    for svc in &services {
+        // Validate service name
+        if let Err(msg) = validate_service_name(&svc.name) {
             errors.push(serde_json::json!({
-                "path": ".",
-                "message": format!(
-                    "Root {} declares app name '{}', but {} declares '{}'.",
-                    project_config::SERVICE_CONFIG_FILE,
-                    svc.app.name,
-                    project_config::APP_CONFIG_FILE,
-                    app_name,
-                ),
+                "path": svc.path,
+                "message": msg,
             }));
         }
 
-        validate_service(
-            &svc.service,
-            ".",
-            &project_path,
-            &mut errors,
-            &mut warnings,
-            &mut services_info,
-            &mut seen_names,
-        );
-    }
-
-    // 3. Check each service declared in app.toml with a path
-    for (svc_name, entry) in &app_config.services {
-        let Some(ref path_str) = entry.path else {
-            continue;
-        };
-
-        let normalized = path_str.strip_prefix("./").unwrap_or(path_str);
-        let normalized = normalized.strip_suffix('/').unwrap_or(normalized);
-
-        if normalized.is_empty() || normalized == "." {
-            continue; // root service, already checked
-        }
-
-        let svc_dir = project_path.join(normalized);
-
-        // Check directory exists
-        if !svc_dir.is_dir() {
+        // Check for duplicate names
+        if seen_names.contains(&svc.name) {
             errors.push(serde_json::json!({
-                "path": normalized,
-                "message": format!("Service '{svc_name}' path '{normalized}/' does not exist."),
+                "path": svc.path,
+                "message": format!("Duplicate service name '{}'.", svc.name),
             }));
-            continue;
+        } else {
+            seen_names.push(svc.name.clone());
         }
 
-        // Check floo.service.toml exists
-        let svc_config = match project_config::load_service_config(&svc_dir) {
-            Ok(Some(cfg)) => cfg,
-            Ok(None) => {
-                errors.push(serde_json::json!({
-                    "path": normalized,
-                    "message": format!(
-                        "No {} found at '{normalized}/' (declared as service '{svc_name}' in {}).",
-                        project_config::SERVICE_CONFIG_FILE,
-                        project_config::APP_CONFIG_FILE,
-                    ),
-                }));
-                continue;
+        // Validate port
+        if svc.port == 0 {
+            errors.push(serde_json::json!({
+                "path": svc.path,
+                "message": format!("Service '{}' has invalid port 0. Ports must be 1-65535.", svc.name),
+            }));
+        }
+
+        let svc_dir = project_path.join(&svc.path);
+
+        // Check env_file exists (for inline services, look at app config entry)
+        if let Some(ref app_cfg) = resolved.app_config {
+            if let Some(entry) = app_cfg.services.get(&svc.name) {
+                if let Some(ref env_file) = entry.env_file {
+                    let env_path = svc_dir.join(env_file);
+                    if !env_path.exists() {
+                        warnings.push(serde_json::json!({
+                            "path": svc.path,
+                            "message": format!("Service '{}' env_file '{env_file}' not found on disk.", svc.name),
+                        }));
+                    }
+                }
             }
-            Err(e) => {
-                errors.push(serde_json::json!({
-                    "path": normalized,
-                    "message": e.message,
-                }));
-                continue;
-            }
-        };
-
-        // Check app name match
-        if svc_config.app.name != *app_name {
-            errors.push(serde_json::json!({
-                "path": normalized,
-                "message": format!(
-                    "Service '{svc_name}' at '{normalized}/{}' declares app name '{}', but {} declares '{}'.",
-                    project_config::SERVICE_CONFIG_FILE,
-                    svc_config.app.name,
-                    project_config::APP_CONFIG_FILE,
-                    app_name,
-                ),
-            }));
         }
 
-        validate_service(
-            &svc_config.service,
-            normalized,
-            &project_path,
-            &mut errors,
-            &mut warnings,
-            &mut services_info,
-            &mut seen_names,
-        );
+        // Check Dockerfile EXPOSE matches port (best-effort)
+        let dockerfile = svc_dir.join("Dockerfile");
+        if dockerfile.exists() {
+            match std::fs::read_to_string(&dockerfile) {
+                Ok(content) => {
+                    for line in content.lines() {
+                        let trimmed = line.trim();
+                        if let Some(expose_val) = trimmed.strip_prefix("EXPOSE ") {
+                            let expose_val = expose_val.trim();
+                            let port_str = expose_val.split('/').next().unwrap_or(expose_val);
+                            if let Ok(exposed_port) = port_str.parse::<u16>() {
+                                if exposed_port != svc.port {
+                                    warnings.push(serde_json::json!({
+                                        "path": svc.path,
+                                        "message": format!(
+                                            "Service '{}' Dockerfile EXPOSE {exposed_port} does not match configured port {}.",
+                                            svc.name, svc.port
+                                        ),
+                                    }));
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    warnings.push(serde_json::json!({
+                        "path": svc.path,
+                        "message": format!(
+                            "Service '{}' Dockerfile exists but could not be read: {e}. Port check skipped.",
+                            svc.name
+                        ),
+                    }));
+                }
+            }
+        }
+
+        let mut svc_json = serde_json::json!({
+            "name": svc.name,
+            "path": svc.path,
+            "port": svc.port,
+            "type": svc.service_type.to_string(),
+            "ingress": svc.ingress.to_string(),
+        });
+
+        // Include resource fields when set
+        if let Some(ref cpu) = svc.cpu {
+            svc_json["cpu"] = serde_json::json!(cpu);
+        }
+        if let Some(ref memory) = svc.memory {
+            svc_json["memory"] = serde_json::json!(memory);
+        }
+        if let Some(max) = svc.max_instances {
+            svc_json["max_instances"] = serde_json::json!(max);
+        }
+        if let Some(ref domain) = svc.domain {
+            svc_json["domain"] = serde_json::json!(domain);
+        }
+
+        services_info.push(svc_json);
     }
 
     // Output results
@@ -166,6 +162,58 @@ pub fn check(path: PathBuf) {
             "warnings": warnings,
         }));
     } else {
+        // Architecture display
+        eprintln!();
+        eprintln!("  App: {app_name} ({} service{})", services.len(), if services.len() == 1 { "" } else { "s" });
+        eprintln!();
+
+        for svc in &services {
+            let path_label = if svc.path == "." {
+                String::new()
+            } else {
+                format!(" (./{path})", path = svc.path)
+            };
+            eprintln!("  {}{path_label}", svc.name);
+
+            let mut details = format!(
+                "    type: {}, port: {}, ingress: {}",
+                svc.service_type, svc.port, svc.ingress
+            );
+            if let Some(ref cpu) = svc.cpu {
+                details.push_str(&format!(", cpu: {cpu}"));
+            }
+            if let Some(ref memory) = svc.memory {
+                details.push_str(&format!(", memory: {memory}"));
+            }
+            if let Some(max) = svc.max_instances {
+                details.push_str(&format!(", max_instances: {max}"));
+            }
+            eprintln!("{details}");
+            eprintln!();
+        }
+
+        // Show global [resources] if present
+        if let Some(ref app_cfg) = resolved.app_config {
+            if let Some(ref res) = app_cfg.resources {
+                let has_any = res.cpu.is_some() || res.memory.is_some() || res.max_instances.is_some();
+                if has_any {
+                    eprintln!("  [resources] (global defaults)");
+                    let mut parts = Vec::new();
+                    if let Some(ref cpu) = res.cpu {
+                        parts.push(format!("cpu: {cpu}"));
+                    }
+                    if let Some(ref memory) = res.memory {
+                        parts.push(format!("memory: {memory}"));
+                    }
+                    if let Some(max) = res.max_instances {
+                        parts.push(format!("max_instances: {max}"));
+                    }
+                    eprintln!("    {}", parts.join(", "));
+                    eprintln!();
+                }
+            }
+        }
+
         if !warnings.is_empty() {
             for w in &warnings {
                 let msg = w.get("message").and_then(|v| v.as_str()).unwrap_or("");
@@ -197,99 +245,4 @@ pub fn check(path: PathBuf) {
     if !valid {
         process::exit(1);
     }
-}
-
-fn validate_service(
-    service: &project_config::ServiceSection,
-    path: &str,
-    project_path: &std::path::Path,
-    errors: &mut Vec<serde_json::Value>,
-    warnings: &mut Vec<serde_json::Value>,
-    services_info: &mut Vec<serde_json::Value>,
-    seen_names: &mut Vec<String>,
-) {
-    let name = &service.name;
-
-    // Validate service name
-    if let Err(msg) = validate_service_name(name) {
-        errors.push(serde_json::json!({
-            "path": path,
-            "message": msg,
-        }));
-    }
-
-    // Check for duplicate names
-    if seen_names.contains(name) {
-        errors.push(serde_json::json!({
-            "path": path,
-            "message": format!("Duplicate service name '{name}'."),
-        }));
-    } else {
-        seen_names.push(name.clone());
-    }
-
-    // Validate port
-    if service.port == 0 {
-        errors.push(serde_json::json!({
-            "path": path,
-            "message": format!("Service '{name}' has invalid port 0. Ports must be 1-65535."),
-        }));
-    }
-
-    // Check env_file exists
-    if let Some(ref env_file) = service.env_file {
-        let svc_dir = project_path.join(path);
-        let env_path = svc_dir.join(env_file);
-        if !env_path.exists() {
-            warnings.push(serde_json::json!({
-                "path": path,
-                "message": format!("Service '{name}' env_file '{env_file}' not found on disk."),
-            }));
-        }
-    }
-
-    // Check Dockerfile EXPOSE matches port (best-effort)
-    let svc_dir = project_path.join(path);
-    let dockerfile = svc_dir.join("Dockerfile");
-    if dockerfile.exists() {
-        match std::fs::read_to_string(&dockerfile) {
-            Ok(content) => {
-                for line in content.lines() {
-                    let trimmed = line.trim();
-                    if let Some(expose_val) = trimmed.strip_prefix("EXPOSE ") {
-                        let expose_val = expose_val.trim();
-                        // Handle EXPOSE port/protocol format
-                        let port_str = expose_val.split('/').next().unwrap_or(expose_val);
-                        if let Ok(exposed_port) = port_str.parse::<u16>() {
-                            if exposed_port != service.port {
-                                warnings.push(serde_json::json!({
-                                    "path": path,
-                                    "message": format!(
-                                        "Service '{name}' Dockerfile EXPOSE {exposed_port} does not match configured port {}.",
-                                        service.port
-                                    ),
-                                }));
-                            }
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                warnings.push(serde_json::json!({
-                    "path": path,
-                    "message": format!(
-                        "Service '{name}' Dockerfile exists but could not be read: {e}. Port check skipped."
-                    ),
-                }));
-            }
-        }
-    }
-
-    services_info.push(serde_json::json!({
-        "name": name,
-        "path": path,
-        "port": service.port,
-        "type": service.service_type.to_string(),
-        "ingress": service.resolved_ingress().to_string(),
-    }));
 }

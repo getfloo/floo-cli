@@ -578,6 +578,9 @@ fn prompt_first_deploy(detection: &crate::detection::DetectionResult) -> FirstDe
             port,
             ingress: ServiceIngress::Public,
             domain: None,
+            cpu: None,
+            memory: None,
+            max_instances: None,
         },
     }
 }
@@ -598,6 +601,7 @@ fn write_first_deploy_configs(project_path: &Path, app_name: &str, service: &Ser
             env_file,
             domain: service.domain.clone(),
         },
+        resources: None,
     };
 
     let app_file = AppFileConfig {
@@ -605,6 +609,7 @@ fn write_first_deploy_configs(project_path: &Path, app_name: &str, service: &Ser
             name: app_name.to_string(),
             access_mode: None,
         },
+        resources: None,
         services: HashMap::new(),
         environments: HashMap::new(),
     };

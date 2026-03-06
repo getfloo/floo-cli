@@ -831,8 +831,11 @@ fn test_service_add_creates_files() {
         .success()
         .stdout(predicate::str::contains(r#""name":"api"#));
 
-    // Verify service toml was created
-    assert!(project.path().join("api/floo.service.toml").exists());
+    // Verify inline service was added to app.toml (no floo.service.toml in subdirs)
+    assert!(!project.path().join("api/floo.service.toml").exists());
+    let app_toml = std::fs::read_to_string(project.path().join("floo.app.toml")).unwrap();
+    assert!(app_toml.contains("[services.api]"));
+    assert!(app_toml.contains("port = 8000"));
 }
 
 #[test]
@@ -938,7 +941,7 @@ path = "./api"
         .args(["--json", "check", project.path().to_str().unwrap()])
         .assert()
         .failure()
-        .stdout(predicate::str::contains(r#""valid":false"#));
+        .stdout(predicate::str::contains(r#""code":"SERVICE_CONFIG_MISSING""#));
 }
 
 #[test]
