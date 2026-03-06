@@ -3,6 +3,8 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process;
 
+use colored::Colorize;
+
 use crate::config::{load_config, save_config};
 use crate::constants::VERSION;
 use crate::errors::ErrorCode;
@@ -108,13 +110,27 @@ pub fn install(path: Option<PathBuf>, print: bool) {
         process::exit(1);
     }
 
-    output::success(
-        &format!("Installed agent skill to {}", abs_path.display()),
-        Some(serde_json::json!({
-            "path": abs_str,
-            "version": VERSION,
-        })),
-    );
+    let (read_only, read_write) = recommended_permissions();
+
+    if output::is_json_mode() {
+        output::success(
+            &format!("Installed agent skill to {}", abs_path.display()),
+            Some(serde_json::json!({
+                "path": abs_str,
+                "version": VERSION,
+                "recommended_permissions": {
+                    "read_only": read_only,
+                    "read_write": read_write,
+                },
+            })),
+        );
+    } else {
+        output::success(
+            &format!("Installed agent skill to {}", abs_path.display()),
+            None,
+        );
+        print_permission_recommendations(&read_only, &read_write);
+    }
 }
 
 /// Refresh all tracked skill files. Returns the list of paths that were refreshed.
@@ -168,6 +184,89 @@ pub fn refresh_skill_files() -> Vec<String> {
     refreshed
 }
 
+fn recommended_permissions() -> (Vec<&'static str>, Vec<&'static str>) {
+    let read_only = vec![
+        "Bash(floo apps list:*)",
+        "Bash(floo apps status:*)",
+        "Bash(floo apps password:*)",
+        "Bash(floo apps github status:*)",
+        "Bash(floo deploy list:*)",
+        "Bash(floo deploy logs:*)",
+        "Bash(floo deploy watch:*)",
+        "Bash(floo env list:*)",
+        "Bash(floo env get:*)",
+        "Bash(floo services list:*)",
+        "Bash(floo services info:*)",
+        "Bash(floo domains list:*)",
+        "Bash(floo logs:*)",
+        "Bash(floo analytics:*)",
+        "Bash(floo releases list:*)",
+        "Bash(floo releases show:*)",
+        "Bash(floo check:*)",
+        "Bash(floo docs:*)",
+        "Bash(floo commands:*)",
+        "Bash(floo version:*)",
+        "Bash(floo auth whoami:*)",
+        "Bash(floo orgs members list:*)",
+        "Bash(floo billing contact:*)",
+    ];
+
+    let read_write = vec![
+        "Bash(floo deploy:*)",
+        "Bash(floo deploy rollback:*)",
+        "Bash(floo init:*)",
+        "Bash(floo env set:*)",
+        "Bash(floo env remove:*)",
+        "Bash(floo env import:*)",
+        "Bash(floo services add:*)",
+        "Bash(floo services rm:*)",
+        "Bash(floo domains add:*)",
+        "Bash(floo domains remove:*)",
+        "Bash(floo apps delete:*)",
+        "Bash(floo apps github connect:*)",
+        "Bash(floo apps github disconnect:*)",
+        "Bash(floo releases promote:*)",
+        "Bash(floo billing spend-cap set:*)",
+        "Bash(floo billing upgrade:*)",
+        "Bash(floo orgs members set-role:*)",
+        "Bash(floo update:*)",
+    ];
+
+    (read_only, read_write)
+}
+
+fn print_permission_recommendations(read_only: &[&str], read_write: &[&str]) {
+    eprintln!();
+    eprintln!(
+        "{}",
+        "  Recommended permissions for coding agents:".bold()
+    );
+    eprintln!();
+    eprintln!(
+        "  {} {}",
+        "Read-only".green().bold(),
+        "(recommended to enable by default):".dimmed()
+    );
+    for perm in read_only {
+        eprintln!("    {perm}");
+    }
+    eprintln!();
+    eprintln!(
+        "  {} {}",
+        "Read-write".yellow().bold(),
+        "(your choice):".dimmed()
+    );
+    for perm in read_write {
+        eprintln!("    {perm}");
+    }
+    eprintln!();
+    eprintln!(
+        "  {}",
+        "Add these to .claude/settings.json under \"permissions.allow\"."
+            .dimmed()
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,5 +283,28 @@ mod tests {
         assert!(SKILL_CONTENT.contains("## Self-Discovery"));
         assert!(SKILL_CONTENT.contains("floo docs"));
         assert!(SKILL_CONTENT.contains("--json"));
+    }
+
+    #[test]
+    fn test_recommended_permissions_read_only() {
+        let (read_only, _) = recommended_permissions();
+        assert!(read_only.contains(&"Bash(floo apps list:*)"));
+        assert!(read_only.contains(&"Bash(floo logs:*)"));
+        assert!(read_only.contains(&"Bash(floo check:*)"));
+        assert!(read_only.contains(&"Bash(floo docs:*)"));
+        // Write commands should not be in read-only
+        assert!(!read_only.contains(&"Bash(floo deploy:*)"));
+        assert!(!read_only.contains(&"Bash(floo apps delete:*)"));
+    }
+
+    #[test]
+    fn test_recommended_permissions_read_write() {
+        let (_, read_write) = recommended_permissions();
+        assert!(read_write.contains(&"Bash(floo deploy:*)"));
+        assert!(read_write.contains(&"Bash(floo env set:*)"));
+        assert!(read_write.contains(&"Bash(floo apps delete:*)"));
+        // Read-only commands should not be in read-write
+        assert!(!read_write.contains(&"Bash(floo logs:*)"));
+        assert!(!read_write.contains(&"Bash(floo docs:*)"));
     }
 }
