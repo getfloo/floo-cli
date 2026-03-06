@@ -1,7 +1,6 @@
 use std::path::Path;
 use std::process;
 
-use crate::archive::create_archive;
 use crate::detection::detect;
 use crate::errors::ErrorCode;
 use crate::output;
@@ -323,19 +322,6 @@ fn trigger_initial_deploy(
         }
     };
 
-    let spinner = output::Spinner::new("Packaging source...");
-    let archive_path = match create_archive(project_path) {
-        Ok(p) => {
-            spinner.finish();
-            p
-        }
-        Err(e) => {
-            spinner.finish();
-            output::error(&e.message, &e.code, e.suggestion.as_deref());
-            process::exit(1);
-        }
-    };
-
     let access_mode: Option<AppAccessMode> = resolved
         .app_config
         .as_ref()
@@ -347,10 +333,9 @@ fn trigger_initial_deploy(
                 .and_then(|c| c.app.access_mode)
         });
 
-    let spinner = output::Spinner::new("Uploading...");
+    let spinner = output::Spinner::new("Deploying...");
     let mut deploy_data = match client.create_deploy(
         app_id,
-        &archive_path,
         &detection.runtime,
         detection.framework.as_deref(),
         Some(&services),
@@ -362,13 +347,10 @@ fn trigger_initial_deploy(
         }
         Err(e) => {
             spinner.finish();
-            super::deploy::cleanup(&archive_path);
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
-
-    super::deploy::cleanup(&archive_path);
 
     let initial_status = deploy_data.status.as_deref().unwrap_or("");
 

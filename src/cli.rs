@@ -63,7 +63,7 @@ Examples:
 Examples:
   floo deploy                              Deploy current directory
   floo deploy ./app --json                 Deploy ./app with JSON output
-  floo deploy --app my-app --restart       Restart without re-uploading source
+  floo deploy --app my-app --restart       Restart without rebuilding
   floo deploy --dry-run --json             Preview what would be deployed
   floo deploy list --app my-app            Show deploy history
   floo deploy rollback my-app abc123       Rollback to a previous deploy")]
@@ -622,7 +622,7 @@ pub struct DeployRunArgs {
     #[arg(short, long = "services")]
     pub services: Vec<String>,
 
-    /// Restart the app without re-uploading source (redeploy existing images with fresh env vars).
+    /// Restart the app without rebuilding (redeploy existing images with fresh env vars).
     #[arg(long)]
     pub restart: bool,
 

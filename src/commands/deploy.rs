@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::process;
@@ -7,16 +6,11 @@ use std::time::{Duration, Instant};
 
 use crate::api_client::FlooClient;
 use crate::api_types::Deploy;
-use crate::archive::create_archive;
 use crate::config::load_config;
 use crate::detection::detect;
 use crate::errors::{ErrorCode, FlooApiError};
-use crate::names::generate_name;
 use crate::output;
-use crate::project_config::{
-    self, AppAccessMode, AppFileAppSection, AppFileConfig, AppSource, ServiceConfig,
-    ServiceFileAppSection, ServiceFileConfig, ServiceIngress, ServiceSection, ServiceType,
-};
+use crate::project_config::{self, AppAccessMode, AppSource};
 use crate::resolve::resolve_app;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -49,7 +43,7 @@ pub fn deploy(
         process::exit(1);
     }
 
-    // --- Restart path: skip detection/archive, call restart API ---
+    // --- Restart path: skip detection, call restart API ---
     if restart {
         let app_ident = match app.as_deref() {
             Some(a) => a.to_string(),
@@ -174,17 +168,14 @@ pub fn deploy(
 
     // Resolve app context from config files (before detection, so we know if multi-service)
     let resolved = match project_config::resolve_app_context(&project_path, app.as_deref()) {
-        Ok(r) => Some(r),
+        Ok(r) => r,
         Err(e) if e.code == ErrorCode::NoConfigFound => {
-            if !output::is_interactive() {
-                output::error(
-                    "No floo.app.toml or floo.service.toml found.",
-                    &ErrorCode::NoConfigFound,
-                    Some("Run `floo init` to create config files."),
-                );
-                process::exit(1);
-            }
-            None
+            output::error(
+                "No floo.app.toml or floo.service.toml found.",
+                &ErrorCode::NoConfigFound,
+                Some("Run 'floo init' to create config files, then 'floo apps github connect <repo>' to connect to GitHub."),
+            );
+            process::exit(1);
         }
         Err(e) => {
             output::error(&e.message, &e.code, e.suggestion.as_deref());
@@ -192,10 +183,9 @@ pub fn deploy(
         }
     };
 
-    // Detect runtime/framework (needed for API call metadata and first-deploy prompts)
+    // Detect runtime/framework (needed for API call metadata)
     let detection = detect(&project_path);
-    let has_config = resolved.is_some();
-    if detection.runtime == "unknown" && !has_config {
+    if detection.runtime == "unknown" {
         output::error(
             "No supported project files found.",
             &ErrorCode::NoRuntimeDetected,
@@ -219,16 +209,10 @@ pub fn deploy(
         );
     }
 
-    if detection.confidence == "low"
-        && !has_config
-        && !output::confirm("Continue with this detection?")
-    {
-        process::exit(0);
-    }
-
     // Display config info for resolved apps
     if !output::is_json_mode() {
-        if let Some(ref r) = resolved {
+        {
+            let r = &resolved;
             let source_label = match r.source {
                 AppSource::Flag => "--app flag".to_string(),
                 AppSource::ServiceFile => {
@@ -285,36 +269,22 @@ pub fn deploy(
     }
 
     // Build the app name and services list
-    let (app_name, services, write_configs_on_success) = match resolved {
-        Some(ref r) => {
-            let all_services = match project_config::discover_services(r) {
-                Ok(svcs) => svcs,
-                Err(e) => {
-                    output::error(&e.message, &e.code, e.suggestion.as_deref());
-                    process::exit(1);
-                }
-            };
-            let filtered = match project_config::filter_services(all_services, &services_filter) {
-                Ok(svcs) => svcs,
-                Err(e) => {
-                    output::error(&e.message, &e.code, e.suggestion.as_deref());
-                    process::exit(1);
-                }
-            };
-            (r.app_name.clone(), Some(filtered), false)
-        }
-        None => {
-            if !services_filter.is_empty() {
-                output::error(
-                    "--services requires config files.",
-                    &ErrorCode::NoConfigFound,
-                    Some("Create floo.app.toml with service entries before using --services."),
-                );
+    let (app_name, services) = {
+        let all_services = match project_config::discover_services(&resolved) {
+            Ok(svcs) => svcs,
+            Err(e) => {
+                output::error(&e.message, &e.code, e.suggestion.as_deref());
                 process::exit(1);
             }
-            let prompted = prompt_first_deploy(&detection);
-            (prompted.app_name, Some(vec![prompted.service]), true)
-        }
+        };
+        let filtered = match project_config::filter_services(all_services, &services_filter) {
+            Ok(svcs) => svcs,
+            Err(e) => {
+                output::error(&e.message, &e.code, e.suggestion.as_deref());
+                process::exit(1);
+            }
+        };
+        (resolved.app_name.clone(), Some(filtered))
     };
 
     // Display per-service summary for multi-service deploys
@@ -349,91 +319,58 @@ pub fn deploy(
         return;
     }
 
-    // Create archive
-    let spinner = output::Spinner::new("Packaging source...");
-    let archive_path = match create_archive(&project_path) {
-        Ok(p) => {
-            spinner.finish();
-            p
-        }
-        Err(e) => {
-            spinner.finish();
-            output::error(&e.message, &e.code, e.suggestion.as_deref());
-            process::exit(1);
-        }
-    };
-
     let client = super::init_client(Some(config));
 
     // Resolve or create app via API
-    let app_data = if let Some(ref r) = resolved {
-        if matches!(r.source, AppSource::Flag) {
-            // --app flag: look up existing app
-            let app_ident = &r.app_name;
-            let spinner = output::Spinner::new("Looking up app...");
-            let result = match resolve_app(&client, app_ident) {
-                Ok(app_data) => app_data,
-                Err(error) => {
-                    spinner.finish();
-                    cleanup(&archive_path);
-                    if error.code == "APP_NOT_FOUND" {
-                        output::error(
-                            &format!("App '{app_ident}' not found."),
-                            &ErrorCode::AppNotFound,
-                            Some("Check the app name or ID and try again."),
-                        );
-                    } else {
-                        output::error(&error.message, &ErrorCode::from_api(&error.code), None);
-                    }
-                    process::exit(1);
-                }
-            };
-            spinner.finish();
-            result
-        } else {
-            // Config file: look up by name, create if not found
-            let spinner = output::Spinner::new(&format!("Looking up app {}...", r.app_name));
-            match resolve_app(&client, &r.app_name) {
-                Ok(app_data) => {
-                    spinner.finish();
-                    app_data
-                }
-                Err(error) if error.code == "APP_NOT_FOUND" => {
-                    spinner.finish();
-                    let spinner = output::Spinner::new(&format!("Creating app {}...", r.app_name));
-                    match client.create_app(&r.app_name, Some(&detection.runtime)) {
-                        Ok(a) => {
-                            spinner.finish();
-                            a
-                        }
-                        Err(e) => {
-                            spinner.finish();
-                            cleanup(&archive_path);
-                            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-                            process::exit(1);
-                        }
-                    }
-                }
-                Err(error) => {
-                    spinner.finish();
-                    cleanup(&archive_path);
+    let app_data = if matches!(resolved.source, AppSource::Flag) {
+        // --app flag: look up existing app
+        let app_ident = &resolved.app_name;
+        let spinner = output::Spinner::new("Looking up app...");
+        let result = match resolve_app(&client, app_ident) {
+            Ok(app_data) => app_data,
+            Err(error) => {
+                spinner.finish();
+                if error.code == "APP_NOT_FOUND" {
+                    output::error(
+                        &format!("App '{app_ident}' not found."),
+                        &ErrorCode::AppNotFound,
+                        Some("Check the app name or ID and try again."),
+                    );
+                } else {
                     output::error(&error.message, &ErrorCode::from_api(&error.code), None);
-                    process::exit(1);
+                }
+                process::exit(1);
+            }
+        };
+        spinner.finish();
+        result
+    } else {
+        // Config file: look up by name, create if not found
+        let spinner = output::Spinner::new(&format!("Looking up app {}...", resolved.app_name));
+        match resolve_app(&client, &resolved.app_name) {
+            Ok(app_data) => {
+                spinner.finish();
+                app_data
+            }
+            Err(error) if error.code == "APP_NOT_FOUND" => {
+                spinner.finish();
+                let spinner =
+                    output::Spinner::new(&format!("Creating app {}...", resolved.app_name));
+                match client.create_app(&resolved.app_name, Some(&detection.runtime)) {
+                    Ok(a) => {
+                        spinner.finish();
+                        a
+                    }
+                    Err(e) => {
+                        spinner.finish();
+                        output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                        process::exit(1);
+                    }
                 }
             }
-        }
-    } else {
-        // First-deploy: create new app
-        let spinner = output::Spinner::new(&format!("Creating app {app_name}..."));
-        match client.create_app(&app_name, Some(&detection.runtime)) {
-            Ok(a) => {
+            Err(error) => {
                 spinner.finish();
-                a
-            }
-            Err(e) => {
-                spinner.finish();
-                cleanup(&archive_path);
-                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                output::error(&error.message, &ErrorCode::from_api(&error.code), None);
                 process::exit(1);
             }
         }
@@ -441,29 +378,30 @@ pub fn deploy(
     let app_id = app_data.id.clone();
 
     // Auto-import env vars on first deploy (or force with --sync-env)
-    if let Some(ref r) = resolved {
-        sync_env_vars_if_needed(&client, &app_id, r, sync_env);
-    }
+    sync_env_vars_if_needed(&client, &app_id, &resolved, sync_env);
 
     // Extract access_mode: [environments.dev] override > [app] level > service_config
-    let access_mode: Option<AppAccessMode> = resolved.as_ref().and_then(|r| {
-        r.app_config
-            .as_ref()
-            .and_then(|c| {
-                c.environments
-                    .get("dev")
-                    .and_then(|env| env.access_mode)
-                    .or(c.app.access_mode)
-            })
-            .or_else(|| r.service_config.as_ref().and_then(|c| c.app.access_mode))
-    });
+    let access_mode: Option<AppAccessMode> = resolved
+        .app_config
+        .as_ref()
+        .and_then(|c| {
+            c.environments
+                .get("dev")
+                .and_then(|env| env.access_mode)
+                .or(c.app.access_mode)
+        })
+        .or_else(|| {
+            resolved
+                .service_config
+                .as_ref()
+                .and_then(|c| c.app.access_mode)
+        });
 
     // Deploy
     let svc_slice = services.as_deref();
-    let spinner = output::Spinner::new("Uploading...");
+    let spinner = output::Spinner::new("Deploying...");
     let mut deploy_data = match client.create_deploy(
         &app_id,
-        &archive_path,
         &detection.runtime,
         detection.framework.as_deref(),
         svc_slice,
@@ -475,7 +413,6 @@ pub fn deploy(
         }
         Err(e) => {
             spinner.finish();
-            cleanup(&archive_path);
             let suggestion = match e.code.as_str() {
                 "PLAN_FEATURE_PASSWORD" | "PLAN_FEATURE_FLOO_ACCOUNTS" => {
                     Some("Upgrade your plan at https://app.getfloo.com/settings/billing")
@@ -486,9 +423,6 @@ pub fn deploy(
             process::exit(1);
         }
     };
-
-    // Clean up archive immediately after upload
-    cleanup(&archive_path);
 
     // Wait for deploy to complete via SSE streaming or polling
     let initial_status = deploy_data.status.as_deref().unwrap_or("");
@@ -535,15 +469,6 @@ pub fn deploy(
         process::exit(1);
     }
 
-    // Write config files on first deploy success
-    if write_configs_on_success {
-        if let Some(ref svcs) = services {
-            if let Some(svc) = svcs.first() {
-                write_first_deploy_configs(&project_path, &app_name, svc);
-            }
-        }
-    }
-
     let url = deploy_data.url.as_deref().unwrap_or("");
 
     if !output::is_json_mode() {
@@ -570,97 +495,6 @@ pub fn deploy(
             "services": service_names,
         })),
     );
-}
-
-struct FirstDeployResult {
-    app_name: String,
-    service: ServiceConfig,
-}
-
-fn prompt_first_deploy(detection: &crate::detection::DetectionResult) -> FirstDeployResult {
-    let default_name = generate_name();
-    let app_name = output::prompt_with_default("App name", &default_name);
-
-    let default_port = detection.default_port().to_string();
-    let port_str = output::prompt_with_default("Port", &default_port);
-    let port: u16 = port_str.parse().unwrap_or_else(|_| {
-        output::error(
-            &format!("Invalid port number: '{port_str}'."),
-            &ErrorCode::InvalidFormat,
-            Some("Port must be a number between 1 and 65535."),
-        );
-        process::exit(1);
-    });
-
-    let default_type = detection.default_service_type();
-    let service_type = match default_type {
-        "api" => ServiceType::Api,
-        _ => ServiceType::Web,
-    };
-
-    FirstDeployResult {
-        app_name,
-        service: ServiceConfig {
-            name: default_type.to_string(),
-            service_type,
-            path: ".".to_string(),
-            port,
-            ingress: ServiceIngress::Public,
-            domain: None,
-            cpu: None,
-            memory: None,
-            max_instances: None,
-        },
-    }
-}
-
-fn write_first_deploy_configs(project_path: &Path, app_name: &str, service: &ServiceConfig) {
-    let env_file = super::detect_env_file(project_path);
-
-    let service_file = ServiceFileConfig {
-        app: ServiceFileAppSection {
-            name: app_name.to_string(),
-            access_mode: None,
-        },
-        service: ServiceSection {
-            name: service.name.clone(),
-            service_type: service.service_type,
-            port: service.port,
-            ingress: Some(service.ingress),
-            env_file,
-            domain: service.domain.clone(),
-        },
-        resources: None,
-    };
-
-    let app_file = AppFileConfig {
-        app: AppFileAppSection {
-            name: app_name.to_string(),
-            access_mode: None,
-        },
-        resources: None,
-        services: HashMap::new(),
-        environments: HashMap::new(),
-    };
-
-    if let Err(e) = project_config::write_app_config(project_path, &app_file) {
-        output::error(&e.message, &e.code, None);
-        process::exit(1);
-    }
-    if !output::is_json_mode() {
-        output::info(&format!("Wrote {}", project_config::APP_CONFIG_FILE), None);
-    }
-
-    if let Err(e) = project_config::write_service_config(project_path, &service_file) {
-        output::error(&e.message, &e.code, None);
-        process::exit(1);
-    }
-    if !output::is_json_mode() {
-        output::info(
-            &format!("Wrote {}", project_config::SERVICE_CONFIG_FILE),
-            None,
-        );
-    }
 }
 
 /// Stream deploy logs via SSE and return the final deploy state.
@@ -1061,15 +895,3 @@ mod tests {
     }
 }
 
-pub(crate) fn cleanup(path: &PathBuf) {
-    if path.exists() {
-        if let Err(error) = std::fs::remove_file(path) {
-            if !output::is_json_mode() {
-                eprintln!(
-                    "Warning: failed to remove temporary archive {}: {error}",
-                    path.display()
-                );
-            }
-        }
-    }
-}
