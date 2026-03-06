@@ -252,6 +252,11 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn get_billing_limits(&self) -> Result<PlanLimitsResponse, FlooApiError> {
+        let resp = self.get("/v1/billing/limits")?;
+        self.handle_response(resp)
+    }
+
     pub fn create_billing_checkout(
         &self,
         plan: Option<&str>,

@@ -37,6 +37,12 @@ pub struct BillingCheckoutResponse {
     pub url: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanLimitsResponse {
+    pub plan: String,
+    pub max_spend_cap_cents: Option<u64>,
+}
+
 // --- Org ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

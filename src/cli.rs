@@ -225,10 +225,13 @@ pub enum BillingCommands {
 
     /// Upgrade your plan via Stripe Checkout or Billing Portal.
     Upgrade {
-        /// Plan to upgrade to: growth or team. Omit to open billing portal.
-        #[arg(long, value_parser = ["growth", "team"])]
+        /// Plan to upgrade to: hobby, pro, or team. Omit to open billing portal.
+        #[arg(long, value_parser = ["hobby", "pro", "team"])]
         plan: Option<String>,
     },
+
+    /// Show current usage, spend cap, and plan details.
+    Usage,
 
     /// Print enterprise contact information.
     Contact,
@@ -749,6 +752,7 @@ pub fn run() {
                 SpendCapCommands::Set { amount } => commands::billing::spend_cap_set(amount),
             },
             BillingCommands::Upgrade { plan } => commands::billing::upgrade(plan),
+            BillingCommands::Usage => commands::billing::usage(),
             BillingCommands::Contact => commands::billing::contact(),
         },
 
