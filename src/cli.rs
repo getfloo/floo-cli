@@ -51,13 +51,6 @@ Examples:
         path: PathBuf,
     },
 
-    /// Validate project config before deploying.
-    Check {
-        /// Project directory.
-        #[arg(default_value = ".")]
-        path: PathBuf,
-    },
-
     /// Deploy a project to Floo, or manage deploy history.
     #[command(after_help = "\
 Examples:
@@ -711,8 +704,6 @@ pub fn run() {
         Commands::Analytics { app, period } => commands::analytics::analytics(app, &period),
 
         Commands::Init { name, path } => commands::init::init(name, path),
-
-        Commands::Check { path } => commands::check::check(path),
 
         Commands::Deploy(args) => {
             if let Some(sub) = args.sub {

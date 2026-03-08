@@ -7,10 +7,10 @@ use std::time::{Duration, Instant};
 use crate::api_client::FlooClient;
 use crate::api_types::Deploy;
 use crate::config::load_config;
-use crate::detection::detect;
+use crate::detection::{detect_for_services, DetectionResult};
 use crate::errors::{ErrorCode, FlooApiError};
 use crate::output;
-use crate::project_config::{self, AppAccessMode, AppSource};
+use crate::project_config::{self, validate_service_name, AppAccessMode, AppSource, ServiceConfig};
 use crate::resolve::resolve_app;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -33,18 +33,18 @@ pub fn deploy(
     restart: bool,
     sync_env: bool,
 ) {
-    let config = load_config();
-    if config.api_key.is_none() {
-        output::error(
-            "Not logged in.",
-            &ErrorCode::NotAuthenticated,
-            Some("Run 'floo login' to authenticate."),
-        );
-        process::exit(1);
-    }
-
-    // --- Restart path: skip detection, call restart API ---
+    // --- Restart path: skip detection, needs auth upfront ---
     if restart {
+        let config = load_config();
+        if config.api_key.is_none() {
+            output::error(
+                "Not logged in.",
+                &ErrorCode::NotAuthenticated,
+                Some("Run 'floo login' to authenticate."),
+            );
+            process::exit(1);
+        }
+
         let app_ident = match app.as_deref() {
             Some(a) => a.to_string(),
             None => {
@@ -145,6 +145,9 @@ pub fn deploy(
         return;
     }
 
+    // ===== Deploy preflight (no auth required) =====
+
+    // 1. Canonicalize path
     let project_path = match path.canonicalize() {
         Ok(p) => p,
         Err(_) => {
@@ -166,7 +169,7 @@ pub fn deploy(
         process::exit(1);
     }
 
-    // Resolve app context from config files (before detection, so we know if multi-service)
+    // 2. Resolve app context
     let resolved = match project_config::resolve_app_context(&project_path, app.as_deref()) {
         Ok(r) => r,
         Err(e) if e.code == ErrorCode::NoConfigFound => {
@@ -183,141 +186,111 @@ pub fn deploy(
         }
     };
 
-    // Detect runtime/framework (needed for API call metadata)
-    let detection = detect(&project_path);
-    if detection.runtime == "unknown" {
-        output::error(
-            "No supported project files found.",
-            &ErrorCode::NoRuntimeDetected,
-            Some("Add a package.json, requirements.txt, or Dockerfile to your project."),
-        );
-        process::exit(1);
-    }
+    let app_name = resolved.app_name.clone();
 
-    if !output::is_json_mode() && detection.runtime != "unknown" {
-        let framework_label = detection
-            .framework
-            .as_deref()
-            .map(|f| format!(" ({f})"))
-            .unwrap_or_default();
-        output::info(
-            &format!(
-                "Detected {}{framework_label} \u{2014} {} confidence",
-                detection.runtime, detection.confidence
-            ),
-            None,
-        );
-    }
-
-    // Display config info for resolved apps
-    if !output::is_json_mode() {
-        {
-            let r = &resolved;
-            let source_label = match r.source {
-                AppSource::Flag => "--app flag".to_string(),
-                AppSource::ServiceFile => {
-                    format!(
-                        "{} in {}",
-                        project_config::SERVICE_CONFIG_FILE,
-                        r.config_dir.display()
-                    )
-                }
-                AppSource::AppFile => {
-                    format!(
-                        "{} in {}",
-                        project_config::APP_CONFIG_FILE,
-                        r.config_dir.display()
-                    )
-                }
-            };
-            if let Some(ref svc) = r.service_config {
-                output::info(
-                    &format!(
-                        "App '{}' (from {}) \u{2014} service '{}' ({}, :{}, {})",
-                        r.app_name,
-                        source_label,
-                        svc.service.name,
-                        svc.service.service_type,
-                        svc.service.port,
-                        svc.service.resolved_ingress()
-                    ),
-                    None,
-                );
-            } else if let Some(ref app_cfg) = r.app_config {
-                let svc_count = app_cfg.services.len();
-                if svc_count > 0 {
-                    output::info(
-                        &format!(
-                            "App '{}' (from {}) \u{2014} {} service(s) defined",
-                            r.app_name, source_label, svc_count
-                        ),
-                        None,
-                    );
-                } else {
-                    output::info(
-                        &format!("App '{}' (from {})", r.app_name, source_label),
-                        None,
-                    );
-                }
-            } else {
-                output::info(
-                    &format!("App '{}' (from {})", r.app_name, source_label),
-                    None,
-                );
-            }
+    // 3. Discover + filter services
+    let all_services = match project_config::discover_services(&resolved) {
+        Ok(svcs) => svcs,
+        Err(e) => {
+            output::error(&e.message, &e.code, e.suggestion.as_deref());
+            process::exit(1);
         }
-    }
-
-    // Build the app name and services list
-    let (app_name, services) = {
-        let all_services = match project_config::discover_services(&resolved) {
-            Ok(svcs) => svcs,
-            Err(e) => {
-                output::error(&e.message, &e.code, e.suggestion.as_deref());
-                process::exit(1);
-            }
-        };
-        let filtered = match project_config::filter_services(all_services, &services_filter) {
-            Ok(svcs) => svcs,
-            Err(e) => {
-                output::error(&e.message, &e.code, e.suggestion.as_deref());
-                process::exit(1);
-            }
-        };
-        (resolved.app_name.clone(), Some(filtered))
+    };
+    let services = match project_config::filter_services(all_services, &services_filter) {
+        Ok(svcs) => svcs,
+        Err(e) => {
+            output::error(&e.message, &e.code, e.suggestion.as_deref());
+            process::exit(1);
+        }
     };
 
-    // Display per-service summary for multi-service deploys
+    // 4. Per-service runtime detection
+    let svc_pairs: Vec<(&str, &str)> = services
+        .iter()
+        .map(|s| (s.name.as_str(), s.path.as_str()))
+        .collect();
+    let (primary_detection, per_service_detection) = detect_for_services(&project_path, &svc_pairs);
+
+    // 5. Validate per-service (port, name, Dockerfile EXPOSE, env_file)
+    let (preflight_errors, preflight_warnings) =
+        validate_preflight(&project_path, &services, &resolved);
+
+    // 6. Display preflight info
     if !output::is_json_mode() {
-        if let Some(ref svcs) = services {
-            if svcs.len() > 1 {
-                let names: Vec<&str> = svcs.iter().map(|s| s.name.as_str()).collect();
-                output::info(
-                    &format!("Deploying {} services: {}", svcs.len(), names.join(", ")),
-                    None,
-                );
-            }
-        }
+        display_preflight_human(
+            &app_name,
+            &resolved,
+            &services,
+            &per_service_detection,
+            &preflight_warnings,
+            &preflight_errors,
+        );
     }
 
-    // Dry-run: preview what would be deployed without uploading
+    // 7. Dry-run exit — full preflight output, no auth needed
     if output::is_dry_run_mode() {
-        let service_names: Vec<&str> = services
-            .as_ref()
-            .map(|svcs| svcs.iter().map(|s| s.name.as_str()).collect())
-            .unwrap_or_default();
+        let svc_json: Vec<serde_json::Value> = services
+            .iter()
+            .zip(per_service_detection.iter())
+            .map(|(svc, (_, det))| {
+                serde_json::json!({
+                    "name": svc.name,
+                    "path": svc.path,
+                    "port": svc.port,
+                    "type": svc.service_type.to_string(),
+                    "ingress": svc.ingress.to_string(),
+                    "runtime": det.runtime,
+                    "framework": det.framework,
+                    "confidence": det.confidence,
+                })
+            })
+            .collect();
+
+        let warning_strings: Vec<&str> = preflight_warnings
+            .iter()
+            .map(|w| w.get("message").and_then(|v| v.as_str()).unwrap_or(""))
+            .collect();
 
         output::dry_run_success(serde_json::json!({
             "action": "deploy",
             "app": app_name,
-            "services": service_names,
-            "runtime": detection.runtime,
-            "framework": detection.framework,
-            "confidence": detection.confidence,
-            "path": project_path.display().to_string(),
+            "services": svc_json,
+            "warnings": warning_strings,
+            "valid": preflight_errors.is_empty(),
         }));
         return;
     }
+
+    // 8. Auth check — only needed for actual deploy
+    let config = load_config();
+    if config.api_key.is_none() {
+        output::error(
+            "Not logged in.",
+            &ErrorCode::NotAuthenticated,
+            Some("Run 'floo login' to authenticate."),
+        );
+        process::exit(1);
+    }
+
+    // 9. Fail if preflight has errors
+    if !preflight_errors.is_empty() {
+        let count = preflight_errors.len();
+        for e in &preflight_errors {
+            let msg = e.get("message").and_then(|v| v.as_str()).unwrap_or("");
+            if !output::is_json_mode() {
+                eprintln!("  \u{2717} {msg}");
+            }
+        }
+        output::error(
+            &format!("{count} preflight error(s) found."),
+            &ErrorCode::ConfigInvalid,
+            Some("Fix the errors above and run `floo deploy --dry-run` to validate."),
+        );
+        process::exit(1);
+    }
+
+    // Use primary detection for API call metadata
+    let detection = primary_detection;
 
     let client = super::init_client(Some(config));
 
@@ -398,7 +371,7 @@ pub fn deploy(
         });
 
     // Deploy
-    let svc_slice = services.as_deref();
+    let svc_slice = Some(services.as_slice());
     let spinner = output::Spinner::new("Deploying...");
     let mut deploy_data = match client.create_deploy(
         &app_id,
@@ -481,10 +454,7 @@ pub fn deploy(
         }
     }
 
-    let service_names: Vec<&str> = services
-        .as_ref()
-        .map(|svcs| svcs.iter().map(|s| s.name.as_str()).collect())
-        .unwrap_or_default();
+    let service_names: Vec<&str> = services.iter().map(|s| s.name.as_str()).collect();
 
     output::success(
         &format!("Deployed to {url}"),
@@ -495,6 +465,198 @@ pub fn deploy(
             "services": service_names,
         })),
     );
+}
+
+/// Validate services for common config errors. Returns (errors, warnings).
+/// Absorbs the validation logic that was previously in `floo check`.
+fn validate_preflight(
+    project_path: &Path,
+    services: &[ServiceConfig],
+    resolved: &project_config::ResolvedApp,
+) -> (Vec<serde_json::Value>, Vec<serde_json::Value>) {
+    let mut errors: Vec<serde_json::Value> = Vec::new();
+    let mut warnings: Vec<serde_json::Value> = Vec::new();
+    let mut seen_names: Vec<String> = Vec::new();
+
+    for svc in services {
+        // Validate service name
+        if let Err(msg) = validate_service_name(&svc.name) {
+            errors.push(serde_json::json!({
+                "path": svc.path,
+                "message": msg,
+            }));
+        }
+
+        // Check for duplicate names
+        if seen_names.contains(&svc.name) {
+            errors.push(serde_json::json!({
+                "path": svc.path,
+                "message": format!("Duplicate service name '{}'.", svc.name),
+            }));
+        } else {
+            seen_names.push(svc.name.clone());
+        }
+
+        // Validate port
+        if svc.port == 0 {
+            errors.push(serde_json::json!({
+                "path": svc.path,
+                "message": format!("Service '{}' has invalid port 0. Ports must be 1-65535.", svc.name),
+            }));
+        }
+
+        let svc_dir = project_path.join(&svc.path);
+
+        // Check env_file exists
+        if let Some(ref app_cfg) = resolved.app_config {
+            if let Some(entry) = app_cfg.services.get(&svc.name) {
+                if let Some(ref env_file) = entry.env_file {
+                    let env_path = svc_dir.join(env_file);
+                    if !env_path.exists() {
+                        warnings.push(serde_json::json!({
+                            "path": svc.path,
+                            "message": format!("Service '{}' env_file '{env_file}' not found on disk.", svc.name),
+                        }));
+                    }
+                }
+            }
+        }
+
+        // Check Dockerfile EXPOSE matches port
+        let dockerfile = svc_dir.join("Dockerfile");
+        if dockerfile.exists() {
+            match std::fs::read_to_string(&dockerfile) {
+                Ok(content) => {
+                    for line in content.lines() {
+                        let trimmed = line.trim();
+                        if let Some(expose_val) = trimmed.strip_prefix("EXPOSE ") {
+                            let expose_val = expose_val.trim();
+                            let port_str = expose_val.split('/').next().unwrap_or(expose_val);
+                            if let Ok(exposed_port) = port_str.parse::<u16>() {
+                                if exposed_port != svc.port {
+                                    warnings.push(serde_json::json!({
+                                        "path": svc.path,
+                                        "message": format!(
+                                            "Service '{}' Dockerfile EXPOSE {exposed_port} does not match configured port {}.",
+                                            svc.name, svc.port
+                                        ),
+                                    }));
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    warnings.push(serde_json::json!({
+                        "path": svc.path,
+                        "message": format!(
+                            "Service '{}' Dockerfile exists but could not be read: {e}. Port check skipped.",
+                            svc.name
+                        ),
+                    }));
+                }
+            }
+        }
+    }
+
+    (errors, warnings)
+}
+
+/// Display preflight info in human-readable format.
+fn display_preflight_human(
+    app_name: &str,
+    resolved: &project_config::ResolvedApp,
+    services: &[ServiceConfig],
+    per_service_detection: &[(String, DetectionResult)],
+    warnings: &[serde_json::Value],
+    errors: &[serde_json::Value],
+) {
+    let source_label = match resolved.source {
+        AppSource::Flag => "--app flag".to_string(),
+        AppSource::ServiceFile => {
+            format!(
+                "{} in {}",
+                project_config::SERVICE_CONFIG_FILE,
+                resolved.config_dir.display()
+            )
+        }
+        AppSource::AppFile => {
+            format!(
+                "{} in {}",
+                project_config::APP_CONFIG_FILE,
+                resolved.config_dir.display()
+            )
+        }
+    };
+
+    eprintln!();
+    eprintln!("  App '{}' (from {})", app_name, source_label);
+
+    if services.len() > 1 {
+        let names: Vec<&str> = services.iter().map(|s| s.name.as_str()).collect();
+        eprintln!(
+            "  Deploying {} services: {}",
+            services.len(),
+            names.join(", ")
+        );
+    }
+    eprintln!();
+
+    for (svc, (_, det)) in services.iter().zip(per_service_detection.iter()) {
+        let path_label = if svc.path == "." {
+            String::new()
+        } else {
+            format!(" (./{path})", path = svc.path)
+        };
+        eprintln!("  {}{path_label}", svc.name);
+        eprintln!(
+            "    type: {}, port: {}, ingress: {}",
+            svc.service_type, svc.port, svc.ingress
+        );
+
+        let framework_label = det
+            .framework
+            .as_deref()
+            .map(|f| format!(" ({f})"))
+            .unwrap_or_default();
+        eprintln!(
+            "    runtime: {}{framework_label} \u{2014} {} confidence",
+            det.runtime, det.confidence
+        );
+        eprintln!();
+    }
+
+    // Show global [resources] if present
+    if let Some(ref app_cfg) = resolved.app_config {
+        if let Some(ref res) = app_cfg.resources {
+            let has_any = res.cpu.is_some() || res.memory.is_some() || res.max_instances.is_some();
+            if has_any {
+                eprintln!("  [resources] (global defaults)");
+                let mut parts = Vec::new();
+                if let Some(ref cpu) = res.cpu {
+                    parts.push(format!("cpu: {cpu}"));
+                }
+                if let Some(ref memory) = res.memory {
+                    parts.push(format!("memory: {memory}"));
+                }
+                if let Some(max) = res.max_instances {
+                    parts.push(format!("max_instances: {max}"));
+                }
+                eprintln!("    {}", parts.join(", "));
+                eprintln!();
+            }
+        }
+    }
+
+    for w in warnings {
+        let msg = w.get("message").and_then(|v| v.as_str()).unwrap_or("");
+        let path = w.get("path").and_then(|v| v.as_str()).unwrap_or("");
+        eprintln!("  \u{26a0} {path}: {msg}");
+    }
+
+    if errors.is_empty() {
+        output::success("Config valid \u{2014} ready to deploy.", None);
+    }
 }
 
 /// Stream deploy logs via SSE and return the final deploy state.
@@ -894,4 +1056,3 @@ mod tests {
         );
     }
 }
-

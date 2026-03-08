@@ -10,7 +10,6 @@ pub mod analytics;
 pub mod apps;
 pub mod auth;
 pub mod billing;
-pub mod check;
 pub mod command_tree;
 pub mod deploy;
 pub mod deploys;

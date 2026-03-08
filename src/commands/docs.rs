@@ -15,7 +15,7 @@ managing, and observing your apps.
 ## Deploy Flow
 
   1. `floo init <name>` — scaffold config files for your project
-  2. `floo check` — validate config before deploying
+  2. `floo deploy --dry-run` — validate config before deploying
   3. `floo deploy` — detect runtime, trigger build via GitHub, deploy
   4. `floo apps status <name>` — see your app's URL and status
 
@@ -104,7 +104,7 @@ Floo Config Files
 ## Commands
 
   floo init <name>   — generate config files interactively
-  floo check         — validate config before deploying
+  floo deploy --dry-run  — validate config before deploying
 ";
 
 const DEPLOY: &str = "\

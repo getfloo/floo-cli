@@ -202,7 +202,7 @@ fn recommended_permissions() -> (Vec<&'static str>, Vec<&'static str>) {
         "Bash(floo analytics:*)",
         "Bash(floo releases list:*)",
         "Bash(floo releases show:*)",
-        "Bash(floo check:*)",
+        "Bash(floo deploy --dry-run:*)",
         "Bash(floo docs:*)",
         "Bash(floo commands:*)",
         "Bash(floo version:*)",
@@ -237,10 +237,7 @@ fn recommended_permissions() -> (Vec<&'static str>, Vec<&'static str>) {
 
 fn print_permission_recommendations(read_only: &[&str], read_write: &[&str]) {
     eprintln!();
-    eprintln!(
-        "{}",
-        "  Recommended permissions for coding agents:".bold()
-    );
+    eprintln!("{}", "  Recommended permissions for coding agents:".bold());
     eprintln!();
     eprintln!(
         "  {} {}",
@@ -262,8 +259,7 @@ fn print_permission_recommendations(read_only: &[&str], read_write: &[&str]) {
     eprintln!();
     eprintln!(
         "  {}",
-        "Add these to .claude/settings.json under \"permissions.allow\"."
-            .dimmed()
+        "Add these to .claude/settings.json under \"permissions.allow\".".dimmed()
     );
 }
 
@@ -290,7 +286,7 @@ mod tests {
         let (read_only, _) = recommended_permissions();
         assert!(read_only.contains(&"Bash(floo apps list:*)"));
         assert!(read_only.contains(&"Bash(floo logs:*)"));
-        assert!(read_only.contains(&"Bash(floo check:*)"));
+        assert!(read_only.contains(&"Bash(floo deploy --dry-run:*)"));
         assert!(read_only.contains(&"Bash(floo docs:*)"));
         // Write commands should not be in read-only
         assert!(!read_only.contains(&"Bash(floo deploy:*)"));

@@ -234,6 +234,8 @@ fn test_update_help() {
 }
 
 // --- Deploy (unauthenticated) ---
+// Preflight (config resolution) runs before auth, so without a config file
+// the error is NO_CONFIG_FOUND rather than NOT_AUTHENTICATED.
 
 #[test]
 fn test_deploy_not_authenticated() {
@@ -242,7 +244,9 @@ fn test_deploy_not_authenticated() {
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("Not logged in."));
+        .stderr(predicate::str::contains(
+            "No floo.app.toml or floo.service.toml found.",
+        ));
 }
 
 #[test]
@@ -252,7 +256,7 @@ fn test_deploy_json_not_authenticated() {
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
-        .stdout(predicate::str::contains(r#""code":"NOT_AUTHENTICATED"#));
+        .stdout(predicate::str::contains(r#""code":"NO_CONFIG_FOUND"#));
 }
 
 // --- Env (unauthenticated) ---
@@ -880,19 +884,10 @@ path = "./api"
         .stdout(predicate::str::contains(r#""code":"DUPLICATE_SERVICE"#));
 }
 
-// --- Check command ---
+// --- Deploy --dry-run (replaces floo check) ---
 
 #[test]
-fn test_check_help() {
-    floo()
-        .args(["check", "--help"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Validate project config"));
-}
-
-#[test]
-fn test_check_valid_config() {
+fn test_deploy_dry_run_valid_config() {
     let project = tempfile::TempDir::new().unwrap();
     std::fs::write(
         project.path().join("floo.app.toml"),
@@ -914,14 +909,20 @@ ingress = "public"
     .unwrap();
 
     floo()
-        .args(["--json", "check", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "--dry-run",
+            "deploy",
+            project.path().to_str().unwrap(),
+        ])
+        .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""valid":true"#));
 }
 
 #[test]
-fn test_check_missing_service_toml() {
+fn test_deploy_dry_run_missing_service_toml() {
     let project = tempfile::TempDir::new().unwrap();
     std::fs::write(
         project.path().join("floo.app.toml"),
@@ -938,7 +939,13 @@ path = "./api"
     std::fs::create_dir(project.path().join("api")).unwrap();
 
     floo()
-        .args(["--json", "check", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "--dry-run",
+            "deploy",
+            project.path().to_str().unwrap(),
+        ])
+        .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
         .stdout(predicate::str::contains(
@@ -947,7 +954,7 @@ path = "./api"
 }
 
 #[test]
-fn test_check_port_mismatch_warning() {
+fn test_deploy_dry_run_port_mismatch_warning() {
     let project = tempfile::TempDir::new().unwrap();
     std::fs::write(
         project.path().join("floo.app.toml"),
@@ -975,7 +982,13 @@ ingress = "public"
     .unwrap();
 
     floo()
-        .args(["--json", "check", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "--dry-run",
+            "deploy",
+            project.path().to_str().unwrap(),
+        ])
+        .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
         .stdout(predicate::str::contains("EXPOSE 8080"));
