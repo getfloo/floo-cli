@@ -223,6 +223,39 @@ fn detect_static(path: &Path) -> Option<DetectionResult> {
     }
 }
 
+/// Run detection per-service subdirectory. Returns the primary detection (first known runtime)
+/// and per-service results as (service_name, detection) pairs.
+pub fn detect_for_services(
+    config_dir: &Path,
+    services: &[(&str, &str)], // (name, path) pairs
+) -> (DetectionResult, Vec<(String, DetectionResult)>) {
+    let mut primary: Option<DetectionResult> = None;
+    let mut per_service = Vec::new();
+
+    for &(name, svc_path) in services {
+        let dir = if svc_path == "." {
+            config_dir.to_path_buf()
+        } else {
+            config_dir.join(svc_path)
+        };
+        let result = detect(&dir);
+        if primary.is_none() && result.runtime != "unknown" {
+            primary = Some(result.clone());
+        }
+        per_service.push((name.to_string(), result));
+    }
+
+    let primary = primary.unwrap_or_else(|| DetectionResult {
+        runtime: "unknown".into(),
+        framework: None,
+        version: None,
+        confidence: "low".into(),
+        reason: "No recognized project files found in any service".into(),
+    });
+
+    (primary, per_service)
+}
+
 pub fn detect(path: &Path) -> DetectionResult {
     let detectors: Vec<fn(&Path) -> Option<DetectionResult>> = vec![
         detect_dockerfile,

@@ -59,13 +59,6 @@ fn command_tree() -> Vec<CommandInfo> {
             subcommands: vec![],
         },
         CommandInfo {
-            name: "check",
-            description: "Validate project config before deploying",
-            usage: "floo check [PATH]",
-            requires_auth: false,
-            subcommands: vec![],
-        },
-        CommandInfo {
             name: "apps",
             description: "Manage your apps (list, status, delete)",
             usage: "floo apps <subcommand>",
@@ -481,7 +474,6 @@ mod tests {
             "apps",
             "auth",
             "billing",
-            "check",
             "commands",
             "deploy",
             "docs",
