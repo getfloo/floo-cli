@@ -30,8 +30,9 @@ fn command_tree() -> Vec<CommandInfo> {
                 },
                 CommandInfo {
                     name: "logs",
-                    description: "Show build logs for a specific deploy",
-                    usage: "floo deploy logs <deploy-id> --app <name>",
+                    description:
+                        "Show build logs for a deploy (use --follow to stream active deploys)",
+                    usage: "floo deploy logs <deploy-id> [--follow] --app <name>",
                     requires_auth: true,
                     subcommands: vec![],
                 },

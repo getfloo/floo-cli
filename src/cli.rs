@@ -59,6 +59,7 @@ Examples:
   floo deploy --app my-app --restart       Restart without rebuilding
   floo deploy --dry-run --json             Preview what would be deployed
   floo deploy list --app my-app            Show deploy history
+  floo deploy logs <id> --follow           Stream build logs in real-time
   floo deploy rollback my-app abc123       Rollback to a previous deploy")]
     Deploy(DeployArgs),
 
@@ -574,6 +575,10 @@ pub enum DeploySubcommands {
         /// App name or ID (uses config file if omitted).
         #[arg(short, long)]
         app: Option<String>,
+
+        /// Follow logs in real-time (stream active deploys).
+        #[arg(short, long)]
+        follow: bool,
     },
 
     /// Stream deploy progress in real-time.
@@ -709,9 +714,11 @@ pub fn run() {
             if let Some(sub) = args.sub {
                 match sub {
                     DeploySubcommands::List { app } => commands::deploys::list(app.as_deref()),
-                    DeploySubcommands::Logs { deploy_id, app } => {
-                        commands::deploys::logs(&deploy_id, app.as_deref())
-                    }
+                    DeploySubcommands::Logs {
+                        deploy_id,
+                        app,
+                        follow,
+                    } => commands::deploys::logs(&deploy_id, app.as_deref(), follow),
                     DeploySubcommands::Watch { app, commit } => {
                         commands::deploys::watch(app.as_deref(), commit.as_deref())
                     }
