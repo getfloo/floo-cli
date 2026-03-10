@@ -1,6 +1,6 @@
 [package]
 name = "floo"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "CLI for Floo — deploy, manage, and observe web apps"
 license = "MIT"
