@@ -744,6 +744,13 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    // --- Images ---
+
+    pub fn list_base_images(&self) -> Result<BaseImagesResponse, FlooApiError> {
+        let resp = self.get("/v1/images")?;
+        self.handle_response(resp)
+    }
+
     // --- Analytics ---
 
     pub fn get_app_analytics(

@@ -255,6 +255,21 @@ pub struct DatabaseInfo {
     pub schema_name: Option<String>,
 }
 
+// --- Images ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BaseImage {
+    pub short_name: String,
+    pub full_uri: String,
+    pub name: String,
+    pub tag: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BaseImagesResponse {
+    pub images: Vec<BaseImage>,
+}
+
 // --- Analytics ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

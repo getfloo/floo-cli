@@ -232,6 +232,19 @@ fn command_tree() -> Vec<CommandInfo> {
             ],
         },
         CommandInfo {
+            name: "images",
+            description: "List available Floo base Docker images",
+            usage: "floo images list",
+            requires_auth: true,
+            subcommands: vec![CommandInfo {
+                name: "list",
+                description: "List available Floo base Docker images",
+                usage: "floo images list",
+                requires_auth: true,
+                subcommands: vec![],
+            }],
+        },
+        CommandInfo {
             name: "logs",
             description: "View runtime logs for an app",
             usage: "floo logs --app <name> [OPTIONS]",
@@ -479,6 +492,7 @@ mod tests {
             "docs",
             "domains",
             "env",
+            "images",
             "init",
             "logs",
             "orgs",

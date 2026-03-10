@@ -17,6 +17,7 @@ pub mod docs;
 pub mod domains;
 pub mod env;
 pub mod github;
+pub mod images;
 pub mod init;
 pub mod logs;
 pub mod orgs;

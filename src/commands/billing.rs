@@ -30,12 +30,12 @@ pub fn contact() {
         output::success(
             "",
             Some(serde_json::json!({
-                "email": "solutions@getfloo.com",
+                "email": "sales@getfloo.com",
                 "subject": "Enterprise inquiry",
             })),
         );
     } else {
-        eprintln!("  Enterprise & custom plans: solutions@getfloo.com");
+        eprintln!("  Enterprise & custom plans: sales@getfloo.com");
         eprintln!("  Subject: Enterprise inquiry");
     }
 }
