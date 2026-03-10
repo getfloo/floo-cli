@@ -27,11 +27,15 @@ pub fn list() {
             vec![
                 img.name.clone(),
                 img.tag.clone(),
-                img.short_name.clone(),
-                img.full_uri.clone(),
+                img.public_uri.clone(),
+                img.mirror_uri.clone().unwrap_or_else(|| "-".to_owned()),
             ]
         })
         .collect();
 
-    output::table(&["Name", "Tag", "Short Form", "Full URI"], &rows, None);
+    output::table(
+        &["Name", "Tag", "Public URI", "Deploy Mirror URI"],
+        &rows,
+        None,
+    );
 }

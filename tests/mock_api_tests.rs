@@ -257,6 +257,65 @@ fn test_apps_list_api_error() {
         .stdout(predicate::str::contains("INTERNAL_ERROR"));
 }
 
+// ───────────────────────── Images ─────────────────────────
+
+#[test]
+fn test_images_list_json() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+
+    let _m = server
+        .mock("GET", "/v1/images")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"images":[{"name":"floo-base-node","tag":"22","public_uri":"ghcr.io/getfloo/floo-base-node:22","mirror_uri":"us-central1-docker.pkg.dev/floo-prod/floo/floo-base-node:22"}]}"#,
+        )
+        .create();
+
+    floo()
+        .args(["--json", "images", "list"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(
+            r#""public_uri":"ghcr.io/getfloo/floo-base-node:22""#,
+        ))
+        .stdout(predicate::str::contains(
+            r#""mirror_uri":"us-central1-docker.pkg.dev/floo-prod/floo/floo-base-node:22""#,
+        ));
+}
+
+#[test]
+fn test_images_list_human() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+
+    let _m = server
+        .mock("GET", "/v1/images")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"images":[{"name":"floo-base-node","tag":"22","public_uri":"ghcr.io/getfloo/floo-base-node:22","mirror_uri":"us-central1-docker.pkg.dev/floo-prod/floo/floo-base-node:22"}]}"#,
+        )
+        .create();
+
+    floo()
+        .args(["images", "list"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Public URI"))
+        .stderr(predicate::str::contains("Deploy Mirror URI"))
+        .stderr(predicate::str::contains(
+            "ghcr.io/getfloo/floo-base-node:22",
+        ))
+        .stderr(predicate::str::contains(
+            "us-central1-docker.pkg.dev/floo-prod/floo/floo-base-node:22",
+        ));
+}
+
 // ───────────────────────── Env ─────────────────────────
 
 const TEST_SERVICE_ID: &str = "svc-uuid-1234";
@@ -801,7 +860,7 @@ ingress = "public"
 
 #[test]
 fn test_logs_no_config_no_app_errors() {
-    let mut server = Server::new();
+    let server = Server::new();
     let home = setup_config(&server);
 
     let project = TempDir::new().unwrap();

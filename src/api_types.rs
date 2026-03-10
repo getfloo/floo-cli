@@ -259,10 +259,10 @@ pub struct DatabaseInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BaseImage {
-    pub short_name: String,
-    pub full_uri: String,
     pub name: String,
     pub tag: String,
+    pub public_uri: String,
+    pub mirror_uri: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
