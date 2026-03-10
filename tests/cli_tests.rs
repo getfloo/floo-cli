@@ -25,7 +25,7 @@ fn test_version() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("floo 0.1.0"));
+        .stdout(predicate::str::contains("floo 0.1.1"));
 }
 
 #[test]
@@ -34,7 +34,7 @@ fn test_version_command_human() {
         .arg("version")
         .assert()
         .success()
-        .stderr(predicate::str::contains("floo 0.1.0"));
+        .stderr(predicate::str::contains("floo 0.1.1"));
 }
 
 #[test]
@@ -44,7 +44,7 @@ fn test_version_command_json() {
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""success":true"#))
-        .stdout(predicate::str::contains(r#""version":"0.1.0""#));
+        .stdout(predicate::str::contains(r#""version":"0.1.1""#));
 }
 
 #[test]
