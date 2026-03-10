@@ -44,8 +44,17 @@ impl FlooConfig {
     }
 }
 
+/// Returns the Floo config directory. Checks `FLOO_CONFIG_DIR` first,
+/// falls back to `$HOME/.floo`.
+pub(crate) fn config_dir() -> PathBuf {
+    if let Ok(dir) = env::var("FLOO_CONFIG_DIR") {
+        return PathBuf::from(dir);
+    }
+    dirs_home().join(CONFIG_DIR_NAME)
+}
+
 fn config_path() -> PathBuf {
-    dirs_home().join(CONFIG_DIR_NAME).join(CONFIG_FILE_NAME)
+    config_dir().join(CONFIG_FILE_NAME)
 }
 
 pub(crate) fn dirs_home() -> PathBuf {
@@ -185,5 +194,22 @@ mod tests {
         // (actual env manipulation in integration tests)
         let config = FlooConfig::default();
         assert_eq!(config.api_url, DEFAULT_API_URL);
+    }
+
+    #[test]
+    fn test_config_dir_env_override() {
+        let tmp = tempfile::tempdir().unwrap();
+        let custom_dir = tmp.path().join("custom-floo");
+        env::set_var("FLOO_CONFIG_DIR", &custom_dir);
+        let result = config_dir();
+        env::remove_var("FLOO_CONFIG_DIR");
+        assert_eq!(result, custom_dir);
+    }
+
+    #[test]
+    fn test_config_dir_fallback() {
+        env::remove_var("FLOO_CONFIG_DIR");
+        let result = config_dir();
+        assert!(result.ends_with(CONFIG_DIR_NAME));
     }
 }

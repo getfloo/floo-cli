@@ -8,7 +8,6 @@ use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::config;
-use crate::constants::CONFIG_DIR_NAME;
 use crate::updater;
 
 const CACHE_TTL_SECS: u64 = 86_400; // 24 hours
@@ -54,12 +53,12 @@ fn now_secs() -> u64 {
 }
 
 fn floo_dir() -> Option<PathBuf> {
-    let home = config::dirs_home();
-    // dirs_home() falls back to "~" when HOME is unset; that's not a usable path
-    if home.as_os_str() == "~" {
+    let dir = config::config_dir();
+    // config_dir() falls back to "~/.floo" when HOME is unset; "~" is not a usable path
+    if dir.starts_with("~") {
         return None;
     }
-    Some(home.join(CONFIG_DIR_NAME))
+    Some(dir)
 }
 
 fn cache_path() -> Option<PathBuf> {
