@@ -1,0 +1,530 @@
+use std::path::{Path, PathBuf};
+use std::process;
+use std::thread;
+use std::time::Duration;
+
+use colored::Colorize;
+
+use crate::api_types::LogEntry;
+use crate::errors::ErrorCode;
+use crate::output;
+use crate::project_config::{self, AppSource};
+use crate::resolve::resolve_app;
+
+const POLL_INTERVAL: Duration = Duration::from_secs(2);
+const MAX_TRANSIENT_RETRIES: u32 = 3;
+
+pub struct LogsArgs {
+    pub app_flag: Option<String>,
+    pub tail: u32,
+    pub since: Option<String>,
+    pub severity: Option<String>,
+    pub services: Vec<String>,
+    pub search: Option<String>,
+    pub live: bool,
+    pub output_path: Option<PathBuf>,
+}
+
+struct LogsFilter<'a> {
+    since: Option<&'a str>,
+    severity: Option<&'a str>,
+    services: &'a [String],
+    search: Option<&'a str>,
+}
+
+fn format_log_line(entry: &LogEntry, show_service_prefix: bool) -> String {
+    let ts = entry.timestamp.as_deref().unwrap_or("");
+    let sev = entry.severity.as_deref().unwrap_or("DEFAULT");
+    let msg = entry.message.as_deref().unwrap_or("");
+    let colored_sev = match sev {
+        "ERROR" | "CRITICAL" => sev.red().bold().to_string(),
+        "WARNING" => sev.yellow().to_string(),
+        "INFO" => sev.cyan().to_string(),
+        "DEBUG" => sev.dimmed().to_string(),
+        _ => sev.to_string(),
+    };
+
+    if show_service_prefix {
+        let service = entry.service_name.as_deref().unwrap_or("unknown");
+        let colored_service = format!("[{}]", service).blue().bold().to_string();
+        format!("{colored_service} {ts} [{colored_sev}] {msg}")
+    } else {
+        format!("{ts} [{colored_sev}] {msg}")
+    }
+}
+
+fn format_log_line_plain(entry: &LogEntry, show_service_prefix: bool) -> String {
+    let ts = entry.timestamp.as_deref().unwrap_or("");
+    let sev = entry.severity.as_deref().unwrap_or("DEFAULT");
+    let msg = entry.message.as_deref().unwrap_or("");
+
+    if show_service_prefix {
+        let svc = entry.service_name.as_deref().unwrap_or("unknown");
+        format!("[{svc}] {ts} [{sev}] {msg}")
+    } else {
+        format!("{ts} [{sev}] {msg}")
+    }
+}
+
+fn fetch_logs(
+    client: &crate::api_client::FlooClient,
+    app_id: &str,
+    tail: u32,
+    filter: &LogsFilter,
+) -> Vec<LogEntry> {
+    if filter.services.len() <= 1 {
+        let service = filter.services.first().map(|s| s.as_str());
+        let result = match client.get_logs(
+            app_id,
+            tail,
+            filter.since,
+            filter.severity,
+            service,
+            filter.search,
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                process::exit(1);
+            }
+        };
+        result.logs
+    } else {
+        let mut all_logs = Vec::new();
+        for svc in filter.services {
+            let result = match client.get_logs(
+                app_id,
+                tail,
+                filter.since,
+                filter.severity,
+                Some(svc),
+                filter.search,
+            ) {
+                Ok(r) => r,
+                Err(e) => {
+                    output::error(
+                        &format!("Failed to fetch logs for service '{}': {}", svc, e.message),
+                        &ErrorCode::from_api(&e.code),
+                        None,
+                    );
+                    process::exit(1);
+                }
+            };
+            all_logs.extend(result.logs);
+        }
+        all_logs.sort_by(|a, b| {
+            let ts_a = a.timestamp.as_deref().unwrap_or("");
+            let ts_b = b.timestamp.as_deref().unwrap_or("");
+            ts_a.cmp(ts_b)
+        });
+        all_logs
+    }
+}
+
+fn try_fetch_logs(
+    client: &crate::api_client::FlooClient,
+    app_id: &str,
+    tail: u32,
+    filter: &LogsFilter,
+) -> Result<Vec<LogEntry>, crate::errors::FlooApiError> {
+    if filter.services.len() <= 1 {
+        let service = filter.services.first().map(|s| s.as_str());
+        let result = client.get_logs(
+            app_id,
+            tail,
+            filter.since,
+            filter.severity,
+            service,
+            filter.search,
+        )?;
+        Ok(result.logs)
+    } else {
+        let mut all_logs = Vec::new();
+        for svc in filter.services {
+            let result = client.get_logs(
+                app_id,
+                tail,
+                filter.since,
+                filter.severity,
+                Some(svc),
+                filter.search,
+            )?;
+            all_logs.extend(result.logs);
+        }
+        all_logs.sort_by(|a, b| {
+            let ts_a = a.timestamp.as_deref().unwrap_or("");
+            let ts_b = b.timestamp.as_deref().unwrap_or("");
+            ts_a.cmp(ts_b)
+        });
+        Ok(all_logs)
+    }
+}
+
+fn print_context_header(app_name: &str, source_label: &str, filter: &LogsFilter) {
+    eprintln!();
+    eprintln!("  {} {} (from {})", "App:".bold(), app_name, source_label);
+    if filter.services.is_empty() {
+        eprintln!("  {} all", "Services:".bold());
+    } else {
+        eprintln!("  {} {}", "Services:".bold(), filter.services.join(", "));
+    }
+    if let Some(s) = filter.since {
+        eprintln!("  {} {}", "Since:".bold(), s);
+    }
+    if let Some(q) = filter.search {
+        eprintln!("  {} \"{}\"", "Search:".bold(), q);
+    }
+    eprintln!("  {}", "\u{2500}".repeat(40).dimmed());
+    eprintln!();
+}
+
+fn source_label(source: &AppSource, config_dir: &Path) -> String {
+    match source {
+        AppSource::Flag => "--app flag".to_string(),
+        AppSource::ServiceFile => {
+            format!(
+                "{} in {}",
+                project_config::SERVICE_CONFIG_FILE,
+                config_dir.display()
+            )
+        }
+        AppSource::AppFile => {
+            format!(
+                "{} in {}",
+                project_config::APP_CONFIG_FILE,
+                config_dir.display()
+            )
+        }
+    }
+}
+
+fn update_last_timestamp(last: &mut Option<String>, entry: &LogEntry) {
+    if let Some(ts) = entry.timestamp.as_deref() {
+        let is_newer = match last.as_deref() {
+            Some(prev) => ts > prev,
+            None => true,
+        };
+        if is_newer {
+            *last = Some(ts.to_string());
+        }
+    }
+}
+
+pub fn logs(args: LogsArgs) {
+    super::require_auth();
+    let client = super::init_client(None);
+
+    let cwd = std::env::current_dir().unwrap_or_else(|e| {
+        output::error(
+            &format!("Failed to read current directory: {e}"),
+            &ErrorCode::FileError,
+            None,
+        );
+        process::exit(1);
+    });
+
+    let resolved = match project_config::resolve_app_context(&cwd, args.app_flag.as_deref()) {
+        Ok(r) => r,
+        Err(e) => {
+            output::error(&e.message, &e.code, e.suggestion.as_deref());
+            process::exit(1);
+        }
+    };
+
+    let app_name = &resolved.app_name;
+    let src_label = source_label(&resolved.source, &resolved.config_dir);
+
+    let app_data = match resolve_app(&client, app_name) {
+        Ok(a) => a,
+        Err(e) => {
+            if e.code == "APP_NOT_FOUND" {
+                output::error(
+                    &format!("App '{app_name}' not found."),
+                    &ErrorCode::AppNotFound,
+                    Some("Check the app name or ID and try again."),
+                );
+            } else {
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            }
+            process::exit(1);
+        }
+    };
+
+    let app_id = &app_data.id;
+    let show_service_prefix = args.services.len() != 1;
+
+    let filter = LogsFilter {
+        since: args.since.as_deref(),
+        severity: args.severity.as_deref(),
+        services: &args.services,
+        search: args.search.as_deref(),
+    };
+
+    if !output::is_json_mode() {
+        print_context_header(app_name, &src_label, &filter);
+    }
+
+    if args.live {
+        live_logs(&client, app_id, args.tail, &filter, show_service_prefix);
+    } else {
+        batch_logs(
+            &client,
+            app_id,
+            app_name,
+            args.tail,
+            &filter,
+            show_service_prefix,
+            args.output_path.as_deref(),
+        );
+    }
+}
+
+fn batch_logs(
+    client: &crate::api_client::FlooClient,
+    app_id: &str,
+    app_name: &str,
+    tail: u32,
+    filter: &LogsFilter,
+    show_service_prefix: bool,
+    output_path: Option<&Path>,
+) {
+    let logs = fetch_logs(client, app_id, tail, filter);
+
+    if logs.is_empty() {
+        if output::is_json_mode() {
+            output::success(
+                "No logs found.",
+                Some(serde_json::json!({
+                    "logs": [],
+                    "total": 0,
+                    "app_name": app_name,
+                })),
+            );
+        } else {
+            output::info(
+                "No logs found. The app may not have produced any output yet.",
+                None,
+            );
+        }
+        return;
+    }
+
+    if let Some(path) = output_path {
+        write_logs_to_file(path, &logs, app_name, show_service_prefix);
+        return;
+    }
+
+    if output::is_json_mode() {
+        let total = logs.len();
+        output::success(
+            "Logs retrieved.",
+            Some(serde_json::json!({
+                "logs": logs,
+                "total": total,
+                "app_name": app_name,
+            })),
+        );
+        return;
+    }
+
+    for entry in &logs {
+        output::dim_line(&format_log_line(entry, show_service_prefix));
+    }
+}
+
+fn write_logs_to_file(path: &Path, logs: &[LogEntry], app_name: &str, show_service_prefix: bool) {
+    let content = if output::is_json_mode() {
+        let payload = serde_json::json!({
+            "logs": logs,
+            "total": logs.len(),
+            "app_name": app_name,
+        });
+        match serde_json::to_string_pretty(&payload) {
+            Ok(s) => s,
+            Err(e) => {
+                output::error(
+                    &format!("Failed to serialize logs to JSON: {e}"),
+                    &ErrorCode::ParseError,
+                    None,
+                );
+                process::exit(1);
+            }
+        }
+    } else {
+        logs.iter()
+            .map(|entry| format_log_line_plain(entry, show_service_prefix))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    if let Err(e) = std::fs::write(path, &content) {
+        output::error(
+            &format!("Failed to write logs to {}: {e}", path.display()),
+            &ErrorCode::FileError,
+            None,
+        );
+        process::exit(1);
+    }
+
+    let count = logs.len();
+    if output::is_json_mode() {
+        output::success(
+            &format!("Wrote {count} log entries to {}", path.display()),
+            Some(serde_json::json!({
+                "logs": logs,
+                "total": count,
+                "app_name": app_name,
+            })),
+        );
+    } else {
+        output::success(
+            &format!("Wrote {count} log entries to {}", path.display()),
+            None,
+        );
+    }
+}
+
+fn live_logs(
+    client: &crate::api_client::FlooClient,
+    app_id: &str,
+    tail: u32,
+    filter: &LogsFilter,
+    show_service_prefix: bool,
+) {
+    let is_json = output::is_json_mode();
+
+    let logs = fetch_logs(client, app_id, tail, filter);
+
+    let mut last_timestamp: Option<String> = None;
+
+    for entry in &logs {
+        if is_json {
+            output::print_json(&output::to_value(entry));
+        } else {
+            output::dim_line(&format_log_line(entry, show_service_prefix));
+        }
+        update_last_timestamp(&mut last_timestamp, entry);
+    }
+
+    if !is_json && logs.is_empty() {
+        output::info("Waiting for new logs...", None);
+    }
+
+    let mut consecutive_errors: u32 = 0;
+
+    loop {
+        thread::sleep(POLL_INTERVAL);
+
+        let since_filter = last_timestamp.as_deref().or(filter.since);
+
+        let poll_filter = LogsFilter {
+            since: since_filter,
+            severity: filter.severity,
+            services: filter.services,
+            search: filter.search,
+        };
+
+        let poll_result = try_fetch_logs(client, app_id, tail, &poll_filter);
+        let new_logs = match poll_result {
+            Ok(logs) => {
+                consecutive_errors = 0;
+                logs
+            }
+            Err(e) => {
+                consecutive_errors += 1;
+                if consecutive_errors >= MAX_TRANSIENT_RETRIES {
+                    output::error(
+                        &format!(
+                            "Live polling failed after {} consecutive errors: {}",
+                            MAX_TRANSIENT_RETRIES, e.message
+                        ),
+                        &ErrorCode::from_api(&e.code),
+                        Some("Check your network connection and try again."),
+                    );
+                    process::exit(1);
+                }
+                if !is_json {
+                    eprintln!(
+                        "  {} transient error (retry {}/{}): {}",
+                        "!".yellow().bold(),
+                        consecutive_errors,
+                        MAX_TRANSIENT_RETRIES,
+                        e.message
+                    );
+                }
+                continue;
+            }
+        };
+
+        let new_entries: Vec<_> = match &last_timestamp {
+            None => new_logs,
+            Some(last_ts) => new_logs
+                .into_iter()
+                .filter(|entry| {
+                    entry
+                        .timestamp
+                        .as_deref()
+                        .map(|ts| ts > last_ts.as_str())
+                        .unwrap_or(false)
+                })
+                .collect(),
+        };
+
+        for entry in &new_entries {
+            if is_json {
+                output::print_json(&output::to_value(entry));
+            } else {
+                output::dim_line(&format_log_line(entry, show_service_prefix));
+            }
+            update_last_timestamp(&mut last_timestamp, entry);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_log_with_service(ts: &str, sev: &str, msg: &str, svc: &str) -> LogEntry {
+        LogEntry {
+            timestamp: Some(ts.to_string()),
+            severity: Some(sev.to_string()),
+            message: Some(msg.to_string()),
+            service_name: Some(svc.to_string()),
+        }
+    }
+
+    #[test]
+    fn test_format_log_line_without_prefix() {
+        let entry = make_log_with_service("2024-01-01T00:00:00Z", "INFO", "Server started", "api");
+
+        let line = format_log_line(&entry, false);
+        assert!(line.contains("2024-01-01T00:00:00Z"));
+        assert!(line.contains("Server started"));
+        assert!(!line.contains("[api]"));
+    }
+
+    #[test]
+    fn test_format_log_line_with_prefix() {
+        let entry = make_log_with_service("2024-01-01T00:00:00Z", "INFO", "Server started", "api");
+
+        let line = format_log_line(&entry, true);
+        assert!(line.contains("2024-01-01T00:00:00Z"));
+        assert!(line.contains("Server started"));
+        assert!(line.contains("[api]"));
+    }
+
+    #[test]
+    fn test_format_log_line_with_prefix_missing_service_name() {
+        let entry = LogEntry {
+            timestamp: Some("2024-01-01T00:00:00Z".to_string()),
+            severity: Some("ERROR".to_string()),
+            message: Some("something broke".to_string()),
+            service_name: None,
+        };
+
+        let line = format_log_line(&entry, true);
+        assert!(line.contains("[unknown]"));
+        assert!(line.contains("something broke"));
+    }
+}

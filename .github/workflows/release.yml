@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "cli-v*"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            name: floo-x86_64-apple-darwin
+            binary: floo
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            name: floo-aarch64-apple-darwin
+            binary: floo
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            name: floo-x86_64-unknown-linux-musl
+            binary: floo
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            name: floo-aarch64-unknown-linux-musl
+            binary: floo
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            name: floo-x86_64-pc-windows-msvc
+            binary: floo.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross (Linux ARM)
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Install musl tools (Linux x86_64)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build (native)
+        if: matrix.target != 'aarch64-unknown-linux-musl'
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Build (cross)
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: cross build --release --target ${{ matrix.target }}
+
+      - name: Strip binary (Unix)
+        if: runner.os != 'Windows' && matrix.target != 'aarch64-unknown-linux-musl'
+        run: strip target/${{ matrix.target }}/release/${{ matrix.binary }}
+
+      - name: Package binary (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cp target/${{ matrix.target }}/release/${{ matrix.binary }} ${{ matrix.name }}
+          shasum -a 256 ${{ matrix.name }} > ${{ matrix.name }}.sha256
+
+      - name: Package binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary }}" "${{ matrix.name }}.exe"
+          $hash = (Get-FileHash "${{ matrix.name }}.exe" -Algorithm SHA256).Hash.ToLower()
+          "$hash  ${{ matrix.name }}.exe" | Out-File -Encoding ascii "${{ matrix.name }}.exe.sha256"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            ${{ matrix.name }}*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            floo-*/*
+          generate_release_notes: true
