@@ -12,4 +12,6 @@ if [[ ! -x "$DEV_BIN" ]]; then
     exit 1
 fi
 
+export FLOO_CONFIG_DIR="${FLOO_CONFIG_DIR:-$HOME/.floo-dev}"
+
 exec "$DEV_BIN" "$@"
