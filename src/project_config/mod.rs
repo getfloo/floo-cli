@@ -13,7 +13,7 @@ pub use app_config::{
     load_app_config, write_app_config, AppAccessMode, AppFileAppSection, AppFileConfig,
     AppServiceEntry, AppServiceType,
 };
-pub use discover::{discover_services, filter_services};
+pub use discover::{discover_managed_services, discover_services, filter_services};
 pub use resolve::{resolve_app_context, AppSource, ResolvedApp};
 pub use service_config::{
     load_service_config, write_service_config, ServiceConfig, ServiceFileAppSection,

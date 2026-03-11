@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -95,6 +96,18 @@ pub enum AppServiceType {
 impl AppServiceType {
     pub fn is_user_managed(&self) -> bool {
         matches!(self, Self::Web | Self::Api | Self::Worker)
+    }
+}
+
+impl fmt::Display for AppServiceType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Web => write!(f, "web"),
+            Self::Api => write!(f, "api"),
+            Self::Worker => write!(f, "worker"),
+            Self::Postgres => write!(f, "postgres"),
+            Self::Redis => write!(f, "redis"),
+        }
     }
 }
 
