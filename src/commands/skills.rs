@@ -11,14 +11,32 @@ use crate::errors::ErrorCode;
 use crate::output;
 
 const SKILL_CONTENT: &str = include_str!("../../skills/floo/SKILL.md");
+const SKILL_SERVICES: &str = include_str!("../../plugin/skills/floo-services/SKILL.md");
+const SKILL_SECURITY: &str = include_str!("../../plugin/skills/floo-security/SKILL.md");
+
+/// All plugin skills to install alongside the main skill.
+const PLUGIN_SKILLS: &[(&str, &str)] = &[
+    ("floo-services", SKILL_SERVICES),
+    ("floo-security", SKILL_SECURITY),
+];
 
 pub fn install(path: Option<PathBuf>, print: bool) {
     if print {
         if output::is_json_mode() {
+            let plugin_skills: Vec<serde_json::Value> = PLUGIN_SKILLS
+                .iter()
+                .map(|(name, content)| {
+                    serde_json::json!({
+                        "name": name,
+                        "content": content,
+                    })
+                })
+                .collect();
             output::success(
                 "Skill content",
                 Some(serde_json::json!({
                     "content": SKILL_CONTENT,
+                    "plugin_skills": plugin_skills,
                     "version": VERSION,
                 })),
             );
@@ -84,6 +102,28 @@ pub fn install(path: Option<PathBuf>, print: bool) {
         process::exit(1);
     }
 
+    // Install plugin skills as sibling directories
+    for (skill_name, skill_content) in PLUGIN_SKILLS {
+        let skill_dir = dir.join(skill_name);
+        if let Err(e) = fs::create_dir_all(&skill_dir) {
+            output::error(
+                &format!("Failed to create directory '{}': {e}", skill_dir.display()),
+                &ErrorCode::FileError,
+                None,
+            );
+            process::exit(1);
+        }
+        let skill_path = skill_dir.join("SKILL.md");
+        if let Err(e) = fs::write(&skill_path, skill_content) {
+            output::error(
+                &format!("Failed to write '{}': {e}", skill_path.display()),
+                &ErrorCode::FileError,
+                None,
+            );
+            process::exit(1);
+        }
+    }
+
     // Track the path in config
     let abs_str = match abs_path.to_str() {
         Some(s) => s.to_string(),
@@ -112,11 +152,14 @@ pub fn install(path: Option<PathBuf>, print: bool) {
 
     let (read_only, read_write) = recommended_permissions();
 
+    let plugin_skill_names: Vec<&str> = PLUGIN_SKILLS.iter().map(|(name, _)| *name).collect();
+
     if output::is_json_mode() {
         output::success(
-            &format!("Installed agent skill to {}", abs_path.display()),
+            &format!("Installed agent skills to {}", dir.display()),
             Some(serde_json::json!({
                 "path": abs_str,
+                "plugin_skills": plugin_skill_names,
                 "version": VERSION,
                 "recommended_permissions": {
                     "read_only": read_only,
@@ -126,7 +169,11 @@ pub fn install(path: Option<PathBuf>, print: bool) {
         );
     } else {
         output::success(
-            &format!("Installed agent skill to {}", abs_path.display()),
+            &format!(
+                "Installed agent skills to {} (floo, {})",
+                dir.display(),
+                plugin_skill_names.join(", ")
+            ),
             None,
         );
         print_permission_recommendations(&read_only, &read_write);
@@ -161,6 +208,20 @@ pub fn refresh_skill_files() -> Vec<String> {
             Ok(()) => {
                 refreshed.push(path_str.clone());
                 still_valid.push(path_str.clone());
+
+                // Refresh plugin skills as sibling directories
+                if let Some(parent) = path.parent() {
+                    for (skill_name, skill_content) in PLUGIN_SKILLS {
+                        let skill_dir = parent.join(skill_name);
+                        let _ = fs::create_dir_all(&skill_dir);
+                        let skill_path = skill_dir.join("SKILL.md");
+                        if let Err(e) = fs::write(&skill_path, skill_content) {
+                            if !output::is_json_mode() {
+                                eprintln!("  Warning: failed to refresh {skill_name} skill: {e}");
+                            }
+                        }
+                    }
+                }
             }
             Err(e) => {
                 // Write failed but directory exists — keep tracking, report error
@@ -279,6 +340,38 @@ mod tests {
         assert!(SKILL_CONTENT.contains("## Self-Discovery"));
         assert!(SKILL_CONTENT.contains("floo docs"));
         assert!(SKILL_CONTENT.contains("--json"));
+    }
+
+    #[test]
+    fn test_plugin_skills_are_embedded() {
+        assert_eq!(PLUGIN_SKILLS.len(), 2);
+        for (name, content) in PLUGIN_SKILLS {
+            assert!(!name.is_empty());
+            assert!(!content.is_empty());
+            assert!(content.contains("---"), "{name} skill missing frontmatter");
+            assert!(
+                content.contains(&format!("name: {name}")),
+                "{name} skill frontmatter name mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn test_services_skill_covers_all_services() {
+        assert!(SKILL_SERVICES.contains("## Postgres"));
+        assert!(SKILL_SERVICES.contains("## Redis"));
+        assert!(SKILL_SERVICES.contains("## Storage"));
+        assert!(SKILL_SERVICES.contains("DATABASE_URL"));
+        assert!(SKILL_SERVICES.contains("REDIS_URL"));
+        assert!(SKILL_SERVICES.contains("STORAGE_BUCKET"));
+    }
+
+    #[test]
+    fn test_security_skill_has_anti_patterns() {
+        assert!(SKILL_SECURITY.contains("## Anti-Pattern Blocklist"));
+        assert!(SKILL_SECURITY.contains("## Secrets Management"));
+        assert!(SKILL_SECURITY.contains("## Database Security"));
+        assert!(SKILL_SECURITY.contains("NEVER hardcode"));
     }
 
     #[test]

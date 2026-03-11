@@ -1,0 +1,13 @@
+{
+  "name": "floo",
+  "version": "0.1.0",
+  "description": "Floo deployment platform — CLI usage, managed services, and security patterns for AI agents",
+  "author": {
+    "name": "Floo",
+    "url": "https://github.com/getfloo"
+  },
+  "repository": "https://github.com/getfloo/floo-cli",
+  "license": "MIT",
+  "keywords": ["floo", "deploy", "cloud", "security", "postgres", "redis"],
+  "skills": "./skills/"
+}
