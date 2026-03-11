@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use serde::Serialize;
+
 use crate::errors::{ErrorCode, FlooError};
 
 use super::app_config::{AppServiceEntry, AppServiceType};
@@ -275,6 +277,42 @@ pub fn filter_services(
         .into_iter()
         .filter(|s| filter_set.contains(s.name.as_str()))
         .collect())
+}
+
+/// A managed service declaration from floo.app.toml (e.g. postgres, redis).
+#[derive(Debug, Clone, Serialize)]
+pub struct ManagedServiceDeclaration {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub service_type: AppServiceType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tier: Option<String>,
+}
+
+/// Extract managed service declarations from floo.app.toml.
+/// These are services where `!is_user_managed()` (Postgres, Redis).
+pub fn discover_managed_services(resolved: &ResolvedApp) -> Vec<ManagedServiceDeclaration> {
+    let Some(ref app_cfg) = resolved.app_config else {
+        return Vec::new();
+    };
+
+    app_cfg
+        .services
+        .iter()
+        .filter_map(|(name, entry)| {
+            if entry.service_type.is_user_managed() {
+                return None;
+            }
+            Some(ManagedServiceDeclaration {
+                name: name.clone(),
+                service_type: entry.service_type.clone(),
+                version: entry.version.clone(),
+                tier: entry.plan.clone(),
+            })
+        })
+        .collect()
 }
 
 /// Extract user-managed inline service entries (have `port` set) from app_config.
@@ -1635,5 +1673,127 @@ domain = "svc.example.com"
         assert_eq!(services[0].cpu.as_deref(), Some("2"));
         assert_eq!(services[0].memory.as_deref(), Some("4Gi"));
         assert_eq!(services[0].max_instances, Some(5));
+    }
+
+    // --- Managed service discovery tests ---
+
+    #[test]
+    fn test_discover_managed_services_postgres_redis() {
+        let dir = TempDir::new().unwrap();
+        let app_cfg = AppFileConfig {
+            app: AppFileAppSection {
+                name: "test-app".to_string(),
+                access_mode: None,
+            },
+            resources: None,
+            services: {
+                let mut m = HashMap::new();
+                m.insert(
+                    "db".to_string(),
+                    AppServiceEntry {
+                        service_type: AppServiceType::Postgres,
+                        path: None,
+                        repo: None,
+                        version: Some("16".to_string()),
+                        plan: Some("hobby".to_string()),
+                        port: None,
+                        ingress: None,
+                        env_file: None,
+                        domain: None,
+                        cpu: None,
+                        memory: None,
+                        max_instances: None,
+                    },
+                );
+                m.insert(
+                    "web".to_string(),
+                    AppServiceEntry {
+                        service_type: AppServiceType::Web,
+                        path: Some("./frontend".to_string()),
+                        repo: None,
+                        version: None,
+                        plan: None,
+                        port: Some(3000),
+                        ingress: Some(ServiceIngress::Public),
+                        env_file: None,
+                        domain: None,
+                        cpu: None,
+                        memory: None,
+                        max_instances: None,
+                    },
+                );
+                m
+            },
+            environments: HashMap::new(),
+        };
+
+        let resolved = make_resolved(
+            dir.path(),
+            "test-app",
+            None,
+            Some(app_cfg),
+            AppSource::AppFile,
+        );
+
+        let managed = discover_managed_services(&resolved);
+        assert_eq!(managed.len(), 1);
+        assert_eq!(managed[0].name, "db");
+        assert_eq!(managed[0].service_type, AppServiceType::Postgres);
+        assert_eq!(managed[0].version, Some("16".to_string()));
+        assert_eq!(managed[0].tier, Some("hobby".to_string()));
+    }
+
+    #[test]
+    fn test_discover_managed_services_empty_when_no_managed() {
+        let dir = TempDir::new().unwrap();
+        let app_cfg = AppFileConfig {
+            app: AppFileAppSection {
+                name: "test-app".to_string(),
+                access_mode: None,
+            },
+            resources: None,
+            services: {
+                let mut m = HashMap::new();
+                m.insert(
+                    "web".to_string(),
+                    AppServiceEntry {
+                        service_type: AppServiceType::Web,
+                        path: Some(".".to_string()),
+                        repo: None,
+                        version: None,
+                        plan: None,
+                        port: Some(3000),
+                        ingress: Some(ServiceIngress::Public),
+                        env_file: None,
+                        domain: None,
+                        cpu: None,
+                        memory: None,
+                        max_instances: None,
+                    },
+                );
+                m
+            },
+            environments: HashMap::new(),
+        };
+
+        let resolved = make_resolved(
+            dir.path(),
+            "test-app",
+            None,
+            Some(app_cfg),
+            AppSource::AppFile,
+        );
+
+        let managed = discover_managed_services(&resolved);
+        assert!(managed.is_empty());
+    }
+
+    #[test]
+    fn test_discover_managed_services_empty_when_no_app_config() {
+        let dir = TempDir::new().unwrap();
+        let resolved = make_resolved(dir.path(), "test-app", None, None, AppSource::Flag);
+
+        let managed = discover_managed_services(&resolved);
+        assert!(managed.is_empty());
     }
 }

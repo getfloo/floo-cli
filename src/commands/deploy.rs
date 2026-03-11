@@ -204,6 +204,9 @@ pub fn deploy(
         }
     };
 
+    // 3b. Discover managed service declarations (postgres, redis, etc.)
+    let managed_services = project_config::discover_managed_services(&resolved);
+
     // 4. Per-service runtime detection
     let svc_pairs: Vec<(&str, &str)> = services
         .iter()
@@ -225,6 +228,23 @@ pub fn deploy(
             &preflight_warnings,
             &preflight_errors,
         );
+
+        if !managed_services.is_empty() {
+            eprintln!("  Managed services:");
+            for ms in &managed_services {
+                let tier_label = ms.tier.as_deref().unwrap_or("basic");
+                let version_label = ms
+                    .version
+                    .as_ref()
+                    .map(|v| format!(" v{v}"))
+                    .unwrap_or_default();
+                eprintln!(
+                    "    {}: {}{version_label} (tier {tier_label})",
+                    ms.name, ms.service_type
+                );
+            }
+            eprintln!();
+        }
     }
 
     // 7. Dry-run exit — full preflight output, no auth needed
@@ -251,10 +271,23 @@ pub fn deploy(
             .map(|w| w.get("message").and_then(|v| v.as_str()).unwrap_or(""))
             .collect();
 
+        let managed_json: Vec<serde_json::Value> = managed_services
+            .iter()
+            .map(|ms| {
+                serde_json::json!({
+                    "name": ms.name,
+                    "type": ms.service_type,
+                    "version": ms.version,
+                    "tier": ms.tier.as_deref().unwrap_or("basic"),
+                })
+            })
+            .collect();
+
         output::dry_run_success(serde_json::json!({
             "action": "deploy",
             "app": app_name,
             "services": svc_json,
+            "managed_services": managed_json,
             "warnings": warning_strings,
             "valid": preflight_errors.is_empty(),
         }));
