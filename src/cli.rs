@@ -654,6 +654,9 @@ pub enum SkillsCommands {
 }
 
 fn should_check_version(cli: &Cli) -> bool {
+    if crate::config::is_local_binary() {
+        return false;
+    }
     if cli.json {
         return false;
     }

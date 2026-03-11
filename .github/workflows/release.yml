@@ -18,23 +18,23 @@ jobs:
           - target: x86_64-apple-darwin
             os: macos-latest
             name: floo-x86_64-apple-darwin
-            binary: floo
+            binary: floo-local
           - target: aarch64-apple-darwin
             os: macos-latest
             name: floo-aarch64-apple-darwin
-            binary: floo
+            binary: floo-local
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             name: floo-x86_64-unknown-linux-musl
-            binary: floo
+            binary: floo-local
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
             name: floo-aarch64-unknown-linux-musl
-            binary: floo
+            binary: floo-local
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             name: floo-x86_64-pc-windows-msvc
-            binary: floo.exe
+            binary: floo-local.exe
 
     runs-on: ${{ matrix.os }}
 

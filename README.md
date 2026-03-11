@@ -90,21 +90,20 @@ Requires [Rust](https://rustup.rs/) (1.70+).
 ```bash
 git clone https://github.com/getfloo/floo-cli.git
 cd floo-cli
-cargo build --release
-# Binary at target/release/floo
+cargo build
+# Binary at target/debug/floo-local
 ```
 
 ## Local development vs installed CLI
 
-Keep your installed production CLI on `floo`, and use the dev wrapper for local builds:
+The binary compiles as `floo-local` and uses `~/.floo-local/` for config, keeping it completely isolated from the installed `floo` binary (`~/.floo/`):
 
 ```bash
 cd floo-cli
 cargo build
-./scripts/floo-dev --help
+./target/debug/floo-local --help
+# Or symlink: ln -sf $(pwd)/target/debug/floo-local /usr/local/bin/floo-local
 ```
-
-`scripts/floo-dev` runs `target/debug/floo` (or `FLOO_DEV_BIN` if set) so local development does not replace your installed `floo` binary.
 
 ## Contributing
 
