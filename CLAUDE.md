@@ -45,7 +45,7 @@ All HTTP calls go through `FlooClient`. Never use `reqwest` directly in commands
 
 ### Config (`config.rs`)
 
-Manages `~/.floo/config.json` (API key, email, API URL). File permissions set to `0o600`.
+Manages `~/.floo-local/config.json` for local builds or `~/.floo/config.json` for installed builds (API key, email, API URL). The config directory is chosen at runtime based on the binary name (`floo-local` vs `floo`). File permissions set to `0o600`.
 
 ### Detection (`detection.rs`)
 

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::constants::{CONFIG_DIR_NAME, CONFIG_FILE_NAME, DEFAULT_API_URL};
+use crate::constants::{CONFIG_FILE_NAME, DEFAULT_API_URL};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FlooConfig {
@@ -44,13 +44,31 @@ impl FlooConfig {
     }
 }
 
+/// Returns true when the running binary is the locally-compiled `floo-local`.
+pub fn is_local_binary() -> bool {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_os_string()))
+        .map(|n| n == "floo-local")
+        .unwrap_or(false)
+}
+
+/// Config directory name: `.floo-local` for local builds, `.floo` for installed.
+pub fn config_dir_name() -> &'static str {
+    if is_local_binary() {
+        ".floo-local"
+    } else {
+        ".floo"
+    }
+}
+
 /// Returns the Floo config directory. Checks `FLOO_CONFIG_DIR` first,
-/// falls back to `$HOME/.floo`.
+/// falls back to `$HOME/.floo-local` or `$HOME/.floo` based on binary name.
 pub(crate) fn config_dir() -> PathBuf {
     if let Ok(dir) = env::var("FLOO_CONFIG_DIR") {
         return PathBuf::from(dir);
     }
-    dirs_home().join(CONFIG_DIR_NAME)
+    dirs_home().join(config_dir_name())
 }
 
 fn config_path() -> PathBuf {
@@ -178,7 +196,7 @@ mod tests {
     #[test]
     fn test_corrupted_config_file_returns_default() {
         let tmp = tempfile::tempdir().unwrap();
-        let config_dir = tmp.path().join(CONFIG_DIR_NAME);
+        let config_dir = tmp.path().join(config_dir_name());
         fs::create_dir_all(&config_dir).unwrap();
         fs::write(config_dir.join(CONFIG_FILE_NAME), "{ not valid json !!!").unwrap();
 
@@ -210,6 +228,6 @@ mod tests {
     fn test_config_dir_fallback() {
         env::remove_var("FLOO_CONFIG_DIR");
         let result = config_dir();
-        assert!(result.ends_with(CONFIG_DIR_NAME));
+        assert!(result.ends_with(config_dir_name()));
     }
 }

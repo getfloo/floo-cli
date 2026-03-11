@@ -3,7 +3,7 @@ use predicates::prelude::*;
 
 #[allow(deprecated)]
 fn floo() -> Command {
-    Command::cargo_bin("floo").unwrap()
+    Command::cargo_bin("floo-local").unwrap()
 }
 
 // --- Help & Version ---
@@ -361,7 +361,7 @@ fn test_services_info_json_not_authenticated() {
 fn test_env_set_invalid_format() {
     // Create a fake config with an API key so we get past the auth check
     let home = tempfile::TempDir::new().unwrap();
-    let config_dir = home.path().join(".floo");
+    let config_dir = home.path().join(".floo-local");
     std::fs::create_dir_all(&config_dir).unwrap();
     std::fs::write(
         config_dir.join("config.json"),
@@ -380,7 +380,7 @@ fn test_env_set_invalid_format() {
 #[test]
 fn test_env_set_invalid_format_json() {
     let home = tempfile::TempDir::new().unwrap();
-    let config_dir = home.path().join(".floo");
+    let config_dir = home.path().join(".floo-local");
     std::fs::create_dir_all(&config_dir).unwrap();
     std::fs::write(
         config_dir.join("config.json"),
@@ -501,7 +501,7 @@ fn test_logs_json_not_authenticated() {
 #[test]
 fn test_deploy_legacy_floo_toml() {
     let home = tempfile::TempDir::new().unwrap();
-    let config_dir = home.path().join(".floo");
+    let config_dir = home.path().join(".floo-local");
     std::fs::create_dir_all(&config_dir).unwrap();
     std::fs::write(
         config_dir.join("config.json"),
@@ -538,7 +538,7 @@ ingress = "public"
 #[test]
 fn test_deploy_legacy_floo_toml_json() {
     let home = tempfile::TempDir::new().unwrap();
-    let config_dir = home.path().join(".floo");
+    let config_dir = home.path().join(".floo-local");
     std::fs::create_dir_all(&config_dir).unwrap();
     std::fs::write(
         config_dir.join("config.json"),
@@ -575,7 +575,7 @@ ingress = "public"
 #[test]
 fn test_deploy_invalid_service_config() {
     let home = tempfile::TempDir::new().unwrap();
-    let config_dir = home.path().join(".floo");
+    let config_dir = home.path().join(".floo-local");
     std::fs::create_dir_all(&config_dir).unwrap();
     std::fs::write(
         config_dir.join("config.json"),
@@ -611,7 +611,7 @@ ingress = "public"
 #[test]
 fn test_deploy_invalid_service_config_json() {
     let home = tempfile::TempDir::new().unwrap();
-    let config_dir = home.path().join(".floo");
+    let config_dir = home.path().join(".floo-local");
     std::fs::create_dir_all(&config_dir).unwrap();
     std::fs::write(
         config_dir.join("config.json"),
@@ -680,7 +680,7 @@ fn test_top_level_whoami_removed() {
 #[test]
 fn test_deploy_no_config_piped_errors() {
     let home = tempfile::TempDir::new().unwrap();
-    let config_dir = home.path().join(".floo");
+    let config_dir = home.path().join(".floo-local");
     std::fs::create_dir_all(&config_dir).unwrap();
     std::fs::write(
         config_dir.join("config.json"),
@@ -706,7 +706,7 @@ fn test_deploy_no_config_piped_errors() {
 #[test]
 fn test_deploy_no_config_piped_json_errors() {
     let home = tempfile::TempDir::new().unwrap();
-    let config_dir = home.path().join(".floo");
+    let config_dir = home.path().join(".floo-local");
     std::fs::create_dir_all(&config_dir).unwrap();
     std::fs::write(
         config_dir.join("config.json"),

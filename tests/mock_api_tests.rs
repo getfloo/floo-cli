@@ -9,13 +9,13 @@ const TEST_APP_NAME: &str = "my-app";
 const TEST_ORG_ID: &str = "org-uuid-5678";
 
 fn floo() -> Command {
-    Command::cargo_bin("floo").unwrap()
+    Command::cargo_bin("floo-local").unwrap()
 }
 
 /// Create temp HOME with config pointing at mock server.
 fn setup_config(server: &Server) -> TempDir {
     let home = TempDir::new().unwrap();
-    let config_dir = home.path().join(".floo");
+    let config_dir = home.path().join(".floo-local");
     std::fs::create_dir_all(&config_dir).unwrap();
     std::fs::write(
         config_dir.join("config.json"),
