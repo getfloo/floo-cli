@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::config;
 use crate::updater;
 
-const CACHE_TTL_SECS: u64 = 86_400; // 24 hours
+const CACHE_TTL_SECS: u64 = 900; // 15 minutes
 const CHECK_TIMEOUT_SECS: u64 = 3;
 const DOWNLOAD_TIMEOUT_SECS: u64 = 30;
 const EXIT_WAIT_MS: u64 = 500;
