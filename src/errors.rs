@@ -60,6 +60,7 @@ pub enum ErrorCode {
     StreamError,
     UnknownService,
     UnsupportedPlatform,
+    Waitlisted,
     UpdateHttpClientError,
     UpdateInstallFailed,
     UpdateInstallPathUnresolved,
@@ -128,6 +129,7 @@ impl ErrorCode {
             ErrorCode::StreamError => "STREAM_ERROR",
             ErrorCode::UnknownService => "UNKNOWN_SERVICE",
             ErrorCode::UnsupportedPlatform => "UNSUPPORTED_PLATFORM",
+            ErrorCode::Waitlisted => "WAITLISTED",
             ErrorCode::UpdateHttpClientError => "UPDATE_HTTP_CLIENT_ERROR",
             ErrorCode::UpdateInstallFailed => "UPDATE_INSTALL_FAILED",
             ErrorCode::UpdateInstallPathUnresolved => "UPDATE_INSTALL_PATH_UNRESOLVED",
@@ -198,6 +200,7 @@ impl ErrorCode {
             "STREAM_ERROR" => ErrorCode::StreamError,
             "UNKNOWN_SERVICE" => ErrorCode::UnknownService,
             "UNSUPPORTED_PLATFORM" => ErrorCode::UnsupportedPlatform,
+            "WAITLISTED" => ErrorCode::Waitlisted,
             "UPDATE_HTTP_CLIENT_ERROR" => ErrorCode::UpdateHttpClientError,
             "UPDATE_INSTALL_FAILED" => ErrorCode::UpdateInstallFailed,
             "UPDATE_INSTALL_PATH_UNRESOLVED" => ErrorCode::UpdateInstallPathUnresolved,
@@ -368,6 +371,7 @@ mod tests {
             ErrorCode::UpdateInstallFailed,
             ErrorCode::UpdateInstallPathUnresolved,
             ErrorCode::UpdatePermissionDenied,
+            ErrorCode::Waitlisted,
         ];
         for variant in &variants {
             assert_eq!(

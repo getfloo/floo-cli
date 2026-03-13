@@ -193,6 +193,15 @@ pub fn login(api_key: Option<&str>, force: bool) {
                 );
                 process::exit(1);
             }
+            Err(e) if e.code == "WAITLISTED" => {
+                spinner.finish();
+                output::error(
+                    "You're on the waitlist! We'll email you when your account is ready.",
+                    &ErrorCode::Waitlisted,
+                    None,
+                );
+                process::exit(1);
+            }
             Err(e) if e.status_code == 0 => {
                 // Network error — retry up to 3 times
                 network_retries += 1;
