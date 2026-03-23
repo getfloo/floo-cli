@@ -4,7 +4,8 @@ const OVERVIEW: &str = "\
 Floo — Deploy web apps from the terminal.
 
 Floo is a deployment platform. The CLI is the primary interface for deploying,
-managing, and observing your apps.
+managing, and observing your apps. All source comes from GitHub — the CLI
+never uploads code.
 
 ## Core Concepts
 
@@ -12,21 +13,91 @@ managing, and observing your apps.
 - **Services** are deployable components inside an app (web servers, APIs, workers, databases).
 - **Deploys** are immutable snapshots of your code, built into containers and deployed to the cloud.
 
-## Deploy Flow
+## First Deploy
 
-  1. `floo init <name>` — scaffold config files for your project
-  2. `floo deploy --dry-run` — validate config before deploying
-  3. `floo deploy` — detect runtime, trigger build via GitHub, deploy
+  1. `floo auth login` — authenticate
+  2. `floo init <name>` — scaffold config files (local only)
+  3. `floo apps github connect owner/repo` — connect to GitHub (triggers first deploy)
   4. `floo apps status <name>` — see your app's URL and status
+
+  After the first deploy, use `floo deploy` for subsequent deploys.
 
 ## Learn More
 
-  floo docs services   — service types and how they work
+  floo docs quickstart — end-to-end walkthrough
+  floo docs services   — service types and managed services
   floo docs config     — config file formats with examples
   floo docs deploy     — detailed deploy flow and runtime detection
   floo docs auth       — add user authentication to your app
   floo --help          — all available commands
   floo <command> --help — details for a specific command
+";
+
+const QUICKSTART: &str = "\
+Floo Quickstart — End-to-End Walkthrough
+
+## 1. Install and Authenticate
+
+  curl -fsSL https://getfloo.com/install.sh | bash
+  floo auth login
+
+## 2. Initialize Your Project
+
+  cd my-project
+  floo init my-app
+
+  This creates config files (floo.service.toml or floo.app.toml) locally.
+  No app is registered on the platform yet.
+
+## 3. (Optional) Add Managed Services
+
+  Edit floo.app.toml to add a database, cache, or storage:
+
+  [services.db]
+  type = \"postgres\"
+  version = \"16\"
+  plan = \"hobby\"
+
+  [services.cache]
+  type = \"redis\"
+
+  Managed services are auto-provisioned on the first deploy.
+  Their credentials arrive as env vars (DATABASE_URL, REDIS_URL, etc.).
+
+## 4. Connect to GitHub and Deploy
+
+  floo apps github connect owner/my-project
+
+  This does three things:
+  1. Creates the app on floo (if it doesn't exist)
+  2. Connects your GitHub repo as the source
+  3. Triggers the first deploy (source pulled from GitHub, built, deployed)
+
+  Use --no-deploy to skip the automatic deploy.
+
+## 5. Check Status
+
+  floo apps status my-app
+  floo logs --app my-app
+
+## 6. Subsequent Deploys
+
+  Push code to GitHub, then:
+
+  floo deploy --app my-app
+
+  Or set up git-push-deploy: floo apps github connect will auto-deploy
+  on every push to your default branch.
+
+## What Creates What
+
+  floo init           — local config files only (no API call)
+  floo deploy         — auto-creates the app if needed, then deploys
+  floo apps github connect — connects GitHub, triggers first deploy
+  floo services add   — adds a user-managed service to config (NOT managed databases)
+
+  Managed services (postgres, redis, storage) are declared in floo.app.toml
+  and provisioned automatically on deploy.
 ";
 
 const SERVICES: &str = "\
@@ -45,18 +116,40 @@ An app contains one or more services. Each service is independently deployable.
 
 ## Managed Services (provisioned by Floo)
 
+  Declared in floo.app.toml, auto-provisioned on first deploy:
+
   postgres — managed PostgreSQL database
              Connection string injected as DATABASE_URL env var.
-             Inspect with: floo services info <name> --app <app>
 
-  redis    — managed Redis instance (coming soon)
+  redis    — managed Redis instance (Upstash, TLS-enabled)
+             Connection string injected as REDIS_URL env var.
+
+  storage  — managed object storage (GCS bucket)
+             Bucket name injected as STORAGE_BUCKET env var.
+             Access files via signed URLs (see floo docs auth for endpoint).
+
+  Example floo.app.toml:
+
+  [services.db]
+  type = \"postgres\"
+  version = \"16\"
+  plan = \"hobby\"
+
+  [services.cache]
+  type = \"redis\"
+
+  Inspect with: floo services info <name> --app <app>
 
 ## Commands
 
   floo services list --app <name>            — list all services
   floo services info <service> --app <name>  — service details (connection info for managed)
-  floo services add <name> <path>            — add a service to project config
+  floo services add <name> <path>            — add a user-managed service to project config
   floo services rm <name>                    — remove a service from config
+
+  Note: `floo services add` adds user-managed services (web/api/worker) to
+  config. Managed databases are declared in floo.app.toml and provisioned
+  automatically on deploy.
 ";
 
 const CONFIG: &str = "\
@@ -86,6 +179,21 @@ Floo Config Files
   path = \"./web\"
 
   Each service directory has its own floo.service.toml.
+
+## Managed Services (in floo.app.toml)
+
+  [services.db]
+  type = \"postgres\"
+  version = \"16\"
+  plan = \"hobby\"
+
+  [services.cache]
+  type = \"redis\"
+
+  [services.files]
+  type = \"storage\"
+
+  Auto-provisioned on first deploy. Credentials injected as env vars.
 
 ## Resource Limits (optional, in floo.service.toml)
 
@@ -119,16 +227,28 @@ Floo Config Files
 const DEPLOY: &str = "\
 Floo Deploy Flow
 
-## What Happens When You Run `floo deploy`
+## How Deploys Work
 
-  1. **Detect runtime** — scans project files to determine language/framework
-  2. **Create deploy** — sends deploy request to Floo API (source pulled from GitHub)
-  3. **Build** — builds container image from source
-  4. **Deploy** — deploys container to cloud infrastructure
-  5. **URL** — returns the live URL for your app
+  All source comes from GitHub. The CLI never uploads code.
 
-  Your app must be connected to GitHub (`floo apps github connect <repo>`) so the
-  API can pull source code directly.
+  1. **Detect runtime** — CLI scans project files to determine language/framework
+  2. **Create deploy** — CLI sends metadata to the API
+  3. **Pull source** — API downloads source from your connected GitHub repo
+  4. **Build** — builds container image via Cloud Build
+  5. **Deploy** — deploys container to Cloud Run
+  6. **URL** — returns the live URL for your app
+
+## First Deploy vs Subsequent Deploys
+
+  **First deploy:** Use `floo apps github connect owner/repo`. This connects
+  GitHub and triggers the first deploy in one step. The app is auto-created
+  if it doesn't exist.
+
+  **Subsequent deploys:** Use `floo deploy`. GitHub must already be connected.
+
+  **App creation:** `floo init` creates local config files only. The app is
+  registered on the platform when you first deploy (either via `floo deploy`
+  or `floo apps github connect`).
 
 ## Runtime Detection Priority
 
@@ -163,6 +283,15 @@ Floo can manage user authentication for your deployed apps. When you set
 access_mode = \"accounts\", floo provides a hosted OAuth flow powered by
 WorkOS so your users can sign in with email, Google, GitHub, and more.
 
+## What Happens When You Enable It
+
+  1. Set access_mode and redirect URIs in floo.app.toml
+  2. Deploy with `floo deploy`
+  3. Floo automatically provisions the auth endpoints for your app
+
+  No separate WorkOS account is needed — floo manages this for you.
+  The auth endpoints are live as soon as the deploy completes.
+
 ## Setup
 
   1. Set access_mode in your floo.app.toml:
@@ -177,6 +306,10 @@ WorkOS so your users can sign in with email, Google, GitHub, and more.
      redirect_uris = [\"http://localhost:3000/callback\", \"https://my-app.com/callback\"]
 
   3. Deploy: `floo deploy`
+
+  4. Get your app ID (needed for the OAuth URLs below):
+
+     floo apps list --json | jq '.data.apps[] | select(.name == \"my-app\") | .id'
 
 ## OAuth Flow
 
@@ -229,6 +362,7 @@ Your app integrates with these endpoints (BASE = https://api.getfloo.com):
 ";
 
 const TOPICS: &[(&str, &str)] = &[
+    ("quickstart", QUICKSTART),
     ("services", SERVICES),
     ("config", CONFIG),
     ("deploy", DEPLOY),
@@ -272,6 +406,7 @@ mod tests {
     #[test]
     fn test_docs_content_not_empty() {
         assert!(!OVERVIEW.is_empty());
+        assert!(!QUICKSTART.is_empty());
         assert!(!SERVICES.is_empty());
         assert!(!CONFIG.is_empty());
         assert!(!DEPLOY.is_empty());
@@ -282,7 +417,7 @@ mod tests {
     fn test_overview_has_key_concepts() {
         assert!(OVERVIEW.contains("Apps"));
         assert!(OVERVIEW.contains("Services"));
-        assert!(OVERVIEW.contains("Deploy Flow"));
+        assert!(OVERVIEW.contains("github connect"));
     }
 
     #[test]
@@ -291,5 +426,25 @@ mod tests {
         assert!(AUTH.contains("authorize"));
         assert!(AUTH.contains("access_token"));
         assert!(AUTH.contains("accounts"));
+        assert!(AUTH.contains("app_id"));
+    }
+
+    #[test]
+    fn test_quickstart_has_full_flow() {
+        assert!(QUICKSTART.contains("auth login"));
+        assert!(QUICKSTART.contains("init"));
+        assert!(QUICKSTART.contains("github connect"));
+        assert!(QUICKSTART.contains("apps status"));
+    }
+
+    #[test]
+    fn test_services_no_coming_soon() {
+        assert!(!SERVICES.contains("coming soon"));
+    }
+
+    #[test]
+    fn test_deploy_mentions_github() {
+        assert!(DEPLOY.contains("GitHub"));
+        assert!(!DEPLOY.contains("archive"));
     }
 }
