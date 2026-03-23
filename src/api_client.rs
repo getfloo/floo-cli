@@ -314,6 +314,7 @@ impl FlooClient {
         framework: Option<&str>,
         services: Option<&[ServiceConfig]>,
         access_mode: Option<&str>,
+        auth_redirect_uris: Option<&[String]>,
     ) -> Result<Deploy, FlooApiError> {
         let mut body = serde_json::json!({
             "runtime": runtime,
@@ -332,6 +333,15 @@ impl FlooClient {
         }
         if let Some(mode) = access_mode {
             body["access_mode"] = Value::String(mode.to_string());
+        }
+        if let Some(uris) = auth_redirect_uris {
+            body["auth_redirect_uris"] = serde_json::to_value(uris).map_err(|e| {
+                FlooApiError::new(
+                    0,
+                    "SERIALIZATION_ERROR",
+                    format!("Failed to serialize auth_redirect_uris: {e}"),
+                )
+            })?;
         }
         let resp = self.post_json(&format!("/v1/apps/{app_id}/deploys"), &body)?;
         self.handle_response(resp)

@@ -24,6 +24,7 @@ managing, and observing your apps.
   floo docs services   — service types and how they work
   floo docs config     — config file formats with examples
   floo docs deploy     — detailed deploy flow and runtime detection
+  floo docs auth       — add user authentication to your app
   floo --help          — all available commands
   floo <command> --help — details for a specific command
 ";
@@ -93,13 +94,21 @@ Floo Config Files
   memory = \"512Mi\"      # Memory (128Mi to 32Gi)
   max_instances = 10    # Max autoscale instances
 
+## Auth Section (in floo.app.toml)
+
+  [auth]
+  redirect_uris = [\"http://localhost:3000/callback\"]
+
+  Required when access_mode = \"accounts\". Registers the OAuth callback
+  URLs that your app will use. See: floo docs auth
+
 ## Environment Overrides (in floo.app.toml)
 
   [environments.dev]
   access_mode = \"public\"
 
   [environments.prod]
-  access_mode = \"password\"
+  access_mode = \"accounts\"
 
 ## Commands
 
@@ -147,10 +156,83 @@ Floo Deploy Flow
   floo deploy rollback <app> <id>  — rollback to a previous deploy
 ";
 
+const AUTH: &str = "\
+App Auth — Add User Authentication to Your App
+
+Floo can manage user authentication for your deployed apps. When you set
+access_mode = \"accounts\", floo provides a hosted OAuth flow powered by
+WorkOS so your users can sign in with email, Google, GitHub, and more.
+
+## Setup
+
+  1. Set access_mode in your floo.app.toml:
+
+     [app]
+     name = \"my-app\"
+     access_mode = \"accounts\"
+
+  2. Register your OAuth callback URLs:
+
+     [auth]
+     redirect_uris = [\"http://localhost:3000/callback\", \"https://my-app.com/callback\"]
+
+  3. Deploy: `floo deploy`
+
+## OAuth Flow
+
+Your app integrates with these endpoints (BASE = https://api.getfloo.com):
+
+  1. **Start login** — redirect users to:
+     GET BASE/v1/auth/apps/{app_id}/authorize?redirect_uri=<your_callback_url>
+
+  2. **Receive callback** — floo redirects back to your redirect_uri with a code:
+     https://your-app.com/callback?code=<exchange_code>
+
+  3. **Exchange code for tokens** — POST from your backend:
+     POST BASE/v1/auth/apps/{app_id}/token
+     Body: { \"grant_type\": \"authorization_code\", \"code\": \"<exchange_code>\" }
+     Returns: { \"access_token\": \"<jwt>\", \"refresh_token\": \"<token>\", \"user\": {...} }
+
+  4. **Verify user** — the access_token is an RS256 JWT. Verify locally with:
+     GET BASE/v1/auth/apps/{app_id}/.well-known/jwks.json
+
+  5. **Refresh tokens** — when the access_token expires:
+     POST BASE/v1/auth/apps/{app_id}/token
+     Body: { \"grant_type\": \"refresh\", \"refresh_token\": \"<token>\" }
+
+  6. **Logout** — revoke the refresh token:
+     POST BASE/v1/auth/apps/{app_id}/session/logout
+     Body: { \"refresh_token\": \"<token>\" }
+
+## Access Modes
+
+  public    — no auth, anyone can access (default)
+  password  — shared password for simple protection (Pro+)
+  accounts  — per-user auth via floo's hosted OAuth (Pro+)
+  sso       — enterprise SSO via SAML/OIDC (Enterprise)
+
+## JWT Claims
+
+  sub    — app user ID (UUID)
+  email  — user's email address
+  name   — user's display name
+  iss    — https://auth.getfloo.com
+  aud    — your app ID
+  iat    — issued at timestamp
+  exp    — expiration timestamp
+
+## Convenience Endpoint
+
+  GET BASE/v1/auth/apps/{app_id}/session/me
+  Header: Authorization: Bearer <access_token>
+  Returns the authenticated user's info without decoding the JWT yourself.
+";
+
 const TOPICS: &[(&str, &str)] = &[
     ("services", SERVICES),
     ("config", CONFIG),
     ("deploy", DEPLOY),
+    ("auth", AUTH),
 ];
 
 pub fn docs(topic: Option<&str>) {
@@ -193,6 +275,7 @@ mod tests {
         assert!(!SERVICES.is_empty());
         assert!(!CONFIG.is_empty());
         assert!(!DEPLOY.is_empty());
+        assert!(!AUTH.is_empty());
     }
 
     #[test]
@@ -200,5 +283,13 @@ mod tests {
         assert!(OVERVIEW.contains("Apps"));
         assert!(OVERVIEW.contains("Services"));
         assert!(OVERVIEW.contains("Deploy Flow"));
+    }
+
+    #[test]
+    fn test_auth_docs_has_key_concepts() {
+        assert!(AUTH.contains("redirect_uris"));
+        assert!(AUTH.contains("authorize"));
+        assert!(AUTH.contains("access_token"));
+        assert!(AUTH.contains("accounts"));
     }
 }

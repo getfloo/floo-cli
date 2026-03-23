@@ -403,6 +403,13 @@ pub fn deploy(
                 .and_then(|c| c.app.access_mode)
         });
 
+    // Extract auth redirect URIs from [auth] toml section
+    let auth_redirect_uris: Option<Vec<String>> = resolved
+        .app_config
+        .as_ref()
+        .and_then(|c| c.auth.as_ref())
+        .and_then(|auth| auth.redirect_uris.clone());
+
     // Deploy
     let svc_slice = Some(services.as_slice());
     let spinner = output::Spinner::new("Deploying...");
@@ -412,6 +419,7 @@ pub fn deploy(
         detection.framework.as_deref(),
         svc_slice,
         access_mode.as_ref().map(|m| m.as_str()),
+        auth_redirect_uris.as_deref(),
     ) {
         Ok(d) => {
             spinner.finish();
@@ -420,7 +428,7 @@ pub fn deploy(
         Err(e) => {
             spinner.finish();
             let suggestion = match e.code.as_str() {
-                "PLAN_FEATURE_PASSWORD" | "PLAN_FEATURE_FLOO_ACCOUNTS" => {
+                "PLAN_FEATURE_PASSWORD" | "PLAN_FEATURE_ACCOUNTS" | "PLAN_FEATURE_SSO" => {
                     Some("Upgrade your plan at https://app.getfloo.com/settings/billing")
                 }
                 _ => None,

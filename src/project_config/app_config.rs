@@ -14,11 +14,20 @@ use super::SCHEMA_URL;
 pub struct AppFileConfig {
     pub app: AppFileAppSection,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<AuthSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resources: Option<ResourceConfig>,
     #[serde(default)]
     pub services: HashMap<String, AppServiceEntry>,
     #[serde(default)]
     pub environments: HashMap<String, AppEnvironmentOverrides>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct AuthSection {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub redirect_uris: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Default)]
@@ -33,7 +42,9 @@ pub struct AppEnvironmentOverrides {
 pub enum AppAccessMode {
     Public,
     Password,
-    FlooAccounts,
+    #[serde(alias = "floo_accounts")]
+    Accounts,
+    Sso,
 }
 
 impl AppAccessMode {
@@ -41,7 +52,8 @@ impl AppAccessMode {
         match self {
             AppAccessMode::Public => "public",
             AppAccessMode::Password => "password",
-            AppAccessMode::FlooAccounts => "floo_accounts",
+            AppAccessMode::Accounts => "accounts",
+            AppAccessMode::Sso => "sso",
         }
     }
 }
@@ -366,6 +378,7 @@ type = "mysql"
                 name: "roundtrip-app".to_string(),
                 access_mode: None,
             },
+            auth: None,
             resources: None,
             services: HashMap::new(),
             environments: HashMap::new(),
@@ -429,7 +442,24 @@ access_mode = "public"
     }
 
     #[test]
-    fn test_load_app_config_with_access_mode_floo_accounts() {
+    fn test_load_app_config_with_access_mode_accounts() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+access_mode = "accounts"
+"#,
+        )
+        .unwrap();
+
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        assert_eq!(config.app.access_mode, Some(AppAccessMode::Accounts));
+    }
+
+    #[test]
+    fn test_load_app_config_with_access_mode_floo_accounts_alias() {
         let dir = TempDir::new().unwrap();
         fs::write(
             dir.path().join(super::super::APP_CONFIG_FILE),
@@ -442,7 +472,24 @@ access_mode = "floo_accounts"
         .unwrap();
 
         let config = load_app_config(dir.path()).unwrap().unwrap();
-        assert_eq!(config.app.access_mode, Some(AppAccessMode::FlooAccounts));
+        assert_eq!(config.app.access_mode, Some(AppAccessMode::Accounts));
+    }
+
+    #[test]
+    fn test_load_app_config_with_access_mode_sso() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+access_mode = "sso"
+"#,
+        )
+        .unwrap();
+
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        assert_eq!(config.app.access_mode, Some(AppAccessMode::Sso));
     }
 
     #[test]
@@ -600,5 +647,64 @@ path = "./frontend"
         assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
         assert!(err.message.contains("web"));
         assert!(err.message.contains("port"));
+    }
+
+    #[test]
+    fn test_load_app_config_with_auth_redirect_uris() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+access_mode = "accounts"
+
+[auth]
+redirect_uris = ["http://localhost:3000/callback", "https://myapp.com/callback"]
+"#,
+        )
+        .unwrap();
+
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        assert_eq!(config.app.access_mode, Some(AppAccessMode::Accounts));
+        let auth = config.auth.unwrap();
+        let uris = auth.redirect_uris.unwrap();
+        assert_eq!(uris.len(), 2);
+        assert_eq!(uris[0], "http://localhost:3000/callback");
+    }
+
+    #[test]
+    fn test_load_app_config_without_auth_section() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+"#,
+        )
+        .unwrap();
+
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        assert!(config.auth.is_none());
+    }
+
+    #[test]
+    fn test_load_app_config_auth_unknown_field_rejected() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[auth]
+bad_field = true
+"#,
+        )
+        .unwrap();
+
+        let err = load_app_config(dir.path()).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
     }
 }
