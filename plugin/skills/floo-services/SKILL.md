@@ -10,9 +10,22 @@ description: >
 
 Floo provisions and manages Postgres, Redis, and Storage as platform services. All credentials are delivered as environment variables — never hardcode them.
 
+## How to Provision
+
+Managed services are declared in `floo.app.toml` and auto-provisioned on the first deploy.
+
+**There is no CLI command to imperatively provision a managed service.** `floo services add <name> <path>` adds a *user-managed* service (web/api/worker) to config — it does NOT provision databases.
+
 ## Postgres (Managed)
 
-**Provision:** `floo services add postgres --app my-app` (optionally `--tier basic|standard|performance`)
+**Declare in `floo.app.toml`:**
+
+```toml
+[postgres]
+tier = "basic"    # optional, defaults to basic
+```
+
+Then deploy — Floo auto-provisions on first deploy.
 
 **What happens:**
 - Floo creates a dedicated schema and role on the managed Postgres instance
@@ -51,7 +64,13 @@ let database_url = std::env::var("DATABASE_URL")?;
 
 ## Redis (Managed)
 
-**Provision:** `floo services add redis --app my-app`
+**Declare in `floo.app.toml`:**
+
+```toml
+[redis]
+```
+
+Then deploy — Floo auto-provisions on first deploy.
 
 **What happens:**
 - Floo provisions a dedicated Redis instance via Upstash (serverless Redis)
@@ -79,15 +98,74 @@ const redisUrl = process.env.REDIS_URL;
 
 ## Storage (Managed)
 
-**Provision:** `floo services add storage --app my-app`
+**Declare in `floo.app.toml`:**
+
+```toml
+[storage]
+```
+
+Then deploy — Floo auto-provisions on first deploy.
 
 **What happens:**
-- Floo creates a GCS bucket scoped to your app
+- Floo creates a storage bucket scoped to your app
 - Access is via signed URLs — no direct bucket credentials in your app
 
-**Env vars created:** `STORAGE_BUCKET` — the bucket name.
+**Env vars created:**
+- `STORAGE_BUCKET` — the bucket name
+- `STORAGE_URL` — the signed URL API endpoint for uploads/downloads
 
-**How to upload/download:** Use Floo's signed URL API endpoint, not direct GCS access. The signed URL is time-limited and scoped to a specific object path.
+**How to upload/download:** Use `STORAGE_URL` to request signed URLs. Do NOT access the bucket directly.
+
+**Signed URL endpoint** (value of `STORAGE_URL`):
+
+```
+POST {STORAGE_URL}
+```
+
+Request body:
+```json
+{
+  "method": "PUT",
+  "object_path": "uploads/photo.jpg",
+  "expiration_seconds": 3600,
+  "content_type": "image/jpeg"
+}
+```
+
+Response:
+```json
+{
+  "url": "https://storage.googleapis.com/...",
+  "method": "PUT",
+  "expires_in_seconds": 3600,
+  "object_path": "uploads/photo.jpg",
+  "bucket": "floo-app-..."
+}
+```
+
+Upload example (using STORAGE_URL env var):
+```bash
+# 1. Get a signed upload URL
+curl -X POST "$STORAGE_URL" \
+  -H "Authorization: Bearer <api-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"method": "PUT", "object_path": "uploads/photo.jpg", "expiration_seconds": 3600}'
+
+# 2. Upload directly to the signed URL
+curl -X PUT "<signed_url>" -H "Content-Type: image/jpeg" --data-binary @photo.jpg
+```
+
+Download example:
+```bash
+# 1. Get a signed download URL
+curl -X POST "$STORAGE_URL" \
+  -H "Authorization: Bearer <api-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"method": "GET", "object_path": "uploads/photo.jpg", "expiration_seconds": 3600}'
+
+# 2. Download from the signed URL
+curl "<signed_url>" -o photo.jpg
+```
 
 **Rules:**
 - NEVER store GCP service account keys in your application
