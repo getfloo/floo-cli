@@ -333,6 +333,12 @@ fn trigger_initial_deploy(
                 .and_then(|c| c.app.access_mode)
         });
 
+    let auth_redirect_uris: Option<Vec<String>> = resolved
+        .app_config
+        .as_ref()
+        .and_then(|c| c.auth.as_ref())
+        .and_then(|auth| auth.redirect_uris.clone());
+
     let spinner = output::Spinner::new("Deploying...");
     let mut deploy_data = match client.create_deploy(
         app_id,
@@ -340,6 +346,7 @@ fn trigger_initial_deploy(
         detection.framework.as_deref(),
         Some(&services),
         access_mode.as_ref().map(|m| m.as_str()),
+        auth_redirect_uris.as_deref(),
     ) {
         Ok(d) => {
             spinner.finish();

@@ -372,7 +372,7 @@ ingress = "public"
         .unwrap();
 
         let config = load_service_config(dir.path()).unwrap().unwrap();
-        assert_eq!(config.app.access_mode, Some(AppAccessMode::FlooAccounts));
+        assert_eq!(config.app.access_mode, Some(AppAccessMode::Accounts));
     }
 
     #[test]
