@@ -53,16 +53,13 @@ Floo Quickstart — End-to-End Walkthrough
 
   Edit floo.app.toml to add a database, cache, or storage:
 
-  [services.db]
-  type = \"postgres\"
-  version = \"16\"
-  plan = \"hobby\"
+  [postgres]
+  tier = \"basic\"
 
-  [services.cache]
-  type = \"redis\"
+  [redis]
 
   Managed services are auto-provisioned on the first deploy.
-  Their credentials arrive as env vars (DATABASE_URL, REDIS_URL, etc.).
+  Their credentials arrive as env vars (DATABASE_URL, REDIS_URL, STORAGE_BUCKET, etc.).
 
 ## 4. Connect to GitHub and Deploy
 
@@ -125,18 +122,17 @@ An app contains one or more services. Each service is independently deployable.
              Connection string injected as REDIS_URL env var.
 
   storage  — managed object storage (GCS bucket)
-             Bucket name injected as STORAGE_BUCKET env var.
-             Access files via signed URLs (see floo docs auth for endpoint).
+             Bucket name injected as STORAGE_BUCKET + STORAGE_URL env vars.
+             Use STORAGE_URL for signed URL requests (upload/download).
 
   Example floo.app.toml:
 
-  [services.db]
-  type = \"postgres\"
-  version = \"16\"
-  plan = \"hobby\"
+  [postgres]
+  tier = \"basic\"
 
-  [services.cache]
-  type = \"redis\"
+  [redis]
+
+  [storage]
 
   Inspect with: floo services info <name> --app <app>
 
@@ -182,16 +178,12 @@ Floo Config Files
 
 ## Managed Services (in floo.app.toml)
 
-  [services.db]
-  type = \"postgres\"
-  version = \"16\"
-  plan = \"hobby\"
+  [postgres]
+  tier = \"basic\"
 
-  [services.cache]
-  type = \"redis\"
+  [redis]
 
-  [services.files]
-  type = \"storage\"
+  [storage]
 
   Auto-provisioned on first deploy. Credentials injected as env vars.
 
@@ -305,7 +297,7 @@ WorkOS so your users can sign in with email, Google, GitHub, and more.
      [auth]
      redirect_uris = [\"http://localhost:3000/callback\", \"https://my-app.com/callback\"]
 
-  3. Deploy: `floo deploy`
+  3. Deploy (first deploy: `floo apps github connect`, subsequent: `floo deploy`)
 
   4. Get your app ID (needed for the OAuth URLs below):
 

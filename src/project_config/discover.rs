@@ -57,7 +57,6 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
                 AppServiceType::Api => ServiceType::Api,
                 AppServiceType::Web => ServiceType::Web,
                 AppServiceType::Worker => ServiceType::Worker,
-                _ => continue,
             };
 
             let ingress = entry.ingress.unwrap_or(match service_type {
@@ -279,40 +278,41 @@ pub fn filter_services(
         .collect())
 }
 
-/// A managed service declaration from floo.app.toml (e.g. postgres, redis).
+/// A managed service declaration from floo.app.toml (e.g. [postgres], [redis], [storage]).
 #[derive(Debug, Clone, Serialize)]
 pub struct ManagedServiceDeclaration {
     pub name: String,
-    #[serde(rename = "type")]
-    pub service_type: AppServiceType,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tier: Option<String>,
 }
 
-/// Extract managed service declarations from floo.app.toml.
-/// These are services where `!is_user_managed()` (Postgres, Redis).
+/// Extract managed service declarations from top-level [postgres], [redis], [storage]
+/// sections in floo.app.toml.
 pub fn discover_managed_services(resolved: &ResolvedApp) -> Vec<ManagedServiceDeclaration> {
     let Some(ref app_cfg) = resolved.app_config else {
         return Vec::new();
     };
 
-    app_cfg
-        .services
-        .iter()
-        .filter_map(|(name, entry)| {
-            if entry.service_type.is_user_managed() {
-                return None;
-            }
-            Some(ManagedServiceDeclaration {
-                name: name.clone(),
-                service_type: entry.service_type.clone(),
-                version: entry.version.clone(),
-                tier: entry.plan.clone(),
-            })
-        })
-        .collect()
+    let mut result = Vec::new();
+    if let Some(ref pg) = app_cfg.postgres {
+        result.push(ManagedServiceDeclaration {
+            name: "postgres".to_string(),
+            tier: pg.tier.clone(),
+        });
+    }
+    if let Some(ref rd) = app_cfg.redis {
+        result.push(ManagedServiceDeclaration {
+            name: "redis".to_string(),
+            tier: rd.tier.clone(),
+        });
+    }
+    if let Some(ref st) = app_cfg.storage {
+        result.push(ManagedServiceDeclaration {
+            name: "storage".to_string(),
+            tier: st.tier.clone(),
+        });
+    }
+    result
 }
 
 /// Extract user-managed inline service entries (have `port` set) from app_config.
@@ -327,9 +327,6 @@ fn inline_service_entries(resolved: &ResolvedApp) -> Vec<(String, String, &AppSe
         .iter()
         .filter_map(|(name, entry)| {
             // Inline mode: user-managed + has port
-            if !entry.service_type.is_user_managed() {
-                return None;
-            }
             entry.port?; // must have port for inline mode
             let raw = entry.path.as_deref().unwrap_or(".");
             let normalized = normalize_path(raw);
@@ -353,7 +350,7 @@ fn delegated_path_entries(resolved: &ResolvedApp) -> Vec<(String, String)> {
     let has_inline = app_cfg
         .services
         .values()
-        .any(|e| e.port.is_some() && e.service_type.is_user_managed());
+        .any(|e| e.port.is_some());
     if has_inline {
         return Vec::new();
     }
@@ -363,9 +360,6 @@ fn delegated_path_entries(resolved: &ResolvedApp) -> Vec<(String, String)> {
         .iter()
         .filter_map(|(name, entry)| {
             let raw = entry.path.as_deref()?;
-            if !entry.service_type.is_user_managed() {
-                return None;
-            }
             let normalized = normalize_path(raw);
             if normalized.is_empty() || normalized == "." {
                 return None;
@@ -518,6 +512,9 @@ ingress = "public"
                 access_mode: None,
             },
             auth: None,
+            postgres: None,
+            redis: None,
+            storage: None,
             resources: None,
             services: services_map,
             environments: HashMap::new(),
@@ -602,6 +599,9 @@ ingress = "public"
                 access_mode: None,
             },
             auth: None,
+            postgres: None,
+            redis: None,
+            storage: None,
             resources: None,
             services: services_map,
             environments: HashMap::new(),
@@ -647,50 +647,18 @@ ingress = "public"
             resources: None,
         };
 
-        let mut services_map = HashMap::new();
-        services_map.insert(
-            "db".to_string(),
-            AppServiceEntry {
-                service_type: AppServiceType::Postgres,
-                path: None,
-                repo: None,
-                version: Some("16".to_string()),
-                plan: None,
-                port: None,
-                ingress: None,
-                env_file: None,
-                domain: None,
-                cpu: None,
-                memory: None,
-                max_instances: None,
-            },
-        );
-        services_map.insert(
-            "cache".to_string(),
-            AppServiceEntry {
-                service_type: AppServiceType::Redis,
-                path: None,
-                repo: None,
-                version: None,
-                plan: None,
-                port: None,
-                ingress: None,
-                env_file: None,
-                domain: None,
-                cpu: None,
-                memory: None,
-                max_instances: None,
-            },
-        );
-
+        use crate::project_config::app_config::ManagedServiceSection;
         let app_config = AppFileConfig {
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
             },
             auth: None,
+            postgres: Some(ManagedServiceSection { tier: None }),
+            redis: Some(ManagedServiceSection { tier: None }),
+            storage: None,
             resources: None,
-            services: services_map,
+            services: HashMap::new(),
             environments: HashMap::new(),
         };
 
@@ -702,7 +670,7 @@ ingress = "public"
             AppSource::ServiceFile,
         );
 
-        // No path entries -> falls to branch 2 (single service)
+        // Managed services (postgres, redis) are not deployable — only the root service is
         let services = discover_services(&resolved).unwrap();
         assert_eq!(services.len(), 1);
         assert_eq!(services[0].name, "web");
@@ -741,6 +709,9 @@ ingress = "public"
                 access_mode: None,
             },
             auth: None,
+            postgres: None,
+            redis: None,
+            storage: None,
             resources: None,
             services: services_map,
             environments: HashMap::new(),
@@ -796,6 +767,9 @@ ingress = "public"
                 access_mode: None,
             },
             auth: None,
+            postgres: None,
+            redis: None,
+            storage: None,
             resources: None,
             services: services_map,
             environments: HashMap::new(),
@@ -870,6 +844,9 @@ ingress = "public"
                 access_mode: None,
             },
             auth: None,
+            postgres: None,
+            redis: None,
+            storage: None,
             resources: None,
             services: services_map,
             environments: HashMap::new(),
@@ -892,33 +869,18 @@ ingress = "public"
     fn test_discover_errors_no_deployable_services() {
         let dir = TempDir::new().unwrap();
 
-        let mut services_map = HashMap::new();
-        services_map.insert(
-            "db".to_string(),
-            AppServiceEntry {
-                service_type: AppServiceType::Postgres,
-                path: None,
-                repo: None,
-                version: Some("16".to_string()),
-                plan: None,
-                port: None,
-                ingress: None,
-                env_file: None,
-                domain: None,
-                cpu: None,
-                memory: None,
-                max_instances: None,
-            },
-        );
-
+        use crate::project_config::app_config::ManagedServiceSection;
         let app_config = AppFileConfig {
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
             },
             auth: None,
+            postgres: Some(ManagedServiceSection { tier: None }),
+            redis: None,
+            storage: None,
             resources: None,
-            services: services_map,
+            services: HashMap::new(),
             environments: HashMap::new(),
         };
 
@@ -971,6 +933,9 @@ ingress = "public"
                 access_mode: None,
             },
             auth: None,
+            postgres: None,
+            redis: None,
+            storage: None,
             resources: None,
             services: services_map,
             environments: HashMap::new(),
@@ -1141,6 +1106,9 @@ ingress = "public"
                 access_mode: None,
             },
             auth: None,
+            postgres: None,
+            redis: None,
+            storage: None,
             resources: None,
             services: services_map,
             environments: HashMap::new(),
@@ -1238,6 +1206,9 @@ ingress = "internal"
                 access_mode: None,
             },
             auth: None,
+            postgres: None,
+            redis: None,
+            storage: None,
             resources: None,
             services: services_map,
             environments: HashMap::new(),
@@ -1302,6 +1273,9 @@ domain = "svc.example.com"
                 access_mode: None,
             },
             auth: None,
+            postgres: None,
+            redis: None,
+            storage: None,
             resources: None,
             services: services_map,
             environments: HashMap::new(),
@@ -1367,6 +1341,9 @@ domain = "svc.example.com"
                 access_mode: None,
             },
             auth: None,
+            postgres: None,
+            redis: None,
+            storage: None,
             resources: None,
             services: services_map,
             environments: HashMap::new(),
@@ -1439,6 +1416,9 @@ domain = "svc.example.com"
                 access_mode: None,
             },
             auth: None,
+            postgres: None,
+            redis: None,
+            storage: None,
             resources: None,
             services: services_map,
             environments: HashMap::new(),
@@ -1500,6 +1480,9 @@ domain = "svc.example.com"
                 access_mode: None,
             },
             auth: None,
+            postgres: None,
+            redis: None,
+            storage: None,
             resources: Some(super::super::service_config::ResourceConfig {
                 cpu: Some("1".to_string()),
                 memory: Some("2Gi".to_string()),
@@ -1562,6 +1545,9 @@ domain = "svc.example.com"
                 access_mode: None,
             },
             auth: None,
+            postgres: None,
+            redis: None,
+            storage: None,
             resources: None,
             services: services_map,
             environments: HashMap::new(),
@@ -1631,6 +1617,9 @@ domain = "svc.example.com"
                 access_mode: None,
             },
             auth: None,
+            postgres: None,
+            redis: None,
+            storage: None,
             resources: None,
             services: services_map,
             environments: HashMap::new(),
@@ -1696,32 +1685,21 @@ domain = "svc.example.com"
     #[test]
     fn test_discover_managed_services_postgres_redis() {
         let dir = TempDir::new().unwrap();
+        use crate::project_config::app_config::ManagedServiceSection;
         let app_cfg = AppFileConfig {
             app: AppFileAppSection {
                 name: "test-app".to_string(),
                 access_mode: None,
             },
             auth: None,
+            postgres: Some(ManagedServiceSection {
+                tier: Some("hobby".to_string()),
+            }),
+            redis: Some(ManagedServiceSection { tier: None }),
+            storage: None,
             resources: None,
             services: {
                 let mut m = HashMap::new();
-                m.insert(
-                    "db".to_string(),
-                    AppServiceEntry {
-                        service_type: AppServiceType::Postgres,
-                        path: None,
-                        repo: None,
-                        version: Some("16".to_string()),
-                        plan: Some("hobby".to_string()),
-                        port: None,
-                        ingress: None,
-                        env_file: None,
-                        domain: None,
-                        cpu: None,
-                        memory: None,
-                        max_instances: None,
-                    },
-                );
                 m.insert(
                     "web".to_string(),
                     AppServiceEntry {
@@ -1753,11 +1731,11 @@ domain = "svc.example.com"
         );
 
         let managed = discover_managed_services(&resolved);
-        assert_eq!(managed.len(), 1);
-        assert_eq!(managed[0].name, "db");
-        assert_eq!(managed[0].service_type, AppServiceType::Postgres);
-        assert_eq!(managed[0].version, Some("16".to_string()));
+        assert_eq!(managed.len(), 2);
+        assert_eq!(managed[0].name, "postgres");
         assert_eq!(managed[0].tier, Some("hobby".to_string()));
+        assert_eq!(managed[1].name, "redis");
+        assert!(managed[1].tier.is_none());
     }
 
     #[test]
@@ -1769,6 +1747,9 @@ domain = "svc.example.com"
                 access_mode: None,
             },
             auth: None,
+            postgres: None,
+            redis: None,
+            storage: None,
             resources: None,
             services: {
                 let mut m = HashMap::new();
