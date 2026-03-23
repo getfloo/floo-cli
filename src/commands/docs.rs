@@ -59,7 +59,7 @@ Floo Quickstart — End-to-End Walkthrough
   [redis]
 
   Managed services are auto-provisioned on the first deploy.
-  Their credentials arrive as env vars (DATABASE_URL, REDIS_URL, STORAGE_BUCKET, etc.).
+  Their credentials arrive as env vars (DATABASE_URL, REDIS_URL, STORAGE_BUCKET + STORAGE_URL).
 
 ## 4. Connect to GitHub and Deploy
 
