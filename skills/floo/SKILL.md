@@ -1,13 +1,29 @@
+---
+name: floo
+description: Floo CLI command reference and patterns. Use when running floo commands, writing CLI integrations, debugging CLI behavior, or when the user mentions floo deploy, floo init, floo logs, floo env, or any floo subcommand.
+user-invocable: false
+---
+
 # Floo CLI
 
 Floo deploys web apps from the terminal. All management happens through `floo` commands.
 
 ## Getting Started
 
-1. `floo auth login --api-key <key>` — authenticate (use `--api-key` for non-interactive/CI; omit for browser flow)
-2. `floo init <app-name>` — scaffold config files in the current directory
-3. `floo deploy` — detect runtime, archive source, build, deploy
+1. `floo auth login` — authenticate (or `--api-key <key>` for CI)
+2. `floo init <app-name>` — scaffold config files (local only, no API call)
+3. `floo apps github connect owner/repo` — connect to GitHub and trigger first deploy
 4. `floo apps status <name>` — see your app's URL and status
+
+After the first deploy, use `floo deploy` for subsequent deploys. All source comes from GitHub — the CLI never uploads code.
+
+## How Deploys Work
+
+`floo deploy` sends metadata to the API. The API pulls source from GitHub, builds a container via Cloud Build, and deploys to Cloud Run. GitHub must be connected first (`floo apps github connect`).
+
+- `floo init` creates local config files only — no app is registered on the platform
+- `floo deploy` auto-creates the app if it doesn't exist, but requires GitHub to be connected
+- `floo apps github connect` connects GitHub and triggers the first deploy by default (use `--no-deploy` to skip)
 
 ## Config Files
 
@@ -110,13 +126,3 @@ floo domains add app.example.com --app my-app                       # single-ser
 floo domains add app.example.com --app my-app --services frontend   # target a specific service (multi-service)
 floo domains list --app my-app
 ```
-
-## Full Plugin
-
-For comprehensive managed services documentation and security rules, install the Floo plugin:
-
-```bash
-claude plugin install getfloo/floo-cli/plugin
-```
-
-The plugin includes three skills: platform CLI usage, managed services (Postgres, Redis, Storage), and security patterns for deployed applications.

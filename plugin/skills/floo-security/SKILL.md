@@ -74,7 +74,9 @@ except Exception:
 
 ## Authentication & Sessions
 
-**Rules:**
+**Floo managed auth:** If the app uses `access_mode = "accounts"`, floo handles authentication via hosted OAuth — no custom password hashing or auth implementation is needed. Use floo's JWT tokens (verified via JWKS) for session management.
+
+**Rules (for apps implementing their own auth outside floo):**
 - Set `HttpOnly`, `Secure`, `SameSite=Lax` on all authentication cookies
 - NEVER store auth tokens in `localStorage` — use `HttpOnly` cookies
 - Validate JWTs on the server side — never trust client-side token claims

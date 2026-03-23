@@ -36,6 +36,22 @@ pub fn update(version: Option<&str>) {
                 })),
             );
         }
+        Err(err) if err.code == crate::errors::ErrorCode::AlreadyUpToDate => {
+            let refreshed = super::skills::refresh_skill_files();
+            if !output::is_json_mode() {
+                for path in &refreshed {
+                    eprintln!("  Refreshed agent skill at {path}");
+                }
+            }
+            output::success(
+                &err.message,
+                Some(serde_json::json!({
+                    "version": crate::constants::VERSION,
+                    "already_latest": true,
+                    "refreshed_skills": refreshed,
+                })),
+            );
+        }
         Err(err) => {
             output::error(&err.message, &err.code, err.suggestion.as_deref());
             process::exit(1);
