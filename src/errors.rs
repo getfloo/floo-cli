@@ -2,6 +2,7 @@ use thiserror::Error;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ErrorCode {
+    AlreadyUpToDate,
     AppNameMismatch,
     AppNotFound,
     ChecksumMismatch,
@@ -71,6 +72,7 @@ pub enum ErrorCode {
 impl ErrorCode {
     pub fn as_str(&self) -> &str {
         match self {
+            ErrorCode::AlreadyUpToDate => "ALREADY_UP_TO_DATE",
             ErrorCode::AppNameMismatch => "APP_NAME_MISMATCH",
             ErrorCode::AppNotFound => "APP_NOT_FOUND",
             ErrorCode::ChecksumMismatch => "CHECKSUM_MISMATCH",
@@ -142,6 +144,7 @@ impl ErrorCode {
     /// Unknown codes become Other(s.to_string()).
     pub fn from_api(s: &str) -> Self {
         match s {
+            "ALREADY_UP_TO_DATE" => ErrorCode::AlreadyUpToDate,
             "APP_NAME_MISMATCH" => ErrorCode::AppNameMismatch,
             "APP_NOT_FOUND" => ErrorCode::AppNotFound,
             "CHECKSUM_MISMATCH" => ErrorCode::ChecksumMismatch,
@@ -309,6 +312,7 @@ mod tests {
     #[test]
     fn test_from_api_roundtrip_all_variants() {
         let variants = [
+            ErrorCode::AlreadyUpToDate,
             ErrorCode::AppNameMismatch,
             ErrorCode::AppNotFound,
             ErrorCode::ChecksumMismatch,

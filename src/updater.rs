@@ -329,6 +329,16 @@ fn run_update_with(
     let release_json = fetch_release_json(client, api_base, version)?;
     let release_asset = release_asset_from_json(&release_json, &asset_name)?;
 
+    // Skip download if already on this version (unless a specific version was requested)
+    let current = crate::constants::VERSION;
+    let remote = release_asset.version.strip_prefix('v').unwrap_or(&release_asset.version);
+    if version.is_none() && remote == current {
+        return Err(FlooError::new(
+            ErrorCode::AlreadyUpToDate,
+            format!("floo {current} is already the latest version."),
+        ));
+    }
+
     let binary_bytes = download_bytes(client, &release_asset.binary_url)?;
     let checksum_bytes = download_bytes(client, &release_asset.checksum_url)?;
     let expected_checksum = parse_checksum(&String::from_utf8_lossy(&checksum_bytes))?;
