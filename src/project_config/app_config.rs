@@ -10,17 +10,29 @@ use super::service_config::{ResourceConfig, ServiceIngress};
 use super::SCHEMA_URL;
 
 #[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct AppFileConfig {
     pub app: AppFileAppSection,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth: Option<AuthSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub postgres: Option<ManagedServiceSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redis: Option<ManagedServiceSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage: Option<ManagedServiceSection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resources: Option<ResourceConfig>,
     #[serde(default)]
     pub services: HashMap<String, AppServiceEntry>,
     #[serde(default)]
     pub environments: HashMap<String, AppEnvironmentOverrides>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ManagedServiceSection {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tier: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Default)]
@@ -101,14 +113,6 @@ pub enum AppServiceType {
     Web,
     Api,
     Worker,
-    Postgres,
-    Redis,
-}
-
-impl AppServiceType {
-    pub fn is_user_managed(&self) -> bool {
-        matches!(self, Self::Web | Self::Api | Self::Worker)
-    }
 }
 
 impl fmt::Display for AppServiceType {
@@ -117,8 +121,6 @@ impl fmt::Display for AppServiceType {
             Self::Web => write!(f, "web"),
             Self::Api => write!(f, "api"),
             Self::Worker => write!(f, "worker"),
-            Self::Postgres => write!(f, "postgres"),
-            Self::Redis => write!(f, "redis"),
         }
     }
 }
@@ -166,10 +168,8 @@ fn validate_app_config(config: &AppFileConfig) -> Result<(), FlooError> {
             ));
         }
 
-        let is_user_managed = entry.service_type.is_user_managed();
-
-        // In inline mode, user-managed services require port and path
-        if has_inline && is_user_managed {
+        // In inline mode, all services require port and path
+        if has_inline {
             if entry.port.is_none() {
                 return Err(FlooError::with_suggestion(
                     ErrorCode::InvalidProjectConfig,
@@ -244,20 +244,16 @@ name = "my-app"
 [app]
 name = "my-app"
 
-[services.db]
-type = "postgres"
-version = "16"
-plan = "hobby"
+[postgres]
+tier = "hobby"
 "#,
         )
         .unwrap();
 
         let config = load_app_config(dir.path()).unwrap().unwrap();
-        assert_eq!(config.services.len(), 1);
-        let db = &config.services["db"];
-        assert_eq!(db.service_type, AppServiceType::Postgres);
-        assert_eq!(db.version.as_deref(), Some("16"));
-        assert_eq!(db.plan.as_deref(), Some("hobby"));
+        assert!(config.services.is_empty());
+        let pg = config.postgres.unwrap();
+        assert_eq!(pg.tier.as_deref(), Some("hobby"));
     }
 
     #[test]
@@ -379,6 +375,9 @@ type = "mysql"
                 access_mode: None,
             },
             auth: None,
+            postgres: None,
+            redis: None,
+            storage: None,
             resources: None,
             services: HashMap::new(),
             environments: HashMap::new(),
@@ -399,11 +398,9 @@ type = "mysql"
 [app]
 name = "full-stack"
 
-[services.db]
-type = "postgres"
+[postgres]
 
-[services.cache]
-type = "redis"
+[redis]
 
 [services.web]
 type = "web"
@@ -417,9 +414,9 @@ path = "./backend"
         .unwrap();
 
         let config = load_app_config(dir.path()).unwrap().unwrap();
-        assert_eq!(config.services.len(), 4);
-        assert_eq!(config.services["db"].service_type, AppServiceType::Postgres);
-        assert_eq!(config.services["cache"].service_type, AppServiceType::Redis);
+        assert_eq!(config.services.len(), 2);
+        assert!(config.postgres.is_some());
+        assert!(config.redis.is_some());
         assert_eq!(config.services["web"].service_type, AppServiceType::Web);
         assert_eq!(config.services["api"].service_type, AppServiceType::Api);
     }

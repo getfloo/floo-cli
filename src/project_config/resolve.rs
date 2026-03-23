@@ -336,8 +336,7 @@ ingress = "public"
 [app]
 name = "my-app"
 
-[services.db]
-type = "postgres"
+[postgres]
 "#,
         )
         .unwrap();

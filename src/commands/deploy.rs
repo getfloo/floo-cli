@@ -233,15 +233,7 @@ pub fn deploy(
             eprintln!("  Managed services:");
             for ms in &managed_services {
                 let tier_label = ms.tier.as_deref().unwrap_or("basic");
-                let version_label = ms
-                    .version
-                    .as_ref()
-                    .map(|v| format!(" v{v}"))
-                    .unwrap_or_default();
-                eprintln!(
-                    "    {}: {}{version_label} (tier {tier_label})",
-                    ms.name, ms.service_type
-                );
+                eprintln!("    {} (tier {tier_label})", ms.name);
             }
             eprintln!();
         }
@@ -276,8 +268,6 @@ pub fn deploy(
             .map(|ms| {
                 serde_json::json!({
                     "name": ms.name,
-                    "type": ms.service_type,
-                    "version": ms.version,
                     "tier": ms.tier.as_deref().unwrap_or("basic"),
                 })
             })
