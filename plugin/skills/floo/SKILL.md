@@ -1,9 +1,7 @@
 ---
 name: floo
-description: >
-  Floo deployment platform CLI. Use when working in a project with
-  floo.app.toml or floo.service.toml, or when the user mentions Floo,
-  deploying with Floo, or using floo commands.
+description: Floo CLI command reference and patterns. Use when running floo commands, writing CLI integrations, debugging CLI behavior, or when the user mentions floo deploy, floo init, floo logs, floo env, or any floo subcommand.
+user-invocable: false
 ---
 
 # Floo CLI
@@ -12,10 +10,20 @@ Floo deploys web apps from the terminal. All management happens through `floo` c
 
 ## Getting Started
 
-1. `floo auth login --api-key <key>` — authenticate (use `--api-key` for non-interactive/CI; omit for browser flow)
-2. `floo init <app-name>` — scaffold config files in the current directory
-3. `floo deploy` — detect runtime, build, deploy
+1. `floo auth login` — authenticate (or `--api-key <key>` for CI)
+2. `floo init <app-name>` — scaffold config files (local only, no API call)
+3. `floo apps github connect owner/repo` — connect to GitHub and trigger first deploy
 4. `floo apps status <name>` — see your app's URL and status
+
+After the first deploy, use `floo deploy` for subsequent deploys. All source comes from GitHub — the CLI never uploads code.
+
+## How Deploys Work
+
+`floo deploy` sends metadata to the API. The API pulls source from GitHub, builds a container via Cloud Build, and deploys to Cloud Run. GitHub must be connected first (`floo apps github connect`).
+
+- `floo init` creates local config files only — no app is registered on the platform
+- `floo deploy` auto-creates the app if it doesn't exist, but requires GitHub to be connected
+- `floo apps github connect` connects GitHub and triggers the first deploy by default (use `--no-deploy` to skip)
 
 ## Config Files
 
@@ -88,18 +96,7 @@ floo env set DB_URL=... --app my-app --restart         # set and restart
 floo env list --app my-app --json                      # list all vars
 floo env import .env --app my-app                      # import from file
 floo env remove SECRET --app my-app                    # remove a var
-floo env set KEY=VAL --app my-app --services backend   # target a specific service
-```
-
-### Deploy Management
-
-```bash
-floo deploy list --app my-app                      # deploy history
-floo deploy logs <deploy-id> --app my-app          # build logs
-floo deploy watch --app my-app                     # stream progress
-floo deploy rollback my-app <deploy-id>            # rollback
-floo deploy --restart --app my-app                 # restart without rebuild
-floo deploy --services api --app my-app            # deploy specific service
+floo env set KEY=VAL --app my-app --services backend   # target a specific service (multi-service apps)
 ```
 
 ### Logs and Debugging
@@ -111,23 +108,21 @@ floo logs --app my-app --live                      # stream real-time
 floo logs --app my-app --search "panic" --json     # search + JSON
 ```
 
+### Deploy Management
+
+```bash
+floo deploy list --app my-app                      # deploy history
+floo deploy logs <deploy-id> --app my-app          # build logs
+floo deploy watch --app my-app                     # stream progress
+floo deploy rollback my-app <deploy-id>            # rollback
+floo deploy --restart --app my-app                 # restart without re-upload
+floo deploy --services api --app my-app            # deploy specific service
+```
+
 ### Custom Domains
 
 ```bash
 floo domains add app.example.com --app my-app                       # single-service app
-floo domains add app.example.com --app my-app --services frontend   # target a specific service
+floo domains add app.example.com --app my-app --services frontend   # target a specific service (multi-service)
 floo domains list --app my-app
 ```
-
-### Managed Services
-
-```bash
-floo services add postgres --app my-app            # add managed Postgres
-floo services add redis --app my-app               # add managed Redis
-floo services add storage --app my-app             # add managed Storage
-floo services list --app my-app                    # list services + status
-floo services info <service-id> --app my-app       # service details
-floo services rm <service-id> --app my-app         # remove a service
-```
-
-See the `floo-services` skill for detailed managed service usage and the `floo-security` skill for security rules.
