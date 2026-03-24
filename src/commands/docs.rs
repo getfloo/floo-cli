@@ -141,6 +141,22 @@ An app contains one or more services. Each service is independently deployable.
 
   [storage]
 
+## Managed Service Tiers
+
+  All tiers are available on every plan. Only Postgres tiers have
+  functional differences today:
+
+                Basic (default)   Standard        Performance
+  Connections   5                 15              50
+  Query timeout 30s               60s             120s
+  Idle timeout  60s               120s            300s
+  work_mem      64 MB             128 MB          256 MB
+
+  Start with basic. Upgrade to standard for multi-service apps or
+  reporting queries. Use performance for high-concurrency workloads.
+
+  Redis and storage tiers default to basic (no difference today).
+
   Inspect with: floo services info <name> --app <app>
 
 ## Commands

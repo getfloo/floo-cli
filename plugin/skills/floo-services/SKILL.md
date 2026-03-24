@@ -16,6 +16,24 @@ Managed services are declared in `floo.app.toml` and auto-provisioned on the fir
 
 **There is no CLI command to imperatively provision a managed service.** `floo services add <name> <path>` adds a *user-managed* service (web/api/worker) to config — it does NOT provision databases.
 
+## Managed Service Tiers
+
+All tiers are available on every plan. Choose based on workload, not plan.
+
+| | Basic (default) | Standard | Performance |
+|---|---|---|---|
+| Postgres connections | 5 | 15 | 50 |
+| Statement timeout | 30s | 60s | 120s |
+| Idle-in-transaction | 60s | 120s | 300s |
+| work_mem | 64 MB | 128 MB | 256 MB |
+
+**When to use each:**
+- `basic` — most web apps, single-service apps, CRUD workloads (recommended default)
+- `standard` — multiple services sharing one DB, moderate reporting queries
+- `performance` — high-concurrency APIs, batch processing, heavy analytics
+
+Redis and Storage tiers default to `basic` — no functional difference today.
+
 ## Postgres (Managed)
 
 **Declare in `floo.app.toml`:**
