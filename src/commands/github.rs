@@ -74,7 +74,7 @@ pub fn connect(
     let result = match client.github_connect(&app_id, repo, branch, skip_env_check) {
         Ok(r) => r,
         Err(e) if e.code == "GITHUB_APP_NOT_INSTALLED" => {
-            // App not installed — run browser install flow or exit in JSON mode
+            // App not installed — open browser and wait for installation
             let install_url = e
                 .extra
                 .as_ref()
@@ -82,28 +82,10 @@ pub fn connect(
                 .and_then(|v| v.as_str())
                 .unwrap_or("https://github.com/apps/getfloo/installations/new");
 
-            if output::is_json_mode() {
-                // Try to open the browser so the user can install the app
-                let _ = open::that(install_url);
-                output::error_with_data(
-                    &e.message,
-                    &ErrorCode::from_api(&e.code),
-                    Some(&format!(
-                        "The user must install the Floo GitHub App on this org. \
-                         A browser window should have opened. If not, ask the user \
-                         to visit: {install_url}"
-                    )),
-                    Some(serde_json::json!({
-                        "error": "github_app_not_installed",
-                        "install_url": install_url,
-                    })),
-                );
-                process::exit(1);
-            }
-
-            // Interactive: run browser install flow
             let owner = repo.split('/').next().unwrap_or(repo);
-            output::warn(&format!("Floo GitHub App not installed on \"{owner}\""));
+            if !output::is_json_mode() {
+                output::warn(&format!("Floo GitHub App not installed on \"{owner}\""));
+            }
 
             run_installation_flow(&client, install_url);
 
@@ -117,58 +99,38 @@ pub fn connect(
             }
         }
         Err(e) if e.code == "GITHUB_REPO_NOT_IN_INSTALLATION" => {
-            // App installed on org but repo not in scope — open settings
+            // App installed on org but repo not in scope — open settings and wait
             let settings_url = e
                 .extra
                 .as_ref()
                 .and_then(|v| v.get("settings_url"))
                 .and_then(|v| v.as_str());
 
-            if output::is_json_mode() {
-                // Try to open the settings page so the user can grant repo access
-                if let Some(url) = settings_url {
-                    let _ = open::that(url);
-                }
-                output::error_with_data(
-                    &e.message,
-                    &ErrorCode::from_api(&e.code),
-                    Some(&format!(
-                        "The Floo GitHub App is installed but doesn't have access to \"{repo}\". \
-                         A browser window should have opened to the installation settings. \
-                         If not, ask the user to visit: {} \
-                         After granting access, re-run this command.",
-                        settings_url.unwrap_or("https://github.com/settings/installations"),
-                    )),
-                    Some(serde_json::json!({
-                        "error": "github_repo_not_in_installation",
-                        "settings_url": settings_url,
-                    })),
-                );
-                process::exit(1);
-            }
-
             let owner = repo.split('/').next().unwrap_or(repo);
-            output::warn(&format!(
-                "Floo GitHub App is installed on \"{owner}\" but does not have access to \"{repo}\"."
-            ));
+            let fallback_url = format!(
+                "https://github.com/organizations/{owner}/settings/installations"
+            );
+            let url = settings_url.unwrap_or(&fallback_url);
 
-            if let Some(url) = settings_url {
+            if !output::is_json_mode() {
+                output::warn(&format!(
+                    "Floo GitHub App is installed on \"{owner}\" but does not have access to \"{repo}\"."
+                ));
                 output::info(
                     "Opening installation settings to add this repository...",
                     None,
                 );
-                if let Err(e) = open::that(url) {
+            }
+
+            if let Err(e) = open::that(url) {
+                if !output::is_json_mode() {
                     output::warn(&format!("Could not open browser: {e}"));
                     output::warn(&format!("Open this URL manually: {url}"));
                 }
-            } else {
-                output::warn(&format!(
-                    "Visit https://github.com/organizations/{owner}/settings/installations to manage repository access."
-                ));
             }
 
-            output::info("After granting access, re-run this command.", None);
-            process::exit(1);
+            // Poll: retry connect until the user grants repo access
+            wait_for_repo_access(&client, &app_id, repo, branch, skip_env_check, url)
         }
         Err(e) => {
             let suggestion = match e.code.as_str() {
@@ -339,6 +301,55 @@ fn run_installation_flow(client: &crate::api_client::FlooClient, install_url: &s
                     );
                     process::exit(1);
                 }
+            }
+        }
+    }
+}
+
+fn wait_for_repo_access(
+    client: &crate::api_client::FlooClient,
+    app_id: &str,
+    repo: &str,
+    branch: Option<&str>,
+    skip_env_check: bool,
+    settings_url: &str,
+) -> crate::api_types::GitHubConnectResponse {
+    let spinner = output::Spinner::new(&format!(
+        "Waiting for repo access (grant access at {settings_url})..."
+    ));
+    let poll_interval = std::time::Duration::from_secs(3);
+    let timeout = std::time::Duration::from_secs(300);
+    let start = std::time::Instant::now();
+
+    loop {
+        std::thread::sleep(poll_interval);
+
+        if start.elapsed() > timeout {
+            spinner.finish();
+            output::error(
+                "Timed out waiting for repository access.",
+                &ErrorCode::Other("REPO_ACCESS_TIMEOUT".into()),
+                Some(&format!(
+                    "Grant access at {settings_url} then re-run: \
+                     floo apps github connect {repo}"
+                )),
+            );
+            process::exit(1);
+        }
+
+        match client.github_connect(app_id, repo, branch, skip_env_check) {
+            Ok(r) => {
+                spinner.finish();
+                return r;
+            }
+            Err(e) if e.code == "GITHUB_REPO_NOT_IN_INSTALLATION" => {
+                // Still waiting — continue polling
+            }
+            Err(e) => {
+                // Unexpected error — abort
+                spinner.finish();
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                process::exit(1);
             }
         }
     }
