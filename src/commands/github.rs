@@ -83,10 +83,16 @@ pub fn connect(
                 .unwrap_or("https://github.com/apps/getfloo/installations/new");
 
             if output::is_json_mode() {
+                // Try to open the browser so the user can install the app
+                let _ = open::that(install_url);
                 output::error_with_data(
                     &e.message,
                     &ErrorCode::from_api(&e.code),
-                    None,
+                    Some(&format!(
+                        "The user must install the Floo GitHub App on this org. \
+                         A browser window should have opened. If not, ask the user \
+                         to visit: {install_url}"
+                    )),
                     Some(serde_json::json!({
                         "error": "github_app_not_installed",
                         "install_url": install_url,
@@ -119,10 +125,20 @@ pub fn connect(
                 .and_then(|v| v.as_str());
 
             if output::is_json_mode() {
+                // Try to open the settings page so the user can grant repo access
+                if let Some(url) = settings_url {
+                    let _ = open::that(url);
+                }
                 output::error_with_data(
                     &e.message,
                     &ErrorCode::from_api(&e.code),
-                    None,
+                    Some(&format!(
+                        "The Floo GitHub App is installed but doesn't have access to \"{repo}\". \
+                         A browser window should have opened to the installation settings. \
+                         If not, ask the user to visit: {} \
+                         After granting access, re-run this command.",
+                        settings_url.unwrap_or("https://github.com/settings/installations"),
+                    )),
                     Some(serde_json::json!({
                         "error": "github_repo_not_in_installation",
                         "settings_url": settings_url,
