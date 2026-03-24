@@ -149,12 +149,19 @@ pub fn connect(
 
     let connected_branch = result.default_branch.as_deref().unwrap_or("main");
 
-    output::success(
-        &format!("Connected {name} to {repo} (branch: {connected_branch})"),
-        Some(output::to_value(&result)),
-    );
-
     // Step 3: Trigger initial deploy unless --no-deploy
+    let will_deploy = !no_deploy && resolved.is_some();
+
+    // In JSON mode, only emit one JSON envelope to stdout. If we're about to
+    // deploy, the deploy result (success or error) will be the envelope.
+    // In human mode, always show the connect success on stderr.
+    if !(will_deploy && output::is_json_mode()) {
+        output::success(
+            &format!("Connected {name} to {repo} (branch: {connected_branch})"),
+            Some(output::to_value(&result)),
+        );
+    }
+
     if !no_deploy {
         if let Some(ref r) = resolved {
             trigger_initial_deploy(&client, &app_id, &cwd, r);
@@ -196,9 +203,27 @@ pub fn status(app: Option<&str>) {
                     Some(output::to_value(&conn)),
                 );
             } else {
+                let repo = conn
+                    .repo_full_name
+                    .as_deref()
+                    .or_else(|| {
+                        conn.services
+                            .first()
+                            .and_then(|s| s.repo_full_name.as_deref())
+                    })
+                    .unwrap_or("(not set)");
+                let branch = conn
+                    .default_branch
+                    .as_deref()
+                    .or_else(|| {
+                        conn.services
+                            .first()
+                            .and_then(|s| s.default_branch.as_deref())
+                    })
+                    .unwrap_or("main");
                 output::info(&format!("{name} GitHub connection"), None);
-                output::info(&format!("  Repo:      {}", conn.repo_full_name), None);
-                output::info(&format!("  Branch:    {}", conn.default_branch), None);
+                output::info(&format!("  Repo:      {repo}"), None);
+                output::info(&format!("  Branch:    {branch}"), None);
                 output::info(&format!("  Connected: {}", conn.connected_at), None);
             }
         }

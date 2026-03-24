@@ -235,11 +235,24 @@ pub struct GitHubConnectResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitHubStatusResponse {
-    pub repo_full_name: String,
-    pub default_branch: String,
-    pub installation_id: i64,
-    pub connected_at: String,
+    pub id: String,
+    pub app_id: String,
     pub skip_env_var_check: bool,
+    pub preview_enabled: bool,
+    pub preview_ttl_hours: Option<i64>,
+    pub connected_at: String,
+    pub repo_full_name: Option<String>,
+    pub default_branch: Option<String>,
+    pub installation_id: Option<i64>,
+    pub services: Vec<ServiceGitHubInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceGitHubInfo {
+    pub name: String,
+    pub repo_full_name: Option<String>,
+    pub default_branch: Option<String>,
+    pub installation_id: Option<i64>,
 }
 
 // --- Database ---
