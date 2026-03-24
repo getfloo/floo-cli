@@ -23,7 +23,7 @@ After the first deploy, use `floo deploy` for subsequent deploys. All source com
 
 - `floo init` creates local config files only — no app is registered on the platform
 - `floo deploy` auto-creates the app if it doesn't exist, but requires GitHub to be connected
-- `floo apps github connect` connects GitHub and triggers the first deploy by default (use `--no-deploy` to skip)
+- `floo apps github connect` auto-creates the app if needed, connects GitHub, and triggers the first deploy (use `--no-deploy` to skip)
 
 ## Config Files
 
@@ -41,7 +41,24 @@ ingress = "public"    # public | internal
 env_file = ".env"     # optional, synced on deploy
 ```
 
-Multi-service app — `floo.app.toml` in project root, plus a `floo.service.toml` in each service dir:
+Multi-service app (inline) — `floo.app.toml` with type/port per service:
+
+```toml
+[app]
+name = "my-app"
+
+[services.api]
+type = "api"
+path = "./api"
+port = 8080
+
+[services.web]
+type = "web"
+path = "./web"
+port = 3000
+```
+
+Multi-service app (delegated) — `floo.app.toml` with paths, plus a `floo.service.toml` in each service dir:
 
 ```toml
 [app]
@@ -53,6 +70,8 @@ path = "./api"
 [services.web]
 path = "./web"
 ```
+
+Inline and delegated are mutually exclusive per service directory. Do not mix both.
 
 ## Self-Discovery
 

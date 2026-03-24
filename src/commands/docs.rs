@@ -61,7 +61,14 @@ Floo Quickstart — End-to-End Walkthrough
   Managed services are auto-provisioned on the first deploy.
   Their credentials arrive as env vars (DATABASE_URL, REDIS_URL, STORAGE_BUCKET + STORAGE_URL).
 
-## 4. Connect to GitHub and Deploy
+## 4. Validate Config
+
+  floo deploy --dry-run --json
+
+  Checks config files, service graph, ports, and Dockerfiles locally — no
+  auth or GitHub connection required. Fix any warnings before deploying.
+
+## 5. Connect to GitHub and Deploy
 
   floo apps github connect owner/my-project
 
@@ -72,12 +79,12 @@ Floo Quickstart — End-to-End Walkthrough
 
   Use --no-deploy to skip the automatic deploy.
 
-## 5. Check Status
+## 6. Check Status
 
   floo apps status my-app
   floo logs --app my-app
 
-## 6. Subsequent Deploys
+## 7. Subsequent Deploys
 
   Push code to GitHub, then:
 
@@ -90,7 +97,7 @@ Floo Quickstart — End-to-End Walkthrough
 
   floo init           — local config files only (no API call)
   floo deploy         — auto-creates the app if needed, then deploys
-  floo apps github connect — connects GitHub, triggers first deploy
+  floo apps github connect — creates app if needed, connects GitHub, triggers first deploy
   floo services add   — adds a user-managed service to config (NOT managed databases)
 
   Managed services (postgres, redis, storage) are declared in floo.app.toml
@@ -175,6 +182,31 @@ Floo Config Files
   path = \"./web\"
 
   Each service directory has its own floo.service.toml.
+
+## Inline Multi-Service App (in floo.app.toml)
+
+  [app]
+  name = \"my-app\"
+
+  [services.api]
+  type = \"api\"
+  path = \"./api\"
+  port = 8080
+  ingress = \"public\"
+
+  [services.web]
+  type = \"web\"
+  path = \"./web\"
+  port = 3000
+  ingress = \"public\"
+
+  When type and port are set inline, no per-service floo.service.toml is needed.
+
+## Inline vs Delegated
+
+  These modes are mutually exclusive per service. If a service has type and
+  port inline in floo.app.toml, there must not be a floo.service.toml in
+  that service's subdirectory. The CLI fails preflight if both are present.
 
 ## Managed Services (in floo.app.toml)
 

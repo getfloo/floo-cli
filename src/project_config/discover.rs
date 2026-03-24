@@ -347,10 +347,7 @@ fn delegated_path_entries(resolved: &ResolvedApp) -> Vec<(String, String)> {
     };
 
     // If any entry has port (inline mode), don't use delegated mode
-    let has_inline = app_cfg
-        .services
-        .values()
-        .any(|e| e.port.is_some());
+    let has_inline = app_cfg.services.values().any(|e| e.port.is_some());
     if has_inline {
         return Vec::new();
     }

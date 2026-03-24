@@ -331,7 +331,10 @@ fn run_update_with(
 
     // Skip download if already on this version (unless a specific version was requested)
     let current = crate::constants::VERSION;
-    let remote = release_asset.version.strip_prefix('v').unwrap_or(&release_asset.version);
+    let remote = release_asset
+        .version
+        .strip_prefix('v')
+        .unwrap_or(&release_asset.version);
     if version.is_none() && remote == current {
         return Err(FlooError::new(
             ErrorCode::AlreadyUpToDate,

@@ -15,9 +15,8 @@ pub fn connect(
 ) {
     super::require_auth();
     let client = super::init_client(None);
-    let (app_id, name) = super::resolve_app_from_config(&client, app);
 
-    // Try to load project config from cwd to import env vars and trigger deploy
+    // Resolve app name from config files or --app flag
     let cwd = std::env::current_dir().unwrap_or_else(|e| {
         output::error(
             &format!("Failed to read current directory: {e}"),
@@ -26,9 +25,44 @@ pub fn connect(
         );
         process::exit(1);
     });
-    // Project config is optional for connect — missing config is fine, all other
-    // errors (LEGACY_CONFIG, INVALID_PROJECT_CONFIG) are also suppressed so the
-    // connect itself still succeeds; users can run `floo env import` separately.
+    let resolved_ctx = match project_config::resolve_app_context(&cwd, app) {
+        Ok(r) => r,
+        Err(e) => {
+            output::error(&e.message, &e.code, e.suggestion.as_deref());
+            process::exit(1);
+        }
+    };
+    let app_name = resolved_ctx.app_name.clone();
+
+    // Resolve existing app or auto-create if it doesn't exist yet
+    let app_data = match crate::resolve::resolve_app(&client, &app_name) {
+        Ok(a) => a,
+        Err(e) if e.code == "APP_NOT_FOUND" => {
+            let detection = detect(&cwd);
+            let spinner = output::Spinner::new(&format!("Creating app {app_name}..."));
+            match client.create_app(&app_name, Some(&detection.runtime)) {
+                Ok(a) => {
+                    spinner.finish();
+                    a
+                }
+                Err(e) => {
+                    spinner.finish();
+                    output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                    process::exit(1);
+                }
+            }
+        }
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+    let app_id = app_data.id.clone();
+    let name = app_data.name.clone();
+
+    // Re-resolve config with the platform-returned name (may differ from flag)
+    // for env var import and deploy trigger. Missing config is fine — users can
+    // run `floo env import` separately.
     let resolved = project_config::resolve_app_context(&cwd, Some(&name)).ok();
 
     // Step 1: Import env vars from local env_file before connecting
