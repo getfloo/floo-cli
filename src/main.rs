@@ -5,6 +5,7 @@ mod commands;
 mod config;
 mod constants;
 mod detection;
+mod dockerfile;
 mod errors;
 mod names;
 mod output;

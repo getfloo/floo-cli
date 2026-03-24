@@ -107,9 +107,8 @@ pub fn connect(
                 .and_then(|v| v.as_str());
 
             let owner = repo.split('/').next().unwrap_or(repo);
-            let fallback_url = format!(
-                "https://github.com/organizations/{owner}/settings/installations"
-            );
+            let fallback_url =
+                format!("https://github.com/organizations/{owner}/settings/installations");
             let url = settings_url.unwrap_or(&fallback_url);
 
             if !output::is_json_mode() {

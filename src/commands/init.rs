@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process;
 
-use crate::detection::detect;
+use crate::detection::{detect, DetectionResult};
+use crate::dockerfile;
 use crate::errors::ErrorCode;
 use crate::names::generate_name;
 use crate::output;
@@ -52,6 +53,65 @@ pub fn init(name: Option<String>, path: PathBuf) {
     }
 }
 
+/// Attempt to generate a Dockerfile based on detection results.
+/// Returns true if a Dockerfile was written.
+fn generate_dockerfile_if_needed(
+    project_path: &std::path::Path,
+    detection: &DetectionResult,
+) -> bool {
+    // Skip if Dockerfile already exists (detection returns "docker" runtime)
+    if detection.runtime == "docker" {
+        return false;
+    }
+
+    let should_auto_generate = detection.confidence == "high" || detection.confidence == "medium";
+
+    if !should_auto_generate {
+        // Low confidence: prompt in interactive mode, skip in non-interactive
+        if output::is_interactive() {
+            if !output::confirm("No Dockerfile found. Generate one?") {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+
+    let content = match dockerfile::generate_dockerfile(detection, project_path) {
+        Some(c) => c,
+        None => return false,
+    };
+
+    let dockerfile_path = project_path.join("Dockerfile");
+    if let Err(e) = std::fs::write(&dockerfile_path, &content) {
+        output::error(
+            &format!("Failed to write Dockerfile: {e}"),
+            &ErrorCode::FileError,
+            None,
+        );
+        process::exit(1);
+    }
+
+    let framework_label = detection.framework.as_deref().unwrap_or(&detection.runtime);
+    let version_label = detection
+        .version
+        .as_deref()
+        .map(|v| format!(" {v}"))
+        .unwrap_or_default();
+
+    if !output::is_json_mode() {
+        output::info(
+            &format!(
+                "Created Dockerfile for {framework_label} ({}{version_label})",
+                detection.runtime
+            ),
+            None,
+        );
+    }
+
+    true
+}
+
 fn init_non_interactive(
     project_path: &std::path::Path,
     name: Option<String>,
@@ -79,6 +139,9 @@ fn init_non_interactive(
 
     let service_name = default_type.to_string();
     let port = detection.default_port();
+
+    // Generate Dockerfile if none exists
+    let dockerfile_generated = generate_dockerfile_if_needed(project_path, detection);
 
     let service_file = ServiceFileConfig {
         app: ServiceFileAppSection {
@@ -124,19 +187,30 @@ fn init_non_interactive(
     }
     files_written.push(project_config::SERVICE_CONFIG_FILE);
 
-    output::success(
-        &format!("Initialized app '{app_name}'."),
-        Some(serde_json::json!({
-            "app_name": app_name,
-            "files_written": files_written,
-            "detection": detection.to_value(),
-            "service": {
-                "name": service_name,
-                "type": service_type.to_string(),
-                "port": port,
-            },
-        })),
-    );
+    if dockerfile_generated {
+        files_written.push("Dockerfile");
+    }
+
+    let mut json_data = serde_json::json!({
+        "app_name": app_name,
+        "files_written": files_written,
+        "detection": detection.to_value(),
+        "service": {
+            "name": service_name,
+            "type": service_type.to_string(),
+            "port": port,
+        },
+        "dockerfile_generated": dockerfile_generated,
+    });
+
+    // Add suggestion when Dockerfile was not generated due to low confidence
+    if !dockerfile_generated && detection.runtime != "docker" {
+        json_data["suggestion"] = serde_json::json!(
+            "No runtime detected with sufficient confidence. Add a Dockerfile manually."
+        );
+    }
+
+    output::success(&format!("Initialized app '{app_name}'."), Some(json_data));
 }
 
 fn init_interactive(
@@ -159,6 +233,9 @@ fn init_interactive(
             None,
         );
     }
+
+    // Generate Dockerfile if none exists
+    generate_dockerfile_if_needed(project_path, detection);
 
     let default_name = name.unwrap_or_else(generate_name);
     let app_name = output::prompt_with_default("App name", &default_name);
