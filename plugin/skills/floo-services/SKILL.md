@@ -190,6 +190,28 @@ curl "<signed_url>" -o photo.jpg
 - NEVER access the bucket directly via GCS client libraries — use signed URLs
 - NEVER make the bucket public — signed URLs handle access control
 
+## Multi-Service Discovery
+
+In multi-service apps, each service runs on a separate hostname. Floo automatically injects discovery env vars so services can find each other:
+
+- `API_URL` — URL of the `api` service (injected into `web` and `worker`)
+- `WEB_URL` — URL of the `web` service (injected into `api` and `worker`)
+- `WORKER_INTERNAL_URL` — URL of the `worker` service
+- `VITE_API_URL` — same as `API_URL`, prefixed for Vite/React frontends
+- `FLOO_ALLOWED_ORIGINS` — comma-separated list of public service URLs (for CORS)
+
+**CRITICAL: Do not use relative paths like `/api/v1/...` in frontend code.** In multi-service apps, the API is on a different hostname than the web frontend. Use the discovery env var instead:
+
+```typescript
+// WRONG — hits the web service, not the API
+const API_BASE = "/api/v1";
+
+// RIGHT — uses the injected discovery URL
+const API_BASE = `${import.meta.env.VITE_API_URL || ""}/api/v1`;
+```
+
+For server-side code (Node.js, Python), use `API_URL` or `WEB_URL` from `process.env` / `os.environ`.
+
 ## General Rules
 
 - All managed service credentials arrive as environment variables
