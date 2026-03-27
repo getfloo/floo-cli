@@ -107,6 +107,8 @@ pub struct AppServiceEntry {
     pub max_instances: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dev_command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub migrate_command: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]

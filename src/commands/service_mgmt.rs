@@ -177,6 +177,7 @@ pub fn add(
             memory: None,
             max_instances: None,
             dev_command: None,
+            migrate_command: None,
         },
     );
 

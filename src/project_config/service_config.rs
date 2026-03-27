@@ -40,6 +40,8 @@ pub struct ServiceConfig {
     pub memory: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_instances: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub migrate_command: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq)]
@@ -110,6 +112,8 @@ pub struct ServiceSection {
     pub domain: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dev_command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub migrate_command: Option<String>,
 }
 
 impl ServiceSection {
@@ -133,6 +137,7 @@ impl ServiceSection {
             cpu: None,
             memory: None,
             max_instances: None,
+            migrate_command: self.migrate_command.clone(),
         }
     }
 }
@@ -303,6 +308,7 @@ ingress = "internal"
                 env_file: None,
                 domain: None,
                 dev_command: None,
+                migrate_command: None,
             },
             resources: None,
         };
@@ -324,6 +330,7 @@ ingress = "internal"
             env_file: None,
             domain: None,
             dev_command: None,
+            migrate_command: None,
         };
 
         let api_config = section.to_api_service_config("backend");
@@ -346,6 +353,7 @@ ingress = "internal"
             cpu: None,
             memory: None,
             max_instances: None,
+            migrate_command: None,
         };
         let json = serde_json::to_value(&config).unwrap();
         assert_eq!(json["name"], "api");
@@ -525,6 +533,7 @@ port = 8000
             env_file: None,
             domain: Some("getfloo.com".to_string()),
             dev_command: None,
+            migrate_command: None,
         };
 
         let api_config = section.to_api_service_config(".");
@@ -543,6 +552,7 @@ port = 8000
             cpu: None,
             memory: None,
             max_instances: None,
+            migrate_command: None,
         };
         let json = serde_json::to_value(&config).unwrap();
         assert!(json.get("domain").is_none());
@@ -560,6 +570,7 @@ port = 8000
             cpu: None,
             memory: None,
             max_instances: None,
+            migrate_command: None,
         };
         let json = serde_json::to_value(&config).unwrap();
         assert_eq!(json["domain"], "getfloo.com");
@@ -581,6 +592,7 @@ port = 8000
                 env_file: None,
                 domain: Some("getfloo.com".to_string()),
                 dev_command: None,
+                migrate_command: None,
             },
             resources: None,
         };
@@ -652,6 +664,7 @@ port = 8000
             cpu: None,
             memory: None,
             max_instances: None,
+            migrate_command: None,
         };
         let json = serde_json::to_value(&config).unwrap();
         assert!(json.get("cpu").is_none());
@@ -671,6 +684,7 @@ port = 8000
             cpu: Some("2".to_string()),
             memory: Some("4Gi".to_string()),
             max_instances: Some(5),
+            migrate_command: None,
         };
         let json = serde_json::to_value(&config).unwrap();
         assert_eq!(json["cpu"], "2");

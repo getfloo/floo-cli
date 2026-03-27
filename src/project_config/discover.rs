@@ -90,6 +90,7 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
                 cpu,
                 memory,
                 max_instances,
+                migrate_command: entry.migrate_command.clone(),
             };
 
             if !seen_names.insert(svc.name.clone()) {
@@ -430,6 +431,7 @@ ingress = "public"
                 env_file: None,
                 domain: None,
                 dev_command: None,
+                migrate_command: None,
             },
             resources: None,
         };
@@ -485,6 +487,7 @@ ingress = "public"
                 memory: None,
                 max_instances: None,
                 dev_command: None,
+                migrate_command: None,
             },
         );
         services_map.insert(
@@ -503,6 +506,7 @@ ingress = "public"
                 memory: None,
                 max_instances: None,
                 dev_command: None,
+                migrate_command: None,
             },
         );
 
@@ -562,6 +566,7 @@ ingress = "public"
                 env_file: None,
                 domain: None,
                 dev_command: None,
+                migrate_command: None,
             },
             resources: None,
         };
@@ -592,6 +597,7 @@ ingress = "public"
                 memory: None,
                 max_instances: None,
                 dev_command: None,
+                migrate_command: None,
             },
         );
 
@@ -646,6 +652,7 @@ ingress = "public"
                 env_file: None,
                 domain: None,
                 dev_command: None,
+                migrate_command: None,
             },
             resources: None,
         };
@@ -704,6 +711,7 @@ ingress = "public"
                 memory: None,
                 max_instances: None,
                 dev_command: None,
+                migrate_command: None,
             },
         );
 
@@ -763,6 +771,7 @@ ingress = "public"
                 memory: None,
                 max_instances: None,
                 dev_command: None,
+                migrate_command: None,
             },
         );
 
@@ -812,6 +821,7 @@ ingress = "public"
                 env_file: None,
                 domain: None,
                 dev_command: None,
+                migrate_command: None,
             },
             resources: None,
         };
@@ -842,6 +852,7 @@ ingress = "public"
                 memory: None,
                 max_instances: None,
                 dev_command: None,
+                migrate_command: None,
             },
         );
 
@@ -932,6 +943,7 @@ ingress = "public"
                 memory: None,
                 max_instances: None,
                 dev_command: None,
+                migrate_command: None,
             },
         );
 
@@ -975,6 +987,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                migrate_command: None,
             },
             ServiceConfig {
                 name: "api".to_string(),
@@ -986,6 +999,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                migrate_command: None,
             },
         ];
 
@@ -1006,6 +1020,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                migrate_command: None,
             },
             ServiceConfig {
                 name: "api".to_string(),
@@ -1017,6 +1032,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                migrate_command: None,
             },
         ];
 
@@ -1038,6 +1054,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                migrate_command: None,
             },
             ServiceConfig {
                 name: "api".to_string(),
@@ -1049,6 +1066,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                migrate_command: None,
             },
         ];
 
@@ -1086,6 +1104,7 @@ ingress = "public"
                 env_file: None,
                 domain: None,
                 dev_command: None,
+                migrate_command: None,
             },
             resources: None,
         };
@@ -1107,6 +1126,7 @@ ingress = "public"
                 memory: None,
                 max_instances: None,
                 dev_command: None,
+                migrate_command: None,
             },
         );
 
@@ -1191,6 +1211,7 @@ ingress = "internal"
                 memory: None,
                 max_instances: None,
                 dev_command: None,
+                migrate_command: None,
             },
         );
         services_map.insert(
@@ -1209,6 +1230,7 @@ ingress = "internal"
                 memory: None,
                 max_instances: None,
                 dev_command: None,
+                migrate_command: None,
             },
         );
 
@@ -1277,6 +1299,7 @@ domain = "svc.example.com"
                 memory: None,
                 max_instances: None,
                 dev_command: None,
+                migrate_command: None,
             },
         );
 
@@ -1346,6 +1369,7 @@ domain = "svc.example.com"
                 memory: None,
                 max_instances: None,
                 dev_command: None,
+                migrate_command: None,
             },
         );
 
@@ -1405,6 +1429,7 @@ domain = "svc.example.com"
                 memory: Some("4Gi".to_string()),
                 max_instances: Some(5),
                 dev_command: None,
+                migrate_command: None,
             },
         );
         services_map.insert(
@@ -1423,6 +1448,7 @@ domain = "svc.example.com"
                 memory: None,
                 max_instances: None,
                 dev_command: None,
+                migrate_command: None,
             },
         );
 
@@ -1488,6 +1514,7 @@ domain = "svc.example.com"
                 memory: None,               // will inherit global
                 max_instances: None,
                 dev_command: None,
+                migrate_command: None,
             },
         );
 
@@ -1554,6 +1581,7 @@ domain = "svc.example.com"
                 memory: None,
                 max_instances: None,
                 dev_command: None,
+                migrate_command: None,
             },
         );
 
@@ -1610,6 +1638,7 @@ domain = "svc.example.com"
                 memory: None,
                 max_instances: None,
                 dev_command: None,
+                migrate_command: None,
             },
         );
         services_map.insert(
@@ -1628,6 +1657,7 @@ domain = "svc.example.com"
                 memory: None,
                 max_instances: None,
                 dev_command: None,
+                migrate_command: None,
             },
         );
 
@@ -1678,6 +1708,7 @@ domain = "svc.example.com"
                 env_file: None,
                 domain: None,
                 dev_command: None,
+                migrate_command: None,
             },
             resources: Some(super::super::service_config::ResourceConfig {
                 cpu: Some("2".to_string()),
@@ -1737,6 +1768,7 @@ domain = "svc.example.com"
                         memory: None,
                         max_instances: None,
                         dev_command: None,
+                        migrate_command: None,
                     },
                 );
                 m
@@ -1791,6 +1823,7 @@ domain = "svc.example.com"
                         memory: None,
                         max_instances: None,
                         dev_command: None,
+                        migrate_command: None,
                     },
                 );
                 m

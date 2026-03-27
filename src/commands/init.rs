@@ -156,6 +156,7 @@ fn init_non_interactive(
             env_file,
             domain: None,
             dev_command: None,
+            migrate_command: None,
         },
         resources: None,
     };
@@ -321,6 +322,7 @@ fn init_interactive(
                     memory: None,
                     max_instances: None,
                     dev_command: None,
+                    migrate_command: None,
                 },
             );
 
@@ -349,6 +351,7 @@ fn init_interactive(
                 env_file,
                 domain: None,
                 dev_command: None,
+                migrate_command: None,
             },
             resources: None,
         });
