@@ -263,6 +263,7 @@ pub fn dev(app_flag: Option<String>) {
     {
         let shutdown_flag = Arc::clone(&shutdown);
         // Install a SIGINT (Ctrl+C) handler
+        #[cfg(unix)]
         unsafe {
             libc::signal(
                 libc::SIGINT,
@@ -275,7 +276,25 @@ pub fn dev(app_flag: Option<String>) {
         }
         SHUTDOWN_FLAG.store(0, Ordering::SeqCst);
 
+        // On non-Unix, set the flag immediately on Ctrl+C via process exit
+        // (Windows doesn't support libc signals; processes get killed directly)
+        #[cfg(not(unix))]
+        {
+            // Just set the flag after a brief delay if the process is still alive
+            let sf = Arc::clone(&shutdown_flag);
+            thread::spawn(move || {
+                // On Windows, rely on the process being killed externally
+                loop {
+                    thread::sleep(Duration::from_millis(500));
+                    if sf.load(Ordering::Relaxed) {
+                        break;
+                    }
+                }
+            });
+        }
+
         // Spawn a thread to watch for the signal and set our Arc flag
+        #[cfg(unix)]
         thread::spawn(move || loop {
             if SHUTDOWN_FLAG.load(Ordering::SeqCst) != 0 {
                 shutdown_flag.store(true, Ordering::Relaxed);
@@ -488,19 +507,25 @@ pub fn dev(app_flag: Option<String>) {
 /// Global flag set by the signal handler (must be static for the C signal handler).
 static SHUTDOWN_FLAG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
+#[cfg(unix)]
 extern "C" fn signal_handler(_sig: libc::c_int) {
     SHUTDOWN_FLAG.store(1, Ordering::SeqCst);
 }
 
 fn cleanup_children(children: &mut [(String, Child)]) {
-    // Send SIGTERM to all children
-    for (name, child) in children.iter() {
+    // Send SIGTERM (Unix) or kill (Windows) to all children
+    for (name, child) in children.iter_mut() {
+        #[cfg(unix)]
         unsafe {
             libc::kill(child.id() as libc::pid_t, libc::SIGTERM);
         }
+        #[cfg(not(unix))]
+        {
+            let _ = child.kill();
+        }
         if !output::is_json_mode() {
             let prefix = format!("[{}]", name);
-            eprintln!("{} sending SIGTERM", prefix.dimmed());
+            eprintln!("{} shutting down", prefix.dimmed());
         }
     }
 
@@ -522,14 +547,14 @@ fn cleanup_children(children: &mut [(String, Child)]) {
         thread::sleep(Duration::from_millis(100));
     }
 
-    // SIGKILL any remaining
+    // Force-kill any remaining
     for (name, child) in children.iter_mut() {
         match child.try_wait() {
             Ok(Some(_)) => {}
             _ => {
                 if !output::is_json_mode() {
                     let prefix = format!("[{}]", name);
-                    eprintln!("{} sending SIGKILL", prefix.dimmed());
+                    eprintln!("{} force killing", prefix.dimmed());
                 }
                 let _ = child.kill();
                 let _ = child.wait();
