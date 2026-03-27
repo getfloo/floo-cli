@@ -10,6 +10,10 @@ keywords = ["deploy", "cli", "cloud", "serverless"]
 categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
+name = "floo"
+path = "src/main.rs"
+
+[[bin]]
 name = "floo-local"
 path = "src/main.rs"
 
