@@ -108,6 +108,8 @@ pub struct ServiceSection {
     pub env_file: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dev_command: Option<String>,
 }
 
 impl ServiceSection {
@@ -300,6 +302,7 @@ ingress = "internal"
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
                 domain: None,
+                dev_command: None,
             },
             resources: None,
         };
@@ -320,6 +323,7 @@ ingress = "internal"
             ingress: Some(ServiceIngress::Internal),
             env_file: None,
             domain: None,
+            dev_command: None,
         };
 
         let api_config = section.to_api_service_config("backend");
@@ -520,6 +524,7 @@ port = 8000
             ingress: Some(ServiceIngress::Public),
             env_file: None,
             domain: Some("getfloo.com".to_string()),
+            dev_command: None,
         };
 
         let api_config = section.to_api_service_config(".");
@@ -575,6 +580,7 @@ port = 8000
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
                 domain: Some("getfloo.com".to_string()),
+                dev_command: None,
             },
             resources: None,
         };

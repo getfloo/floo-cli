@@ -51,6 +51,17 @@ Examples:
         path: PathBuf,
     },
 
+    /// Run all services locally with managed-service credentials.
+    #[command(after_help = "\
+Examples:
+  floo dev                                 Start all services defined in floo.app.toml
+  floo dev --app my-app                    Explicitly specify the app")]
+    Dev {
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+
     /// Deploy a project to Floo, or manage deploy history.
     #[command(after_help = "\
 Examples:
@@ -722,6 +733,8 @@ pub fn run() {
         Commands::Analytics { app, period } => commands::analytics::analytics(app, &period),
 
         Commands::Init { name, path } => commands::init::init(name, path),
+
+        Commands::Dev { app } => commands::dev::dev(app),
 
         Commands::Deploy(args) => {
             if let Some(sub) = args.sub {

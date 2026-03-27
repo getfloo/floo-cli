@@ -176,6 +176,7 @@ pub fn add(
             cpu: None,
             memory: None,
             max_instances: None,
+            dev_command: None,
         },
     );
 

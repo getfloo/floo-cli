@@ -13,6 +13,7 @@ pub mod billing;
 pub mod command_tree;
 pub mod deploy;
 pub mod deploys;
+pub mod dev;
 pub mod docs;
 pub mod domains;
 pub mod env;

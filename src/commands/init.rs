@@ -155,6 +155,7 @@ fn init_non_interactive(
             ingress: Some(ServiceIngress::Public),
             env_file,
             domain: None,
+            dev_command: None,
         },
         resources: None,
     };
@@ -319,6 +320,7 @@ fn init_interactive(
                     cpu: None,
                     memory: None,
                     max_instances: None,
+                    dev_command: None,
                 },
             );
 
@@ -346,6 +348,7 @@ fn init_interactive(
                 ingress: Some(ServiceIngress::Public),
                 env_file,
                 domain: None,
+                dev_command: None,
             },
             resources: None,
         });

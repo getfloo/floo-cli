@@ -429,6 +429,7 @@ ingress = "public"
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
                 domain: None,
+                dev_command: None,
             },
             resources: None,
         };
@@ -483,6 +484,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                dev_command: None,
             },
         );
         services_map.insert(
@@ -500,6 +502,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                dev_command: None,
             },
         );
 
@@ -558,6 +561,7 @@ ingress = "public"
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
                 domain: None,
+                dev_command: None,
             },
             resources: None,
         };
@@ -587,6 +591,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                dev_command: None,
             },
         );
 
@@ -640,6 +645,7 @@ ingress = "public"
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
                 domain: None,
+                dev_command: None,
             },
             resources: None,
         };
@@ -697,6 +703,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                dev_command: None,
             },
         );
 
@@ -755,6 +762,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                dev_command: None,
             },
         );
 
@@ -803,6 +811,7 @@ ingress = "public"
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
                 domain: None,
+                dev_command: None,
             },
             resources: None,
         };
@@ -832,6 +841,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                dev_command: None,
             },
         );
 
@@ -921,6 +931,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                dev_command: None,
             },
         );
 
@@ -1074,6 +1085,7 @@ ingress = "public"
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
                 domain: None,
+                dev_command: None,
             },
             resources: None,
         };
@@ -1094,6 +1106,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                dev_command: None,
             },
         );
 
@@ -1177,6 +1190,7 @@ ingress = "internal"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                dev_command: None,
             },
         );
         services_map.insert(
@@ -1194,6 +1208,7 @@ ingress = "internal"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                dev_command: None,
             },
         );
 
@@ -1261,6 +1276,7 @@ domain = "svc.example.com"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                dev_command: None,
             },
         );
 
@@ -1329,6 +1345,7 @@ domain = "svc.example.com"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                dev_command: None,
             },
         );
 
@@ -1387,6 +1404,7 @@ domain = "svc.example.com"
                 cpu: Some("2".to_string()),
                 memory: Some("4Gi".to_string()),
                 max_instances: Some(5),
+                dev_command: None,
             },
         );
         services_map.insert(
@@ -1404,6 +1422,7 @@ domain = "svc.example.com"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                dev_command: None,
             },
         );
 
@@ -1468,6 +1487,7 @@ domain = "svc.example.com"
                 cpu: Some("4".to_string()), // per-service override
                 memory: None,               // will inherit global
                 max_instances: None,
+                dev_command: None,
             },
         );
 
@@ -1533,6 +1553,7 @@ domain = "svc.example.com"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                dev_command: None,
             },
         );
 
@@ -1588,6 +1609,7 @@ domain = "svc.example.com"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                dev_command: None,
             },
         );
         services_map.insert(
@@ -1605,6 +1627,7 @@ domain = "svc.example.com"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                dev_command: None,
             },
         );
 
@@ -1654,6 +1677,7 @@ domain = "svc.example.com"
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
                 domain: None,
+                dev_command: None,
             },
             resources: Some(super::super::service_config::ResourceConfig {
                 cpu: Some("2".to_string()),
@@ -1712,6 +1736,7 @@ domain = "svc.example.com"
                         cpu: None,
                         memory: None,
                         max_instances: None,
+                        dev_command: None,
                     },
                 );
                 m
@@ -1765,6 +1790,7 @@ domain = "svc.example.com"
                         cpu: None,
                         memory: None,
                         max_instances: None,
+                        dev_command: None,
                     },
                 );
                 m

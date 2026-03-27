@@ -761,6 +761,27 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    // --- Dev Sessions ---
+
+    pub fn create_dev_session(
+        &self,
+        app_id: &str,
+        services: &[crate::api_types::DevSessionService],
+    ) -> Result<crate::api_types::DevSessionResponse, FlooApiError> {
+        let body = serde_json::json!({ "services": services });
+        let resp = self.post_json(&format!("/v1/apps/{app_id}/dev-session"), &body)?;
+        self.handle_response(resp)
+    }
+
+    pub fn delete_dev_session(&self, app_id: &str, session_id: &str) -> Result<(), FlooApiError> {
+        let resp = self.delete(&format!("/v1/apps/{app_id}/dev-session/{session_id}"))?;
+        if resp.status().as_u16() == 204 || resp.status().is_success() {
+            return Ok(());
+        }
+        self.handle_response_value(resp)?;
+        Ok(())
+    }
+
     // --- Analytics ---
 
     pub fn get_app_analytics(

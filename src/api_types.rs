@@ -283,6 +283,21 @@ pub struct BaseImagesResponse {
     pub images: Vec<BaseImage>,
 }
 
+// --- Dev Session ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DevSessionService {
+    pub name: String,
+    pub port: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DevSessionResponse {
+    pub session_id: String,
+    pub services: HashMap<String, HashMap<String, String>>,
+    pub postgres_authorized: bool,
+}
+
 // --- Analytics ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
