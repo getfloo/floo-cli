@@ -316,7 +316,7 @@ pub fn watch(app: Option<&str>, commit: Option<&str>) {
     // Stream the active deploy
     let deploy_id = deploy.id.clone();
     let final_deploy = if !output::is_json_mode() {
-        match stream_deploy(&client, &app_id, &deploy_id) {
+        let streamed = match stream_deploy(&client, &app_id, &deploy_id) {
             Ok(d) => d,
             Err(e) => {
                 eprintln!(
@@ -325,6 +325,15 @@ pub fn watch(app: Option<&str>, commit: Option<&str>) {
                 );
                 poll_deploy(&client, &app_id, &deploy)
             }
+        };
+        // SSE stream may end before the deploy reaches a terminal state (e.g. connection
+        // drop, server restart). If so, fall back to polling to wait for completion.
+        let streamed_status = streamed.status.as_deref().unwrap_or("");
+        if !TERMINAL_STATUSES.contains(&streamed_status) {
+            eprintln!("Stream ended in non-terminal state ({streamed_status}), falling back to polling...");
+            poll_deploy(&client, &app_id, &streamed)
+        } else {
+            streamed
         }
     } else {
         match stream_deploy_json(&client, &app_id, &deploy_id) {
