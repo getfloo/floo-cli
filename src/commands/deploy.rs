@@ -460,6 +460,14 @@ pub fn deploy(
 
     if final_status == "failed" {
         let build_logs = deploy_data.build_logs.as_deref().unwrap_or("");
+        if !output::is_json_mode() {
+            if !build_logs.is_empty() && build_logs != "[no message content]" {
+                output::bold_line("Build Logs");
+                for line in build_logs.lines() {
+                    output::dim_line(line);
+                }
+            }
+        }
         output::error_with_data(
             "Deploy failed.",
             &ErrorCode::DeployFailed,

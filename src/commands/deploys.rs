@@ -92,13 +92,37 @@ fn print_deploy_header(deploy: &Deploy) {
     output::dim_line("");
 }
 
-pub fn logs(deploy_id: &str, app: Option<&str>, follow: bool) {
+pub fn logs(deploy_id: Option<&str>, app: Option<&str>, follow: bool) {
     super::require_auth();
     let client = super::init_client(None);
 
     let (app_id, _app_name) = super::resolve_app_from_config(&client, app);
 
-    let deploy = match client.get_deploy(&app_id, deploy_id) {
+    let resolved_deploy_id: String = match deploy_id {
+        Some(id) => id.to_string(),
+        None => {
+            let result = match client.list_deploys(&app_id) {
+                Ok(r) => r,
+                Err(e) => {
+                    output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                    process::exit(1);
+                }
+            };
+            match result.deploys.into_iter().next() {
+                Some(d) => d.id,
+                None => {
+                    output::error(
+                        "No deploys found for this app.",
+                        &ErrorCode::DeployNotFound,
+                        Some("Deploy the app first: floo deploy"),
+                    );
+                    process::exit(1);
+                }
+            }
+        }
+    };
+
+    let deploy = match client.get_deploy(&app_id, &resolved_deploy_id) {
         Ok(d) => d,
         Err(e) => {
             let suggestion = match e.code.as_str() {

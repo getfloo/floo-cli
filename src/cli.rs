@@ -588,10 +588,10 @@ pub enum DeploySubcommands {
         app: Option<String>,
     },
 
-    /// Show build logs for a specific deploy.
+    /// Show build logs for a deploy (defaults to the latest deploy).
     Logs {
-        /// Deploy ID.
-        deploy_id: String,
+        /// Deploy ID (defaults to latest deploy if omitted).
+        deploy_id: Option<String>,
 
         /// App name or ID (uses config file if omitted).
         #[arg(short, long)]
@@ -744,7 +744,7 @@ pub fn run() {
                         deploy_id,
                         app,
                         follow,
-                    } => commands::deploys::logs(&deploy_id, app.as_deref(), follow),
+                    } => commands::deploys::logs(deploy_id.as_deref(), app.as_deref(), follow),
                     DeploySubcommands::Watch { app, commit } => {
                         commands::deploys::watch(app.as_deref(), commit.as_deref())
                     }
