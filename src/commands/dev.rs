@@ -35,6 +35,7 @@ struct DevServiceInfo {
     port: u16,
     path: String,
     dev_command: String,
+    migrate_command: Option<String>,
 }
 
 pub fn dev(app_flag: Option<String>) {
@@ -133,6 +134,7 @@ pub fn dev(app_flag: Option<String>) {
             port,
             path,
             dev_command,
+            migrate_command: entry.migrate_command.clone(),
         });
     }
 
@@ -331,6 +333,39 @@ pub fn dev(app_flag: Option<String>) {
         }
         // Also inject PORT so services that read it get the right value
         env_vars.insert("PORT".to_string(), svc.port.to_string());
+
+        // Run migrate_command before starting the service, if configured
+        if let Some(ref migrate_cmd) = svc.migrate_command {
+            output::info(&format!("  Running migrations for {}...", svc.name), None);
+            let migrate_status = match Command::new("sh")
+                .arg("-c")
+                .arg(migrate_cmd)
+                .current_dir(&working_dir)
+                .envs(&env_vars)
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()
+            {
+                Ok(s) => s,
+                Err(e) => {
+                    output::error(
+                        &format!("Failed to run migrate_command for '{}': {e}", svc.name),
+                        &ErrorCode::InternalError,
+                        Some(&format!("Command: {migrate_cmd}")),
+                    );
+                    cleanup_children(&mut children);
+                    cleanup_session(&client, &app_id, &session_id);
+                    process::exit(1);
+                }
+            };
+            if !migrate_status.success() {
+                output::warn(&format!(
+                    "Migration for '{}' exited with code {} — continuing anyway.",
+                    svc.name,
+                    migrate_status.code().unwrap_or(-1)
+                ));
+            }
+        }
 
         let child = match Command::new("sh")
             .arg("-c")
