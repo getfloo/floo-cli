@@ -314,7 +314,9 @@ impl FlooClient {
         framework: Option<&str>,
         services: Option<&[ServiceConfig]>,
         access_mode: Option<&str>,
+        agent_mode: Option<&str>,
         auth_redirect_uris: Option<&[String]>,
+        reparo_config: Option<&crate::project_config::ReparoConfig>,
     ) -> Result<Deploy, FlooApiError> {
         let mut body = serde_json::json!({
             "runtime": runtime,
@@ -334,12 +336,24 @@ impl FlooClient {
         if let Some(mode) = access_mode {
             body["access_mode"] = Value::String(mode.to_string());
         }
+        if let Some(mode) = agent_mode {
+            body["agent_mode"] = Value::String(mode.to_string());
+        }
         if let Some(uris) = auth_redirect_uris {
             body["auth_redirect_uris"] = serde_json::to_value(uris).map_err(|e| {
                 FlooApiError::new(
                     0,
                     "SERIALIZATION_ERROR",
                     format!("Failed to serialize auth_redirect_uris: {e}"),
+                )
+            })?;
+        }
+        if let Some(reparo) = reparo_config {
+            body["reparo_config"] = serde_json::to_value(reparo).map_err(|e| {
+                FlooApiError::new(
+                    0,
+                    "SERIALIZATION_ERROR",
+                    format!("Failed to serialize reparo_config: {e}"),
                 )
             })?;
         }
@@ -799,5 +813,52 @@ impl FlooClient {
     pub fn get_org_analytics(&self, period: &str) -> Result<AppAnalyticsResponse, FlooApiError> {
         let resp = self.get_with_query("/v1/orgs/analytics", &[("period", period)])?;
         self.handle_response(resp)
+    }
+
+    // --- Database query/schema/migrate ---
+
+    pub fn db_query(
+        &self,
+        app_id: &str,
+        sql: &str,
+        environment: &str,
+        limit: u32,
+    ) -> Result<Value, FlooApiError> {
+        let body = serde_json::json!({
+            "sql": sql,
+            "environment": environment,
+            "limit": limit,
+        });
+        let resp = self.post_json(&format!("/v1/apps/{app_id}/db/query"), &body)?;
+        self.handle_response_value(resp)
+    }
+
+    pub fn db_schema(&self, app_id: &str) -> Result<Value, FlooApiError> {
+        let resp = self.get(&format!("/v1/apps/{app_id}/db/schema"))?;
+        self.handle_response_value(resp)
+    }
+
+    pub fn db_migrate(&self, app_id: &str) -> Result<Value, FlooApiError> {
+        let resp = self.post_json(
+            &format!("/v1/apps/{app_id}/db/migrate"),
+            &serde_json::json!({}),
+        )?;
+        self.handle_response_value(resp)
+    }
+
+    // --- Reparo ---
+
+    pub fn reparo_events(
+        &self,
+        app_id: &str,
+        status: Option<&str>,
+    ) -> Result<Value, FlooApiError> {
+        let path = format!("/v1/apps/{app_id}/reparo/events");
+        let resp = if let Some(s) = status {
+            self.get_with_query(&path, &[("status", s)])?
+        } else {
+            self.get(&path)?
+        };
+        self.handle_response_value(resp)
     }
 }

@@ -180,6 +180,21 @@ Examples:
         topic: Option<String>,
     },
 
+    /// Query, inspect schema, and run migrations for an app's managed database.
+    #[command(
+        subcommand,
+        after_help = "\
+Examples:
+  floo db query --app my-app \"SELECT * FROM users LIMIT 10\"
+  floo db schema --app my-app
+  floo db migrate --app my-app"
+    )]
+    Db(DbCommands),
+
+    /// Manage Reparo auto-recovery events.
+    #[command(subcommand)]
+    Reparo(ReparoCommands),
+
     /// List all commands (structured for agents in --json mode).
     #[command(name = "commands")]
     Discover,
@@ -664,6 +679,60 @@ pub enum SkillsCommands {
     },
 }
 
+#[derive(Subcommand)]
+pub enum DbCommands {
+    /// Run a SQL query against the app's managed database.
+    #[command(after_help = "\
+Examples:
+  floo db query --app my-app \"SELECT id, email FROM users LIMIT 5\"
+  floo db query --app my-app \"SELECT COUNT(*) FROM orders\" --env prod
+  floo db query --app my-app \"SELECT * FROM logs\" --limit 50")]
+    Query {
+        /// SQL query to execute.
+        sql: String,
+
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Environment to query: dev or prod.
+        #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
+        env: String,
+
+        /// Maximum number of rows to return.
+        #[arg(long, default_value = "1000")]
+        limit: u32,
+    },
+
+    /// Show the database schema for an app.
+    Schema {
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+
+    /// Run database migrations for an app.
+    Migrate {
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ReparoCommands {
+    /// List Reparo auto-recovery events for an app.
+    Events {
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Filter by event status (e.g. triggered, resolved, skipped).
+        #[arg(long)]
+        status: Option<String>,
+    },
+}
+
 fn should_check_version(cli: &Cli) -> bool {
     if crate::config::is_local_binary() {
         return false;
@@ -899,6 +968,20 @@ pub fn run() {
 
         Commands::Skills(sub) => match sub {
             SkillsCommands::Install { path, print } => commands::skills::install(path, print),
+        },
+
+        Commands::Db(sub) => match sub {
+            DbCommands::Query { sql, app, env, limit } => {
+                commands::db::query(app.as_deref(), &sql, &env, limit)
+            }
+            DbCommands::Schema { app } => commands::db::schema(app.as_deref()),
+            DbCommands::Migrate { app } => commands::db::migrate(app.as_deref()),
+        },
+
+        Commands::Reparo(sub) => match sub {
+            ReparoCommands::Events { app, status } => {
+                commands::reparo::events(app.as_deref(), status.as_deref())
+            }
         },
 
         Commands::Docs { topic } => commands::docs::docs(topic.as_deref()),
