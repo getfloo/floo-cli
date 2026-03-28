@@ -434,6 +434,11 @@ fn trigger_initial_deploy(
         .as_ref()
         .and_then(|c| c.reparo.as_ref());
 
+    let github_config = resolved
+        .app_config
+        .as_ref()
+        .and_then(|c| c.github.as_ref());
+
     let spinner = output::Spinner::new("Deploying...");
     let mut deploy_data = match client.create_deploy(
         app_id,
@@ -445,6 +450,7 @@ fn trigger_initial_deploy(
         auth_redirect_uris.as_deref(),
         reparo_config,
         None,
+        github_config,
     ) {
         Ok(d) => {
             spinner.finish();

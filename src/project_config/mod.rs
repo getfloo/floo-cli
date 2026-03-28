@@ -11,7 +11,7 @@ const MAX_WALK_UP_LEVELS: usize = 20;
 
 pub use app_config::{
     load_app_config, write_app_config, AppAccessMode, AppAgentMode, AppFileAppSection,
-    AppFileConfig, AppServiceEntry, AppServiceType, ReparoConfig,
+    AppFileConfig, AppServiceEntry, AppServiceType, GitHubConfig, ReparoConfig,
 };
 pub use discover::{discover_managed_services, discover_services, filter_services};
 pub use resolve::{resolve_app_context, AppSource, ResolvedApp};

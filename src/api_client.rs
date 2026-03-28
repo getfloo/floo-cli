@@ -336,6 +336,7 @@ impl FlooClient {
         auth_redirect_uris: Option<&[String]>,
         reparo_config: Option<&crate::project_config::ReparoConfig>,
         cron_jobs: Option<&[crate::project_config::CronJobEntry]>,
+        github_config: Option<&crate::project_config::GitHubConfig>,
     ) -> Result<Deploy, FlooApiError> {
         let mut body = serde_json::json!({
             "runtime": runtime,
@@ -385,6 +386,17 @@ impl FlooClient {
                         format!("Failed to serialize cron_jobs: {e}"),
                     )
                 })?;
+            }
+        }
+        if let Some(gh) = github_config {
+            if let Some(v) = gh.deploy_on_push {
+                body["deploy_on_push"] = Value::Bool(v);
+            }
+            if let Some(v) = gh.preview_environments {
+                body["preview_environments"] = Value::Bool(v);
+            }
+            if let Some(v) = gh.preview_ttl_hours {
+                body["preview_ttl_hours"] = Value::Number(v.into());
             }
         }
         let resp = self.post_json(&format!("/v1/apps/{app_id}/deploys"), &body)?;

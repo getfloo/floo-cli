@@ -435,6 +435,12 @@ pub fn deploy(
         Some(cron_entries.as_slice())
     };
 
+    // Extract [github] config
+    let github_config = resolved
+        .app_config
+        .as_ref()
+        .and_then(|c| c.github.as_ref());
+
     // Deploy
     let svc_slice = Some(services.as_slice());
     let spinner = output::Spinner::new("Deploying...");
@@ -448,6 +454,7 @@ pub fn deploy(
         auth_redirect_uris.as_deref(),
         reparo_config,
         cron_jobs_arg,
+        github_config,
     ) {
         Ok(d) => {
             spinner.finish();

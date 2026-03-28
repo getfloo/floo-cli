@@ -23,11 +23,28 @@ pub struct CronJobConfig {
     pub timeout: Option<u32>,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct GitHubConfig {
+    /// When false, GitHub push webhooks do not trigger automatic deploys.
+    /// The agent deploys manually when ready. Defaults to true.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deploy_on_push: Option<bool>,
+    /// Enable preview environments for pull requests.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview_environments: Option<bool>,
+    /// How many hours preview environments live before expiring.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview_ttl_hours: Option<u32>,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct AppFileConfig {
     pub app: AppFileAppSection,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth: Option<AuthSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github: Option<GitHubConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub postgres: Option<ManagedServiceSection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -436,6 +453,7 @@ type = "mysql"
                 agent_mode: None,
             },
             auth: None,
+            github: None,
             postgres: None,
             redis: None,
             storage: None,
@@ -747,6 +765,65 @@ name = "my-app"
 
         let config = load_app_config(dir.path()).unwrap().unwrap();
         assert!(config.auth.is_none());
+    }
+
+    #[test]
+    fn test_load_app_config_with_github_section() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[github]
+deploy_on_push = false
+preview_environments = true
+preview_ttl_hours = 48
+"#,
+        )
+        .unwrap();
+
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        let gh = config.github.unwrap();
+        assert_eq!(gh.deploy_on_push, Some(false));
+        assert_eq!(gh.preview_environments, Some(true));
+        assert_eq!(gh.preview_ttl_hours, Some(48));
+    }
+
+    #[test]
+    fn test_load_app_config_github_section_defaults_none() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+"#,
+        )
+        .unwrap();
+
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        assert!(config.github.is_none());
+    }
+
+    #[test]
+    fn test_load_app_config_github_unknown_field_rejected() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[github]
+unknown_field = true
+"#,
+        )
+        .unwrap();
+
+        let err = load_app_config(dir.path()).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
     }
 
     #[test]
