@@ -20,7 +20,9 @@ never uploads code.
   3. `floo apps github connect owner/repo` — connect to GitHub (triggers first deploy)
   4. `floo apps status <name>` — see your app's URL and status
 
-  After the first deploy, use `floo deploy` for subsequent deploys.
+  After the first deploy, push to GitHub to deploy: `git push origin main`.
+  Watch progress with `floo deploy watch --app <name>`.
+  Use `floo deploy` only to force a redeploy (e.g., after updating env vars).
 
 ## Learn More
 
@@ -86,12 +88,13 @@ Floo Quickstart — End-to-End Walkthrough
 
 ## 7. Subsequent Deploys
 
-  Push code to GitHub, then:
+  Push to GitHub — the webhook triggers a deploy automatically:
 
-  floo deploy --app my-app
+  git push origin main
+  floo deploy watch --app my-app
 
-  Or set up git-push-deploy: floo apps github connect will auto-deploy
-  on every push to your default branch.
+  Use `floo deploy --app my-app` only when you need to redeploy without
+  a code change (e.g., after updating env vars).
 
 ## 8. Local Development
 
@@ -310,17 +313,27 @@ Floo Deploy Flow
   6. **Deploy** — deploys container to Cloud Run
   7. **URL** — returns the live URL for your app
 
-## First Deploy vs Subsequent Deploys
+## Deploy Flow
 
-  **First deploy:** Use `floo apps github connect owner/repo`. This connects
-  GitHub and triggers the first deploy in one step. The app is auto-created
-  if it doesn't exist.
+  1. Push to GitHub:     git push origin main
+  2. Watch the deploy:   floo deploy watch --app <name>
+  3. Done when you see:  ✓ Deployed to https://...
 
-  **Subsequent deploys:** Use `floo deploy`. GitHub must already be connected.
+  The push triggers a deploy automatically via GitHub webhook.
 
-  **App creation:** `floo init` creates local config files only. The app is
-  registered on the platform when you first deploy (either via `floo deploy`
-  or `floo apps github connect`).
+## Force Redeploy
+
+  Use `floo deploy` when you need to redeploy without a code change
+  (e.g., after updating env vars):
+
+    floo env set API_KEY=new-value --app myapp --services api
+    floo deploy --app myapp
+
+## First Deploy
+
+  Use `floo apps github connect owner/repo`. This connects GitHub and
+  triggers the first deploy in one step. The app is auto-created if
+  it doesn't exist.
 
 ## Runtime Detection Priority
 

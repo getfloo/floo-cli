@@ -15,11 +15,26 @@ Floo deploys web apps from the terminal. All management happens through `floo` c
 3. `floo apps github connect owner/repo` — connect to GitHub and trigger first deploy
 4. `floo apps status <name>` — see your app's URL and status
 
-After the first deploy, use `floo deploy` for subsequent deploys. All source comes from GitHub — the CLI never uploads code.
+After the first deploy, push to GitHub to trigger deploys automatically. Watch progress with `floo deploy watch`. All source comes from GitHub — the CLI never uploads code.
 
 ## How Deploys Work
 
-`floo deploy` sends metadata to the API. The API pulls source from GitHub, builds a container via Cloud Build, and deploys to Cloud Run. GitHub must be connected first (`floo apps github connect`).
+Pushing to GitHub triggers a deploy via webhook. Watch it with `floo deploy watch --app <name>`. Use `floo deploy` only to force a redeploy without a code change (e.g., after updating env vars).
+
+Normal workflow:
+
+```bash
+git push origin main && floo deploy watch --app <name>
+```
+
+Force redeploy (after env var change):
+
+```bash
+floo env set API_KEY=new-value --app my-app
+floo deploy --app my-app
+```
+
+The API pulls source from GitHub, builds a container via Cloud Build, and deploys to Cloud Run. GitHub must be connected first (`floo apps github connect`).
 
 - `floo init` creates local config files only — no app is registered on the platform
 - `floo deploy` auto-creates the app if it doesn't exist, but requires GitHub to be connected
