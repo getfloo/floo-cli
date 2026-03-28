@@ -93,6 +93,13 @@ Floo Quickstart — End-to-End Walkthrough
   Or set up git-push-deploy: floo apps github connect will auto-deploy
   on every push to your default branch.
 
+## 8. Local Development
+
+  floo dev --app my-app --service web
+
+  Runs your service locally with live Cloud SQL access and the same env vars
+  as the deployed version. Requires dev_command set in floo.service.toml.
+
 ## What Creates What
 
   floo init           — local config files only (no API call)
@@ -159,6 +166,16 @@ An app contains one or more services. Each service is independently deployable.
 
   Inspect with: floo services info <name> --app <app>
 
+## Routing
+
+Multi-service apps share a single hostname with path-based routing:
+
+  web service  → app-name.on.getfloo.com/
+  api service  → app-name.on.getfloo.com/api/
+
+This is automatic — no configuration needed. All services share the same
+origin, so cookies and auth work without CORS setup.
+
 ## Commands
 
   floo services list --app <name>            — list all services
@@ -185,6 +202,8 @@ Floo Config Files
   type = \"web\"
   ingress = \"public\"
   env_file = \".env\"
+  dev_command = \"npm run dev\"          # command to run for `floo dev`
+  migrate_command = \"npx prisma migrate deploy\"  # optional, runs after deploy
 
 ## floo.app.toml — Multi-Service Apps
 
@@ -217,6 +236,17 @@ Floo Config Files
   ingress = \"public\"
 
   When type and port are set inline, no per-service floo.service.toml is needed.
+
+## Service Fields (floo.service.toml)
+
+  dev_command      — command to run locally for `floo dev`
+                     e.g., \"npm run dev\", \"uvicorn app.main:app --reload\"
+
+  migrate_command  — optional command run after deploy and before `floo dev`
+                     e.g., \"alembic upgrade head\", \"npx prisma migrate deploy\"
+
+  domain           — optional custom domain for this service
+                     e.g., \"api.example.com\"
 
 ## Inline vs Delegated
 
@@ -272,11 +302,13 @@ Floo Deploy Flow
   All source comes from GitHub. The CLI never uploads code.
 
   1. **Detect runtime** — CLI scans project files to determine language/framework
-  2. **Create deploy** — CLI sends metadata to the API
+  2. **Create deploy** — CLI sends metadata to the API; any in-progress deploy
+     for the same service is automatically cancelled
   3. **Pull source** — API downloads source from your connected GitHub repo
   4. **Build** — builds container image via Cloud Build
-  5. **Deploy** — deploys container to Cloud Run
-  6. **URL** — returns the live URL for your app
+  5. **Migrate** — runs migrate_command (if set) after build, before traffic shifts
+  6. **Deploy** — deploys container to Cloud Run
+  7. **URL** — returns the live URL for your app
 
 ## First Deploy vs Subsequent Deploys
 
