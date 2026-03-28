@@ -16,6 +16,8 @@ pub struct FlooConfig {
     pub user_email: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skill_paths: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_org: Option<String>,
 }
 
 fn default_api_url() -> String {
@@ -29,6 +31,7 @@ impl Default for FlooConfig {
             api_url: DEFAULT_API_URL.to_string(),
             user_email: None,
             skill_paths: Vec::new(),
+            default_org: None,
         }
     }
 }
@@ -162,6 +165,7 @@ mod tests {
             api_url: "https://api.test.local".to_string(),
             user_email: Some("test@example.com".to_string()),
             skill_paths: vec!["/tmp/floo.md".to_string()],
+            default_org: Some("org-123".to_string()),
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: FlooConfig = serde_json::from_str(&json).unwrap();
@@ -169,6 +173,7 @@ mod tests {
         assert_eq!(deserialized.api_url, "https://api.test.local");
         assert_eq!(deserialized.user_email.as_deref(), Some("test@example.com"));
         assert_eq!(deserialized.skill_paths, vec!["/tmp/floo.md"]);
+        assert_eq!(deserialized.default_org.as_deref(), Some("org-123"));
     }
 
     #[test]
@@ -191,6 +196,7 @@ mod tests {
         let config = FlooConfig::default();
         let json = serde_json::to_string(&config).unwrap();
         assert!(!json.contains("skill_paths"));
+        assert!(!json.contains("default_org"));
     }
 
     #[test]

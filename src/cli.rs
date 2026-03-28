@@ -191,6 +191,16 @@ Examples:
     )]
     Db(DbCommands),
 
+    /// List and trigger scheduled cron jobs for an app.
+    #[command(
+        subcommand,
+        after_help = "\
+Examples:
+  floo cron list --app my-app              List all cron jobs and their last run status
+  floo cron run daily-report --app my-app  Manually trigger a cron job"
+    )]
+    Cron(CronCommands),
+
     /// Manage Reparo auto-recovery events.
     #[command(subcommand)]
     Reparo(ReparoCommands),
@@ -277,6 +287,12 @@ pub enum OrgsCommands {
     /// Manage org members.
     #[command(subcommand)]
     Members(MembersCommands),
+
+    /// Switch the default org for subsequent commands.
+    Switch {
+        /// Org slug or ID.
+        org_slug: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -329,6 +345,16 @@ pub enum AppsCommands {
     Password {
         /// App name or ID.
         app_name: String,
+    },
+
+    /// Invite a user to an app (grant email-based access).
+    Invite {
+        /// Email address to invite.
+        email: String,
+
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
     },
 }
 
@@ -733,6 +759,26 @@ pub enum ReparoCommands {
     },
 }
 
+#[derive(Subcommand)]
+pub enum CronCommands {
+    /// List all cron jobs for an app and their last run status.
+    List {
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+
+    /// Manually trigger a cron job by name.
+    Run {
+        /// Cron job name (as defined in floo.app.toml [cron] section).
+        name: String,
+
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+}
+
 fn should_check_version(cli: &Cli) -> bool {
     if crate::config::is_local_binary() {
         return false;
@@ -760,7 +806,11 @@ fn reject_unsupported_dry_run(command: &Commands) {
             ))
             | Commands::Releases(ReleasesCommands::Promote { .. })
             | Commands::Services(ServicesCommands::Add { .. } | ServicesCommands::Rm { .. })
-            | Commands::Orgs(OrgsCommands::Members(MembersCommands::SetRole { .. }))
+            | Commands::Orgs(
+                OrgsCommands::Members(MembersCommands::SetRole { .. })
+                    | OrgsCommands::Switch { .. },
+            )
+            | Commands::Apps(AppsCommands::Invite { .. })
             | Commands::Billing(BillingCommands::SpendCap(SpendCapCommands::Set { .. }))
     );
     if unsupported {
@@ -856,6 +906,7 @@ pub fn run() {
                     commands::orgs::set_role(&user_id, &role)
                 }
             },
+            OrgsCommands::Switch { org_slug } => commands::orgs::switch(&org_slug),
         },
 
         Commands::Apps(sub) => match sub {
@@ -880,6 +931,9 @@ pub fn run() {
                 GitHubCommands::Status { app } => commands::github::status(app.as_deref()),
             },
             AppsCommands::Password { app_name } => commands::apps::show_password(&app_name),
+            AppsCommands::Invite { email, app } => {
+                commands::apps::invite(&email, app.as_deref())
+            }
         },
 
         Commands::Env(sub) => match sub {
@@ -976,6 +1030,11 @@ pub fn run() {
             }
             DbCommands::Schema { app } => commands::db::schema(app.as_deref()),
             DbCommands::Migrate { app } => commands::db::migrate(app.as_deref()),
+        },
+
+        Commands::Cron(sub) => match sub {
+            CronCommands::List { app } => commands::cron::list(app.as_deref()),
+            CronCommands::Run { name, app } => commands::cron::run(app.as_deref(), &name),
         },
 
         Commands::Reparo(sub) => match sub {

@@ -412,6 +412,29 @@ pub fn deploy(
         .as_ref()
         .and_then(|c| c.reparo.as_ref());
 
+    // Extract cron job definitions from [cron] toml section
+    let cron_entries: Vec<crate::project_config::CronJobEntry> = resolved
+        .app_config
+        .as_ref()
+        .map(|c| {
+            c.cron
+                .iter()
+                .map(|(name, cfg)| crate::project_config::CronJobEntry {
+                    name: name.clone(),
+                    schedule: cfg.schedule.clone(),
+                    command: cfg.command.clone(),
+                    service: cfg.service.clone(),
+                    timeout: cfg.timeout.unwrap_or(300),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let cron_jobs_arg = if cron_entries.is_empty() {
+        None
+    } else {
+        Some(cron_entries.as_slice())
+    };
+
     // Deploy
     let svc_slice = Some(services.as_slice());
     let spinner = output::Spinner::new("Deploying...");
@@ -424,6 +447,7 @@ pub fn deploy(
         agent_mode.as_ref().map(|m| m.as_str()),
         auth_redirect_uris.as_deref(),
         reparo_config,
+        cron_jobs_arg,
     ) {
         Ok(d) => {
             spinner.finish();

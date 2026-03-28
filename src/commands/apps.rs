@@ -185,3 +185,22 @@ pub fn show_password(app_name: &str) {
         }
     }
 }
+
+pub fn invite(email: &str, app_flag: Option<&str>) {
+    super::require_auth();
+    let client = super::init_client(None);
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
+
+    match client.grant_app_access(&app_id, email) {
+        Ok(result) => {
+            output::success(
+                &format!("Invited {email} to '{app_name}'."),
+                Some(result),
+            );
+        }
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    }
+}

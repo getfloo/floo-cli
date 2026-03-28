@@ -174,6 +174,7 @@ fn init_non_interactive(
         storage: None,
         resources: None,
         reparo: None,
+        cron: HashMap::new(),
         services: HashMap::new(),
         environments: HashMap::new(),
     };
@@ -375,6 +376,7 @@ fn init_interactive(
         storage: None,
         resources: None,
         reparo: None,
+        cron: HashMap::new(),
         services: services_map,
         environments: HashMap::new(),
     };

@@ -9,6 +9,20 @@ use crate::errors::{ErrorCode, FlooError};
 use super::service_config::{ResourceConfig, ServiceIngress};
 use super::SCHEMA_URL;
 
+/// A single scheduled cron job declared in `[cron.<name>]`.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct CronJobConfig {
+    /// Cron expression (e.g. `"0 9 * * *"` for 9am daily).
+    pub schedule: String,
+    /// Shell command to execute inside the container.
+    pub command: String,
+    /// Which service's image to run the command in.
+    pub service: String,
+    /// Maximum execution time in seconds (default 300).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<u32>,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct AppFileConfig {
     pub app: AppFileAppSection,
@@ -28,6 +42,9 @@ pub struct AppFileConfig {
     pub services: HashMap<String, AppServiceEntry>,
     #[serde(default)]
     pub environments: HashMap<String, AppEnvironmentOverrides>,
+    /// Scheduled cron jobs declared as `[cron.<name>]` sections.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub cron: HashMap<String, CronJobConfig>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
@@ -424,6 +441,7 @@ type = "mysql"
             storage: None,
             resources: None,
             reparo: None,
+            cron: HashMap::new(),
             services: HashMap::new(),
             environments: HashMap::new(),
         };

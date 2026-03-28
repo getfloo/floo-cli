@@ -64,6 +64,12 @@ impl OrgResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListOrgsResponse {
+    pub orgs: Vec<OrgResponse>,
+    pub total: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListMembersResponse {
     pub members: Vec<OrgMember>,
 }
@@ -296,6 +302,33 @@ pub struct DevSessionResponse {
     pub session_id: String,
     pub services: HashMap<String, HashMap<String, String>>,
     pub postgres_authorized: bool,
+}
+
+// --- Cron Jobs ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CronJobResponse {
+    pub id: String,
+    pub name: String,
+    pub schedule: String,
+    pub command: String,
+    pub service_name: String,
+    pub timeout: u32,
+    pub enabled: bool,
+    pub last_run_at: Option<String>,
+    pub last_status: Option<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CronJobListResponse {
+    pub cron_jobs: Vec<CronJobResponse>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CronJobRunResponse {
+    pub status: String,
+    pub message: Option<String>,
 }
 
 // --- Analytics ---

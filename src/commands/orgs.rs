@@ -1,5 +1,6 @@
 use std::process;
 
+use crate::config::{load_config, save_config};
 use crate::errors::ErrorCode;
 use crate::output;
 
@@ -75,4 +76,62 @@ pub fn set_role(user_id: &str, role: &str) {
             process::exit(1);
         }
     }
+}
+
+pub fn switch(org_slug: &str) {
+    super::require_auth();
+    let client = super::init_client(None);
+
+    let orgs = match client.list_orgs() {
+        Ok(r) => r,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+
+    let target = orgs.orgs.iter().find(|o| {
+        o.slug.as_deref() == Some(org_slug) || o.id == org_slug
+    });
+
+    let target = match target {
+        Some(o) => o,
+        None => {
+            let available: Vec<&str> = orgs
+                .orgs
+                .iter()
+                .filter_map(|o| o.slug.as_deref())
+                .collect();
+            output::error(
+                &format!("Organization '{org_slug}' not found."),
+                &ErrorCode::from_api("ORG_NOT_FOUND"),
+                Some(&format!(
+                    "Available orgs: {}",
+                    if available.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        available.join(", ")
+                    }
+                )),
+            );
+            process::exit(1);
+        }
+    };
+
+    let mut config = load_config();
+    config.default_org = Some(target.id.clone());
+    if let Err(e) = save_config(&config) {
+        output::error(
+            &format!("Failed to save config: {e}"),
+            &ErrorCode::ConfigError,
+            None,
+        );
+        process::exit(1);
+    }
+
+    let display = target.display_name().unwrap_or(&target.id);
+    output::success(
+        &format!("Switched to org '{display}'."),
+        Some(output::to_value(target)),
+    );
 }

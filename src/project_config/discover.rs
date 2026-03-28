@@ -535,6 +535,7 @@ ingress = "public"
             reparo: None,
             services: services_map,
             environments: HashMap::new(),
+            cron: HashMap::new(),
         };
 
         let resolved = make_resolved(
@@ -630,6 +631,7 @@ ingress = "public"
             reparo: None,
             services: services_map,
             environments: HashMap::new(),
+            cron: HashMap::new(),
         };
 
         let resolved = make_resolved(
@@ -690,6 +692,7 @@ ingress = "public"
             reparo: None,
             services: HashMap::new(),
             environments: HashMap::new(),
+            cron: HashMap::new(),
         };
 
         let resolved = make_resolved(
@@ -750,6 +753,7 @@ ingress = "public"
             reparo: None,
             services: services_map,
             environments: HashMap::new(),
+            cron: HashMap::new(),
         };
 
         let resolved = make_resolved(
@@ -813,6 +817,7 @@ ingress = "public"
             reparo: None,
             services: services_map,
             environments: HashMap::new(),
+            cron: HashMap::new(),
         };
 
         let resolved = make_resolved(
@@ -898,6 +903,7 @@ ingress = "public"
             reparo: None,
             services: services_map,
             environments: HashMap::new(),
+            cron: HashMap::new(),
         };
 
         let resolved = make_resolved(
@@ -932,6 +938,7 @@ ingress = "public"
             reparo: None,
             services: HashMap::new(),
             environments: HashMap::new(),
+            cron: HashMap::new(),
         };
 
         let resolved = make_resolved(
@@ -994,6 +1001,7 @@ ingress = "public"
             reparo: None,
             services: services_map,
             environments: HashMap::new(),
+            cron: HashMap::new(),
         };
 
         let resolved = make_resolved(
@@ -1187,6 +1195,7 @@ ingress = "public"
             reparo: None,
             services: services_map,
             environments: HashMap::new(),
+            cron: HashMap::new(),
         };
 
         let resolved = make_resolved(
@@ -1295,6 +1304,7 @@ ingress = "internal"
             reparo: None,
             services: services_map,
             environments: HashMap::new(),
+            cron: HashMap::new(),
         };
 
         let resolved = make_resolved(
@@ -1367,6 +1377,7 @@ domain = "svc.example.com"
             reparo: None,
             services: services_map,
             environments: HashMap::new(),
+            cron: HashMap::new(),
         };
 
         let resolved = make_resolved(
@@ -1440,6 +1451,7 @@ domain = "svc.example.com"
             reparo: None,
             services: services_map,
             environments: HashMap::new(),
+            cron: HashMap::new(),
         };
 
         let resolved = make_resolved(
@@ -1523,6 +1535,7 @@ domain = "svc.example.com"
             reparo: None,
             services: services_map,
             environments: HashMap::new(),
+            cron: HashMap::new(),
         };
 
         let resolved = make_resolved(
@@ -1597,6 +1610,7 @@ domain = "svc.example.com"
             reparo: None,
             services: services_map,
             environments: HashMap::new(),
+            cron: HashMap::new(),
         };
 
         let resolved = make_resolved(
@@ -1663,6 +1677,7 @@ domain = "svc.example.com"
             reparo: None,
             services: services_map,
             environments: HashMap::new(),
+            cron: HashMap::new(),
         };
 
         let resolved = make_resolved(
@@ -1743,6 +1758,7 @@ domain = "svc.example.com"
             reparo: None,
             services: services_map,
             environments: HashMap::new(),
+            cron: HashMap::new(),
         };
 
         let resolved = make_resolved(
@@ -1849,6 +1865,7 @@ domain = "svc.example.com"
                 m
             },
             environments: HashMap::new(),
+            cron: HashMap::new(),
         };
 
         let resolved = make_resolved(
@@ -1907,6 +1924,7 @@ domain = "svc.example.com"
                 m
             },
             environments: HashMap::new(),
+            cron: HashMap::new(),
         };
 
         let resolved = make_resolved(

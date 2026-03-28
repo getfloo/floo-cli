@@ -12,6 +12,7 @@ pub struct FlooClient {
     client: Client,
     base_url: String,
     api_key: Option<String>,
+    default_org: Option<String>,
 }
 
 impl FlooClient {
@@ -32,6 +33,7 @@ impl FlooClient {
             client,
             base_url: config.api_url.clone(),
             api_key: config.api_key.clone(),
+            default_org: config.default_org.clone(),
         })
     }
 
@@ -41,6 +43,20 @@ impl FlooClient {
 
     fn auth_header(&self) -> Option<String> {
         self.api_key.as_ref().map(|k| format!("Bearer {k}"))
+    }
+
+    /// Apply auth and org headers to a request builder.
+    fn apply_headers(
+        &self,
+        mut req: reqwest::blocking::RequestBuilder,
+    ) -> reqwest::blocking::RequestBuilder {
+        if let Some(auth) = self.auth_header() {
+            req = req.header("Authorization", auth);
+        }
+        if let Some(org_id) = &self.default_org {
+            req = req.header("X-Floo-Org-Id", org_id);
+        }
+        req
     }
 
     fn handle_error(&self, response: reqwest::blocking::Response) -> FlooApiError {
@@ -105,10 +121,7 @@ impl FlooClient {
     }
 
     fn get(&self, path: &str) -> Result<reqwest::blocking::Response, FlooApiError> {
-        let mut req = self.client.get(self.url(path));
-        if let Some(auth) = self.auth_header() {
-            req = req.header("Authorization", auth);
-        }
+        let req = self.apply_headers(self.client.get(self.url(path)));
         req.send()
             .map_err(|e| FlooApiError::new(0, "CONNECTION_ERROR", e.to_string()))
     }
@@ -118,10 +131,7 @@ impl FlooClient {
         path: &str,
         query: &[(&str, &str)],
     ) -> Result<reqwest::blocking::Response, FlooApiError> {
-        let mut req = self.client.get(self.url(path)).query(query);
-        if let Some(auth) = self.auth_header() {
-            req = req.header("Authorization", auth);
-        }
+        let req = self.apply_headers(self.client.get(self.url(path)).query(query));
         req.send()
             .map_err(|e| FlooApiError::new(0, "CONNECTION_ERROR", e.to_string()))
     }
@@ -131,10 +141,7 @@ impl FlooClient {
         path: &str,
         body: &Value,
     ) -> Result<reqwest::blocking::Response, FlooApiError> {
-        let mut req = self.client.post(self.url(path)).json(body);
-        if let Some(auth) = self.auth_header() {
-            req = req.header("Authorization", auth);
-        }
+        let req = self.apply_headers(self.client.post(self.url(path)).json(body));
         req.send()
             .map_err(|e| FlooApiError::new(0, "CONNECTION_ERROR", e.to_string()))
     }
@@ -144,19 +151,13 @@ impl FlooClient {
         path: &str,
         body: &Value,
     ) -> Result<reqwest::blocking::Response, FlooApiError> {
-        let mut req = self.client.patch(self.url(path)).json(body);
-        if let Some(auth) = self.auth_header() {
-            req = req.header("Authorization", auth);
-        }
+        let req = self.apply_headers(self.client.patch(self.url(path)).json(body));
         req.send()
             .map_err(|e| FlooApiError::new(0, "CONNECTION_ERROR", e.to_string()))
     }
 
     fn delete(&self, path: &str) -> Result<reqwest::blocking::Response, FlooApiError> {
-        let mut req = self.client.delete(self.url(path));
-        if let Some(auth) = self.auth_header() {
-            req = req.header("Authorization", auth);
-        }
+        let req = self.apply_headers(self.client.delete(self.url(path)));
         req.send()
             .map_err(|e| FlooApiError::new(0, "CONNECTION_ERROR", e.to_string()))
     }
@@ -217,6 +218,11 @@ impl FlooClient {
 
     // --- Org ---
 
+    pub fn list_orgs(&self) -> Result<ListOrgsResponse, FlooApiError> {
+        let resp = self.get("/v1/orgs")?;
+        self.handle_response(resp)
+    }
+
     pub fn get_org_me(&self) -> Result<OrgResponse, FlooApiError> {
         let resp = self.get("/v1/orgs/me")?;
         self.handle_response(resp)
@@ -240,6 +246,18 @@ impl FlooClient {
     ) -> Result<MemberRoleResponse, FlooApiError> {
         let body = serde_json::json!({"role": role});
         let resp = self.patch_json(&format!("/v1/orgs/{org_id}/members/{user_id}"), &body)?;
+        self.handle_response(resp)
+    }
+
+    // --- Access ---
+
+    pub fn grant_app_access(
+        &self,
+        app_id: &str,
+        email: &str,
+    ) -> Result<Value, FlooApiError> {
+        let body = serde_json::json!({"email": email});
+        let resp = self.post_json(&format!("/v1/apps/{app_id}/access"), &body)?;
         self.handle_response(resp)
     }
 
@@ -317,6 +335,7 @@ impl FlooClient {
         agent_mode: Option<&str>,
         auth_redirect_uris: Option<&[String]>,
         reparo_config: Option<&crate::project_config::ReparoConfig>,
+        cron_jobs: Option<&[crate::project_config::CronJobEntry]>,
     ) -> Result<Deploy, FlooApiError> {
         let mut body = serde_json::json!({
             "runtime": runtime,
@@ -357,12 +376,42 @@ impl FlooClient {
                 )
             })?;
         }
+        if let Some(crons) = cron_jobs {
+            if !crons.is_empty() {
+                body["cron_jobs"] = serde_json::to_value(crons).map_err(|e| {
+                    FlooApiError::new(
+                        0,
+                        "SERIALIZATION_ERROR",
+                        format!("Failed to serialize cron_jobs: {e}"),
+                    )
+                })?;
+            }
+        }
         let resp = self.post_json(&format!("/v1/apps/{app_id}/deploys"), &body)?;
         self.handle_response(resp)
     }
 
     pub fn list_deploys(&self, app_id: &str) -> Result<ListDeploysResponse, FlooApiError> {
         let resp = self.get(&format!("/v1/apps/{app_id}/deploys"))?;
+        self.handle_response(resp)
+    }
+
+    // --- Cron Jobs ---
+
+    pub fn list_cron_jobs(&self, app_id: &str) -> Result<CronJobListResponse, FlooApiError> {
+        let resp = self.get(&format!("/v1/apps/{app_id}/cron"))?;
+        self.handle_response(resp)
+    }
+
+    pub fn run_cron_job(
+        &self,
+        app_id: &str,
+        name: &str,
+    ) -> Result<CronJobRunResponse, FlooApiError> {
+        let resp = self.post_json(
+            &format!("/v1/apps/{app_id}/cron/{name}/run"),
+            &serde_json::json!({}),
+        )?;
         self.handle_response(resp)
     }
 
@@ -396,6 +445,9 @@ impl FlooClient {
             .header("Accept", "text/event-stream");
         if let Some(auth) = self.auth_header() {
             req = req.header("Authorization", auth);
+        }
+        if let Some(org_id) = &self.default_org {
+            req = req.header("X-Floo-Org-Id", org_id);
         }
         let response = req
             .send()
@@ -632,6 +684,9 @@ impl FlooClient {
             .timeout(Duration::from_secs(120));
         if let Some(auth) = self.auth_header() {
             req = req.header("Authorization", auth);
+        }
+        if let Some(org_id) = &self.default_org {
+            req = req.header("X-Floo-Org-Id", org_id);
         }
         let resp = req
             .send()

@@ -444,6 +444,7 @@ fn trigger_initial_deploy(
         agent_mode.as_ref().map(|m| m.as_str()),
         auth_redirect_uris.as_deref(),
         reparo_config,
+        None,
     ) {
         Ok(d) => {
             spinner.finish();

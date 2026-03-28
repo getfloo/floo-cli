@@ -20,6 +20,19 @@ pub use service_config::{
     ServiceFileConfig, ServiceIngress, ServiceSection, ServiceType,
 };
 
+/// Wire-format representation of a cron job sent to the API.
+///
+/// Flattens `AppFileConfig.cron` HashMap<name, CronJobConfig> into a list
+/// where the name is included as a field (matching the API's `CronJobDefinition` schema).
+#[derive(Debug, serde::Serialize, Clone)]
+pub struct CronJobEntry {
+    pub name: String,
+    pub schedule: String,
+    pub command: String,
+    pub service: String,
+    pub timeout: u32,
+}
+
 /// Validate a service name for DNS-label compatibility.
 ///
 /// Rules: lowercase ASCII, digits, hyphens; must start with a letter,

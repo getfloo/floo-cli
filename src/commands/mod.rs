@@ -11,6 +11,7 @@ pub mod apps;
 pub mod auth;
 pub mod billing;
 pub mod command_tree;
+pub mod cron;
 pub mod db;
 pub mod deploy;
 pub mod deploys;
