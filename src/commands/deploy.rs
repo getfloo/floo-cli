@@ -10,7 +10,7 @@ use crate::config::load_config;
 use crate::detection::{detect_for_services, DetectionResult};
 use crate::errors::{ErrorCode, FlooApiError};
 use crate::output;
-use crate::project_config::{self, validate_service_name, AppAccessMode, AppSource, ServiceConfig};
+use crate::project_config::{self, validate_service_name, AppAccessMode, AppAgentMode, AppSource, ServiceConfig};
 use crate::resolve::resolve_app;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -393,12 +393,24 @@ pub fn deploy(
                 .and_then(|c| c.app.access_mode)
         });
 
+    // Extract agent_mode from [app] section
+    let agent_mode: Option<AppAgentMode> = resolved
+        .app_config
+        .as_ref()
+        .and_then(|c| c.app.agent_mode);
+
     // Extract auth redirect URIs from [auth] toml section
     let auth_redirect_uris: Option<Vec<String>> = resolved
         .app_config
         .as_ref()
         .and_then(|c| c.auth.as_ref())
         .and_then(|auth| auth.redirect_uris.clone());
+
+    // Extract reparo config from [reparo] toml section
+    let reparo_config = resolved
+        .app_config
+        .as_ref()
+        .and_then(|c| c.reparo.as_ref());
 
     // Deploy
     let svc_slice = Some(services.as_slice());
@@ -409,7 +421,9 @@ pub fn deploy(
         detection.framework.as_deref(),
         svc_slice,
         access_mode.as_ref().map(|m| m.as_str()),
+        agent_mode.as_ref().map(|m| m.as_str()),
         auth_redirect_uris.as_deref(),
+        reparo_config,
     ) {
         Ok(d) => {
             spinner.finish();

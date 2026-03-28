@@ -165,12 +165,14 @@ fn init_non_interactive(
         app: AppFileAppSection {
             name: app_name.clone(),
             access_mode: None,
+            agent_mode: None,
         },
         auth: None,
         postgres: None,
         redis: None,
         storage: None,
         resources: None,
+        reparo: None,
         services: HashMap::new(),
         environments: HashMap::new(),
     };
@@ -362,12 +364,14 @@ fn init_interactive(
         app: AppFileAppSection {
             name: app_name.clone(),
             access_mode: None,
+            agent_mode: None,
         },
         auth: None,
         postgres: None,
         redis: None,
         storage: None,
         resources: None,
+        reparo: None,
         services: services_map,
         environments: HashMap::new(),
     };

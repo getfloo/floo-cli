@@ -4,7 +4,7 @@ use std::process;
 use crate::detection::detect;
 use crate::errors::ErrorCode;
 use crate::output;
-use crate::project_config::{self, AppAccessMode};
+use crate::project_config::{self, AppAccessMode, AppAgentMode};
 
 pub fn connect(
     repo: &str,
@@ -418,11 +418,21 @@ fn trigger_initial_deploy(
                 .and_then(|c| c.app.access_mode)
         });
 
+    let agent_mode: Option<AppAgentMode> = resolved
+        .app_config
+        .as_ref()
+        .and_then(|c| c.app.agent_mode);
+
     let auth_redirect_uris: Option<Vec<String>> = resolved
         .app_config
         .as_ref()
         .and_then(|c| c.auth.as_ref())
         .and_then(|auth| auth.redirect_uris.clone());
+
+    let reparo_config = resolved
+        .app_config
+        .as_ref()
+        .and_then(|c| c.reparo.as_ref());
 
     let spinner = output::Spinner::new("Deploying...");
     let mut deploy_data = match client.create_deploy(
@@ -431,7 +441,9 @@ fn trigger_initial_deploy(
         detection.framework.as_deref(),
         Some(&services),
         access_mode.as_ref().map(|m| m.as_str()),
+        agent_mode.as_ref().map(|m| m.as_str()),
         auth_redirect_uris.as_deref(),
+        reparo_config,
     ) {
         Ok(d) => {
             spinner.finish();

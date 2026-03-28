@@ -514,12 +514,14 @@ ingress = "public"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
+                agent_mode: None,
             },
             auth: None,
             postgres: None,
             redis: None,
             storage: None,
             resources: None,
+            reparo: None,
             services: services_map,
             environments: HashMap::new(),
         };
@@ -605,12 +607,14 @@ ingress = "public"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
+                agent_mode: None,
             },
             auth: None,
             postgres: None,
             redis: None,
             storage: None,
             resources: None,
+            reparo: None,
             services: services_map,
             environments: HashMap::new(),
         };
@@ -662,12 +666,14 @@ ingress = "public"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
+                agent_mode: None,
             },
             auth: None,
             postgres: Some(ManagedServiceSection { tier: None }),
             redis: Some(ManagedServiceSection { tier: None }),
             storage: None,
             resources: None,
+            reparo: None,
             services: HashMap::new(),
             environments: HashMap::new(),
         };
@@ -719,12 +725,14 @@ ingress = "public"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
+                agent_mode: None,
             },
             auth: None,
             postgres: None,
             redis: None,
             storage: None,
             resources: None,
+            reparo: None,
             services: services_map,
             environments: HashMap::new(),
         };
@@ -779,12 +787,14 @@ ingress = "public"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
+                agent_mode: None,
             },
             auth: None,
             postgres: None,
             redis: None,
             storage: None,
             resources: None,
+            reparo: None,
             services: services_map,
             environments: HashMap::new(),
         };
@@ -860,12 +870,14 @@ ingress = "public"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
+                agent_mode: None,
             },
             auth: None,
             postgres: None,
             redis: None,
             storage: None,
             resources: None,
+            reparo: None,
             services: services_map,
             environments: HashMap::new(),
         };
@@ -892,12 +904,14 @@ ingress = "public"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
+                agent_mode: None,
             },
             auth: None,
             postgres: Some(ManagedServiceSection { tier: None }),
             redis: None,
             storage: None,
             resources: None,
+            reparo: None,
             services: HashMap::new(),
             environments: HashMap::new(),
         };
@@ -951,12 +965,14 @@ ingress = "public"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
+                agent_mode: None,
             },
             auth: None,
             postgres: None,
             redis: None,
             storage: None,
             resources: None,
+            reparo: None,
             services: services_map,
             environments: HashMap::new(),
         };
@@ -1134,12 +1150,14 @@ ingress = "public"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
+                agent_mode: None,
             },
             auth: None,
             postgres: None,
             redis: None,
             storage: None,
             resources: None,
+            reparo: None,
             services: services_map,
             environments: HashMap::new(),
         };
@@ -1238,12 +1256,14 @@ ingress = "internal"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
+                agent_mode: None,
             },
             auth: None,
             postgres: None,
             redis: None,
             storage: None,
             resources: None,
+            reparo: None,
             services: services_map,
             environments: HashMap::new(),
         };
@@ -1307,12 +1327,14 @@ domain = "svc.example.com"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
+                agent_mode: None,
             },
             auth: None,
             postgres: None,
             redis: None,
             storage: None,
             resources: None,
+            reparo: None,
             services: services_map,
             environments: HashMap::new(),
         };
@@ -1377,12 +1399,14 @@ domain = "svc.example.com"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
+                agent_mode: None,
             },
             auth: None,
             postgres: None,
             redis: None,
             storage: None,
             resources: None,
+            reparo: None,
             services: services_map,
             environments: HashMap::new(),
         };
@@ -1456,12 +1480,14 @@ domain = "svc.example.com"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
+                agent_mode: None,
             },
             auth: None,
             postgres: None,
             redis: None,
             storage: None,
             resources: None,
+            reparo: None,
             services: services_map,
             environments: HashMap::new(),
         };
@@ -1522,6 +1548,7 @@ domain = "svc.example.com"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
+                agent_mode: None,
             },
             auth: None,
             postgres: None,
@@ -1532,6 +1559,7 @@ domain = "svc.example.com"
                 memory: Some("2Gi".to_string()),
                 max_instances: Some(3),
             }),
+            reparo: None,
             services: services_map,
             environments: HashMap::new(),
         };
@@ -1589,12 +1617,14 @@ domain = "svc.example.com"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
+                agent_mode: None,
             },
             auth: None,
             postgres: None,
             redis: None,
             storage: None,
             resources: None,
+            reparo: None,
             services: services_map,
             environments: HashMap::new(),
         };
@@ -1665,12 +1695,14 @@ domain = "svc.example.com"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
+                agent_mode: None,
             },
             auth: None,
             postgres: None,
             redis: None,
             storage: None,
             resources: None,
+            reparo: None,
             services: services_map,
             environments: HashMap::new(),
         };
@@ -1742,6 +1774,7 @@ domain = "svc.example.com"
             app: AppFileAppSection {
                 name: "test-app".to_string(),
                 access_mode: None,
+                agent_mode: None,
             },
             auth: None,
             postgres: Some(ManagedServiceSection {
@@ -1750,6 +1783,7 @@ domain = "svc.example.com"
             redis: Some(ManagedServiceSection { tier: None }),
             storage: None,
             resources: None,
+            reparo: None,
             services: {
                 let mut m = HashMap::new();
                 m.insert(
@@ -1799,12 +1833,14 @@ domain = "svc.example.com"
             app: AppFileAppSection {
                 name: "test-app".to_string(),
                 access_mode: None,
+                agent_mode: None,
             },
             auth: None,
             postgres: None,
             redis: None,
             storage: None,
             resources: None,
+            reparo: None,
             services: {
                 let mut m = HashMap::new();
                 m.insert(
