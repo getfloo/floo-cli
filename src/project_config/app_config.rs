@@ -143,6 +143,8 @@ pub struct AppServiceEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_instances: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_instances: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub dev_command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub migrate_command: Option<String>,

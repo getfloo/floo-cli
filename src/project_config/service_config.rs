@@ -19,6 +19,8 @@ pub struct ResourceConfig {
     pub memory: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_instances: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_instances: Option<u32>,
 }
 
 // --- API wire format (sent to the API as JSON) ---
@@ -40,6 +42,8 @@ pub struct ServiceConfig {
     pub memory: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_instances: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_instances: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub migrate_command: Option<String>,
 }
@@ -111,6 +115,8 @@ pub struct ServiceSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_instances: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dev_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub migrate_command: Option<String>,
@@ -137,6 +143,7 @@ impl ServiceSection {
             cpu: None,
             memory: None,
             max_instances: None,
+            min_instances: self.min_instances,
             migrate_command: self.migrate_command.clone(),
         }
     }
@@ -307,6 +314,7 @@ ingress = "internal"
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
                 domain: None,
+                min_instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -329,6 +337,7 @@ ingress = "internal"
             ingress: Some(ServiceIngress::Internal),
             env_file: None,
             domain: None,
+            min_instances: None,
             dev_command: None,
             migrate_command: None,
         };
@@ -353,6 +362,7 @@ ingress = "internal"
             cpu: None,
             memory: None,
             max_instances: None,
+            min_instances: None,
             migrate_command: None,
         };
         let json = serde_json::to_value(&config).unwrap();
@@ -532,6 +542,7 @@ port = 8000
             ingress: Some(ServiceIngress::Public),
             env_file: None,
             domain: Some("getfloo.com".to_string()),
+            min_instances: None,
             dev_command: None,
             migrate_command: None,
         };
@@ -552,6 +563,7 @@ port = 8000
             cpu: None,
             memory: None,
             max_instances: None,
+            min_instances: None,
             migrate_command: None,
         };
         let json = serde_json::to_value(&config).unwrap();
@@ -570,6 +582,7 @@ port = 8000
             cpu: None,
             memory: None,
             max_instances: None,
+            min_instances: None,
             migrate_command: None,
         };
         let json = serde_json::to_value(&config).unwrap();
@@ -591,6 +604,7 @@ port = 8000
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
                 domain: Some("getfloo.com".to_string()),
+                min_instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -664,6 +678,7 @@ port = 8000
             cpu: None,
             memory: None,
             max_instances: None,
+            min_instances: None,
             migrate_command: None,
         };
         let json = serde_json::to_value(&config).unwrap();
@@ -684,6 +699,7 @@ port = 8000
             cpu: Some("2".to_string()),
             memory: Some("4Gi".to_string()),
             max_instances: Some(5),
+            min_instances: None,
             migrate_command: None,
         };
         let json = serde_json::to_value(&config).unwrap();

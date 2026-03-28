@@ -79,6 +79,9 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
             let max_instances = entry
                 .max_instances
                 .or_else(|| global_resources.and_then(|r| r.max_instances));
+            let min_instances = entry
+                .min_instances
+                .or_else(|| global_resources.and_then(|r| r.min_instances));
 
             let svc = ServiceConfig {
                 name: name.clone(),
@@ -90,6 +93,7 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
                 cpu,
                 memory,
                 max_instances,
+                min_instances,
                 migrate_command: entry.migrate_command.clone(),
             };
 
@@ -236,6 +240,7 @@ fn apply_service_file_resources(
         svc.cpu = res.cpu.clone();
         svc.memory = res.memory.clone();
         svc.max_instances = res.max_instances;
+        svc.min_instances = res.min_instances;
     }
     // Fall back to global for any fields still None
     if let Some(global) = global_resources {
@@ -247,6 +252,9 @@ fn apply_service_file_resources(
         }
         if svc.max_instances.is_none() {
             svc.max_instances = global.max_instances;
+        }
+        if svc.min_instances.is_none() {
+            svc.min_instances = global.min_instances;
         }
     }
 }
@@ -430,6 +438,7 @@ ingress = "public"
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
                 domain: None,
+                min_instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -486,6 +495,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                min_instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -505,6 +515,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                min_instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -567,6 +578,7 @@ ingress = "public"
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
                 domain: None,
+                min_instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -598,6 +610,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                min_instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -655,6 +668,7 @@ ingress = "public"
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
                 domain: None,
+                min_instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -716,6 +730,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                min_instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -778,6 +793,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                min_instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -830,6 +846,7 @@ ingress = "public"
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
                 domain: None,
+                min_instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -861,6 +878,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                min_instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -956,6 +974,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                min_instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -1003,6 +1022,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                min_instances: None,
                 migrate_command: None,
             },
             ServiceConfig {
@@ -1015,6 +1035,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                min_instances: None,
                 migrate_command: None,
             },
         ];
@@ -1036,6 +1057,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                min_instances: None,
                 migrate_command: None,
             },
             ServiceConfig {
@@ -1048,6 +1070,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                min_instances: None,
                 migrate_command: None,
             },
         ];
@@ -1070,6 +1093,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                min_instances: None,
                 migrate_command: None,
             },
             ServiceConfig {
@@ -1082,6 +1106,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                min_instances: None,
                 migrate_command: None,
             },
         ];
@@ -1119,6 +1144,7 @@ ingress = "public"
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
                 domain: None,
+                min_instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -1141,6 +1167,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                min_instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -1228,6 +1255,7 @@ ingress = "internal"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                min_instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -1247,6 +1275,7 @@ ingress = "internal"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                min_instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -1318,6 +1347,7 @@ domain = "svc.example.com"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                min_instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -1390,6 +1420,7 @@ domain = "svc.example.com"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                min_instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -1452,6 +1483,7 @@ domain = "svc.example.com"
                 cpu: Some("2".to_string()),
                 memory: Some("4Gi".to_string()),
                 max_instances: Some(5),
+                min_instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -1471,6 +1503,7 @@ domain = "svc.example.com"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                min_instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -1539,6 +1572,7 @@ domain = "svc.example.com"
                 cpu: Some("4".to_string()), // per-service override
                 memory: None,               // will inherit global
                 max_instances: None,
+                min_instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -1558,6 +1592,7 @@ domain = "svc.example.com"
                 cpu: Some("1".to_string()),
                 memory: Some("2Gi".to_string()),
                 max_instances: Some(3),
+                min_instances: None,
             }),
             reparo: None,
             services: services_map,
@@ -1608,6 +1643,7 @@ domain = "svc.example.com"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                min_instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -1667,6 +1703,7 @@ domain = "svc.example.com"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                min_instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -1686,6 +1723,7 @@ domain = "svc.example.com"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                min_instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -1739,6 +1777,7 @@ domain = "svc.example.com"
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
                 domain: None,
+                min_instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -1746,6 +1785,7 @@ domain = "svc.example.com"
                 cpu: Some("2".to_string()),
                 memory: Some("4Gi".to_string()),
                 max_instances: Some(5),
+                min_instances: None,
             }),
         };
 
@@ -1801,6 +1841,7 @@ domain = "svc.example.com"
                         cpu: None,
                         memory: None,
                         max_instances: None,
+                        min_instances: None,
                         dev_command: None,
                         migrate_command: None,
                     },
@@ -1858,6 +1899,7 @@ domain = "svc.example.com"
                         cpu: None,
                         memory: None,
                         max_instances: None,
+                        min_instances: None,
                         dev_command: None,
                         migrate_command: None,
                     },
