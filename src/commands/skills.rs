@@ -249,13 +249,11 @@ fn recommended_permissions() -> (Vec<&'static str>, Vec<&'static str>) {
     let read_only = vec![
         "Bash(floo apps list:*)",
         "Bash(floo apps status:*)",
-        "Bash(floo apps password:*)",
         "Bash(floo apps github status:*)",
         "Bash(floo deploy list:*)",
         "Bash(floo deploy logs:*)",
         "Bash(floo deploy watch:*)",
         "Bash(floo env list:*)",
-        "Bash(floo env get:*)",
         "Bash(floo services list:*)",
         "Bash(floo services info:*)",
         "Bash(floo domains list:*)",
@@ -273,6 +271,8 @@ fn recommended_permissions() -> (Vec<&'static str>, Vec<&'static str>) {
     ];
 
     let read_write = vec![
+        "Bash(floo apps password:*)",
+        "Bash(floo env get:*)",
         "Bash(floo deploy:*)",
         "Bash(floo deploy rollback:*)",
         "Bash(floo init:*)",

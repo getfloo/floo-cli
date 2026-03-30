@@ -996,8 +996,13 @@ pub(crate) fn sync_env_vars_if_needed(
     // Check root service
     if let Some(ref svc_config) = resolved.service_config {
         if let Some(ref env_file) = svc_config.service.env_file {
-            let path = resolved.config_dir.join(env_file);
-            env_file_entries.push((svc_config.service.name.clone(), path));
+            match super::env::validate_env_file_path(env_file, &resolved.config_dir) {
+                Ok(path) => env_file_entries.push((svc_config.service.name.clone(), path)),
+                Err(msg) => {
+                    output::error(&msg, &ErrorCode::InvalidPath, None);
+                    process::exit(1);
+                }
+            }
         }
     }
 
@@ -1013,8 +1018,13 @@ pub(crate) fn sync_env_vars_if_needed(
                 let svc_dir = resolved.config_dir.join(normalized);
                 if let Ok(Some(svc_config)) = project_config::load_service_config(&svc_dir) {
                     if let Some(ref env_file) = svc_config.service.env_file {
-                        let path = svc_dir.join(env_file);
-                        env_file_entries.push((svc_config.service.name.clone(), path));
+                        match super::env::validate_env_file_path(env_file, &svc_dir) {
+                            Ok(path) => env_file_entries.push((svc_config.service.name.clone(), path)),
+                            Err(msg) => {
+                                output::error(&msg, &ErrorCode::InvalidPath, None);
+                                process::exit(1);
+                            }
+                        }
                     }
                 }
             }

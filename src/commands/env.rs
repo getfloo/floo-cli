@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
 
 use crate::api_client::FlooClient;
@@ -12,6 +12,34 @@ const DEPLOY_HINT: &str =
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Validate that an `env_file` path from config stays within the project root.
+///
+/// Rejects absolute paths and paths that escape the project via `..`.
+/// Returns the canonicalized path on success.
+pub(crate) fn validate_env_file_path(env_file: &str, project_root: &Path) -> Result<PathBuf, String> {
+    let p = Path::new(env_file);
+    if p.is_absolute() {
+        return Err(format!(
+            "env_file must be a relative path, got absolute path: {env_file}"
+        ));
+    }
+    let joined = project_root.join(env_file);
+    let canonical = joined.canonicalize().map_err(|e| {
+        format!("env_file '{}' could not be resolved: {e}", joined.display())
+    })?;
+    let root_canonical = project_root.canonicalize().map_err(|e| {
+        format!("Project root '{}' could not be resolved: {e}", project_root.display())
+    })?;
+    if !canonical.starts_with(&root_canonical) {
+        return Err(format!(
+            "env_file '{}' resolves to '{}' which is outside the project directory.",
+            env_file,
+            canonical.display()
+        ));
+    }
+    Ok(canonical)
+}
 
 fn format_target(app_name: &str, service_name: Option<&str>) -> String {
     match service_name {
@@ -422,7 +450,13 @@ pub fn import_vars(file_flag: Option<&Path>, app_flag: Option<&str>, service_nam
                 .and_then(|r| r.service_config.as_ref())
                 .and_then(|sc| sc.service.env_file.as_deref());
             match from_config {
-                Some(f) => cwd.join(f),
+                Some(f) => match validate_env_file_path(f, &cwd) {
+                    Ok(p) => p,
+                    Err(msg) => {
+                        output::error(&msg, &ErrorCode::InvalidPath, None);
+                        process::exit(1);
+                    }
+                },
                 None => cwd.join(".env"),
             }
         }
@@ -500,13 +534,18 @@ pub fn import_all_services(app_flag: Option<&str>) {
     };
 
     // Collect (service_name, env_file_path) pairs from all service configs
-    let mut env_file_entries: Vec<(String, std::path::PathBuf)> = Vec::new();
+    let mut env_file_entries: Vec<(String, PathBuf)> = Vec::new();
 
     // Check root service
     if let Some(ref svc_config) = resolved.service_config {
         if let Some(ref env_file) = svc_config.service.env_file {
-            let path = resolved.config_dir.join(env_file);
-            env_file_entries.push((svc_config.service.name.clone(), path));
+            match validate_env_file_path(env_file, &resolved.config_dir) {
+                Ok(path) => env_file_entries.push((svc_config.service.name.clone(), path)),
+                Err(msg) => {
+                    output::error(&msg, &ErrorCode::InvalidPath, None);
+                    process::exit(1);
+                }
+            }
         }
     }
 
@@ -525,8 +564,13 @@ pub fn import_all_services(app_flag: Option<&str>) {
             match project_config::load_service_config(&svc_dir) {
                 Ok(Some(svc_config)) => {
                     if let Some(ref env_file) = svc_config.service.env_file {
-                        let path = svc_dir.join(env_file);
-                        env_file_entries.push((svc_config.service.name.clone(), path));
+                        match validate_env_file_path(env_file, &svc_dir) {
+                            Ok(path) => env_file_entries.push((svc_config.service.name.clone(), path)),
+                            Err(msg) => {
+                                output::error(&msg, &ErrorCode::InvalidPath, None);
+                                process::exit(1);
+                            }
+                        }
                     } else if !output::is_json_mode() {
                         output::info(
                             &format!(
@@ -584,11 +628,23 @@ pub fn import_all_services(app_flag: Option<&str>) {
         let vars = parse_env_file(env_path);
         let count = vars.len();
 
-        // Find service ID on server
+        // Find service ID on server — refuse to fall back to app-scope if not found
         let service_id = server_services
             .iter()
             .find(|s| s.name == *svc_name)
             .map(|s| s.id.as_str());
+
+        if service_id.is_none() {
+            output::error(
+                &format!(
+                    "Service '{}' not found on server. Cannot import env vars — refusing to widen scope to app level.",
+                    svc_name
+                ),
+                &ErrorCode::ServiceNotFound,
+                Some("Deploy the app first so services are created, then re-run this command."),
+            );
+            process::exit(1);
+        }
 
         match client.import_env_vars(&app_id, &vars, service_id) {
             Ok(result) => {
