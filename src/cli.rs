@@ -117,10 +117,6 @@ Examples:
     #[command(subcommand)]
     Domains(DomainsCommands),
 
-    /// List available Floo base Docker images.
-    #[command(subcommand)]
-    Images(ImagesCommands),
-
     /// Manage releases and promote to prod.
     #[command(subcommand)]
     Releases(ReleasesCommands),
@@ -529,12 +525,6 @@ pub enum ServicesCommands {
         #[arg(long)]
         delete_config: bool,
     },
-}
-
-#[derive(Subcommand)]
-pub enum ImagesCommands {
-    /// List available Floo base Docker images.
-    List,
 }
 
 #[derive(Subcommand)]
@@ -990,9 +980,6 @@ pub fn run() {
             } => commands::service_mgmt::rm(&name, delete_config),
         },
 
-        Commands::Images(sub) => match sub {
-            ImagesCommands::List => commands::images::list(),
-        },
 
         Commands::Domains(sub) => match sub {
             DomainsCommands::Add {

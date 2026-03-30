@@ -160,3 +160,17 @@ floo domains add app.example.com --app my-app                       # single-ser
 floo domains add app.example.com --app my-app --services frontend   # target a specific service (multi-service)
 floo domains list --app my-app
 ```
+
+### Local Development
+
+```bash
+floo dev                                   # start all services locally with managed-service credentials
+floo dev --app my-app                      # explicitly specify the app
+```
+
+### Cron Jobs
+
+```bash
+floo cron list --app my-app                # list cron jobs and last run status
+floo cron run daily-report --app my-app    # manually trigger a cron job
+```

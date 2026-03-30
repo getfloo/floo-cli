@@ -274,21 +274,6 @@ pub struct DatabaseInfo {
     pub schema_name: Option<String>,
 }
 
-// --- Images ---
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BaseImage {
-    pub name: String,
-    pub tag: String,
-    pub public_uri: String,
-    pub mirror_uri: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BaseImagesResponse {
-    pub images: Vec<BaseImage>,
-}
-
 // --- Dev Session ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

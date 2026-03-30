@@ -174,18 +174,18 @@ fn template_node_nextjs(path: &Path) -> String {
     let start_json: Vec<String> = start.iter().map(|s| format!("\"{s}\"")).collect();
 
     format!(
-        r#"FROM floo-base-node:22 AS deps
+        r#"FROM node:22-slim AS deps
 WORKDIR /app
 {copy}
 {install}
 
-FROM floo-base-node:22 AS build
+FROM node:22-slim AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 {build}
 
-FROM floo-base-node:22
+FROM node:22-slim
 WORKDIR /app
 COPY --from=build /app/.next ./.next
 COPY --from=build /app/node_modules ./node_modules
@@ -204,14 +204,14 @@ fn template_node_vite(path: &Path) -> String {
     let pm = detect_package_manager(path);
 
     format!(
-        r#"FROM floo-base-node:22 AS build
+        r#"FROM node:22-slim AS build
 WORKDIR /app
 {copy}
 {install}
 COPY . .
 {build}
 
-FROM floo-base-node:22
+FROM node:22-slim
 WORKDIR /app
 RUN npm install -g serve
 COPY --from=build /app/dist ./dist
@@ -229,12 +229,12 @@ fn template_node_express(path: &Path) -> String {
     let entry = detect_node_entry_point(path);
 
     format!(
-        r#"FROM floo-base-node:22 AS deps
+        r#"FROM node:22-slim AS deps
 WORKDIR /app
 {copy}
 {install}
 
-FROM floo-base-node:22
+FROM node:22-slim
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -251,12 +251,12 @@ fn template_python_fastapi(path: &Path) -> String {
     let entry = detect_python_entry_point(path);
 
     format!(
-        r#"FROM floo-base-python:{py_version} AS deps
+        r#"FROM python:{py_version}-slim AS deps
 WORKDIR /app
 COPY pyproject.toml requirements*.txt* ./
 RUN pip install --no-cache-dir -r requirements.txt 2>/dev/null || pip install --no-cache-dir .
 
-FROM floo-base-python:{py_version}
+FROM python:{py_version}-slim
 WORKDIR /app
 COPY --from=deps /usr/local/lib/python{py_version}/site-packages /usr/local/lib/python{py_version}/site-packages
 COPY --from=deps /usr/local/bin /usr/local/bin
@@ -274,12 +274,12 @@ fn template_python_flask(path: &Path) -> String {
     let gunicorn_entry = entry.clone();
 
     format!(
-        r#"FROM floo-base-python:{py_version} AS deps
+        r#"FROM python:{py_version}-slim AS deps
 WORKDIR /app
 COPY pyproject.toml requirements*.txt* ./
 RUN pip install --no-cache-dir -r requirements.txt 2>/dev/null || pip install --no-cache-dir .
 
-FROM floo-base-python:{py_version}
+FROM python:{py_version}-slim
 WORKDIR /app
 COPY --from=deps /usr/local/lib/python{py_version}/site-packages /usr/local/lib/python{py_version}/site-packages
 COPY --from=deps /usr/local/bin /usr/local/bin
@@ -297,12 +297,12 @@ fn template_python_django(path: &Path) -> String {
     let wsgi_module = detect_django_wsgi(path);
 
     format!(
-        r#"FROM floo-base-python:{py_version} AS deps
+        r#"FROM python:{py_version}-slim AS deps
 WORKDIR /app
 COPY pyproject.toml requirements*.txt* ./
 RUN pip install --no-cache-dir -r requirements.txt 2>/dev/null || pip install --no-cache-dir .
 
-FROM floo-base-python:{py_version}
+FROM python:{py_version}-slim
 WORKDIR /app
 COPY --from=deps /usr/local/lib/python{py_version}/site-packages /usr/local/lib/python{py_version}/site-packages
 COPY --from=deps /usr/local/bin /usr/local/bin
@@ -352,7 +352,7 @@ fn template_go(path: &Path) -> String {
     let go_version = detect_go_version(path);
 
     format!(
-        r#"FROM floo-base-go:{go_version} AS build
+        r#"FROM golang:{go_version} AS build
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
@@ -381,7 +381,7 @@ fn detect_go_version(path: &Path) -> String {
 }
 
 fn template_static() -> String {
-    r#"FROM floo-base-node:22
+    r#"FROM node:22-slim
 WORKDIR /app
 RUN npm install -g serve
 COPY . .
@@ -433,7 +433,7 @@ mod tests {
         .unwrap();
         let det = make_detection("nodejs", Some("Next.js"), "high");
         let content = generate_dockerfile(&det, dir.path()).unwrap();
-        assert!(content.contains("floo-base-node:22"));
+        assert!(content.contains("node:22-slim"));
         assert!(content.contains(".next"));
         assert!(content.contains("npm ci"));
         assert!(content.contains("npm run build"));
@@ -519,7 +519,7 @@ mod tests {
         std::fs::write(dir.path().join("app/main.py"), "").ok(); // may fail, that's ok
         let det = make_detection("python", Some("FastAPI"), "high");
         let content = generate_dockerfile(&det, dir.path()).unwrap();
-        assert!(content.contains("floo-base-python:3.13"));
+        assert!(content.contains("python:3.13-slim"));
         assert!(content.contains("uvicorn"));
         assert!(content.contains("pip install"));
     }
@@ -534,7 +534,7 @@ mod tests {
         .unwrap();
         let det = make_detection("python", Some("FastAPI"), "high");
         let content = generate_dockerfile(&det, dir.path()).unwrap();
-        assert!(content.contains("floo-base-python:3.11"));
+        assert!(content.contains("python:3.11-slim"));
     }
 
     #[test]
@@ -583,7 +583,7 @@ mod tests {
         .unwrap();
         let det = make_detection("go", None, "high");
         let content = generate_dockerfile(&det, dir.path()).unwrap();
-        assert!(content.contains("floo-base-go:1.22"));
+        assert!(content.contains("golang:1.22"));
         assert!(content.contains("distroless/static"));
         assert!(content.contains("go build -o server"));
     }
@@ -593,7 +593,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let det = make_detection("go", None, "high");
         let content = generate_dockerfile(&det, dir.path()).unwrap();
-        assert!(content.contains("floo-base-go:1.23"));
+        assert!(content.contains("golang:1.23"));
     }
 
     #[test]
@@ -602,7 +602,7 @@ mod tests {
         let det = make_detection("static", None, "low");
         let content = generate_dockerfile(&det, dir.path()).unwrap();
         assert!(content.contains("serve"));
-        assert!(content.contains("floo-base-node:22"));
+        assert!(content.contains("node:22-slim"));
     }
 
     // -- helper function tests --

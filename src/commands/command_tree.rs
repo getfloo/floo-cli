@@ -16,6 +16,13 @@ struct CommandInfo {
 fn command_tree() -> Vec<CommandInfo> {
     vec![
         CommandInfo {
+            name: "dev",
+            description: "Run all services locally with managed-service credentials",
+            usage: "floo dev [--app <name>]",
+            requires_auth: true,
+            subcommands: vec![],
+        },
+        CommandInfo {
             name: "deploy",
             description: "Deploy a project to Floo",
             usage: "floo deploy [PATH] [OPTIONS]",
@@ -233,19 +240,6 @@ fn command_tree() -> Vec<CommandInfo> {
             ],
         },
         CommandInfo {
-            name: "images",
-            description: "List available Floo base Docker images",
-            usage: "floo images list",
-            requires_auth: true,
-            subcommands: vec![CommandInfo {
-                name: "list",
-                description: "List available Floo base Docker images",
-                usage: "floo images list",
-                requires_auth: true,
-                subcommands: vec![],
-            }],
-        },
-        CommandInfo {
             name: "logs",
             description: "View runtime logs for an app",
             usage: "floo logs --app <name> [OPTIONS]",
@@ -418,6 +412,28 @@ fn command_tree() -> Vec<CommandInfo> {
             ],
         },
         CommandInfo {
+            name: "cron",
+            description: "List and trigger scheduled cron jobs for an app",
+            usage: "floo cron <subcommand>",
+            requires_auth: true,
+            subcommands: vec![
+                CommandInfo {
+                    name: "list",
+                    description: "List all cron jobs and their last run status",
+                    usage: "floo cron list --app <name>",
+                    requires_auth: true,
+                    subcommands: vec![],
+                },
+                CommandInfo {
+                    name: "run",
+                    description: "Manually trigger a cron job",
+                    usage: "floo cron run <job-name> --app <name>",
+                    requires_auth: true,
+                    subcommands: vec![],
+                },
+            ],
+        },
+        CommandInfo {
             name: "reparo",
             description: "Manage Reparo auto-recovery events",
             usage: "floo reparo <subcommand>",
@@ -531,12 +547,13 @@ mod tests {
             "auth",
             "billing",
             "commands",
+            "cron",
             "db",
             "deploy",
+            "dev",
             "docs",
             "domains",
             "env",
-            "images",
             "init",
             "logs",
             "orgs",
