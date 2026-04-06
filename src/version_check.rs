@@ -41,7 +41,7 @@ pub struct VersionCheckHandle {
 }
 
 enum CheckResult {
-    Downloaded(String),
+    Downloaded,
     UpToDate,
 }
 
@@ -319,7 +319,7 @@ pub fn spawn_check(current_version: &str) -> Option<VersionCheckHandle> {
                     return;
                 };
                 let result = match download_and_stage(&version, &release_json) {
-                    Some(v) => CheckResult::Downloaded(v),
+                    Some(_) => CheckResult::Downloaded,
                     None => CheckResult::UpToDate,
                 };
                 let _ = tx.send(result);
@@ -359,7 +359,7 @@ pub fn spawn_check(current_version: &str) -> Option<VersionCheckHandle> {
         }
 
         let result = match download_and_stage(&version, &release_json) {
-            Some(v) => CheckResult::Downloaded(v),
+            Some(_) => CheckResult::Downloaded,
             None => CheckResult::UpToDate,
         };
         let _ = tx.send(result);
@@ -369,11 +369,23 @@ pub fn spawn_check(current_version: &str) -> Option<VersionCheckHandle> {
 }
 
 impl VersionCheckHandle {
-    pub fn print_notice(self) {
-        if let Ok(CheckResult::Downloaded(version)) =
+    /// Wait for the background download to finish, apply the update immediately,
+    /// and print a notice. The current process is already finishing, so replacing
+    /// the binary on disk is safe — the next `floo` invocation runs the new version.
+    pub fn apply_and_notify(self, current_version: &str, show_notice: bool) {
+        if let Ok(CheckResult::Downloaded) =
             self.rx.recv_timeout(Duration::from_millis(EXIT_WAIT_MS))
         {
-            eprintln!("  floo {version} downloaded. Update will be applied on next run.");
+            apply_staged_update(current_version);
+            if show_notice {
+                if let Some(meta) = read_staged_meta() {
+                    // staged dir still exists = apply failed, tell user
+                    eprintln!("  floo {} downloaded but could not be applied.", meta.version);
+                    eprintln!("{MANUAL_UPDATE_HINT}");
+                } else {
+                    // staged dir cleaned up = apply succeeded (already printed by apply_staged_update)
+                }
+            }
         }
     }
 }

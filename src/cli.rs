@@ -1091,10 +1091,8 @@ pub fn run() {
         Commands::Update { version } => commands::update::update(version.as_deref()),
     }
 
-    // Post-command: print notice if download completed during this run (skip in --json mode)
+    // Post-command: apply any update that was downloaded during this run
     if let Some(handle) = version_handle {
-        if !cli.json {
-            handle.print_notice();
-        }
+        handle.apply_and_notify(VERSION, !cli.json);
     }
 }
