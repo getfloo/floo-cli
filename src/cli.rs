@@ -798,16 +798,11 @@ fn should_check_version(cli: &Cli) -> bool {
     if crate::config::is_local_binary() {
         return false;
     }
-    if cli.json {
-        return false;
-    }
     if std::env::var("FLOO_NO_UPDATE_CHECK").is_ok() {
         return false;
     }
-    !matches!(
-        cli.command,
-        Commands::Update { .. } | Commands::Version | Commands::Docs { .. } | Commands::Discover
-    )
+    // Only skip for update command (has its own update flow)
+    !matches!(cli.command, Commands::Update { .. })
 }
 
 /// Reject `--dry-run` for mutating commands that don't implement it yet.
@@ -1096,8 +1091,10 @@ pub fn run() {
         Commands::Update { version } => commands::update::update(version.as_deref()),
     }
 
-    // Post-command: print notice if download completed during this run
+    // Post-command: print notice if download completed during this run (skip in --json mode)
     if let Some(handle) = version_handle {
-        handle.print_notice();
+        if !cli.json {
+            handle.print_notice();
+        }
     }
 }
