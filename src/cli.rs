@@ -170,6 +170,31 @@ Examples:
     #[command(subcommand)]
     Skills(SkillsCommands),
 
+    /// Send feedback, report bugs, or request features.
+    #[command(after_help = "\
+Examples:
+  floo feedback \"deploy logs are hard to read\"
+  floo feedback --category bug \"deploys fail when Dockerfile is missing\"
+  floo feedback --category feature_request \"add support for monorepos\"
+  floo feedback --app my-app \"this app crashes on startup\"
+  floo feedback --json \"friction with env var sync\" --category friction")]
+    Feedback {
+        /// Your feedback message.
+        message: String,
+
+        /// Category: bug, friction, feature_request, or general.
+        #[arg(short, long, default_value = "general", value_parser = ["bug", "friction", "feature_request", "general"])]
+        category: String,
+
+        /// App name (attach feedback to a specific app).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Extra context (error output, steps to reproduce, etc.).
+        #[arg(long)]
+        context: Option<String>,
+    },
+
     /// Built-in platform documentation.
     Docs {
         /// Topic: services, config, deploy. Omit for overview.
@@ -1029,6 +1054,13 @@ pub fn run() {
                 commands::reparo::events(app.as_deref(), status.as_deref())
             }
         },
+
+        Commands::Feedback {
+            message,
+            category,
+            app,
+            context,
+        } => commands::feedback::feedback(&message, &category, app.as_deref(), context.as_deref()),
 
         Commands::Docs { topic } => commands::docs::docs(topic.as_deref()),
 

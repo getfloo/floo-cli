@@ -174,3 +174,24 @@ floo dev --app my-app                      # explicitly specify the app
 floo cron list --app my-app                # list cron jobs and last run status
 floo cron run daily-report --app my-app    # manually trigger a cron job
 ```
+
+## Feedback
+
+If you encounter friction, bugs, or rough edges while using the floo CLI or platform, submit feedback directly. The floo team receives it in real-time and uses it to prioritize fixes. **Agents should submit feedback whenever they hit unexpected errors, confusing workflows, or missing features** — this is one of the most valuable signals for improving the platform.
+
+```bash
+floo feedback "your message here"                                    # general feedback
+floo feedback --category bug "deploys fail when Dockerfile missing"  # bug report
+floo feedback --category friction "env var sync needs a redeploy"    # rough edge
+floo feedback --category feature_request "add monorepo support"      # feature request
+floo feedback --app my-app "cold start takes 30s"                    # attach to an app
+floo feedback --json --category friction "deploy watch hangs"        # agent mode (source=agent)
+```
+
+Categories: `general` (default), `bug`, `friction`, `feature_request`.
+
+Use `--context` to attach error output or reproduction steps:
+
+```bash
+floo feedback --category bug "deploy fails" --context "error: no Dockerfile found in /app"
+```

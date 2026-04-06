@@ -19,6 +19,7 @@ pub mod dev;
 pub mod docs;
 pub mod domains;
 pub mod env;
+pub mod feedback;
 pub mod github;
 pub mod init;
 pub mod logs;

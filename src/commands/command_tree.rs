@@ -447,6 +447,13 @@ fn command_tree() -> Vec<CommandInfo> {
             }],
         },
         CommandInfo {
+            name: "feedback",
+            description: "Send feedback, report bugs, or request features",
+            usage: "floo feedback <message> [--category bug|friction|feature_request|general]",
+            requires_auth: true,
+            subcommands: vec![],
+        },
+        CommandInfo {
             name: "docs",
             description: "Built-in platform documentation",
             usage: "floo docs [TOPIC]",
@@ -554,6 +561,7 @@ mod tests {
             "docs",
             "domains",
             "env",
+            "feedback",
             "init",
             "logs",
             "orgs",

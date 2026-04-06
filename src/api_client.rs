@@ -921,4 +921,30 @@ impl FlooClient {
         };
         self.handle_response_value(resp)
     }
+
+    // --- Feedback ---
+
+    pub fn submit_feedback(
+        &self,
+        category: &str,
+        message: &str,
+        source: &str,
+        context: Option<&str>,
+        app_name: Option<&str>,
+    ) -> Result<(), FlooApiError> {
+        let mut body = serde_json::json!({
+            "category": category,
+            "message": message,
+            "source": source,
+        });
+        if let Some(ctx) = context {
+            body["context"] = Value::String(ctx.to_owned());
+        }
+        if let Some(app) = app_name {
+            body["app_name"] = Value::String(app.to_owned());
+        }
+        let resp = self.post_json("/v1/feedback", &body)?;
+        self.handle_response_value(resp)?;
+        Ok(())
+    }
 }
