@@ -849,14 +849,13 @@ pub fn run() {
         reject_unsupported_dry_run(&cli.command);
     }
 
-    let do_version_check = should_check_version(&cli);
-
-    // Phase 2: Auto-apply any staged update (before command dispatch)
-    if do_version_check {
+    // Phase 2: Always apply staged updates (safe for any command, including --json)
+    if !crate::config::is_local_binary() {
         crate::version_check::apply_staged_update(VERSION);
     }
 
-    // Phase 1: Spawn background check + download (non-blocking)
+    // Phase 1: Spawn background check + download (non-blocking, skipped for --json/version)
+    let do_version_check = should_check_version(&cli);
     let version_handle = if do_version_check {
         crate::version_check::spawn_check(VERSION)
     } else {
