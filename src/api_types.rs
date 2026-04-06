@@ -34,7 +34,10 @@ pub struct ProfileResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BillingCheckoutResponse {
-    pub url: String,
+    pub url: Option<String>,
+    #[serde(default)]
+    pub upgraded: bool,
+    pub plan: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

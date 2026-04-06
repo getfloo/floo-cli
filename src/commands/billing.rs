@@ -9,12 +9,21 @@ pub fn upgrade(plan: Option<String>) {
 
     match client.create_billing_checkout(plan.as_deref()) {
         Ok(result) => {
-            if output::is_json_mode() {
-                output::success("", Some(serde_json::json!({"url": result.url})));
-            } else {
-                output::info("Opening billing page in browser...", None);
-                if open::that(&result.url).is_err() {
-                    output::warn(&format!("Open this URL manually: {}", result.url));
+            if result.upgraded {
+                let plan_name = result.plan.as_deref().unwrap_or("paid");
+                if output::is_json_mode() {
+                    output::success("", Some(serde_json::json!({"upgraded": true, "plan": plan_name})));
+                } else {
+                    output::success(&format!("Upgraded to {plan_name}"), None);
+                }
+            } else if let Some(url) = &result.url {
+                if output::is_json_mode() {
+                    output::success("", Some(serde_json::json!({"url": url})));
+                } else {
+                    output::info("Opening billing page in browser...", None);
+                    if open::that(url).is_err() {
+                        output::warn(&format!("Open this URL manually: {url}"));
+                    }
                 }
             }
         }
