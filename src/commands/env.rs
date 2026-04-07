@@ -61,7 +61,7 @@ fn resolve_service_ids(
     app_name: &str,
     service_names: &[String],
 ) -> Vec<(Option<String>, Option<String>)> {
-    let result = match client.list_services(app_id) {
+    let result = match client.list_services(app_id, None) {
         Ok(r) => r,
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
@@ -214,7 +214,7 @@ fn parse_env_file(path: &Path) -> Vec<(String, String)> {
 // Commands
 // ---------------------------------------------------------------------------
 
-pub fn set(key_value: &str, app_flag: Option<&str>, service_names: &[String], restart: bool) {
+pub fn set(key_value: &str, app_flag: Option<&str>, service_names: &[String], restart: bool, env: &str) {
     if !key_value.contains('=') {
         output::error(
             "Invalid format. Use KEY=VALUE.",
@@ -244,7 +244,7 @@ pub fn set(key_value: &str, app_flag: Option<&str>, service_names: &[String], re
 
     let mut last_env_result = serde_json::Value::Null;
     for (service_id, service_name) in &targets {
-        match client.set_env_var(&app_id, &key, value, service_id.as_deref()) {
+        match client.set_env_var(&app_id, &key, value, service_id.as_deref(), env) {
             Ok(result) => {
                 let target = format_target(&app_name, service_name.as_deref());
                 last_env_result = output::to_value(&result);
@@ -312,14 +312,14 @@ pub fn set(key_value: &str, app_flag: Option<&str>, service_names: &[String], re
     }
 }
 
-pub fn list(app_flag: Option<&str>, service_names: &[String]) {
+pub fn list(app_flag: Option<&str>, service_names: &[String], env: &str) {
     super::require_auth();
     let client = super::init_client(None);
     let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
     let targets = resolve_service_ids(&client, &app_id, &app_name, service_names);
 
     for (service_id, service_name) in &targets {
-        let result = match client.list_env_vars(&app_id, service_id.as_deref()) {
+        let result = match client.list_env_vars(&app_id, service_id.as_deref(), env) {
             Ok(r) => r,
             Err(e) => {
                 output::error(&e.message, &ErrorCode::from_api(&e.code), None);
@@ -353,7 +353,7 @@ pub fn list(app_flag: Option<&str>, service_names: &[String]) {
     }
 }
 
-pub fn remove(key: &str, app_flag: Option<&str>, service_names: &[String]) {
+pub fn remove(key: &str, app_flag: Option<&str>, service_names: &[String], env: &str) {
     let key = key.to_uppercase();
 
     if output::is_dry_run_mode() {
@@ -371,7 +371,7 @@ pub fn remove(key: &str, app_flag: Option<&str>, service_names: &[String]) {
     let targets = resolve_service_ids(&client, &app_id, &app_name, service_names);
 
     for (service_id, service_name) in &targets {
-        if let Err(e) = client.delete_env_var(&app_id, &key, service_id.as_deref()) {
+        if let Err(e) = client.delete_env_var(&app_id, &key, service_id.as_deref(), env) {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
@@ -384,7 +384,7 @@ pub fn remove(key: &str, app_flag: Option<&str>, service_names: &[String]) {
     }
 }
 
-pub fn get(key: &str, app_flag: Option<&str>, service_flag: Option<&str>) {
+pub fn get(key: &str, app_flag: Option<&str>, service_flag: Option<&str>, env: &str) {
     let key = key.to_uppercase();
     super::require_auth();
 
@@ -393,7 +393,7 @@ pub fn get(key: &str, app_flag: Option<&str>, service_flag: Option<&str>) {
     let (service_id, _service_name) =
         resolve_single_service(&client, &app_id, &app_name, service_flag);
 
-    let result = match client.get_env_var(&app_id, &key, service_id.as_deref()) {
+    let result = match client.get_env_var(&app_id, &key, service_id.as_deref(), env) {
         Ok(r) => r,
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
@@ -420,7 +420,7 @@ pub fn get(key: &str, app_flag: Option<&str>, service_flag: Option<&str>) {
     }
 }
 
-pub fn import_vars(file_flag: Option<&Path>, app_flag: Option<&str>, service_names: &[String]) {
+pub fn import_vars(file_flag: Option<&Path>, app_flag: Option<&str>, service_names: &[String], env: &str) {
     let cwd = std::env::current_dir().unwrap_or_else(|e| {
         output::error(
             &format!("Failed to read current directory: {e}"),
@@ -493,7 +493,7 @@ pub fn import_vars(file_flag: Option<&Path>, app_flag: Option<&str>, service_nam
     let targets = resolve_service_ids(&client, &app_id, &app_name, service_names);
 
     for (service_id, service_name) in &targets {
-        match client.import_env_vars(&app_id, &vars, service_id.as_deref()) {
+        match client.import_env_vars(&app_id, &vars, service_id.as_deref(), env) {
             Ok(result) => {
                 let target = format_target(&app_name, service_name.as_deref());
                 output::success(
@@ -513,7 +513,7 @@ pub fn import_vars(file_flag: Option<&Path>, app_flag: Option<&str>, service_nam
     }
 }
 
-pub fn import_all_services(app_flag: Option<&str>) {
+pub fn import_all_services(app_flag: Option<&str>, env: &str) {
     super::require_auth();
 
     let cwd = std::env::current_dir().unwrap_or_else(|e| {
@@ -613,7 +613,7 @@ pub fn import_all_services(app_flag: Option<&str>) {
     let app_name = app.name.clone();
 
     // Resolve all service IDs from server
-    let server_services = match client.list_services(&app_id) {
+    let server_services = match client.list_services(&app_id, None) {
         Ok(r) => r.services,
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
@@ -646,7 +646,7 @@ pub fn import_all_services(app_flag: Option<&str>) {
             process::exit(1);
         }
 
-        match client.import_env_vars(&app_id, &vars, service_id) {
+        match client.import_env_vars(&app_id, &vars, service_id, env) {
             Ok(result) => {
                 let target = format!("{app_name}/{svc_name}");
                 output::success(

@@ -23,6 +23,7 @@ pub struct LogsArgs {
     pub search: Option<String>,
     pub live: bool,
     pub output_path: Option<PathBuf>,
+    pub env: Option<String>,
 }
 
 struct LogsFilter<'a> {
@@ -30,6 +31,7 @@ struct LogsFilter<'a> {
     severity: Option<&'a str>,
     services: &'a [String],
     search: Option<&'a str>,
+    environment: Option<&'a str>,
 }
 
 fn format_log_line(entry: &LogEntry, show_service_prefix: bool) -> String {
@@ -81,6 +83,7 @@ fn fetch_logs(
             filter.severity,
             service,
             filter.search,
+            filter.environment,
         ) {
             Ok(r) => r,
             Err(e) => {
@@ -99,6 +102,7 @@ fn fetch_logs(
                 filter.severity,
                 Some(svc),
                 filter.search,
+                filter.environment,
             ) {
                 Ok(r) => r,
                 Err(e) => {
@@ -136,6 +140,7 @@ fn try_fetch_logs(
             filter.severity,
             service,
             filter.search,
+            filter.environment,
         )?;
         Ok(result.logs)
     } else {
@@ -148,6 +153,7 @@ fn try_fetch_logs(
                 filter.severity,
                 Some(svc),
                 filter.search,
+                filter.environment,
             )?;
             all_logs.extend(result.logs);
         }
@@ -258,6 +264,7 @@ pub fn logs(args: LogsArgs) {
         severity: args.severity.as_deref(),
         services: &args.services,
         search: args.search.as_deref(),
+        environment: args.env.as_deref(),
     };
 
     if !output::is_json_mode() {
@@ -422,6 +429,7 @@ fn live_logs(
             severity: filter.severity,
             services: filter.services,
             search: filter.search,
+            environment: filter.environment,
         };
 
         let poll_result = try_fetch_logs(client, app_id, tail, &poll_filter);

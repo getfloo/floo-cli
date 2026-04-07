@@ -3,7 +3,7 @@ use std::process;
 use crate::errors::ErrorCode;
 use crate::output;
 
-pub fn list(app: Option<&str>) {
+pub fn list(app: Option<&str>, env: &str) {
     super::require_auth();
     let client = super::init_client(None);
 
@@ -11,7 +11,7 @@ pub fn list(app: Option<&str>) {
     let app_id = app_id.as_str();
     let app_name = app_name.as_str();
 
-    let result = match client.list_services(app_id) {
+    let result = match client.list_services(app_id, Some(env)) {
         Ok(r) => r,
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
@@ -60,7 +60,7 @@ pub fn info(service_name: &str, app: Option<&str>) {
     let app_id = app_id.as_str();
     let app_name = app_name.as_str();
 
-    let result = match client.list_services(app_id) {
+    let result = match client.list_services(app_id, None) {
         Ok(r) => r,
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);

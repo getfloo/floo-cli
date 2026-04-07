@@ -5,7 +5,7 @@ use crate::errors::ErrorCode;
 use crate::output;
 
 fn check_services_flag(client: &FlooClient, app_id: &str, services: Option<&str>) {
-    let result = match client.list_services(app_id) {
+    let result = match client.list_services(app_id, None) {
         Ok(r) => r,
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);

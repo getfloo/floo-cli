@@ -490,6 +490,7 @@ impl FlooClient {
         key: &str,
         value: &str,
         service_id: Option<&str>,
+        env: &str,
     ) -> Result<SetEnvVarResponse, FlooApiError> {
         let mut body = serde_json::json!({"key": key, "value": value});
         if let Some(sid) = service_id {
@@ -497,7 +498,7 @@ impl FlooClient {
                 .unwrap()
                 .insert("service_id".to_string(), Value::String(sid.to_string()));
         }
-        let resp = self.post_json(&format!("/v1/apps/{app_id}/env"), &body)?;
+        let resp = self.post_json(&format!("/v1/apps/{app_id}/env?env={env}"), &body)?;
         self.handle_response(resp)
     }
 
@@ -505,10 +506,11 @@ impl FlooClient {
         &self,
         app_id: &str,
         service_id: Option<&str>,
+        env: &str,
     ) -> Result<ListEnvVarsResponse, FlooApiError> {
-        let mut path = format!("/v1/apps/{app_id}/env");
+        let mut path = format!("/v1/apps/{app_id}/env?env={env}");
         if let Some(sid) = service_id {
-            path.push_str(&format!("?service_id={sid}"));
+            path.push_str(&format!("&service_id={sid}"));
         }
         let resp = self.get(&path)?;
         self.handle_response(resp)
@@ -519,10 +521,11 @@ impl FlooClient {
         app_id: &str,
         key: &str,
         service_id: Option<&str>,
+        env: &str,
     ) -> Result<(), FlooApiError> {
-        let mut path = format!("/v1/apps/{app_id}/env/{key}");
+        let mut path = format!("/v1/apps/{app_id}/env/{key}?env={env}");
         if let Some(sid) = service_id {
-            path.push_str(&format!("?service_id={sid}"));
+            path.push_str(&format!("&service_id={sid}"));
         }
         let resp = self.delete(&path)?;
         if resp.status().as_u16() == 204 {
@@ -537,10 +540,11 @@ impl FlooClient {
         app_id: &str,
         key: &str,
         service_id: Option<&str>,
+        env: &str,
     ) -> Result<EnvVar, FlooApiError> {
-        let mut path = format!("/v1/apps/{app_id}/env/{key}");
+        let mut path = format!("/v1/apps/{app_id}/env/{key}?env={env}");
         if let Some(sid) = service_id {
-            path.push_str(&format!("?service_id={sid}"));
+            path.push_str(&format!("&service_id={sid}"));
         }
         let resp = self.get(&path)?;
         self.handle_response(resp)
@@ -551,6 +555,7 @@ impl FlooClient {
         app_id: &str,
         env_vars: &[(String, String)],
         service_id: Option<&str>,
+        env: &str,
     ) -> Result<Value, FlooApiError> {
         let vars: Vec<Value> = env_vars
             .iter()
@@ -562,12 +567,20 @@ impl FlooClient {
                 .unwrap()
                 .insert("service_id".to_string(), Value::String(sid.to_string()));
         }
-        let resp = self.post_json(&format!("/v1/apps/{app_id}/env/import"), &body)?;
+        let resp = self.post_json(&format!("/v1/apps/{app_id}/env/import?env={env}"), &body)?;
         self.handle_response(resp)
     }
 
-    pub fn list_services(&self, app_id: &str) -> Result<ListServicesResponse, FlooApiError> {
-        let resp = self.get(&format!("/v1/apps/{app_id}/services?page=1&per_page=100"))?;
+    pub fn list_services(
+        &self,
+        app_id: &str,
+        environment: Option<&str>,
+    ) -> Result<ListServicesResponse, FlooApiError> {
+        let mut path = format!("/v1/apps/{app_id}/services?page=1&per_page=100");
+        if let Some(env) = environment {
+            path.push_str(&format!("&environment={env}"));
+        }
+        let resp = self.get(&path)?;
         self.handle_response(resp)
     }
 
@@ -716,6 +729,7 @@ impl FlooClient {
         severity: Option<&str>,
         service: Option<&str>,
         search: Option<&str>,
+        environment: Option<&str>,
     ) -> Result<LogsResponse, FlooApiError> {
         let limit_str = limit.to_string();
         let mut params: Vec<(&str, &str)> = vec![("limit", &limit_str)];
@@ -730,6 +744,9 @@ impl FlooClient {
         }
         if let Some(q) = search {
             params.push(("search", q));
+        }
+        if let Some(env) = environment {
+            params.push(("environment", env));
         }
         let resp = self.get_with_query(&format!("/v1/apps/{app_id}/logs"), &params)?;
         self.handle_response(resp)

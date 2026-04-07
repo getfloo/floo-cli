@@ -94,6 +94,12 @@ pub struct MemberRoleResponse {
 // --- App ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvironmentSummary {
+    pub name: String,
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct App {
     pub id: String,
     pub name: String,
@@ -102,6 +108,8 @@ pub struct App {
     pub url: Option<String>,
     pub runtime: Option<String>,
     pub created_at: Option<String>,
+    #[serde(default)]
+    pub environments: Vec<EnvironmentSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

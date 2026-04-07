@@ -218,6 +218,10 @@ Examples:
         /// Write logs to a file (JSON or plain text based on --json flag).
         #[arg(short, long)]
         output: Option<PathBuf>,
+
+        /// Environment to query: dev or prod.
+        #[arg(long, value_parser = ["dev", "prod"])]
+        env: Option<String>,
     },
 
     /// Install agent skills for AI coding assistants.
@@ -490,6 +494,10 @@ pub enum EnvCommands {
         /// Restart the app after setting the env var (redeploy with fresh env vars).
         #[arg(long)]
         restart: bool,
+
+        /// Environment: dev or prod.
+        #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
+        env: String,
     },
 
     /// List environment variables for an app.
@@ -501,6 +509,10 @@ pub enum EnvCommands {
         /// Target specific services (repeatable).
         #[arg(long)]
         services: Vec<String>,
+
+        /// Environment: dev or prod.
+        #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
+        env: String,
     },
 
     /// Remove an environment variable from an app.
@@ -515,6 +527,10 @@ pub enum EnvCommands {
         /// Target specific services (repeatable).
         #[arg(long)]
         services: Vec<String>,
+
+        /// Environment: dev or prod.
+        #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
+        env: String,
     },
 
     /// Get an environment variable's plaintext value.
@@ -529,6 +545,10 @@ pub enum EnvCommands {
         /// Target a specific service.
         #[arg(long)]
         service: Option<String>,
+
+        /// Environment: dev or prod.
+        #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
+        env: String,
     },
 
     /// Import environment variables from a .env file.
@@ -548,6 +568,10 @@ pub enum EnvCommands {
         /// Import env vars for all services using their configured env_file paths.
         #[arg(long)]
         all: bool,
+
+        /// Environment: dev or prod.
+        #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
+        env: String,
     },
 }
 
@@ -558,6 +582,10 @@ pub enum ServicesCommands {
         /// App name or ID (uses config file if omitted).
         #[arg(short, long)]
         app: Option<String>,
+
+        /// Environment to query: dev or prod.
+        #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
+        env: String,
     },
 
     /// Show details for a service (managed or user-managed).
@@ -980,30 +1008,40 @@ pub fn run() {
                 app,
                 services,
                 restart,
-            } => commands::env::set(&key_value, app.as_deref(), &services, restart),
-            EnvCommands::List { app, services } => commands::env::list(app.as_deref(), &services),
-            EnvCommands::Remove { key, app, services } => {
-                commands::env::remove(&key, app.as_deref(), &services)
+                env,
+            } => commands::env::set(&key_value, app.as_deref(), &services, restart, &env),
+            EnvCommands::List { app, services, env } => {
+                commands::env::list(app.as_deref(), &services, &env)
             }
-            EnvCommands::Get { key, app, service } => {
-                commands::env::get(&key, app.as_deref(), service.as_deref())
-            }
+            EnvCommands::Remove {
+                key,
+                app,
+                services,
+                env,
+            } => commands::env::remove(&key, app.as_deref(), &services, &env),
+            EnvCommands::Get {
+                key,
+                app,
+                service,
+                env,
+            } => commands::env::get(&key, app.as_deref(), service.as_deref(), &env),
             EnvCommands::Import {
                 file,
                 app,
                 services,
                 all,
+                env,
             } => {
                 if all {
-                    commands::env::import_all_services(app.as_deref());
+                    commands::env::import_all_services(app.as_deref(), &env);
                 } else {
-                    commands::env::import_vars(file.as_deref(), app.as_deref(), &services);
+                    commands::env::import_vars(file.as_deref(), app.as_deref(), &services, &env);
                 }
             }
         },
 
         Commands::Services(sub) => match sub {
-            ServicesCommands::List { app } => commands::services::list(app.as_deref()),
+            ServicesCommands::List { app, env } => commands::services::list(app.as_deref(), &env),
             ServicesCommands::Info { service_name, app } => {
                 commands::services::info(&service_name, app.as_deref())
             }
@@ -1099,6 +1137,7 @@ pub fn run() {
             search,
             live,
             output,
+            env,
         } => {
             let severity = if error {
                 Some("ERROR".to_string())
@@ -1114,6 +1153,7 @@ pub fn run() {
                 search,
                 live,
                 output_path: output,
+                env,
             });
         }
         Commands::Version => commands::update::version(),

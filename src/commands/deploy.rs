@@ -1192,7 +1192,7 @@ pub(crate) fn sync_env_vars_if_needed(
     }
 
     // Get server-side services — silently return on API error (services may not exist on first deploy)
-    let server_services = match client.list_services(app_id) {
+    let server_services = match client.list_services(app_id, None) {
         Ok(r) => r.services,
         Err(_) => return,
     };
@@ -1204,7 +1204,7 @@ pub(crate) fn sync_env_vars_if_needed(
         let svc_id = &svc.id;
 
         // Check env var count on server
-        let env_count = match client.list_env_vars(app_id, Some(svc_id)) {
+        let env_count = match client.list_env_vars(app_id, Some(svc_id), "dev") {
             Ok(r) => r.env_vars.len(),
             Err(_) => continue,
         };
@@ -1245,7 +1245,7 @@ pub(crate) fn sync_env_vars_if_needed(
             );
         }
 
-        if let Err(e) = client.import_env_vars(app_id, &vars, Some(svc_id)) {
+        if let Err(e) = client.import_env_vars(app_id, &vars, Some(svc_id), "dev") {
             output::warn(&format!(
                 "Failed to import env vars for service '{svc_name}': {}",
                 e.message
