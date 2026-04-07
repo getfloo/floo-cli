@@ -353,3 +353,4 @@ pub struct AppAnalyticsEntry {
     pub total_errors: i64,
     pub error_rate: f64,
 }
+

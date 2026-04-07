@@ -23,9 +23,23 @@ fn command_tree() -> Vec<CommandInfo> {
             subcommands: vec![],
         },
         CommandInfo {
+            name: "preflight",
+            description: "Validate project config, detect runtimes, and check readiness (no auth required, no side effects)",
+            usage: "floo preflight [PATH] [--app <name>] [--services <name>] [--json]",
+            requires_auth: false,
+            subcommands: vec![],
+        },
+        CommandInfo {
+            name: "redeploy",
+            description: "Force a redeploy (after env var changes, config updates, or to restart). The primary deploy path is git push.",
+            usage: "floo redeploy [PATH] [--app <name>] [--restart] [--sync-env] [--services <name>]",
+            requires_auth: true,
+            subcommands: vec![],
+        },
+        CommandInfo {
             name: "deploy",
-            description: "Deploy a project to Floo",
-            usage: "floo deploy [PATH] [OPTIONS]",
+            description: "View and manage deploy history (list, watch, logs, rollback). To trigger a deploy, use `floo redeploy` or push to GitHub.",
+            usage: "floo deploy <subcommand>",
             requires_auth: true,
             subcommands: vec![
                 CommandInfo {
@@ -565,6 +579,8 @@ mod tests {
             "init",
             "logs",
             "orgs",
+            "preflight",
+            "redeploy",
             "releases",
             "reparo",
             "services",

@@ -26,6 +26,162 @@ fn status_label(status: &str) -> &str {
     }
 }
 
+pub fn preflight(
+    path: PathBuf,
+    app: Option<String>,
+    services_filter: Vec<String>,
+) {
+    // 1. Canonicalize path
+    let project_path = match path.canonicalize() {
+        Ok(p) => p,
+        Err(_) => {
+            output::error(
+                &format!("Path '{}' is not a directory.", path.display()),
+                &ErrorCode::InvalidPath,
+                Some("Provide a valid project directory."),
+            );
+            process::exit(1);
+        }
+    };
+
+    if !project_path.is_dir() {
+        output::error(
+            &format!("Path '{}' is not a directory.", path.display()),
+            &ErrorCode::InvalidPath,
+            Some("Provide a valid project directory."),
+        );
+        process::exit(1);
+    }
+
+    // 2. Resolve app context
+    let resolved = match project_config::resolve_app_context(&project_path, app.as_deref()) {
+        Ok(r) => r,
+        Err(e) if e.code == ErrorCode::NoConfigFound => {
+            output::error(
+                "No floo.app.toml or floo.service.toml found.",
+                &ErrorCode::NoConfigFound,
+                Some("Run 'floo init' to create config files, then 'floo apps github connect <repo>' to connect to GitHub."),
+            );
+            process::exit(1);
+        }
+        Err(e) => {
+            output::error(&e.message, &e.code, e.suggestion.as_deref());
+            process::exit(1);
+        }
+    };
+
+    let app_name = resolved.app_name.clone();
+
+    // 3. Discover + filter services
+    let all_services = match project_config::discover_services(&resolved) {
+        Ok(svcs) => svcs,
+        Err(e) => {
+            output::error(&e.message, &e.code, e.suggestion.as_deref());
+            process::exit(1);
+        }
+    };
+    let services = match project_config::filter_services(all_services, &services_filter) {
+        Ok(svcs) => svcs,
+        Err(e) => {
+            output::error(&e.message, &e.code, e.suggestion.as_deref());
+            process::exit(1);
+        }
+    };
+
+    let managed_services = project_config::discover_managed_services(&resolved);
+
+    // 4. Per-service runtime detection
+    let svc_pairs: Vec<(&str, &str)> = services
+        .iter()
+        .map(|s| (s.name.as_str(), s.path.as_str()))
+        .collect();
+    let (_primary_detection, per_service_detection) = detect_for_services(&project_path, &svc_pairs);
+
+    // 5. Validate
+    let (preflight_errors, preflight_warnings) =
+        validate_preflight(&project_path, &services, &resolved);
+
+    // 6. Display
+    if output::is_json_mode() {
+        let svc_json: Vec<serde_json::Value> = services
+            .iter()
+            .zip(per_service_detection.iter())
+            .map(|(svc, (_, det))| {
+                serde_json::json!({
+                    "name": svc.name,
+                    "path": svc.path,
+                    "port": svc.port,
+                    "type": svc.service_type.to_string(),
+                    "ingress": svc.ingress.to_string(),
+                    "runtime": det.runtime,
+                    "framework": det.framework,
+                    "confidence": det.confidence,
+                })
+            })
+            .collect();
+
+        let warning_strings: Vec<&str> = preflight_warnings
+            .iter()
+            .map(|w| w.get("message").and_then(|v| v.as_str()).unwrap_or(""))
+            .collect();
+
+        let managed_json: Vec<serde_json::Value> = managed_services
+            .iter()
+            .map(|ms| {
+                serde_json::json!({
+                    "name": ms.name,
+                    "tier": ms.tier.as_deref().unwrap_or("basic"),
+                })
+            })
+            .collect();
+
+        output::success(
+            "",
+            Some(serde_json::json!({
+                "app": app_name,
+                "services": svc_json,
+                "managed_services": managed_json,
+                "warnings": warning_strings,
+                "valid": preflight_errors.is_empty(),
+            })),
+        );
+    } else {
+        display_preflight_human(
+            &app_name,
+            &resolved,
+            &services,
+            &per_service_detection,
+            &preflight_warnings,
+            &preflight_errors,
+        );
+
+        if !managed_services.is_empty() {
+            eprintln!("  Managed services:");
+            for ms in &managed_services {
+                let tier_label = ms.tier.as_deref().unwrap_or("basic");
+                eprintln!("    {} (tier {tier_label})", ms.name);
+            }
+            eprintln!();
+        }
+    }
+
+    if !preflight_errors.is_empty() {
+        let count = preflight_errors.len();
+        for e in &preflight_errors {
+            let msg = e.get("message").and_then(|v| v.as_str()).unwrap_or("");
+            if !output::is_json_mode() {
+                eprintln!("  \u{2717} {msg}");
+            }
+        }
+        output::error(
+            &format!("{count} preflight error(s) found."),
+            &ErrorCode::ConfigInvalid,
+            Some("Fix the errors above and run `floo preflight` to re-validate."),
+        );
+        process::exit(1);
+    }
+}
+
 pub fn deploy(
     path: PathBuf,
     app: Option<String>,
@@ -307,7 +463,7 @@ pub fn deploy(
         output::error(
             &format!("{count} preflight error(s) found."),
             &ErrorCode::ConfigInvalid,
-            Some("Fix the errors above and run `floo deploy --dry-run` to validate."),
+            Some("Fix the errors above and run `floo preflight` to validate."),
         );
         process::exit(1);
     }

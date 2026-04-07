@@ -1218,7 +1218,7 @@ fn test_deploy_new_app_json() {
         .create();
 
     floo()
-        .args(["--json", "deploy", project.path().to_str().unwrap()])
+        .args(["--json", "redeploy", project.path().to_str().unwrap()])
         .env("HOME", home.path())
         .assert()
         .success()
@@ -1269,7 +1269,7 @@ fn test_deploy_existing_app_by_name_json() {
     floo()
         .args([
             "--json",
-            "deploy",
+            "redeploy",
             project.path().to_str().unwrap(),
             "--app",
             TEST_APP_NAME,
@@ -1316,7 +1316,7 @@ fn test_deploy_fails_with_invalid_response_when_app_id_missing() {
         .create();
 
     floo()
-        .args(["--json", "deploy", project.path().to_str().unwrap()])
+        .args(["--json", "redeploy", project.path().to_str().unwrap()])
         .env("HOME", home.path())
         .assert()
         .failure()
@@ -1363,7 +1363,7 @@ fn test_deploy_failed_json_includes_logs_and_suggestion() {
     floo()
         .args([
             "--json",
-            "deploy",
+            "redeploy",
             project.path().to_str().unwrap(),
             "--app",
             TEST_APP_NAME,
@@ -1536,7 +1536,7 @@ fn test_deploy_with_sse_streaming() {
         .create();
 
     floo()
-        .args(["deploy", project.path().to_str().unwrap()])
+        .args(["redeploy", project.path().to_str().unwrap()])
         .env("HOME", home.path())
         .assert()
         .success()
@@ -1611,7 +1611,7 @@ fn test_deploy_sse_fallback_to_polling() {
         .create();
 
     floo()
-        .args(["deploy", project.path().to_str().unwrap()])
+        .args(["redeploy", project.path().to_str().unwrap()])
         .env("HOME", home.path())
         .assert()
         .success()
@@ -1690,7 +1690,7 @@ fn test_deploy_json_mode_uses_polling() {
         .create();
 
     floo()
-        .args(["--json", "deploy", project.path().to_str().unwrap()])
+        .args(["--json", "redeploy", project.path().to_str().unwrap()])
         .env("HOME", home.path())
         .assert()
         .success()

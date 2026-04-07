@@ -212,7 +212,7 @@ fn test_deploy_help() {
         .args(["deploy", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Deploy a project to Floo"));
+        .stdout(predicate::str::contains("View and manage deploy history"));
 }
 
 #[test]
@@ -240,7 +240,7 @@ fn test_update_help() {
 #[test]
 fn test_deploy_not_authenticated() {
     floo()
-        .arg("deploy")
+        .arg("redeploy")
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
@@ -252,7 +252,7 @@ fn test_deploy_not_authenticated() {
 #[test]
 fn test_deploy_json_not_authenticated() {
     floo()
-        .args(["--json", "deploy"])
+        .args(["--json", "redeploy"])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
@@ -528,7 +528,7 @@ ingress = "public"
     .unwrap();
 
     floo()
-        .args(["deploy", project.path().to_str().unwrap()])
+        .args(["redeploy", project.path().to_str().unwrap()])
         .env("HOME", home.path().to_str().unwrap())
         .assert()
         .failure()
@@ -565,7 +565,7 @@ ingress = "public"
     .unwrap();
 
     floo()
-        .args(["--json", "deploy", project.path().to_str().unwrap()])
+        .args(["--json", "redeploy", project.path().to_str().unwrap()])
         .env("HOME", home.path().to_str().unwrap())
         .assert()
         .failure()
@@ -601,7 +601,7 @@ ingress = "public"
     .unwrap();
 
     floo()
-        .args(["deploy", project.path().to_str().unwrap()])
+        .args(["redeploy", project.path().to_str().unwrap()])
         .env("HOME", home.path().to_str().unwrap())
         .assert()
         .failure()
@@ -637,7 +637,7 @@ ingress = "public"
     .unwrap();
 
     floo()
-        .args(["--json", "deploy", project.path().to_str().unwrap()])
+        .args(["--json", "redeploy", project.path().to_str().unwrap()])
         .env("HOME", home.path().to_str().unwrap())
         .assert()
         .failure()
@@ -694,7 +694,7 @@ fn test_deploy_no_config_piped_errors() {
 
     // assert_cmd pipes stdin (no TTY), so this should error with NO_CONFIG_FOUND
     floo()
-        .args(["deploy", project.path().to_str().unwrap()])
+        .args(["redeploy", project.path().to_str().unwrap()])
         .env("HOME", home.path().to_str().unwrap())
         .assert()
         .failure()
@@ -718,7 +718,7 @@ fn test_deploy_no_config_piped_json_errors() {
     std::fs::write(project.path().join("package.json"), r#"{"name":"test"}"#).unwrap();
 
     floo()
-        .args(["--json", "deploy", project.path().to_str().unwrap()])
+        .args(["--json", "redeploy", project.path().to_str().unwrap()])
         .env("HOME", home.path().to_str().unwrap())
         .assert()
         .failure()
@@ -911,8 +911,7 @@ ingress = "public"
     floo()
         .args([
             "--json",
-            "--dry-run",
-            "deploy",
+            "preflight",
             project.path().to_str().unwrap(),
         ])
         .env("HOME", "/tmp/floo-test-nonexistent")
@@ -941,8 +940,7 @@ path = "./api"
     floo()
         .args([
             "--json",
-            "--dry-run",
-            "deploy",
+            "preflight",
             project.path().to_str().unwrap(),
         ])
         .env("HOME", "/tmp/floo-test-nonexistent")
@@ -984,8 +982,7 @@ ingress = "public"
     floo()
         .args([
             "--json",
-            "--dry-run",
-            "deploy",
+            "preflight",
             project.path().to_str().unwrap(),
         ])
         .env("HOME", "/tmp/floo-test-nonexistent")
@@ -1166,7 +1163,7 @@ fn test_no_update_check_env_var() {
 #[test]
 fn test_deploy_sync_env_help() {
     floo()
-        .args(["deploy", "--help"])
+        .args(["redeploy", "--help"])
         .assert()
         .success()
         .stdout(predicate::str::contains("--sync-env"));

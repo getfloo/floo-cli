@@ -10,7 +10,7 @@ Floo deploys web apps from the terminal. All management happens through `floo` c
 
 ## Getting Started
 
-1. `floo auth login` — authenticate (or `--api-key <key>` for CI)
+1. `floo auth login` — sign up or log in (opens browser; use `--api-key <key>` for CI/headless)
 2. `floo init <app-name>` — scaffold config files (local only, no API call)
 3. `floo apps github connect owner/repo` — connect to GitHub and trigger first deploy
 4. `floo apps status <name>` — see your app's URL and status
@@ -19,11 +19,12 @@ After the first deploy, push to GitHub to trigger deploys automatically. Watch p
 
 ## How Deploys Work
 
-Pushing to GitHub triggers a deploy via webhook. Watch it with `floo deploy watch --app <name>`. Use `floo deploy` only to force a redeploy without a code change (e.g., after updating env vars).
+Pushing to GitHub triggers a deploy via webhook. Watch it with `floo deploy watch --app <name>`. Use `floo redeploy` only to force a redeploy without a code change (e.g., after updating env vars). Use `floo preflight` to validate config before pushing.
 
 Normal workflow:
 
 ```bash
+floo preflight                                  # validate config
 git push origin main && floo deploy watch --app <name>
 ```
 
@@ -31,13 +32,13 @@ Force redeploy (after env var change):
 
 ```bash
 floo env set API_KEY=new-value --app my-app
-floo deploy --app my-app
+floo redeploy --app my-app
 ```
 
 The API pulls source from GitHub, builds a container via Cloud Build, and deploys to Cloud Run. GitHub must be connected first (`floo apps github connect`).
 
 - `floo init` creates local config files only — no app is registered on the platform
-- `floo deploy` auto-creates the app if it doesn't exist, but requires GitHub to be connected
+- `floo redeploy` forces a redeploy from GitHub HEAD (auto-creates the app if it doesn't exist)
 - `floo apps github connect` auto-creates the app if needed, connects GitHub, and triggers the first deploy (use `--no-deploy` to skip)
 
 ## Config Files
@@ -52,7 +53,7 @@ name = "my-app"
 name = "web"
 port = 3000
 type = "web"          # web | api | worker
-ingress = "public"    # public | internal
+ingress = "public"    # public (internet-facing) | internal (only reachable by other services in the app)
 env_file = ".env"     # optional, synced on deploy
 ```
 
@@ -114,10 +115,11 @@ Most commands infer the app name from config files in the current directory. Use
 
 ## Dry Run
 
-`--dry-run` previews what a command will do without executing it. Supported on: `deploy`, `env set/remove/import`, `apps delete`, `domains add/remove`, `deploy rollback`.
+`--dry-run` previews what a command will do without executing it. Supported on: `redeploy`, `preflight`, `env set/remove/import`, `apps delete`, `domains add/remove`, `deploy rollback`.
 
 ```bash
-floo deploy --dry-run --json    # preview deploy without executing
+floo preflight --json           # validate config (no auth, no side effects)
+floo redeploy --dry-run --json  # preview redeploy without executing
 ```
 
 ## Common Workflows
@@ -142,15 +144,23 @@ floo logs --app my-app --live                      # stream real-time
 floo logs --app my-app --search "panic" --json     # search + JSON
 ```
 
-### Deploy Management
+### Preflight and Redeploy
+
+```bash
+floo preflight                                     # validate config before pushing
+floo preflight --json                              # structured output for agents
+floo redeploy --app my-app                         # force redeploy (after env var changes)
+floo redeploy --restart --app my-app               # restart without rebuilding
+floo redeploy --services api --app my-app          # redeploy specific service
+```
+
+### Deploy History
 
 ```bash
 floo deploy list --app my-app                      # deploy history
 floo deploy logs <deploy-id> --app my-app          # build logs
 floo deploy watch --app my-app                     # stream progress
 floo deploy rollback my-app <deploy-id>            # rollback
-floo deploy --restart --app my-app                 # restart without re-upload
-floo deploy --services api --app my-app            # deploy specific service
 ```
 
 ### Custom Domains

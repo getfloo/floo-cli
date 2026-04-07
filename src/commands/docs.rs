@@ -22,10 +22,12 @@ never uploads code.
 
   After the first deploy, push to GitHub to deploy: `git push origin main`.
   Watch progress with `floo deploy watch --app <name>`.
-  Use `floo deploy` only to force a redeploy (e.g., after updating env vars).
+  Use `floo redeploy` only to force a redeploy (e.g., after updating env vars).
+  Use `floo preflight` to validate config before pushing.
 
 ## Learn More
 
+  floo docs golden-path — golden path and decision table
   floo docs quickstart — end-to-end walkthrough
   floo docs services   — service types and managed services
   floo docs config     — config file formats with examples
@@ -39,10 +41,13 @@ never uploads code.
 const QUICKSTART: &str = "\
 Floo Quickstart — End-to-End Walkthrough
 
-## 1. Install and Authenticate
+## 1. Install and Sign Up
 
   curl -fsSL https://getfloo.com/install.sh | bash
   floo auth login
+
+  Opens a browser to sign up or log in. New users create an account automatically.
+  In headless/CI environments: floo auth login --api-key <key>
 
 ## 2. Initialize Your Project
 
@@ -66,7 +71,7 @@ Floo Quickstart — End-to-End Walkthrough
 
 ## 4. Validate Config
 
-  floo deploy --dry-run --json
+  floo preflight --json
 
   Checks config files, service graph, ports, and Dockerfiles locally — no
   auth or GitHub connection required. Fix any warnings before deploying.
@@ -94,7 +99,7 @@ Floo Quickstart — End-to-End Walkthrough
   git push origin main
   floo deploy watch --app my-app
 
-  Use `floo deploy --app my-app` only when you need to redeploy without
+  Use `floo redeploy --app my-app` only when you need to redeploy without
   a code change (e.g., after updating env vars).
 
 ## 8. Local Development
@@ -107,9 +112,9 @@ Floo Quickstart — End-to-End Walkthrough
 ## What Creates What
 
   floo init           — local config files only (no API call)
-  floo deploy         — auto-creates the app if needed, then deploys
+  floo redeploy       — force a redeploy (auto-creates app if needed)
   floo apps github connect — creates app if needed, connects GitHub, triggers first deploy
-  floo services add   — adds a user-managed service to config (NOT managed databases)
+  floo services add   — adds an app service to config (NOT platform services like postgres)
 
   Managed services (postgres, redis, storage) are declared in floo.app.toml
   and provisioned automatically on deploy.
@@ -120,16 +125,16 @@ Floo Services
 
 An app contains one or more services. Each service is independently deployable.
 
-## User-Managed Services (your code)
+## App Services (your code)
 
   web     — HTTP server facing the internet (default for apps with a frontend)
   api     — HTTP server for backend APIs
   worker  — background process (no incoming HTTP traffic)
 
-  These are deployed from source via `floo deploy`. Each has its own
+  These are deployed from source via git push. Each has its own
   `floo.service.toml` with port, runtime, and ingress settings.
 
-## Managed Services (provisioned by Floo)
+## Platform Services (provisioned by Floo)
 
   Declared in floo.app.toml, auto-provisioned on first deploy:
 
@@ -184,10 +189,10 @@ origin, so cookies and auth work without CORS setup.
 
   floo services list --app <name>            — list all services
   floo services info <service> --app <name>  — service details (connection info for managed)
-  floo services add <name> <path>            — add a user-managed service to project config
+  floo services add <name> <path>            — add an app service to project config
   floo services rm <name>                    — remove a service from config
 
-  Note: `floo services add` adds user-managed services (web/api/worker) to
+  Note: `floo services add` adds app services (web/api/worker) to
   config. Managed databases are declared in floo.app.toml and provisioned
   automatically on deploy.
 ";
@@ -204,7 +209,7 @@ Floo Config Files
   name = \"web\"
   port = 3000
   type = \"web\"
-  ingress = \"public\"
+  ingress = \"public\"                   # public = internet-facing, internal = only other services
   env_file = \".env\"
   dev_command = \"npm run dev\"          # command to run for `floo dev`
   migrate_command = \"npx prisma migrate deploy\"  # optional, runs after deploy
@@ -295,7 +300,7 @@ Floo Config Files
 ## Commands
 
   floo init <name>   — generate config files interactively
-  floo deploy --dry-run  — validate config before deploying
+  floo preflight     — validate config before deploying
 ";
 
 const DEPLOY: &str = "\
@@ -324,11 +329,11 @@ Floo Deploy Flow
 
 ## Force Redeploy
 
-  Use `floo deploy` when you need to redeploy without a code change
+  Use `floo redeploy` when you need to redeploy without a code change
   (e.g., after updating env vars):
 
     floo env set API_KEY=new-value --app myapp --services api
-    floo deploy --app myapp
+    floo redeploy --app myapp
 
 ## First Deploy
 
@@ -345,14 +350,18 @@ Floo Deploy Flow
   go.mod           — Go
   index.html       — Static site (lowest priority)
 
-## Deploy Options
+## Preflight Validation
 
-  floo deploy [path]                — deploy from directory (default: current)
-  floo deploy --app <name>         — deploy to existing app
-  floo deploy --services <name>    — deploy specific services only
-  floo deploy --restart            — restart without rebuilding
-  floo deploy --sync-env           — re-sync env vars from env_file before deploy
-  floo deploy --dry-run            — preview what would be deployed without deploying
+  floo preflight                   — validate config, detect runtimes, check readiness
+  floo preflight --json            — structured output for agents
+
+## Redeploy Options
+
+  floo redeploy [path]             — force redeploy from directory (default: current)
+  floo redeploy --app <name>       — redeploy a specific app
+  floo redeploy --services <name>  — redeploy specific services only
+  floo redeploy --restart          — restart without rebuilding
+  floo redeploy --sync-env         — re-sync env vars from env_file before redeploying
 
 ## Deploy History
 
@@ -372,7 +381,7 @@ WorkOS so your users can sign in with email, Google, GitHub, and more.
 ## What Happens When You Enable It
 
   1. Set access_mode and redirect URIs in floo.app.toml
-  2. Deploy with `floo deploy`
+  2. Deploy with `git push` (or `floo redeploy`)
   3. Floo automatically provisions the auth endpoints for your app
 
   No separate WorkOS account is needed — floo manages this for you.
@@ -391,7 +400,7 @@ WorkOS so your users can sign in with email, Google, GitHub, and more.
      [auth]
      redirect_uris = [\"http://localhost:3000/callback\", \"https://my-app.com/callback\"]
 
-  3. Deploy (first deploy: `floo apps github connect`, subsequent: `floo deploy`)
+  3. Deploy (first deploy: `floo apps github connect`, subsequent: `git push`)
 
   4. Get your app ID (needed for the OAuth URLs below):
 
@@ -483,8 +492,107 @@ the CLI. Feedback is routed to the Floo team in real-time.
   floo feedback --category bug \"deploy fails\" --context \"error: no Dockerfile found\"
 ";
 
+const HOWTO: &str = "\
+Floo — Golden Path
+
+## Before You Start
+
+  You need:
+  - A project directory with source code and a Dockerfile
+  - The code pushed to a GitHub repository
+
+  App names must be lowercase, alphanumeric, and may include hyphens (e.g., my-saas-app).
+  Replace owner/repo with your GitHub username (or org) and repository name.
+
+  The --app flag is optional when you're in a directory with config files
+  (floo.service.toml or floo.app.toml). Use it when running commands from
+  outside your project directory.
+
+## First-Time Setup (4 commands)
+
+  1. floo auth login                         # sign up or log in (opens browser)
+  2. floo init my-app
+  3. floo preflight                          # validate config (local only, no auth)
+  4. floo apps github connect owner/repo     # creates app + triggers first deploy
+
+  floo auth login opens a browser. New users create an account automatically.
+  In headless/CI environments, use: floo auth login --api-key <key>
+
+  Floo installs a GitHub webhook when you connect. After that, every
+  git push triggers a build and deploy automatically.
+
+  Check your deploy succeeded:
+  floo apps status my-app
+
+## How to Ship Changes
+
+  git add . && git commit -m \"feat: my change\"
+  git push origin main
+  floo deploy watch --app my-app
+
+## How to Redeploy Without a Code Change
+
+  floo redeploy --app my-app
+
+  Use this after updating env vars or changing config.
+  To restart without rebuilding: floo redeploy --restart --app my-app
+
+## How to Add Env Vars
+
+  floo env set KEY=value --app my-app
+  floo redeploy --app my-app                # pick up new vars
+
+## How to Add a Database
+
+  Add to floo.app.toml:
+
+  [postgres]
+  tier = \"basic\"
+
+  Commit the change and push to GitHub:
+  git add floo.app.toml && git commit -m \"feat: add postgres\"
+  git push origin main
+
+  The database is auto-provisioned on the next deploy. Credentials arrive as DATABASE_URL.
+
+## How to Add a Custom Domain
+
+  floo domains add app.example.com --app my-app
+
+  Follow the DNS instructions in the output.
+
+## How to Roll Back
+
+  floo deploy list --app my-app             # find the deploy ID
+  floo deploy rollback my-app <deploy-id>
+
+## How to Debug
+
+  floo logs --app my-app --since 1h --error
+  floo deploy logs <deploy-id> --app my-app
+
+## Decision Table: What Command Do I Run?
+
+  I want to...                          | Run this
+  --------------------------------------|----------------------------------------
+  Create an account or log in           | floo auth login
+  Deploy for the first time             | floo apps github connect owner/repo
+  Ship a code change                    | git push origin main
+  Validate my config                    | floo preflight (local only, no auth)
+  Redeploy after env var change         | floo redeploy --app my-app
+  Restart without rebuilding            | floo redeploy --restart --app my-app
+  Watch a deploy in progress            | floo deploy watch --app my-app
+  See deploy history                    | floo deploy list --app my-app
+  Roll back to a previous version       | floo deploy rollback my-app <id>
+  Set an env var                        | floo env set KEY=val --app my-app
+  Add a custom domain                   | floo domains add example.com --app my-app
+  View logs                             | floo logs --app my-app
+  Run locally with prod credentials     | floo dev --app my-app (requires dev_command)
+";
+
 const TOPICS: &[(&str, &str)] = &[
     ("quickstart", QUICKSTART),
+    ("golden-path", HOWTO),
     ("services", SERVICES),
     ("config", CONFIG),
     ("deploy", DEPLOY),

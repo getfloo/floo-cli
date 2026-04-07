@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 
 use crate::commands;
 use crate::constants::VERSION;
@@ -62,17 +62,71 @@ Examples:
         app: Option<String>,
     },
 
-    /// Deploy a project to Floo, or manage deploy history.
+    /// Validate project config, detect runtimes, and check readiness.
     #[command(after_help = "\
 Examples:
-  floo deploy                              Deploy current directory
-  floo deploy ./app --json                 Deploy ./app with JSON output
-  floo deploy --app my-app --restart       Restart without rebuilding
-  floo deploy --dry-run --json             Preview what would be deployed
+  floo preflight                           Validate current directory
+  floo preflight ./app --json              Validate ./app with JSON output")]
+    Preflight {
+        /// Project directory to validate.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Existing app name to validate against.
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Validate only these services.
+        #[arg(short, long = "services")]
+        services: Vec<String>,
+    },
+
+    /// Force a redeploy (after env var changes, config updates, or to restart).
+    #[command(after_help = "\
+Examples:
+  floo redeploy                            Redeploy current directory
+  floo redeploy --app my-app               Redeploy a specific app
+  floo redeploy --restart                  Restart containers without rebuilding
+  floo redeploy --sync-env                 Re-sync env vars before redeploying
+  floo redeploy --services api             Redeploy specific services only
+
+Note: The primary way to deploy is `git push`. Use `floo redeploy` only
+when you need to trigger a build without a code change.")]
+    Redeploy {
+        /// Project directory.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Existing app ID or name to deploy to.
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Deploy only these services (repeatable: --services api --services web).
+        #[arg(short, long = "services")]
+        services: Vec<String>,
+
+        /// Restart the app without rebuilding (redeploy existing images with fresh env vars).
+        #[arg(long)]
+        restart: bool,
+
+        /// Re-sync env vars from configured env_file before deploying.
+        #[arg(long)]
+        sync_env: bool,
+    },
+
+    /// View and manage deploy history.
+    #[command(
+        subcommand,
+        after_help = "\
+Examples:
   floo deploy list --app my-app            Show deploy history
   floo deploy logs <id> --follow           Stream build logs in real-time
-  floo deploy rollback my-app abc123       Rollback to a previous deploy")]
-    Deploy(DeployArgs),
+  floo deploy watch --app my-app           Stream deploy progress
+  floo deploy rollback my-app abc123       Rollback to a previous deploy
+
+Note: To trigger a deploy, use `floo redeploy` or push to GitHub."
+    )]
+    Deploy(DeploySubcommands),
 
     /// Authenticate and manage your account.
     #[command(subcommand)]
@@ -625,16 +679,6 @@ pub enum ReleasesCommands {
     },
 }
 
-#[derive(Args)]
-#[command(args_conflicts_with_subcommands = true)]
-pub struct DeployArgs {
-    #[command(subcommand)]
-    pub sub: Option<DeploySubcommands>,
-
-    #[command(flatten)]
-    pub run: DeployRunArgs,
-}
-
 #[derive(Subcommand)]
 pub enum DeploySubcommands {
     /// List deploy history for an app.
@@ -683,28 +727,6 @@ pub enum DeploySubcommands {
     },
 }
 
-#[derive(Args)]
-pub struct DeployRunArgs {
-    /// Project directory to deploy.
-    #[arg(default_value = ".")]
-    pub path: PathBuf,
-
-    /// Existing app ID or name to deploy to.
-    #[arg(short, long)]
-    pub app: Option<String>,
-
-    /// Deploy only these services (repeatable: --services api --services web).
-    #[arg(short, long = "services")]
-    pub services: Vec<String>,
-
-    /// Restart the app without rebuilding (redeploy existing images with fresh env vars).
-    #[arg(long)]
-    pub restart: bool,
-
-    /// Re-sync env vars from configured env_file before deploying.
-    #[arg(long)]
-    pub sync_env: bool,
-}
 
 #[derive(Subcommand)]
 pub enum SkillsCommands {
@@ -827,7 +849,7 @@ fn reject_unsupported_dry_run(command: &Commands) {
         output::error(
             "--dry-run is not supported for this command.",
             &crate::errors::ErrorCode::InvalidFormat,
-            Some("Supported commands: deploy, env set/remove/import, apps delete, domains add/remove, deploy rollback."),
+            Some("Supported commands: redeploy, preflight, env set/remove/import, apps delete, domains add/remove, deploy rollback."),
         );
         std::process::exit(1);
     }
@@ -864,29 +886,36 @@ pub fn run() {
 
         Commands::Dev { app } => commands::dev::dev(app),
 
-        Commands::Deploy(args) => {
-            if let Some(sub) = args.sub {
-                match sub {
-                    DeploySubcommands::List { app } => commands::deploys::list(app.as_deref()),
-                    DeploySubcommands::Logs {
-                        deploy_id,
-                        app,
-                        follow,
-                    } => commands::deploys::logs(deploy_id.as_deref(), app.as_deref(), follow),
-                    DeploySubcommands::Watch { app, commit } => {
-                        commands::deploys::watch(app.as_deref(), commit.as_deref())
-                    }
-                    DeploySubcommands::Rollback {
-                        app,
-                        deploy_id,
-                        force,
-                    } => commands::rollbacks::rollback(&app, &deploy_id, force),
-                }
-            } else {
-                let r = args.run;
-                commands::deploy::deploy(r.path, r.app, r.services, r.restart, r.sync_env)
+        Commands::Preflight {
+            path,
+            app,
+            services,
+        } => commands::deploy::preflight(path, app, services),
+
+        Commands::Redeploy {
+            path,
+            app,
+            services,
+            restart,
+            sync_env,
+        } => commands::deploy::deploy(path, app, services, restart, sync_env),
+
+        Commands::Deploy(sub) => match sub {
+            DeploySubcommands::List { app } => commands::deploys::list(app.as_deref()),
+            DeploySubcommands::Logs {
+                deploy_id,
+                app,
+                follow,
+            } => commands::deploys::logs(deploy_id.as_deref(), app.as_deref(), follow),
+            DeploySubcommands::Watch { app, commit } => {
+                commands::deploys::watch(app.as_deref(), commit.as_deref())
             }
-        }
+            DeploySubcommands::Rollback {
+                app,
+                deploy_id,
+                force,
+            } => commands::rollbacks::rollback(&app, &deploy_id, force),
+        },
         Commands::Auth(sub) => match sub {
             AuthCommands::Login { api_key, force } => {
                 commands::auth::login(api_key.as_deref(), force)
