@@ -234,18 +234,8 @@ fn validate_app_config(config: &AppFileConfig) -> Result<(), FlooError> {
     let has_inline = config.services.values().any(|e| e.port.is_some());
 
     for (name, entry) in &config.services {
-        if entry.path.is_some() && entry.repo.is_some() {
-            return Err(FlooError::with_suggestion(
-                ErrorCode::InvalidProjectConfig,
-                format!(
-                    "Service '{name}' in {} has both 'path' and 'repo' — these are mutually exclusive.",
-                    super::APP_CONFIG_FILE
-                ),
-                "Use 'path' for monorepo services or 'repo' for multi-repo services, not both.",
-            ));
-        }
-
         // In inline mode, all services require port and path
+        // (path is optional when repo is set — defaults to "." on the server)
         if has_inline {
             if entry.port.is_none() {
                 return Err(FlooError::with_suggestion(
@@ -257,7 +247,7 @@ fn validate_app_config(config: &AppFileConfig) -> Result<(), FlooError> {
                     format!("Add port = <number> to [services.{name}]."),
                 ));
             }
-            if entry.path.is_none() {
+            if entry.path.is_none() && entry.repo.is_none() {
                 return Err(FlooError::with_suggestion(
                     ErrorCode::InvalidProjectConfig,
                     format!(
@@ -379,7 +369,7 @@ repo = "myorg/my-api"
     }
 
     #[test]
-    fn test_load_app_config_rejects_path_and_repo() {
+    fn test_load_app_config_accepts_path_and_repo() {
         let dir = TempDir::new().unwrap();
         fs::write(
             dir.path().join(super::super::APP_CONFIG_FILE),
@@ -390,14 +380,45 @@ name = "my-app"
 [services.api]
 type = "api"
 path = "./backend"
+port = 8000
 repo = "myorg/my-api"
 "#,
         )
         .unwrap();
 
-        let err = load_app_config(dir.path()).unwrap_err();
-        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
-        assert!(err.message.contains("mutually exclusive"));
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        let api = &config.services["api"];
+        assert_eq!(api.path.as_deref(), Some("./backend"));
+        assert_eq!(api.repo.as_deref(), Some("myorg/my-api"));
+    }
+
+    #[test]
+    fn test_load_app_config_repo_without_path_in_inline_mode() {
+        // When repo is set, path is optional (defaults to "." on the server)
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[services.web]
+type = "web"
+path = "./frontend"
+port = 3000
+
+[services.fixture]
+type = "worker"
+port = 9000
+repo = "myorg/my-fixture"
+"#,
+        )
+        .unwrap();
+
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        let fixture = &config.services["fixture"];
+        assert!(fixture.path.is_none());
+        assert_eq!(fixture.repo.as_deref(), Some("myorg/my-fixture"));
     }
 
     #[test]
