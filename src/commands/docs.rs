@@ -136,7 +136,9 @@ An app contains one or more services. Each service is independently deployable.
 
 ## Platform Services (provisioned by Floo)
 
-  Declared in floo.app.toml, auto-provisioned on first deploy:
+  Declared in floo.app.toml (NOT floo.service.toml), auto-provisioned
+  on first deploy. If floo init created floo.service.toml, rename it to
+  floo.app.toml and move [service] to [services.web] (add path = \".\").
 
   postgres — managed PostgreSQL database
              Connection string injected as DATABASE_URL env var.
@@ -378,33 +380,46 @@ Floo can manage user authentication for your deployed apps. When you set
 access_mode = \"accounts\", floo provides a hosted OAuth flow powered by
 WorkOS so your users can sign in with email, Google, GitHub, and more.
 
-## What Happens When You Enable It
+No separate WorkOS account is needed — floo manages this for you.
+The auth endpoints are live as soon as the deploy completes.
 
-  1. Set access_mode and redirect URIs in floo.app.toml
-  2. Deploy with `git push` (or `floo redeploy`)
-  3. Floo automatically provisions the auth endpoints for your app
+## Quickstart (exact sequence)
 
-  No separate WorkOS account is needed — floo manages this for you.
-  The auth endpoints are live as soon as the deploy completes.
+  IMPORTANT: Auth config lives in floo.app.toml, NOT floo.service.toml.
+  If `floo init` created a floo.service.toml for your single-service app,
+  rename it to floo.app.toml and move [service] to [services.web] (add path = \".\").
 
-## Setup
+  1. Configure floo.app.toml (see config below)
+  2. Deploy so auth endpoints are provisioned:
+     git push origin main
+  3. Get your app ID:
+     floo apps list --json | jq '.data.apps[] | select(.name == \"my-app\") | .id'
+  4. Set FLOO_APP_ID so your app can reference it:
+     floo env set FLOO_APP_ID=<app-id> --app my-app
+     floo redeploy --app my-app
 
-  1. Set access_mode in your floo.app.toml:
+  Each step depends on the previous one. Do not skip ahead.
+  Use `floo redeploy` (not `floo deploy`) to redeploy after config changes.
+
+## Domain Naming Convention
+
+  dev:         <app-name>-dev.on.getfloo.com
+  production:  <app-name>.on.getfloo.com
+
+  Use these exact hostnames when registering redirect URIs.
+
+## Config
 
      [app]
      name = \"my-app\"
      access_mode = \"accounts\"
 
-  2. Register your OAuth callback URLs:
-
      [auth]
-     redirect_uris = [\"http://localhost:3000/callback\", \"https://my-app.com/callback\"]
-
-  3. Deploy (first deploy: `floo apps github connect`, subsequent: `git push`)
-
-  4. Get your app ID (needed for the OAuth URLs below):
-
-     floo apps list --json | jq '.data.apps[] | select(.name == \"my-app\") | .id'
+     redirect_uris = [
+       \"http://localhost:3000/callback\",
+       \"https://my-app-dev.on.getfloo.com/callback\",
+       \"https://my-app.on.getfloo.com/callback\"
+     ]
 
 ## OAuth Flow
 
@@ -413,8 +428,10 @@ Your app integrates with these endpoints (BASE = https://api.getfloo.com):
   1. **Start login** — redirect users to:
      GET BASE/v1/auth/apps/{app_id}/authorize?redirect_uri=<your_callback_url>
 
+     The redirect_uri must EXACTLY match a registered URI (protocol, host, path).
+
   2. **Receive callback** — floo redirects back to your redirect_uri with a code:
-     https://your-app.com/callback?code=<exchange_code>
+     https://my-app-dev.on.getfloo.com/callback?code=<exchange_code>
 
   3. **Exchange code for tokens** — POST from your backend:
      POST BASE/v1/auth/apps/{app_id}/token
@@ -432,12 +449,27 @@ Your app integrates with these endpoints (BASE = https://api.getfloo.com):
      POST BASE/v1/auth/apps/{app_id}/session/logout
      Body: { \"refresh_token\": \"<token>\" }
 
-## Access Modes
+## Constructing Redirect URIs
 
-  public    — no auth, anyone can access (default)
-  password  — shared password for simple protection (Pro+)
-  accounts  — per-user auth via floo's hosted OAuth (Pro+)
-  sso       — enterprise SSO via SAML/OIDC (Enterprise)
+  Your app receives the public hostname via X-Forwarded-Host header.
+  Use it to build the redirect_uri dynamically:
+
+  Node.js:
+    const host = req.headers['x-forwarded-host'] || req.headers.host;
+    const redirectUri = `https://${host}/callback`;
+
+  This works in all environments (local, dev, prod) without hardcoding.
+
+## Troubleshooting
+
+  INVALID_REDIRECT_URI:
+    - dev deploys use <app>-dev.on.getfloo.com, not <app>.on.getfloo.com
+    - deployed apps must use https://, not http://
+    - /callback is not the same as /callback/ (trailing slash matters)
+    - redirect_uri changes require a deploy to take effect
+
+  NO_REDIRECT_URIS:
+    - add [auth] redirect_uris to floo.app.toml and redeploy
 
 ## JWT Claims
 
@@ -449,11 +481,20 @@ Your app integrates with these endpoints (BASE = https://api.getfloo.com):
   iat    — issued at timestamp
   exp    — expiration timestamp
 
+## Access Modes
+
+  public    — no auth, anyone can access (default)
+  password  — shared password for simple protection (Pro+)
+  accounts  — per-user auth via floo's hosted OAuth (Pro+)
+  sso       — enterprise SSO via SAML/OIDC (Enterprise, coming soon)
+
 ## Convenience Endpoint
 
   GET BASE/v1/auth/apps/{app_id}/session/me
   Header: Authorization: Bearer <access_token>
   Returns the authenticated user's info without decoding the JWT yourself.
+
+Full docs: https://docs.getfloo.com/guides/app-auth
 ";
 
 const FEEDBACK: &str = "\
