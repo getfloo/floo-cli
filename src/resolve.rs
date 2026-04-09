@@ -157,6 +157,7 @@ mod tests {
             url: None,
             runtime: None,
             created_at: None,
+            environments: vec![],
         }
     }
 

@@ -5,9 +5,26 @@ use crate::output;
 use crate::updater;
 
 pub fn version() {
+    let update_available = crate::version_check::known_newer_version(VERSION);
+
+    if !output::is_json_mode() {
+        if let Some(ref newer) = update_available {
+            output::success(
+                &format!("floo {VERSION}"),
+                None,
+            );
+            let newer_display = newer.strip_prefix('v').unwrap_or(newer);
+            eprintln!("  Update available: {newer_display} → will auto-apply on next run, or run `floo update`");
+            return;
+        }
+    }
+
     output::success(
         &format!("floo {VERSION}"),
-        Some(serde_json::json!({"version": VERSION})),
+        Some(serde_json::json!({
+            "version": VERSION,
+            "update_available": update_available,
+        })),
     );
 }
 
