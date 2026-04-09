@@ -139,6 +139,30 @@ pub fn known_newer_version(current_version: &str) -> Option<String> {
     None
 }
 
+/// Synchronously check GitHub for a newer version. Used by `floo version`
+/// where a 1-2 second network call is acceptable.
+pub fn check_latest_version(current_version: &str) -> Option<String> {
+    // Check cache/staged first to avoid unnecessary network call
+    if let Some(v) = known_newer_version(current_version) {
+        return Some(v);
+    }
+
+    let client = build_client(CHECK_TIMEOUT_SECS)?;
+    let api_base = updater::releases_api_base();
+    let (latest, _) = fetch_latest_release(&client, &api_base)?;
+
+    write_cache(&VersionCache {
+        latest_version: latest.clone(),
+        checked_at: now_secs(),
+    });
+
+    if is_newer(&latest, current_version) {
+        Some(latest)
+    } else {
+        None
+    }
+}
+
 fn is_newer(remote: &str, local: &str) -> bool {
     let parse = |v: &str| -> Option<(u64, u64, u64)> {
         let v = v.strip_prefix('v').unwrap_or(v);

@@ -5,7 +5,7 @@ use crate::output;
 use crate::updater;
 
 pub fn version() {
-    let update_available = crate::version_check::known_newer_version(VERSION);
+    let update_available = crate::version_check::check_latest_version(VERSION);
 
     if !output::is_json_mode() {
         if let Some(ref newer) = update_available {
