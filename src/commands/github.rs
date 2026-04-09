@@ -366,8 +366,11 @@ fn wait_for_repo_access(
                 spinner.finish();
                 return r;
             }
-            Err(e) if e.code == "GITHUB_REPO_NOT_IN_INSTALLATION" => {
-                // Still waiting — continue polling
+            Err(e)
+                if e.code == "GITHUB_REPO_NOT_IN_INSTALLATION"
+                    || e.code == "GITHUB_REPO_NOT_ACCESSIBLE" =>
+            {
+                // Still waiting — repo not yet visible or token stale, continue polling
             }
             Err(e) => {
                 // Unexpected error — abort
