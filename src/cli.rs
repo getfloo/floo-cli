@@ -661,6 +661,16 @@ pub enum DomainsCommands {
         services: Option<String>,
     },
 
+    /// Verify DNS for a pending custom domain.
+    Verify {
+        /// Domain hostname to verify.
+        hostname: String,
+
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+
     /// Remove a custom domain from an app.
     Remove {
         /// Domain hostname to remove.
@@ -1075,6 +1085,9 @@ pub fn run() {
             } => commands::domains::add(&hostname, app.as_deref(), services.as_deref()),
             DomainsCommands::List { app, services } => {
                 commands::domains::list(app.as_deref(), services.as_deref())
+            }
+            DomainsCommands::Verify { hostname, app } => {
+                commands::domains::verify(&hostname, app.as_deref())
             }
             DomainsCommands::Remove {
                 hostname,

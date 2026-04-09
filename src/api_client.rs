@@ -689,6 +689,16 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn verify_domain(
+        &self,
+        app_id: &str,
+        hostname: &str,
+    ) -> Result<AddDomainResponse, FlooApiError> {
+        let resp =
+            self.post_json(&format!("/v1/apps/{app_id}/domains/{hostname}/verify"), &serde_json::json!({}))?;
+        self.handle_response(resp)
+    }
+
     pub fn delete_domain(&self, app_id: &str, hostname: &str) -> Result<(), FlooApiError> {
         let resp = self.delete(&format!("/v1/apps/{app_id}/domains/{hostname}"))?;
         if resp.status().as_u16() == 204 {

@@ -245,6 +245,13 @@ fn command_tree() -> Vec<CommandInfo> {
                     subcommands: vec![],
                 },
                 CommandInfo {
+                    name: "verify",
+                    description: "Verify DNS for a pending custom domain",
+                    usage: "floo domains verify <hostname> --app <name>",
+                    requires_auth: true,
+                    subcommands: vec![],
+                },
+                CommandInfo {
                     name: "remove",
                     description: "Remove a custom domain",
                     usage: "floo domains remove <hostname> --app <name>",

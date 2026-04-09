@@ -641,6 +641,7 @@ Floo — Golden Path
   Roll back to a previous version       | floo deploy rollback my-app <id>
   Set an env var                        | floo env set KEY=val --app my-app
   Add a custom domain                   | floo domains add example.com --app my-app (then add CNAME at DNS provider)
+  Verify a custom domain                | floo domains verify example.com --app my-app
   View logs                             | floo logs --app my-app
   Run locally with prod credentials     | floo dev --app my-app (requires dev_command)
 ";

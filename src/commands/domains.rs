@@ -128,6 +128,35 @@ pub fn list(app: Option<&str>, services: Option<&str>) {
     );
 }
 
+pub fn verify(hostname: &str, app: Option<&str>) {
+    super::require_auth();
+    let client = super::init_client(None);
+
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app);
+
+    let result = match client.verify_domain(&app_id, hostname) {
+        Ok(r) => r,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+
+    if output::is_json_mode() {
+        output::success(
+            &format!("Verified {hostname}"),
+            Some(output::to_value(&result)),
+        );
+    } else {
+        output::success(
+            &format!("Domain {hostname} verified on {app_name}."),
+            Some(serde_json::Value::Null),
+        );
+        let status = result.status.as_deref().unwrap_or("-");
+        output::info(&format!("  Status: {status}"), None);
+    }
+}
+
 pub fn remove(hostname: &str, app: Option<&str>, services: Option<&str>) {
     if output::is_dry_run_mode() {
         output::dry_run_success(serde_json::json!({
