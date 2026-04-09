@@ -165,10 +165,26 @@ floo deploy rollback my-app <deploy-id>            # rollback
 
 ### Custom Domains
 
+Adding a custom domain is a three-step process:
+
+1. **Add the domain** — registers it with floo and returns CNAME instructions:
+   ```bash
+   floo domains add app.example.com --app my-app
+   # multi-service: floo domains add app.example.com --app my-app --services frontend
+   ```
+
+2. **Add a CNAME record** at the user's DNS provider (Cloudflare, Route 53, etc):
+   - Type: `CNAME`
+   - Name: `app.example.com`
+   - Target: `my-app.on.getfloo.com` (shown in the CLI output)
+
+3. **Verify** — click "Verify DNS" in the dashboard. The API checks that the CNAME resolves to the expected gateway host. Once verified, domain status changes to `active` and org admins receive a confirmation email.
+
+The dashboard auto-polls pending domains every 30 seconds.
+
 ```bash
-floo domains add app.example.com --app my-app                       # single-service app
-floo domains add app.example.com --app my-app --services frontend   # target a specific service (multi-service)
-floo domains list --app my-app
+floo domains list --app my-app                     # check domain status
+floo domains remove app.example.com --app my-app   # remove a domain
 ```
 
 ### Local Development
