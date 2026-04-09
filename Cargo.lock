@@ -410,7 +410,7 @@ dependencies = [
 
 [[package]]
 name = "floo"
-version = "0.3.2"
+version = "0.0.0-dev"
 dependencies = [
  "anyhow",
  "assert_cmd",

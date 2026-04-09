@@ -4,7 +4,7 @@ use std::process;
 use crate::detection::detect;
 use crate::errors::ErrorCode;
 use crate::output;
-use crate::project_config::{self, AppAccessMode, AppAgentMode};
+use crate::project_config;
 
 pub fn connect(
     repo: &str,
@@ -162,8 +162,8 @@ pub fn connect(
     }
 
     if !no_deploy {
-        if let Some(ref r) = resolved {
-            trigger_initial_deploy(&client, &app_id, &cwd, r);
+        if resolved.is_some() {
+            trigger_initial_deploy(&client, &app_id, &cwd);
         } else if !output::is_json_mode() {
             output::info(
                 "No project config found. Run `floo deploy` to trigger the first deploy.",
@@ -394,7 +394,6 @@ fn trigger_initial_deploy(
     client: &crate::api_client::FlooClient,
     app_id: &str,
     project_path: &Path,
-    resolved: &project_config::ResolvedApp,
 ) {
     if !output::is_json_mode() {
         output::info("Deploying...", None);
@@ -402,58 +401,22 @@ fn trigger_initial_deploy(
 
     let detection = detect(project_path);
 
-    let services = match project_config::discover_services(resolved) {
-        Ok(svcs) => svcs,
-        Err(e) => {
-            output::error(&e.message, &e.code, e.suggestion.as_deref());
-            process::exit(1);
-        }
-    };
-
-    let access_mode: Option<AppAccessMode> = resolved
-        .app_config
-        .as_ref()
-        .and_then(|c| c.app.access_mode)
-        .or_else(|| {
-            resolved
-                .service_config
-                .as_ref()
-                .and_then(|c| c.app.access_mode)
-        });
-
-    let agent_mode: Option<AppAgentMode> = resolved
-        .app_config
-        .as_ref()
-        .and_then(|c| c.app.agent_mode);
-
-    let auth_redirect_uris: Option<Vec<String>> = resolved
-        .app_config
-        .as_ref()
-        .and_then(|c| c.auth.as_ref())
-        .and_then(|auth| auth.redirect_uris.clone());
-
-    let reparo_config = resolved
-        .app_config
-        .as_ref()
-        .and_then(|c| c.reparo.as_ref());
-
-    let github_config = resolved
-        .app_config
-        .as_ref()
-        .and_then(|c| c.github.as_ref());
+    // Don't discover services locally — the API will parse them from the
+    // GitHub tarball. Local discovery can fail if the user ran this command
+    // from a different directory than the repo root.
 
     let spinner = output::Spinner::new("Deploying...");
     let mut deploy_data = match client.create_deploy(
         app_id,
         &detection.runtime,
         detection.framework.as_deref(),
-        Some(&services),
-        access_mode.as_ref().map(|m| m.as_str()),
-        agent_mode.as_ref().map(|m| m.as_str()),
-        auth_redirect_uris.as_deref(),
-        reparo_config,
-        None,
-        github_config,
+        None, // API discovers services from GitHub tarball
+        None, // access_mode — API reads from tarball config
+        None, // agent_mode — API reads from tarball config
+        None, // auth_redirect_uris — API reads from tarball config
+        None, // reparo_config — API reads from tarball config
+        None, // cron_jobs
+        None, // github_config
     ) {
         Ok(d) => {
             spinner.finish();
