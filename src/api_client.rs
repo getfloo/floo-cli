@@ -780,6 +780,12 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn github_check_repo_access(&self, repo: &str) -> Result<Value, FlooApiError> {
+        let encoded = repo.replace('/', "%2F");
+        let resp = self.get(&format!("/v1/github/check-repo-access?repo={encoded}"))?;
+        self.handle_response(resp)
+    }
+
     pub fn github_connect(
         &self,
         app_id: &str,

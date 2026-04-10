@@ -60,21 +60,18 @@ pub fn connect(
     let app_id = app_data.id.clone();
     let name = app_data.name.clone();
 
-    // Re-resolve config with the platform-returned name (may differ from flag)
-    // for env var import and deploy trigger. Missing config is fine — users can
-    // run `floo env import` separately.
+    // Re-resolve config for env var import. Missing config is fine.
     let resolved = project_config::resolve_app_context(&cwd, Some(&name)).ok();
 
-    // Step 1: Import env vars from local env_file before connecting
+    // Phase 1: Import env vars from local env_file before connecting
     if let Some(ref r) = resolved {
         import_env_vars_for_connect(&client, &app_id, r);
     }
 
-    // Step 2: Connect to GitHub (installation_id auto-resolved by the API)
+    // Phase 2: Connect to GitHub (handles installation + repo access)
     let result = match client.github_connect(&app_id, repo, branch, skip_env_check) {
         Ok(r) => r,
         Err(e) if e.code == "GITHUB_APP_NOT_INSTALLED" => {
-            // App not installed — open browser and wait for installation
             let install_url = e
                 .extra
                 .as_ref()
@@ -89,7 +86,6 @@ pub fn connect(
 
             run_installation_flow(&client, install_url);
 
-            // Retry connect — API will auto-resolve the newly installed ID
             match client.github_connect(&app_id, repo, branch, skip_env_check) {
                 Ok(r) => r,
                 Err(e2) => {
@@ -99,7 +95,6 @@ pub fn connect(
             }
         }
         Err(e) if e.code == "GITHUB_REPO_NOT_IN_INSTALLATION" => {
-            // App installed on org but repo not in scope — open settings and wait
             let settings_url = e
                 .extra
                 .as_ref()
@@ -113,12 +108,9 @@ pub fn connect(
 
             if !output::is_json_mode() {
                 output::warn(&format!(
-                    "Floo GitHub App is installed on \"{owner}\" but does not have access to \"{repo}\"."
+                    "Floo GitHub App does not have access to \"{repo}\"."
                 ));
-                output::info(
-                    "Opening installation settings to add this repository...",
-                    None,
-                );
+                output::info("Opening GitHub settings to grant access...", None);
             }
 
             if let Err(e) = open::that(url) {
@@ -128,8 +120,16 @@ pub fn connect(
                 }
             }
 
-            // Poll: retry connect until the user grants repo access
-            wait_for_repo_access(&client, &app_id, repo, branch, skip_env_check, url)
+            poll_repo_access(&client, repo, url);
+
+            // Repo is now accessible — connect
+            match client.github_connect(&app_id, repo, branch, skip_env_check) {
+                Ok(r) => r,
+                Err(e2) => {
+                    output::error(&e2.message, &ErrorCode::from_api(&e2.code), None);
+                    process::exit(1);
+                }
+            }
         }
         Err(e) => {
             let suggestion = match e.code.as_str() {
@@ -145,30 +145,58 @@ pub fn connect(
             process::exit(1);
         }
     };
-
     let connected_branch = result.default_branch.as_deref().unwrap_or("main");
 
-    // Step 3: Trigger initial deploy unless --no-deploy
-    let will_deploy = !no_deploy && resolved.is_some();
-
-    // In JSON mode, only emit one JSON envelope to stdout. If we're about to
-    // deploy, the deploy result (success or error) will be the envelope.
-    // In human mode, always show the connect success on stderr.
-    if !(will_deploy && output::is_json_mode()) {
+    // Phase 4: Deploy and wait (unless --no-deploy)
+    if no_deploy {
         output::success(
             &format!("Connected {name} to {repo} (branch: {connected_branch})"),
-            Some(output::to_value(&result)),
+            Some(serde_json::json!({
+                "connected": true,
+                "app": name,
+                "repo": repo,
+                "branch": connected_branch,
+                "deployed": false,
+            })),
         );
+        return;
     }
 
-    if !no_deploy {
-        if resolved.is_some() {
-            trigger_initial_deploy(&client, &app_id, &cwd);
-        } else if !output::is_json_mode() {
-            output::info(
-                "No project config found. Run `floo deploy` to trigger the first deploy.",
-                None,
+    let deploy_result = run_initial_deploy(&client, &app_id, &cwd);
+
+    // Phase 5: One success/failure message
+    match deploy_result {
+        DeployOutcome::Live { url, deploy } => {
+            output::success(
+                &format!("Connected {name} to {repo} — deployed and live at {url}"),
+                Some(serde_json::json!({
+                    "connected": true,
+                    "app": name,
+                    "repo": repo,
+                    "branch": connected_branch,
+                    "deployed": true,
+                    "deploy_status": "live",
+                    "url": url,
+                    "deploy": deploy,
+                })),
             );
+        }
+        DeployOutcome::Failed { deploy } => {
+            output::error_with_data(
+                &format!("Connected {name} to {repo} but deploy failed."),
+                &ErrorCode::DeployFailed,
+                Some("Run `floo deploy` to retry."),
+                Some(serde_json::json!({
+                    "connected": true,
+                    "app": name,
+                    "repo": repo,
+                    "branch": connected_branch,
+                    "deployed": false,
+                    "deploy_status": "failed",
+                    "deploy": deploy,
+                })),
+            );
+            process::exit(1);
         }
     }
 }
@@ -239,6 +267,50 @@ pub fn status(app: Option<&str>) {
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
+        }
+    }
+}
+
+/// Poll the lightweight check-repo-access endpoint until the repo is accessible.
+fn poll_repo_access(client: &crate::api_client::FlooClient, repo: &str, settings_url: &str) {
+    let spinner = output::Spinner::new(&format!(
+        "Waiting for repo access (grant at {settings_url})..."
+    ));
+    let poll_interval = std::time::Duration::from_secs(1);
+    let timeout = std::time::Duration::from_secs(180);
+    let start = std::time::Instant::now();
+
+    loop {
+        std::thread::sleep(poll_interval);
+
+        if start.elapsed() > timeout {
+            spinner.finish();
+            output::error(
+                "Timed out waiting for repository access.",
+                &ErrorCode::Other("REPO_ACCESS_TIMEOUT".into()),
+                Some(&format!(
+                    "Grant access at {settings_url} then re-run: \
+                     floo apps github connect {repo}"
+                )),
+            );
+            process::exit(1);
+        }
+
+        match client.github_check_repo_access(repo) {
+            Ok(resp) => {
+                if resp.get("accessible").and_then(|v| v.as_bool()) == Some(true) {
+                    spinner.finish();
+                    return;
+                }
+            }
+            Err(e) => {
+                let is_transient = e.status_code == 0 || e.status_code >= 500;
+                if !is_transient {
+                    spinner.finish();
+                    output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                    process::exit(1);
+                }
+            }
         }
     }
 }
@@ -330,58 +402,6 @@ fn run_installation_flow(client: &crate::api_client::FlooClient, install_url: &s
     }
 }
 
-fn wait_for_repo_access(
-    client: &crate::api_client::FlooClient,
-    app_id: &str,
-    repo: &str,
-    branch: Option<&str>,
-    skip_env_check: bool,
-    settings_url: &str,
-) -> crate::api_types::GitHubConnectResponse {
-    let spinner = output::Spinner::new(&format!(
-        "Waiting for repo access (grant access at {settings_url})..."
-    ));
-    let poll_interval = std::time::Duration::from_secs(3);
-    let timeout = std::time::Duration::from_secs(300);
-    let start = std::time::Instant::now();
-
-    loop {
-        std::thread::sleep(poll_interval);
-
-        if start.elapsed() > timeout {
-            spinner.finish();
-            output::error(
-                "Timed out waiting for repository access.",
-                &ErrorCode::Other("REPO_ACCESS_TIMEOUT".into()),
-                Some(&format!(
-                    "Grant access at {settings_url} then re-run: \
-                     floo apps github connect {repo}"
-                )),
-            );
-            process::exit(1);
-        }
-
-        match client.github_connect(app_id, repo, branch, skip_env_check) {
-            Ok(r) => {
-                spinner.finish();
-                return r;
-            }
-            Err(e)
-                if e.code == "GITHUB_REPO_NOT_IN_INSTALLATION"
-                    || e.code == "GITHUB_REPO_NOT_ACCESSIBLE" =>
-            {
-                // Still waiting — repo not yet visible or token stale, continue polling
-            }
-            Err(e) => {
-                // Unexpected error — abort
-                spinner.finish();
-                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-                process::exit(1);
-            }
-        }
-    }
-}
-
 fn import_env_vars_for_connect(
     client: &crate::api_client::FlooClient,
     app_id: &str,
@@ -390,20 +410,22 @@ fn import_env_vars_for_connect(
     super::deploy::sync_env_vars_if_needed(client, app_id, resolved, true);
 }
 
-fn trigger_initial_deploy(
+enum DeployOutcome {
+    Live {
+        url: String,
+        deploy: serde_json::Value,
+    },
+    Failed {
+        deploy: serde_json::Value,
+    },
+}
+
+fn run_initial_deploy(
     client: &crate::api_client::FlooClient,
     app_id: &str,
     project_path: &Path,
-) {
-    if !output::is_json_mode() {
-        output::info("Deploying...", None);
-    }
-
+) -> DeployOutcome {
     let detection = detect(project_path);
-
-    // Don't discover services locally — the API will parse them from the
-    // GitHub tarball. Local discovery can fail if the user ran this command
-    // from a different directory than the repo root.
 
     let spinner = output::Spinner::new("Deploying...");
     let mut deploy_data = match client.create_deploy(
@@ -411,10 +433,10 @@ fn trigger_initial_deploy(
         &detection.runtime,
         detection.framework.as_deref(),
         None, // API discovers services from GitHub tarball
-        None, // access_mode — API reads from tarball config
-        None, // agent_mode — API reads from tarball config
-        None, // auth_redirect_uris — API reads from tarball config
-        None, // reparo_config — API reads from tarball config
+        None, // access_mode
+        None, // agent_mode
+        None, // auth_redirect_uris
+        None, // reparo_config
         None, // cron_jobs
         None, // github_config
     ) {
@@ -424,8 +446,9 @@ fn trigger_initial_deploy(
         }
         Err(e) => {
             spinner.finish();
-            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-            process::exit(1);
+            return DeployOutcome::Failed {
+                deploy: serde_json::json!({"error": e.message}),
+            };
         }
     };
 
@@ -433,12 +456,9 @@ fn trigger_initial_deploy(
 
     if !super::deploy::TERMINAL_STATUSES.contains(&initial_status) {
         if deploy_data.id.is_empty() {
-            output::error(
-                "Unexpected API response: deploy is missing required 'id'.",
-                &ErrorCode::InvalidResponse,
-                Some("This may indicate a CLI/API mismatch. Check for updates with `floo update`."),
-            );
-            process::exit(1);
+            return DeployOutcome::Failed {
+                deploy: serde_json::json!({"error": "Deploy missing 'id' in response"}),
+            };
         }
         let deploy_id = deploy_data.id.clone();
 
@@ -458,19 +478,14 @@ fn trigger_initial_deploy(
     let final_status = deploy_data.status.as_deref().unwrap_or("");
 
     if final_status == "failed" {
-        output::error_with_data(
-            "Deploy failed.",
-            &ErrorCode::DeployFailed,
-            Some("Check build output above, or run `floo logs` for details."),
-            Some(output::to_value(&deploy_data)),
-        );
-        process::exit(1);
+        DeployOutcome::Failed {
+            deploy: output::to_value(&deploy_data),
+        }
+    } else {
+        let url = deploy_data.url.as_deref().unwrap_or("").to_string();
+        DeployOutcome::Live {
+            url,
+            deploy: output::to_value(&deploy_data),
+        }
     }
-
-    let url = deploy_data.url.as_deref().unwrap_or("");
-
-    output::success(
-        &format!("Deployed to {url}"),
-        Some(output::to_value(&deploy_data)),
-    );
 }
