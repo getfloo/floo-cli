@@ -37,15 +37,15 @@ fn command_tree() -> Vec<CommandInfo> {
             subcommands: vec![],
         },
         CommandInfo {
-            name: "deploy",
+            name: "deploys",
             description: "View and manage deploy history (list, watch, logs, rollback). To trigger a deploy, use `floo redeploy` or push to GitHub.",
-            usage: "floo deploy <subcommand>",
+            usage: "floo deploys <subcommand>",
             requires_auth: true,
             subcommands: vec![
                 CommandInfo {
                     name: "list",
                     description: "List deploy history for an app",
-                    usage: "floo deploy list --app <name>",
+                    usage: "floo deploys list --app <name>",
                     requires_auth: true,
                     subcommands: vec![],
                 },
@@ -53,21 +53,21 @@ fn command_tree() -> Vec<CommandInfo> {
                     name: "logs",
                     description:
                         "Show build logs for a deploy (use --follow to stream active deploys)",
-                    usage: "floo deploy logs <deploy-id> [--follow] --app <name>",
+                    usage: "floo deploys logs <deploy-id> [--follow] --app <name>",
                     requires_auth: true,
                     subcommands: vec![],
                 },
                 CommandInfo {
                     name: "watch",
                     description: "Stream deploy progress in real-time",
-                    usage: "floo deploy watch --app <name>",
+                    usage: "floo deploys watch --app <name>",
                     requires_auth: true,
                     subcommands: vec![],
                 },
                 CommandInfo {
                     name: "rollback",
                     description: "Rollback to a previous deploy",
-                    usage: "floo deploy rollback <app> <deploy-id>",
+                    usage: "floo deploys rollback <app> <deploy-id>",
                     requires_auth: true,
                     subcommands: vec![],
                 },
