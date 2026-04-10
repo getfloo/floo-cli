@@ -8,11 +8,11 @@ description: >
 
 # Floo Managed Services
 
-Floo provisions and manages Postgres, Redis, and Storage as platform services. All credentials are delivered as environment variables — never hardcode them.
+Floo provisions and manages Postgres, Redis, Storage, and Cron as platform services. All credentials are delivered as environment variables — never hardcode them.
 
 ## How to Provision
 
-Managed services are declared in `floo.app.toml` and auto-provisioned on the first deploy.
+All managed services are declared in `floo.app.toml` and auto-provisioned on deploy. The API parses `floo.app.toml` directly from the repo tarball, so this works identically for `floo deploy`, `git push` (deploy-on-push), and preview deploys.
 
 **There is no CLI command to imperatively provision a managed service.** Declare them in `floo.app.toml` and they are auto-provisioned on deploy.
 
@@ -207,11 +207,12 @@ command = "node cleanup.js"
 service = "api"
 ```
 
-Then deploy — Floo syncs cron jobs on every deploy (creates new ones, updates changed ones, deletes removed ones).
+Then deploy — Floo syncs cron jobs on every deploy (creates new ones, updates changed ones, deletes removed ones). This works for both `floo deploy` and push-to-deploy (git push) — the API parses `[cron.*]` directly from `floo.app.toml` in the repo.
 
 **What happens:**
 - Floo creates a CronJob record for each `[cron.<name>]` section
 - The job runs inside the specified service's container image
+- All app env vars (including `DATABASE_URL`, `REDIS_URL`) are available in the cron job
 - Jobs are scoped to the app and environment (dev/prod have separate cron jobs)
 
 **Fields:**
