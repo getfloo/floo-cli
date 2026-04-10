@@ -186,11 +186,24 @@ pub fn deploy(
     path: PathBuf,
     app: Option<String>,
     services_filter: Vec<String>,
-    restart: bool,
+    rebuild: bool,
     sync_env: bool,
 ) {
-    // --- Restart path: skip detection, needs auth upfront ---
-    if restart {
+    // --- Path 1 & 2: --app flag provided — no local directory needed ---
+    if let Some(ref app_name) = app {
+        // Dry-run exits early — no auth or API calls needed
+        if output::is_dry_run_mode() {
+            let action = if rebuild { "rebuild" } else { "restart" };
+            let service_names: Vec<&str> =
+                services_filter.iter().map(|s| s.as_str()).collect();
+            output::dry_run_success(serde_json::json!({
+                "action": action,
+                "app": app_name,
+                "services": service_names,
+            }));
+            return;
+        }
+
         let config = load_config();
         if config.api_key.is_none() {
             output::error(
@@ -201,44 +214,13 @@ pub fn deploy(
             process::exit(1);
         }
 
-        let app_ident = match app.as_deref() {
-            Some(a) => a.to_string(),
-            None => {
-                let cwd = std::env::current_dir().unwrap_or_else(|e| {
-                    output::error(
-                        &format!("Failed to read current directory: {e}"),
-                        &ErrorCode::FileError,
-                        None,
-                    );
-                    process::exit(1);
-                });
-                match project_config::resolve_app_context(&cwd, None) {
-                    Ok(r) => r.app_name,
-                    Err(e) => {
-                        output::error(&e.message, &e.code, e.suggestion.as_deref());
-                        process::exit(1);
-                    }
-                }
-            }
-        };
-
-        if output::is_dry_run_mode() {
-            let service_names: Vec<&str> = services_filter.iter().map(|s| s.as_str()).collect();
-            output::dry_run_success(serde_json::json!({
-                "action": "restart",
-                "app": app_ident,
-                "services": service_names,
-            }));
-            return;
-        }
-
         let client = super::init_client(Some(config));
-        let app_data = match resolve_app(&client, &app_ident) {
+        let app_data = match resolve_app(&client, app_name) {
             Ok(a) => a,
             Err(e) => {
                 if e.code == "APP_NOT_FOUND" {
                     output::error(
-                        &format!("App '{app_ident}' not found."),
+                        &format!("App '{app_name}' not found."),
                         &ErrorCode::AppNotFound,
                         Some("Check the app name or ID and try again."),
                     );
@@ -248,63 +230,16 @@ pub fn deploy(
                 process::exit(1);
             }
         };
-        let app_id = app_data.id.clone();
 
-        let svcs = if services_filter.is_empty() {
-            None
+        if rebuild {
+            deploy_rebuild(&client, &app_data, &services_filter);
         } else {
-            Some(services_filter.as_slice())
-        };
-
-        let spinner = output::Spinner::new("Restarting...");
-        let deploy_data = match client.restart_app(&app_id, svcs) {
-            Ok(d) => {
-                spinner.finish();
-                d
-            }
-            Err(e) => {
-                spinner.finish();
-                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-                process::exit(1);
-            }
-        };
-
-        let final_status = deploy_data
-            .get("status")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let url = deploy_data
-            .get("url")
-            .and_then(|v| v.as_str())
-            .unwrap_or("(no URL)");
-
-        if final_status == "failed" {
-            output::error_with_data(
-                "Restart failed.",
-                &ErrorCode::RestartFailed,
-                Some("Run `floo logs` for details."),
-                Some(serde_json::json!({
-                    "app": output::to_value(&app_data),
-                    "deploy": deploy_data,
-                })),
-            );
-            process::exit(1);
+            deploy_restart(&client, &app_data, &services_filter);
         }
-
-        let env_display = deploy_data
-            .get("environment_name")
-            .and_then(|v| v.as_str())
-            .map(|e| format!("{e} \u{2192} "))
-            .unwrap_or_default();
-        output::success(
-            &format!("Restarted {env_display}{url}"),
-            Some(serde_json::json!({
-                "app": output::to_value(&app_data),
-                "deploy": deploy_data,
-            })),
-        );
         return;
     }
+
+    // --- Path 3: No --app flag — full preflight from local project directory ---
 
     // ===== Deploy preflight (no auth required) =====
 
@@ -713,6 +648,185 @@ pub fn deploy(
             "deploy": output::to_value(&deploy_data),
             "detection": detection.to_value(),
             "services": service_names,
+        })),
+    );
+}
+
+/// Redeploy existing images with fresh env vars (no build). Used when `--app` is
+/// provided without `--rebuild`.
+fn deploy_restart(
+    client: &FlooClient,
+    app_data: &crate::api_types::App,
+    services_filter: &[String],
+) {
+    let app_id = &app_data.id;
+
+    if output::is_dry_run_mode() {
+        let service_names: Vec<&str> = services_filter.iter().map(|s| s.as_str()).collect();
+        output::dry_run_success(serde_json::json!({
+            "action": "restart",
+            "app": app_data.name,
+            "services": service_names,
+        }));
+        return;
+    }
+
+    let svcs: Option<&[String]> = if services_filter.is_empty() {
+        None
+    } else {
+        Some(services_filter)
+    };
+
+    let spinner = output::Spinner::new("Restarting...");
+    let deploy_data = match client.restart_app(app_id, svcs) {
+        Ok(d) => {
+            spinner.finish();
+            d
+        }
+        Err(e) => {
+            spinner.finish();
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+
+    let final_status = deploy_data
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let url = deploy_data
+        .get("url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("(no URL)");
+
+    if final_status == "failed" {
+        output::error_with_data(
+            "Restart failed.",
+            &ErrorCode::RestartFailed,
+            Some("Run `floo logs` for details."),
+            Some(serde_json::json!({
+                "app": output::to_value(app_data),
+                "deploy": deploy_data,
+            })),
+        );
+        process::exit(1);
+    }
+
+    let env_display = deploy_data
+        .get("environment_name")
+        .and_then(|v| v.as_str())
+        .map(|e| format!("{e} \u{2192} "))
+        .unwrap_or_default();
+    output::success(
+        &format!("Restarted {env_display}{url}"),
+        Some(serde_json::json!({
+            "app": output::to_value(app_data),
+            "deploy": deploy_data,
+        })),
+    );
+}
+
+/// Force a full rebuild from the latest commit. Used when `--app --rebuild` is
+/// provided — no local project directory needed.
+fn deploy_rebuild(
+    client: &FlooClient,
+    app_data: &crate::api_types::App,
+    services_filter: &[String],
+) {
+    let app_id = &app_data.id;
+    let runtime = app_data.runtime.as_deref().unwrap_or("unknown");
+
+    if output::is_dry_run_mode() {
+        let service_names: Vec<&str> = services_filter.iter().map(|s| s.as_str()).collect();
+        output::dry_run_success(serde_json::json!({
+            "action": "rebuild",
+            "app": app_data.name,
+            "runtime": runtime,
+            "services": service_names,
+        }));
+        return;
+    }
+
+    let svcs: Option<&[String]> = if services_filter.is_empty() {
+        None
+    } else {
+        Some(services_filter)
+    };
+
+    let spinner = output::Spinner::new("Rebuilding...");
+    let mut deploy_data = match client.rebuild_app(app_id, runtime, svcs) {
+        Ok(d) => {
+            spinner.finish();
+            d
+        }
+        Err(e) => {
+            spinner.finish();
+            let suggestion = match e.code.as_str() {
+                "PLAN_FEATURE_PASSWORD" | "PLAN_FEATURE_ACCOUNTS" | "PLAN_FEATURE_SSO" => {
+                    Some("Upgrade your plan at https://app.getfloo.com/settings/billing")
+                }
+                _ => None,
+            };
+            output::error(&e.message, &ErrorCode::from_api(&e.code), suggestion);
+            process::exit(1);
+        }
+    };
+
+    // Wait for deploy to complete via SSE streaming or polling
+    let initial_status = deploy_data.status.as_deref().unwrap_or("");
+
+    if TERMINAL_STATUSES.contains(&initial_status) {
+        // Already complete
+    } else if !output::is_json_mode() {
+        let deploy_id = deploy_data.id.clone();
+        match stream_deploy(client, app_id, &deploy_id) {
+            Ok(final_data) => deploy_data = final_data,
+            Err(e) => {
+                eprintln!(
+                    "Stream unavailable ({}), falling back to polling...",
+                    e.code
+                );
+                deploy_data = poll_deploy(client, app_id, &deploy_data);
+            }
+        }
+    } else {
+        let deploy_id = deploy_data.id.clone();
+        match stream_deploy_json(client, app_id, &deploy_id) {
+            Ok(final_data) => deploy_data = final_data,
+            Err(_) => deploy_data = poll_deploy(client, app_id, &deploy_data),
+        }
+    }
+
+    let final_status = deploy_data.status.as_deref().unwrap_or("");
+
+    if final_status == "failed" {
+        let build_logs = deploy_data.build_logs.as_deref().unwrap_or("");
+        if !output::is_json_mode() && !build_logs.is_empty() && build_logs != "[no message content]"
+        {
+            output::bold_line("Build Logs");
+            for line in build_logs.lines() {
+                output::dim_line(line);
+            }
+        }
+        output::error_with_data(
+            "Rebuild failed.",
+            &ErrorCode::DeployFailed,
+            Some("Check build output above, or run `floo logs` for details."),
+            Some(serde_json::json!({
+                "app": output::to_value(app_data),
+                "deploy": output::to_value(&deploy_data),
+                "build_logs": build_logs,
+            })),
+        );
+        process::exit(1);
+    }
+
+    let url = deploy_data.url.as_deref().unwrap_or("");
+    output::success(
+        &format!("Rebuilt and deployed {url}"),
+        Some(serde_json::json!({
+            "app": output::to_value(app_data),
+            "deploy": output::to_value(&deploy_data),
         })),
     );
 }

@@ -16,7 +16,6 @@ pub fn connect(
     super::require_auth();
     let client = super::init_client(None);
 
-    // Resolve app name from config files or --app flag
     let cwd = std::env::current_dir().unwrap_or_else(|e| {
         output::error(
             &format!("Failed to read current directory: {e}"),
@@ -25,43 +24,78 @@ pub fn connect(
         );
         process::exit(1);
     });
-    let resolved_ctx = match project_config::resolve_app_context(&cwd, app) {
-        Ok(r) => r,
-        Err(e) => {
-            output::error(&e.message, &e.code, e.suggestion.as_deref());
-            process::exit(1);
-        }
-    };
-    let app_name = resolved_ctx.app_name.clone();
 
-    // Resolve existing app or auto-create if it doesn't exist yet
-    let app_data = match crate::resolve::resolve_app(&client, &app_name) {
-        Ok(a) => a,
-        Err(e) if e.code == "APP_NOT_FOUND" => {
-            let detection = detect(&cwd);
-            let spinner = output::Spinner::new(&format!("Creating app {app_name}..."));
-            match client.create_app(&app_name, Some(&detection.runtime)) {
-                Ok(a) => {
-                    spinner.finish();
-                    a
-                }
-                Err(e) => {
-                    spinner.finish();
-                    output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-                    process::exit(1);
+    // Resolve app — skip config file reads when --app is provided
+    let (app_data, resolved) = if let Some(app_flag) = app {
+        // --app provided: look up directly, no local config needed
+        let app_data = match crate::resolve::resolve_app(&client, app_flag) {
+            Ok(a) => a,
+            Err(e) if e.code == "APP_NOT_FOUND" => {
+                // Create new app — try local detection for runtime, fall back to "unknown"
+                let runtime = detect(&cwd).runtime;
+                let spinner = output::Spinner::new(&format!("Creating app {app_flag}..."));
+                match client.create_app(app_flag, Some(&runtime)) {
+                    Ok(a) => {
+                        spinner.finish();
+                        a
+                    }
+                    Err(e) => {
+                        spinner.finish();
+                        output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                        process::exit(1);
+                    }
                 }
             }
-        }
-        Err(e) => {
-            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-            process::exit(1);
-        }
+            Err(e) => {
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                process::exit(1);
+            }
+        };
+        // Try to load local config for env var import (optional — not required)
+        let resolved =
+            project_config::resolve_app_context(&cwd, Some(&app_data.name)).ok();
+        (app_data, resolved)
+    } else {
+        // No --app: must resolve from local config
+        let resolved_ctx = match project_config::resolve_app_context(&cwd, None) {
+            Ok(r) => r,
+            Err(e) => {
+                output::error(&e.message, &e.code, e.suggestion.as_deref());
+                process::exit(1);
+            }
+        };
+        let app_name = resolved_ctx.app_name.clone();
+
+        let app_data = match crate::resolve::resolve_app(&client, &app_name) {
+            Ok(a) => a,
+            Err(e) if e.code == "APP_NOT_FOUND" => {
+                let detection = detect(&cwd);
+                let spinner = output::Spinner::new(&format!("Creating app {app_name}..."));
+                match client.create_app(&app_name, Some(&detection.runtime)) {
+                    Ok(a) => {
+                        spinner.finish();
+                        a
+                    }
+                    Err(e) => {
+                        spinner.finish();
+                        output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                        process::exit(1);
+                    }
+                }
+            }
+            Err(e) => {
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                process::exit(1);
+            }
+        };
+
+        let resolved =
+            project_config::resolve_app_context(&cwd, Some(&app_data.name)).ok();
+        (app_data, resolved)
     };
+
     let app_id = app_data.id.clone();
     let name = app_data.name.clone();
-
-    // Re-resolve config for env var import. Missing config is fine.
-    let resolved = project_config::resolve_app_context(&cwd, Some(&name)).ok();
 
     // Phase 1: Import env vars from local env_file before connecting
     if let Some(ref r) = resolved {

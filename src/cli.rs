@@ -81,19 +81,18 @@ Examples:
         services: Vec<String>,
     },
 
-    /// Force a redeploy (after env var changes, config updates, or to restart).
+    /// Force a redeploy (after env var changes, config updates, or to rebuild).
     #[command(after_help = "\
 Examples:
-  floo redeploy                            Redeploy current directory
-  floo redeploy --app my-app               Redeploy a specific app
-  floo redeploy --restart                  Restart containers without rebuilding
-  floo redeploy --sync-env                 Re-sync env vars before redeploying
+  floo redeploy --app my-app               Redeploy with fresh env vars (no rebuild)
+  floo redeploy --app my-app --rebuild     Force a full rebuild from latest commit
+  floo redeploy                            Redeploy from current project directory
   floo redeploy --services api             Redeploy specific services only
 
-Note: The primary way to deploy is `git push`. Use `floo redeploy` only
-when you need to trigger a build without a code change.")]
+Note: The primary way to deploy is `git push`. Use `floo redeploy` when you
+need to apply env var changes or force a rebuild without a code change.")]
     Redeploy {
-        /// Project directory.
+        /// Project directory (only needed when --app is not provided).
         #[arg(default_value = ".")]
         path: PathBuf,
 
@@ -105,9 +104,9 @@ when you need to trigger a build without a code change.")]
         #[arg(short, long = "services")]
         services: Vec<String>,
 
-        /// Restart the app without rebuilding (redeploy existing images with fresh env vars).
+        /// Force a full rebuild from the latest commit (re-download source and run Cloud Build).
         #[arg(long)]
-        restart: bool,
+        rebuild: bool,
 
         /// Re-sync env vars from configured env_file before deploying.
         #[arg(long)]
@@ -900,9 +899,9 @@ pub fn run() {
             path,
             app,
             services,
-            restart,
+            rebuild,
             sync_env,
-        } => commands::deploy::deploy(path, app, services, restart, sync_env),
+        } => commands::deploy::deploy(path, app, services, rebuild, sync_env),
 
         Commands::Deploys(sub) => match sub {
             DeploysSubcommands::List { app } => commands::deploys::list(app.as_deref()),

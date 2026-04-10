@@ -31,8 +31,8 @@ fn command_tree() -> Vec<CommandInfo> {
         },
         CommandInfo {
             name: "redeploy",
-            description: "Force a redeploy (after env var changes, config updates, or to restart). The primary deploy path is git push.",
-            usage: "floo redeploy [PATH] [--app <name>] [--restart] [--sync-env] [--services <name>]",
+            description: "Force a redeploy (after env var changes, config updates, or to rebuild). The primary deploy path is git push.",
+            usage: "floo redeploy [PATH] [--app <name>] [--rebuild] [--sync-env] [--services <name>]",
             requires_auth: true,
             subcommands: vec![],
         },

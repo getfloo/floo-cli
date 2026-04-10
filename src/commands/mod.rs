@@ -80,6 +80,12 @@ pub(crate) fn resolve_app_from_config(
     client: &FlooClient,
     app_flag: Option<&str>,
 ) -> (String, String) {
+    // Short-circuit: --app flag means we don't need local config
+    if let Some(app_name) = app_flag {
+        let app = resolve_app_or_exit(client, app_name);
+        return (app.id.clone(), app.name.clone());
+    }
+
     let cwd = std::env::current_dir().unwrap_or_else(|e| {
         output::error(
             &format!("Failed to read current directory: {e}"),
@@ -88,7 +94,7 @@ pub(crate) fn resolve_app_from_config(
         );
         process::exit(1);
     });
-    let resolved = match crate::project_config::resolve_app_context(&cwd, app_flag) {
+    let resolved = match crate::project_config::resolve_app_context(&cwd, None) {
         Ok(r) => r,
         Err(e) => {
             output::error(&e.message, &e.code, e.suggestion.as_deref());
