@@ -15,7 +15,7 @@ pub fn list(page: u32, per_page: u32) {
     };
 
     let total = result.total.unwrap_or_else(|| {
-        eprintln!("Warning: API response missing 'total' field; pagination may be inaccurate.");
+        output::warn("API response missing 'total' field; pagination may be inaccurate.");
         result.apps.len() as u64
     }) as u32;
 

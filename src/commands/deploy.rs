@@ -196,7 +196,7 @@ pub fn deploy(
             output::error(
                 "Not logged in.",
                 &ErrorCode::NotAuthenticated,
-                Some("Run 'floo login' to authenticate."),
+                Some("Run 'floo auth login' to authenticate."),
             );
             process::exit(1);
         }
@@ -451,7 +451,7 @@ pub fn deploy(
         output::error(
             "Not logged in.",
             &ErrorCode::NotAuthenticated,
-            Some("Run 'floo login' to authenticate."),
+            Some("Run 'floo auth login' to authenticate."),
         );
         process::exit(1);
     }

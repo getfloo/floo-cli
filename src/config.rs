@@ -100,7 +100,7 @@ pub fn load_config() -> FlooConfig {
                         path.display()
                     );
                     eprintln!(
-                        "  Your API key may have been lost. Run 'floo login' to re-authenticate."
+                        "  Your API key may have been lost. Run 'floo auth login' to re-authenticate."
                     );
                     FlooConfig::default()
                 }

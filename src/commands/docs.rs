@@ -21,7 +21,7 @@ never uploads code.
   4. `floo apps status <name>` — see your app's URL and status
 
   After the first deploy, push to GitHub to deploy: `git push origin main`.
-  Watch progress with `floo deploy watch --app <name>`.
+  Watch progress with `floo deploys watch --app <name>`.
   Use `floo redeploy` only to force a redeploy (e.g., after updating env vars).
   Use `floo preflight` to validate config before pushing.
 
@@ -97,7 +97,7 @@ Floo Quickstart — End-to-End Walkthrough
   Push to GitHub — the webhook triggers a deploy automatically:
 
   git push origin main
-  floo deploy watch --app my-app
+  floo deploys watch --app my-app
 
   Use `floo redeploy --app my-app` only when you need to redeploy without
   a code change (e.g., after updating env vars).
@@ -328,7 +328,7 @@ Floo Deploy Flow
 ## Deploy Flow
 
   1. Push to GitHub:     git push origin main
-  2. Watch the deploy:   floo deploy watch --app <name>
+  2. Watch the deploy:   floo deploys watch --app <name>
   3. Done when you see:  ✓ Deployed to https://...
 
   The push triggers a deploy automatically via GitHub webhook.
@@ -371,10 +371,10 @@ Floo Deploy Flow
 
 ## Deploy History
 
-  floo deploy list --app <name>    — list past deploys
-  floo deploy logs <id> --app <n>  — build logs for a specific deploy
-  floo deploy watch --app <name>   — stream deploy progress in real-time
-  floo deploy rollback <app> <id>  — rollback to a previous deploy
+  floo deploys list --app <name>    — list past deploys
+  floo deploys logs <id> --app <n>  — build logs for a specific deploy
+  floo deploys watch --app <name>   — stream deploy progress in real-time
+  floo deploys rollback <app> <id>  — rollback to a previous deploy
 ";
 
 const AUTH: &str = "\
@@ -573,7 +573,7 @@ Floo — Golden Path
 
   git add . && git commit -m \"feat: my change\"
   git push origin main
-  floo deploy watch --app my-app
+  floo deploys watch --app my-app
 
 ## How to Redeploy Without a Code Change
 
@@ -622,13 +622,13 @@ Floo — Golden Path
 
 ## How to Roll Back
 
-  floo deploy list --app my-app             # find the deploy ID
-  floo deploy rollback my-app <deploy-id>
+  floo deploys list --app my-app             # find the deploy ID
+  floo deploys rollback my-app <deploy-id>
 
 ## How to Debug
 
   floo logs --app my-app --since 1h --error
-  floo deploy logs <deploy-id> --app my-app
+  floo deploys logs <deploy-id> --app my-app
 
 ## Decision Table: What Command Do I Run?
 
@@ -640,9 +640,9 @@ Floo — Golden Path
   Validate my config                    | floo preflight (local only, no auth)
   Redeploy after env var change         | floo redeploy --app my-app
   Restart without rebuilding            | floo redeploy --restart --app my-app
-  Watch a deploy in progress            | floo deploy watch --app my-app
-  See deploy history                    | floo deploy list --app my-app
-  Roll back to a previous version       | floo deploy rollback my-app <id>
+  Watch a deploy in progress            | floo deploys watch --app my-app
+  See deploy history                    | floo deploys list --app my-app
+  Roll back to a previous version       | floo deploys rollback my-app <id>
   Set an env var                        | floo env set KEY=val --app my-app
   Add a custom domain                   | floo domains add example.com --app my-app (then add CNAME at DNS provider)
   Verify a custom domain                | floo domains verify example.com --app my-app

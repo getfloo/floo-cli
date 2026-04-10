@@ -145,7 +145,7 @@ pub fn connect(
             process::exit(1);
         }
     };
-    let connected_branch = result.default_branch.as_deref().unwrap_or("main");
+    let connected_branch = result.default_branch.as_deref().unwrap_or("(unknown)");
 
     // Phase 4: Deploy and wait (unless --no-deploy)
     if no_deploy {
@@ -247,7 +247,7 @@ pub fn status(app: Option<&str>) {
                             .first()
                             .and_then(|s| s.default_branch.as_deref())
                     })
-                    .unwrap_or("main");
+                    .unwrap_or("(unknown)");
                 output::info(&format!("{name} GitHub connection"), None);
                 output::info(&format!("  Repo:      {repo}"), None);
                 output::info(&format!("  Branch:    {branch}"), None);
@@ -481,10 +481,16 @@ fn run_initial_deploy(
         DeployOutcome::Failed {
             deploy: output::to_value(&deploy_data),
         }
-    } else {
+    } else if final_status == "live" {
         let url = deploy_data.url.as_deref().unwrap_or("").to_string();
         DeployOutcome::Live {
             url,
+            deploy: output::to_value(&deploy_data),
+        }
+    } else {
+        // Ambiguous status (timeout, cancelled, unknown) — report as failed
+        output::warn(&format!("Deploy ended with unexpected status: {}", final_status));
+        DeployOutcome::Failed {
             deploy: output::to_value(&deploy_data),
         }
     }
