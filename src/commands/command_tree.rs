@@ -563,7 +563,7 @@ mod tests {
             "commands",
             "cron",
             "db",
-            "deploy",
+            "deploys",
             "dev",
             "docs",
             "domains",

@@ -656,7 +656,7 @@ fn test_deploy_list_json() {
         .create();
 
     floo()
-        .args(["--json", "deploy", "list", "--app", TEST_APP_NAME])
+        .args(["--json", "deploys", "list", "--app", TEST_APP_NAME])
         .env("HOME", home.path())
         .assert()
         .success()
@@ -685,7 +685,7 @@ fn test_deploy_rollback_json() {
 
     // --json auto-confirms via output::confirm()
     floo()
-        .args(["--json", "deploy", "rollback", TEST_APP_NAME, "deploy-456"])
+        .args(["--json", "deploys", "rollback", TEST_APP_NAME, "deploy-456"])
         .env("HOME", home.path())
         .assert()
         .success()
@@ -1158,7 +1158,7 @@ fn test_deploy_list_from_config() {
         .create();
 
     floo()
-        .args(["--json", "deploy", "list"])
+        .args(["--json", "deploys", "list"])
         .current_dir(project.path())
         .env("HOME", home.path())
         .assert()
