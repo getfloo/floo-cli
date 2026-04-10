@@ -1094,6 +1094,33 @@ fn test_dry_run_rollback() {
 }
 
 #[test]
+fn test_dry_run_redeploy_restart() {
+    floo()
+        .args(["--json", "--dry-run", "redeploy", "--app", "test-app"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""action":"restart"#));
+}
+
+#[test]
+fn test_dry_run_redeploy_rebuild() {
+    floo()
+        .args([
+            "--json",
+            "--dry-run",
+            "redeploy",
+            "--app",
+            "test-app",
+            "--rebuild",
+        ])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""action":"rebuild"#));
+}
+
+#[test]
 fn test_dry_run_unsupported_init() {
     floo()
         .args(["--json", "--dry-run", "init", "my-app"])

@@ -851,6 +851,22 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn rebuild_app(
+        &self,
+        app_id: &str,
+        runtime: &str,
+        services: Option<&[String]>,
+    ) -> Result<Deploy, FlooApiError> {
+        let mut body = serde_json::json!({
+            "runtime": runtime,
+        });
+        if let Some(svcs) = services {
+            body["services_filter"] = serde_json::to_value(svcs).unwrap_or_default();
+        }
+        let resp = self.post_json(&format!("/v1/apps/{app_id}/deploys"), &body)?;
+        self.handle_response(resp)
+    }
+
     pub fn list_releases(
         &self,
         app_id: &str,

@@ -220,42 +220,64 @@ pub fn logs(args: LogsArgs) {
     super::require_auth();
     let client = super::init_client(None);
 
-    let cwd = std::env::current_dir().unwrap_or_else(|e| {
-        output::error(
-            &format!("Failed to read current directory: {e}"),
-            &ErrorCode::FileError,
-            None,
-        );
-        process::exit(1);
-    });
-
-    let resolved = match project_config::resolve_app_context(&cwd, args.app_flag.as_deref()) {
-        Ok(r) => r,
-        Err(e) => {
-            output::error(&e.message, &e.code, e.suggestion.as_deref());
-            process::exit(1);
-        }
-    };
-
-    let app_name = &resolved.app_name;
-    let src_label = source_label(&resolved.source, &resolved.config_dir);
-
-    let app_data = match resolve_app(&client, app_name) {
-        Ok(a) => a,
-        Err(e) => {
-            if e.code == "APP_NOT_FOUND" {
-                output::error(
-                    &format!("App '{app_name}' not found."),
-                    &ErrorCode::AppNotFound,
-                    Some("Check the app name or ID and try again."),
-                );
-            } else {
-                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+    let (app_data, src_label) = if let Some(ref app_flag) = args.app_flag {
+        // --app provided: skip disk reads entirely
+        let app = match resolve_app(&client, app_flag) {
+            Ok(a) => a,
+            Err(e) => {
+                if e.code == "APP_NOT_FOUND" {
+                    output::error(
+                        &format!("App '{app_flag}' not found."),
+                        &ErrorCode::AppNotFound,
+                        Some("Check the app name or ID and try again."),
+                    );
+                } else {
+                    output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                }
+                process::exit(1);
             }
+        };
+        let label = format!("(--app {})", app.name);
+        (app, label)
+    } else {
+        // No --app: resolve from local config files
+        let cwd = std::env::current_dir().unwrap_or_else(|e| {
+            output::error(
+                &format!("Failed to read current directory: {e}"),
+                &ErrorCode::FileError,
+                None,
+            );
             process::exit(1);
-        }
+        });
+
+        let resolved = match project_config::resolve_app_context(&cwd, None) {
+            Ok(r) => r,
+            Err(e) => {
+                output::error(&e.message, &e.code, e.suggestion.as_deref());
+                process::exit(1);
+            }
+        };
+
+        let label = source_label(&resolved.source, &resolved.config_dir);
+        let app = match resolve_app(&client, &resolved.app_name) {
+            Ok(a) => a,
+            Err(e) => {
+                if e.code == "APP_NOT_FOUND" {
+                    output::error(
+                        &format!("App '{}' not found.", resolved.app_name),
+                        &ErrorCode::AppNotFound,
+                        Some("Check the app name or ID and try again."),
+                    );
+                } else {
+                    output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                }
+                process::exit(1);
+            }
+        };
+        (app, label)
     };
 
+    let app_name = &app_data.name;
     let app_id = &app_data.id;
     let show_service_prefix = args.services.len() != 1;
 

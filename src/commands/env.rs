@@ -430,15 +430,19 @@ pub fn import_vars(file_flag: Option<&Path>, app_flag: Option<&str>, service_nam
         process::exit(1);
     });
 
-    // Resolve config once — used for both env_file default and app resolution.
-    // NO_CONFIG_FOUND is acceptable when determining env_file path (fall back to .env),
-    // but all other errors (LEGACY_CONFIG, INVALID_PROJECT_CONFIG) must surface.
+    // Resolve config — used for env_file default path. Missing config is OK.
+    // When --app is provided, config errors in the current dir are irrelevant
+    // (agent may be in an unrelated directory).
     let resolved = match project_config::resolve_app_context(&cwd, app_flag) {
         Ok(r) => Some(r),
         Err(e) if e.code == ErrorCode::NoConfigFound => None,
         Err(e) => {
-            output::error(&e.message, &e.code, e.suggestion.as_deref());
-            process::exit(1);
+            if app_flag.is_some() {
+                None
+            } else {
+                output::error(&e.message, &e.code, e.suggestion.as_deref());
+                process::exit(1);
+            }
         }
     };
 

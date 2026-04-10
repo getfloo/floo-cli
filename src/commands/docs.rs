@@ -363,10 +363,10 @@ Floo Deploy Flow
 
 ## Redeploy Options
 
-  floo redeploy [path]             — force redeploy from directory (default: current)
-  floo redeploy --app <name>       — redeploy a specific app
+  floo redeploy --app <name>       — redeploy with fresh env vars (no rebuild)
+  floo redeploy --app <name> --rebuild  — force a full rebuild from latest commit
+  floo redeploy [path]             — full redeploy from local project directory
   floo redeploy --services <name>  — redeploy specific services only
-  floo redeploy --restart          — restart without rebuilding
   floo redeploy --sync-env         — re-sync env vars from env_file before redeploying
 
 ## Deploy History
@@ -580,7 +580,7 @@ Floo — Golden Path
   floo redeploy --app my-app
 
   Use this after updating env vars or changing config.
-  To restart without rebuilding: floo redeploy --restart --app my-app
+  To force a full rebuild: floo redeploy --app my-app --rebuild
 
 ## How to Add Env Vars
 
@@ -639,7 +639,7 @@ Floo — Golden Path
   Ship a code change                    | git push origin main
   Validate my config                    | floo preflight (local only, no auth)
   Redeploy after env var change         | floo redeploy --app my-app
-  Restart without rebuilding            | floo redeploy --restart --app my-app
+  Force rebuild without code change      | floo redeploy --app my-app --rebuild
   Watch a deploy in progress            | floo deploys watch --app my-app
   See deploy history                    | floo deploys list --app my-app
   Roll back to a previous version       | floo deploys rollback my-app <id>
