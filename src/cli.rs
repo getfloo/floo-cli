@@ -598,40 +598,6 @@ pub enum ServicesCommands {
         app: Option<String>,
     },
 
-    /// Add a service to the project config.
-    Add {
-        /// Service name (DNS-safe: lowercase, digits, hyphens).
-        name: String,
-
-        /// Relative path to the service directory.
-        path: String,
-
-        /// Port the service listens on.
-        #[arg(long)]
-        port: Option<u16>,
-
-        /// Service type: web, api, or worker.
-        #[arg(long = "type")]
-        service_type: Option<String>,
-
-        /// Ingress mode: public or internal.
-        #[arg(long)]
-        ingress: Option<String>,
-
-        /// Path to .env file relative to service directory.
-        #[arg(long)]
-        env_file: Option<String>,
-    },
-
-    /// Remove a service from the project config.
-    Rm {
-        /// Service name to remove.
-        name: String,
-
-        /// Also delete the service's floo.service.toml file.
-        #[arg(long)]
-        delete_config: bool,
-    },
 }
 
 #[derive(Subcommand)]
@@ -875,7 +841,6 @@ fn reject_unsupported_dry_run(command: &Commands) {
                 GitHubCommands::Connect { .. } | GitHubCommands::Disconnect { .. },
             ))
             | Commands::Releases(ReleasesCommands::Promote { .. })
-            | Commands::Services(ServicesCommands::Add { .. } | ServicesCommands::Rm { .. })
             | Commands::Orgs(
                 OrgsCommands::Members(MembersCommands::SetRole { .. })
                     | OrgsCommands::Switch { .. },
@@ -1055,25 +1020,6 @@ pub fn run() {
             ServicesCommands::Info { service_name, app } => {
                 commands::services::info(&service_name, app.as_deref())
             }
-            ServicesCommands::Add {
-                name,
-                path,
-                port,
-                service_type,
-                ingress,
-                env_file,
-            } => commands::service_mgmt::add(
-                &name,
-                &path,
-                port,
-                service_type.as_deref(),
-                ingress.as_deref(),
-                env_file.as_deref(),
-            ),
-            ServicesCommands::Rm {
-                name,
-                delete_config,
-            } => commands::service_mgmt::rm(&name, delete_config),
         },
 
 

@@ -14,7 +14,7 @@ Floo provisions and manages Postgres, Redis, and Storage as platform services. A
 
 Managed services are declared in `floo.app.toml` and auto-provisioned on the first deploy.
 
-**There is no CLI command to imperatively provision a managed service.** `floo services add <name> <path>` adds a *user-managed* service (web/api/worker) to config — it does NOT provision databases.
+**There is no CLI command to imperatively provision a managed service.** Declare them in `floo.app.toml` and they are auto-provisioned on deploy.
 
 ## Managed Service Tiers
 
@@ -189,6 +189,49 @@ curl "<signed_url>" -o photo.jpg
 - NEVER store GCP service account keys in your application
 - NEVER access the bucket directly via GCS client libraries — use signed URLs
 - NEVER make the bucket public — signed URLs handle access control
+
+## Cron Jobs (Managed)
+
+**Declare in `floo.app.toml`:**
+
+```toml
+[cron.daily-report]
+schedule = "0 9 * * *"        # cron expression (9am UTC daily)
+command = "python scripts/report.py"
+service = "worker"            # which service's image to run in
+timeout = 600                 # max execution seconds (default 300)
+
+[cron.cleanup]
+schedule = "*/5 * * * *"      # every 5 minutes
+command = "node cleanup.js"
+service = "api"
+```
+
+Then deploy — Floo syncs cron jobs on every deploy (creates new ones, updates changed ones, deletes removed ones).
+
+**What happens:**
+- Floo creates a CronJob record for each `[cron.<name>]` section
+- The job runs inside the specified service's container image
+- Jobs are scoped to the app and environment (dev/prod have separate cron jobs)
+
+**Fields:**
+- `schedule` — standard cron expression (required)
+- `command` — shell command to execute (required)
+- `service` — which service's image to run the command in (required)
+- `timeout` — max execution time in seconds, default 300 (optional)
+
+**CLI commands (read-only):**
+
+```bash
+floo cron list --app my-app              # list all cron jobs and last run status
+floo cron run daily-report --app my-app  # manually trigger a cron job
+```
+
+**Rules:**
+- Cron jobs are defined in config only — no CLI command to create them
+- The `service` field must match a service name defined in the same `floo.app.toml`
+- Use `floo cron list` to verify jobs were synced after deploy
+- Use `floo cron run` to test a job without waiting for its schedule
 
 ## Multi-Service Discovery
 

@@ -114,10 +114,8 @@ Floo Quickstart — End-to-End Walkthrough
   floo init           — local config files only (no API call)
   floo redeploy       — force a redeploy (auto-creates app if needed)
   floo apps github connect — creates app if needed, connects GitHub, triggers first deploy
-  floo services add   — adds an app service to config (NOT platform services like postgres)
-
-  Managed services (postgres, redis, storage) are declared in floo.app.toml
-  and provisioned automatically on deploy.
+  Managed services (postgres, redis, storage, cron) are declared in floo.app.toml
+  and provisioned automatically on deploy. Edit the config file directly.
 ";
 
 const SERVICES: &str = "\
@@ -150,6 +148,9 @@ An app contains one or more services. Each service is independently deployable.
              Bucket name injected as STORAGE_BUCKET + STORAGE_URL env vars.
              Use STORAGE_URL for signed URL requests (upload/download).
 
+  cron     — scheduled tasks that run inside a service's container
+             Declare as [cron.<name>] sections with schedule, command, service.
+
   Example floo.app.toml:
 
   [postgres]
@@ -158,6 +159,12 @@ An app contains one or more services. Each service is independently deployable.
   [redis]
 
   [storage]
+
+  [cron.daily-report]
+  schedule = \"0 9 * * *\"
+  command = \"python scripts/report.py\"
+  service = \"web\"
+  timeout = 600
 
 ## Managed Service Tiers
 
@@ -191,12 +198,9 @@ origin, so cookies and auth work without CORS setup.
 
   floo services list --app <name>            — list all services
   floo services info <service> --app <name>  — service details (connection info for managed)
-  floo services add <name> <path>            — add an app service to project config
-  floo services rm <name>                    — remove a service from config
 
-  Note: `floo services add` adds app services (web/api/worker) to
-  config. Managed databases are declared in floo.app.toml and provisioned
-  automatically on deploy.
+  All services are declared in config files and provisioned on deploy.
+  Edit floo.app.toml directly to add or remove services.
 ";
 
 const CONFIG: &str = "\

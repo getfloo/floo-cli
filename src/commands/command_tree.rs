@@ -208,20 +208,6 @@ fn command_tree() -> Vec<CommandInfo> {
                     requires_auth: true,
                     subcommands: vec![],
                 },
-                CommandInfo {
-                    name: "add",
-                    description: "Add a service to the project config",
-                    usage: "floo services add <name> <path>",
-                    requires_auth: false,
-                    subcommands: vec![],
-                },
-                CommandInfo {
-                    name: "rm",
-                    description: "Remove a service from the project config",
-                    usage: "floo services rm <name>",
-                    requires_auth: false,
-                    subcommands: vec![],
-                },
             ],
         },
         CommandInfo {

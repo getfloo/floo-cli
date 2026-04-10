@@ -39,7 +39,7 @@ pub fn init(name: Option<String>, path: PathBuf) {
         output::error(
             &format!("{} already exists.", project_config::APP_CONFIG_FILE),
             &ErrorCode::ConfigExists,
-            Some("Use `floo service add` to add services to the existing config."),
+            Some("Edit floo.app.toml directly to add services."),
         );
         process::exit(1);
     }

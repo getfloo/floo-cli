@@ -114,7 +114,7 @@ pub fn logs(deploy_id: Option<&str>, app: Option<&str>, follow: bool) {
                     output::error(
                         "No deploys found for this app.",
                         &ErrorCode::DeployNotFound,
-                        Some("Deploy the app first: floo deploy"),
+                        Some("Connect a repo first: floo apps github connect <owner/repo>"),
                     );
                     process::exit(1);
                 }
@@ -322,7 +322,7 @@ pub fn watch(app: Option<&str>, commit: Option<&str>) {
             output::error(
                 "No deploy found.",
                 &ErrorCode::DeployNotFound,
-                Some("Deploy to the app first: floo deploy"),
+                Some("Connect a repo first: floo apps github connect <owner/repo>"),
             );
             process::exit(1);
         }

@@ -91,7 +91,7 @@ pub fn resolve_app_context(cwd: &Path, app_flag: Option<&str>) -> Result<Resolve
         ErrorCode::NoConfigFound,
         format!("No {} or {} found.", SERVICE_CONFIG_FILE, APP_CONFIG_FILE),
         format!(
-            "Run 'floo deploy' interactively to create config files, or write {} manually.",
+            "Run 'floo init' to create config files, or write {} manually.",
             SERVICE_CONFIG_FILE
         ),
     ))

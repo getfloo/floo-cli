@@ -20,7 +20,7 @@ pub fn promote(app: Option<&str>, tag: Option<&str>) {
                 "GITHUB_NOT_CONNECTED" => Some(
                     "Connect a GitHub repo first: floo apps github connect org/repo --app <name>",
                 ),
-                "NO_DEV_DEPLOY" => Some("Deploy to dev first: floo deploy --app <name>"),
+                "NO_DEV_DEPLOY" => Some("Deploy to dev first: push to GitHub or run floo redeploy --app <name>"),
                 "RELEASE_TAG_EXISTS" => Some("Use a different tag with --tag <tag>"),
                 _ => None,
             };

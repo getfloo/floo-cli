@@ -27,7 +27,7 @@ pub mod orgs;
 pub mod releases;
 pub mod reparo;
 pub mod rollbacks;
-pub mod service_mgmt;
+
 pub mod services;
 pub mod skills;
 pub mod update;
