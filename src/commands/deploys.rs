@@ -48,10 +48,12 @@ pub fn list(app: Option<&str>) {
                 .unwrap_or("\u{2014}");
             let short_id = truncate_id(&d.id);
             let status = d.status.as_deref().unwrap_or("-");
+            let env = d.environment_name.as_deref().unwrap_or("\u{2014}");
             let created = d.created_at.as_deref().unwrap_or("-");
             vec![
                 short_id,
                 colored_status(status),
+                env.to_string(),
                 d.triggered_by.as_deref().unwrap_or("\u{2014}").to_string(),
                 commit.to_string(),
                 relative_time(created),
@@ -60,7 +62,7 @@ pub fn list(app: Option<&str>) {
         .collect();
 
     output::table(
-        &["Deploy ID", "Status", "Triggered By", "Commit", "Created"],
+        &["Deploy ID", "Status", "Env", "Triggered By", "Commit", "Created"],
         &rows,
         Some(output::to_value(&result)),
     );
@@ -76,6 +78,7 @@ fn is_real_log(logs: &str) -> bool {
 fn print_deploy_header(deploy: &Deploy) {
     let id = &deploy.id;
     let status = deploy.status.as_deref().unwrap_or("unknown");
+    let env = deploy.environment_name.as_deref().unwrap_or("\u{2014}");
     let commit = deploy
         .commit_sha
         .as_deref()
@@ -86,6 +89,7 @@ fn print_deploy_header(deploy: &Deploy) {
 
     output::bold_line(&format!("Deploy {id}"));
     output::dim_line(&format!("  Status:  {}", colored_status(status)));
+    output::dim_line(&format!("  Env:     {env}"));
     output::dim_line(&format!("  Commit:  {commit}"));
     output::dim_line(&format!("  By:      {triggered_by}"));
     output::dim_line(&format!("  Created: {created}"));
@@ -114,7 +118,7 @@ pub fn logs(deploy_id: Option<&str>, app: Option<&str>, follow: bool) {
                     output::error(
                         "No deploys found for this app.",
                         &ErrorCode::DeployNotFound,
-                        Some("Deploy the app first: floo deploy"),
+                        Some("Connect a repo first: floo apps github connect <owner/repo>"),
                     );
                     process::exit(1);
                 }
@@ -322,7 +326,7 @@ pub fn watch(app: Option<&str>, commit: Option<&str>) {
             output::error(
                 "No deploy found.",
                 &ErrorCode::DeployNotFound,
-                Some("Deploy to the app first: floo deploy"),
+                Some("Connect a repo first: floo apps github connect <owner/repo>"),
             );
             process::exit(1);
         }
@@ -442,6 +446,7 @@ fn find_deploy_by_commit(client: &FlooClient, app_id: &str, sha_prefix: &str) ->
 fn emit_deploy_found(deploy: &Deploy, app_name: &str) {
     let deploy_id = &deploy.id;
     let status = deploy.status.as_deref().unwrap_or("unknown");
+    let env = deploy.environment_name.as_deref().unwrap_or("unknown");
     let commit = deploy
         .commit_sha
         .as_deref()
@@ -454,11 +459,12 @@ fn emit_deploy_found(deploy: &Deploy, app_name: &str) {
             "deploy_id": deploy_id,
             "app": app_name,
             "status": status,
+            "environment": env,
             "commit": commit,
         }));
     } else {
         output::info(
-            &format!("Watching deploy {deploy_id} ({commit}) \u{2014} {status}"),
+            &format!("Watching deploy {deploy_id} ({commit}) \u{2014} {status} ({env})"),
             None,
         );
     }

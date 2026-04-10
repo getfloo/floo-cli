@@ -131,6 +131,8 @@ pub struct Deploy {
     pub generated_password: Option<String>,
     pub triggered_by: Option<String>,
     pub commit_sha: Option<String>,
+    #[serde(default)]
+    pub environment_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

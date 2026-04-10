@@ -116,17 +116,18 @@ when you need to trigger a build without a code change.")]
 
     /// View and manage deploy history.
     #[command(
+        name = "deploys",
         subcommand,
         after_help = "\
 Examples:
-  floo deploy list --app my-app            Show deploy history
-  floo deploy logs <id> --follow           Stream build logs in real-time
-  floo deploy watch --app my-app           Stream deploy progress
-  floo deploy rollback my-app abc123       Rollback to a previous deploy
+  floo deploys list --app my-app            Show deploy history
+  floo deploys logs <id> --follow           Stream build logs in real-time
+  floo deploys watch --app my-app           Stream deploy progress
+  floo deploys rollback my-app abc123       Rollback to a previous deploy
 
 Note: To trigger a deploy, use `floo redeploy` or push to GitHub."
     )]
-    Deploy(DeploySubcommands),
+    Deploys(DeploysSubcommands),
 
     /// Authenticate and manage your account.
     #[command(subcommand)]
@@ -598,40 +599,6 @@ pub enum ServicesCommands {
         app: Option<String>,
     },
 
-    /// Add a service to the project config.
-    Add {
-        /// Service name (DNS-safe: lowercase, digits, hyphens).
-        name: String,
-
-        /// Relative path to the service directory.
-        path: String,
-
-        /// Port the service listens on.
-        #[arg(long)]
-        port: Option<u16>,
-
-        /// Service type: web, api, or worker.
-        #[arg(long = "type")]
-        service_type: Option<String>,
-
-        /// Ingress mode: public or internal.
-        #[arg(long)]
-        ingress: Option<String>,
-
-        /// Path to .env file relative to service directory.
-        #[arg(long)]
-        env_file: Option<String>,
-    },
-
-    /// Remove a service from the project config.
-    Rm {
-        /// Service name to remove.
-        name: String,
-
-        /// Also delete the service's floo.service.toml file.
-        #[arg(long)]
-        delete_config: bool,
-    },
 }
 
 #[derive(Subcommand)]
@@ -718,7 +685,7 @@ pub enum ReleasesCommands {
 }
 
 #[derive(Subcommand)]
-pub enum DeploySubcommands {
+pub enum DeploysSubcommands {
     /// List deploy history for an app.
     List {
         /// App name or ID (uses config file if omitted).
@@ -875,7 +842,6 @@ fn reject_unsupported_dry_run(command: &Commands) {
                 GitHubCommands::Connect { .. } | GitHubCommands::Disconnect { .. },
             ))
             | Commands::Releases(ReleasesCommands::Promote { .. })
-            | Commands::Services(ServicesCommands::Add { .. } | ServicesCommands::Rm { .. })
             | Commands::Orgs(
                 OrgsCommands::Members(MembersCommands::SetRole { .. })
                     | OrgsCommands::Switch { .. },
@@ -938,17 +904,17 @@ pub fn run() {
             sync_env,
         } => commands::deploy::deploy(path, app, services, restart, sync_env),
 
-        Commands::Deploy(sub) => match sub {
-            DeploySubcommands::List { app } => commands::deploys::list(app.as_deref()),
-            DeploySubcommands::Logs {
+        Commands::Deploys(sub) => match sub {
+            DeploysSubcommands::List { app } => commands::deploys::list(app.as_deref()),
+            DeploysSubcommands::Logs {
                 deploy_id,
                 app,
                 follow,
             } => commands::deploys::logs(deploy_id.as_deref(), app.as_deref(), follow),
-            DeploySubcommands::Watch { app, commit } => {
+            DeploysSubcommands::Watch { app, commit } => {
                 commands::deploys::watch(app.as_deref(), commit.as_deref())
             }
-            DeploySubcommands::Rollback {
+            DeploysSubcommands::Rollback {
                 app,
                 deploy_id,
                 force,
@@ -1055,25 +1021,6 @@ pub fn run() {
             ServicesCommands::Info { service_name, app } => {
                 commands::services::info(&service_name, app.as_deref())
             }
-            ServicesCommands::Add {
-                name,
-                path,
-                port,
-                service_type,
-                ingress,
-                env_file,
-            } => commands::service_mgmt::add(
-                &name,
-                &path,
-                port,
-                service_type.as_deref(),
-                ingress.as_deref(),
-                env_file.as_deref(),
-            ),
-            ServicesCommands::Rm {
-                name,
-                delete_config,
-            } => commands::service_mgmt::rm(&name, delete_config),
         },
 
 

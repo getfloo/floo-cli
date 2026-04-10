@@ -291,8 +291,13 @@ pub fn deploy(
             process::exit(1);
         }
 
+        let env_display = deploy_data
+            .get("environment_name")
+            .and_then(|v| v.as_str())
+            .map(|e| format!("{e} \u{2192} "))
+            .unwrap_or_default();
         output::success(
-            &format!("Restarted {url}"),
+            &format!("Restarted {env_display}{url}"),
             Some(serde_json::json!({
                 "app": output::to_value(&app_data),
                 "deploy": deploy_data,
@@ -696,8 +701,13 @@ pub fn deploy(
 
     let service_names: Vec<&str> = services.iter().map(|s| s.name.as_str()).collect();
 
+    let env_display = deploy_data
+        .environment_name
+        .as_deref()
+        .map(|e| format!("{e} \u{2192} "))
+        .unwrap_or_default();
     output::success(
-        &format!("Deployed to {url}"),
+        &format!("Deployed to {env_display}{url}"),
         Some(serde_json::json!({
             "app": output::to_value(&app_data),
             "deploy": output::to_value(&deploy_data),

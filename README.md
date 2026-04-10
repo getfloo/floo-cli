@@ -51,9 +51,9 @@ floo update --version v0.1.0
 # Authenticate
 floo login
 
-# Deploy your project
+# Connect and deploy your project
 cd my-project
-floo deploy
+floo apps github connect owner/repo
 
 # Manage apps
 floo apps list
@@ -77,7 +77,7 @@ Every command supports `--json` for structured output:
 
 ```bash
 # JSON to stdout, human output to stderr
-floo deploy --json 2>/dev/null | jq '.data.deploy.url'
+floo redeploy --json 2>/dev/null | jq '.data.deploy.url'
 
 # Success: {"success": true, "data": {...}}
 # Error:   {"success": false, "error": {"code": "...", "message": "...", "suggestion": "..."}}

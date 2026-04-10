@@ -185,7 +185,7 @@ pub fn connect(
             output::error_with_data(
                 &format!("Connected {name} to {repo} but deploy failed."),
                 &ErrorCode::DeployFailed,
-                Some("Run `floo deploy` to retry."),
+                Some("Run `floo redeploy` to retry."),
                 Some(serde_json::json!({
                     "connected": true,
                     "app": name,

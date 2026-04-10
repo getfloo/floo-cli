@@ -19,7 +19,7 @@ After the first deploy, push to GitHub to trigger deploys automatically. Watch p
 
 ## How Deploys Work
 
-Pushing to GitHub triggers a deploy via webhook. Watch it with `floo deploy watch --app <name>`. Use `floo deploy` only to force a redeploy without a code change (e.g., after updating env vars).
+Pushing to GitHub triggers a deploy via webhook. Watch it with `floo deploy watch --app <name>`. Use `floo redeploy` only to force a redeploy without a code change (e.g., after updating env vars).
 
 Normal workflow:
 
@@ -31,14 +31,14 @@ Force redeploy (after env var change):
 
 ```bash
 floo env set API_KEY=new-value --app my-app
-floo deploy --app my-app
+floo redeploy --app my-app
 ```
 
 The API pulls source from GitHub, builds a container via Cloud Build, and deploys to Cloud Run. GitHub must be connected first (`floo apps github connect`).
 
 - `floo init` creates local config files only — no app is registered on the platform
-- `floo deploy` auto-creates the app if it doesn't exist, but requires GitHub to be connected
 - `floo apps github connect` auto-creates the app if needed, connects GitHub, and triggers the first deploy (use `--no-deploy` to skip)
+- `floo redeploy` forces a redeploy of the latest code (use after env var changes or config updates)
 
 ## Config Files
 
@@ -102,7 +102,7 @@ The CLI is fully self-documenting:
 Every command supports `--json`. JSON goes to stdout, human output to stderr.
 
 ```bash
-floo deploy --json 2>/dev/null | jq '.data.app.url'
+floo redeploy --json 2>/dev/null | jq '.data.app.url'
 ```
 
 Success: `{"success": true, "message": "...", "data": {...}}`
@@ -117,7 +117,7 @@ Most commands infer the app name from config files in the current directory. Use
 `--dry-run` previews what a command will do without executing it. Supported on: `deploy`, `env set/remove/import`, `apps delete`, `domains add/remove`, `deploy rollback`.
 
 ```bash
-floo deploy --dry-run --json    # preview deploy without executing
+floo redeploy --dry-run --json    # preview deploy without executing
 ```
 
 ## Common Workflows
@@ -149,8 +149,8 @@ floo deploy list --app my-app                      # deploy history
 floo deploy logs <deploy-id> --app my-app          # build logs
 floo deploy watch --app my-app                     # stream progress
 floo deploy rollback my-app <deploy-id>            # rollback
-floo deploy --restart --app my-app                 # restart without re-upload
-floo deploy --services api --app my-app            # deploy specific service
+floo redeploy --app my-app                         # force redeploy
+floo redeploy --services api --app my-app          # redeploy specific service
 ```
 
 ### Custom Domains

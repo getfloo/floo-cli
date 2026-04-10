@@ -21,7 +21,7 @@ pub fn list(page: u32, per_page: u32) {
 
     if result.apps.is_empty() {
         if !output::is_json_mode() {
-            output::info("No apps yet. Deploy one with floo deploy.", None);
+            output::info("No apps yet. Connect a repo: floo apps github connect <owner/repo>", None);
         } else {
             output::success(
                 "No apps.",
@@ -116,6 +116,26 @@ pub fn status(app_name: &str) {
             &format!("  Created:  {}", app.created_at.as_deref().unwrap_or("-")),
             None,
         );
+        if !app.environments.is_empty() {
+            let env_lines: Vec<String> = app
+                .environments
+                .iter()
+                .map(|e| {
+                    let url = e.url.as_deref().unwrap_or("\u{2014}");
+                    format!("{}  {}", e.name, url)
+                })
+                .collect();
+            output::info(
+                &format!("  Envs:     {}", env_lines[0]),
+                None,
+            );
+            for line in &env_lines[1..] {
+                output::info(
+                    &format!("            {line}"),
+                    None,
+                );
+            }
+        }
     }
 }
 

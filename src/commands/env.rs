@@ -7,7 +7,7 @@ use crate::output;
 use crate::project_config;
 
 const DEPLOY_HINT: &str =
-    "Push a commit to trigger a deploy with the updated env vars, or run: floo deploy";
+    "Push a commit to trigger a deploy with the updated env vars, or run: floo redeploy";
 
 // ---------------------------------------------------------------------------
 // Helpers
