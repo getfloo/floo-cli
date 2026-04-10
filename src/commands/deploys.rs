@@ -130,7 +130,7 @@ pub fn logs(deploy_id: Option<&str>, app: Option<&str>, follow: bool) {
         Ok(d) => d,
         Err(e) => {
             let suggestion = match e.code.as_str() {
-                "DEPLOY_NOT_FOUND" => Some("Check the deploy ID: floo deploy list --app <name>"),
+                "DEPLOY_NOT_FOUND" => Some("Check the deploy ID: floo deploys list --app <name>"),
                 _ => None,
             };
             output::error(&e.message, &ErrorCode::from_api(&e.code), suggestion);
@@ -434,7 +434,7 @@ fn find_deploy_by_commit(client: &FlooClient, app_id: &str, sha_prefix: &str) ->
                     COMMIT_WAIT_TIMEOUT.as_secs()
                 ),
                 &ErrorCode::DeployTimeout,
-                Some("The deploy may still be processing. Check `floo deploy list --app <name>` or try again."),
+                Some("The deploy may still be processing. Check `floo deploys list --app <name>` or try again."),
             );
             process::exit(1);
         }
@@ -507,7 +507,7 @@ fn print_final_status(deploy: &Deploy) {
         output::error(
             &format!("Deploy ended in unexpected state: {status}"),
             &ErrorCode::DeployFailed,
-            Some("Check deploy status with `floo deploy list --app <name>`."),
+            Some("Check deploy status with `floo deploys list --app <name>`."),
         );
         process::exit(1);
     } else {

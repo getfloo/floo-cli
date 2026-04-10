@@ -72,7 +72,7 @@ pub fn list(app: Option<&str>) {
         if output::is_json_mode() {
             output::success("No releases.", Some(serde_json::json!({"releases": []})));
         } else {
-            output::info("No releases yet. Promote with: floo promote", None);
+            output::info("No releases yet. Promote with: floo releases promote --app <name>", None);
         }
         return;
     }
@@ -82,11 +82,7 @@ pub fn list(app: Option<&str>) {
         .iter()
         .map(|r| {
             let sha = r.commit_sha.as_deref().unwrap_or("-");
-            let short_sha = if sha.len() > 7 && sha.is_ascii() {
-                &sha[..7]
-            } else {
-                sha
-            };
+            let short_sha = super::short_sha(sha);
             vec![
                 r.release_number
                     .map(|n| format!("#{n}"))

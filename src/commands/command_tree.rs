@@ -143,6 +143,13 @@ fn command_tree() -> Vec<CommandInfo> {
                     requires_auth: true,
                     subcommands: vec![],
                 },
+                CommandInfo {
+                    name: "invite",
+                    description: "Invite a user to an app",
+                    usage: "floo apps invite <email> --app <name> [--role member|admin]",
+                    requires_auth: true,
+                    subcommands: vec![],
+                },
             ],
         },
         CommandInfo {
@@ -330,6 +337,13 @@ fn command_tree() -> Vec<CommandInfo> {
                     requires_auth: false,
                     subcommands: vec![],
                 },
+                CommandInfo {
+                    name: "update-profile",
+                    description: "Update your profile",
+                    usage: "floo auth update-profile [--name <name>]",
+                    requires_auth: true,
+                    subcommands: vec![],
+                },
             ],
         },
         CommandInfo {
@@ -337,28 +351,37 @@ fn command_tree() -> Vec<CommandInfo> {
             description: "Manage your organization",
             usage: "floo orgs <subcommand>",
             requires_auth: true,
-            subcommands: vec![CommandInfo {
-                name: "members",
-                description: "Manage org members",
-                usage: "floo orgs members <subcommand>",
-                requires_auth: true,
-                subcommands: vec![
-                    CommandInfo {
-                        name: "list",
-                        description: "List members of the current org",
-                        usage: "floo orgs members list",
-                        requires_auth: true,
-                        subcommands: vec![],
-                    },
-                    CommandInfo {
-                        name: "set-role",
-                        description: "Change a member's role",
-                        usage: "floo orgs members set-role <user-id> <role>",
-                        requires_auth: true,
-                        subcommands: vec![],
-                    },
-                ],
-            }],
+            subcommands: vec![
+                CommandInfo {
+                    name: "members",
+                    description: "Manage org members",
+                    usage: "floo orgs members <subcommand>",
+                    requires_auth: true,
+                    subcommands: vec![
+                        CommandInfo {
+                            name: "list",
+                            description: "List members of the current org",
+                            usage: "floo orgs members list",
+                            requires_auth: true,
+                            subcommands: vec![],
+                        },
+                        CommandInfo {
+                            name: "set-role",
+                            description: "Change a member's role",
+                            usage: "floo orgs members set-role <user-id> <role>",
+                            requires_auth: true,
+                            subcommands: vec![],
+                        },
+                    ],
+                },
+                CommandInfo {
+                    name: "switch",
+                    description: "Switch active organization",
+                    usage: "floo orgs switch <org-slug>",
+                    requires_auth: true,
+                    subcommands: vec![],
+                },
+            ],
         },
         CommandInfo {
             name: "billing",
@@ -376,7 +399,7 @@ fn command_tree() -> Vec<CommandInfo> {
                 CommandInfo {
                     name: "upgrade",
                     description: "Upgrade your plan",
-                    usage: "floo billing upgrade [--plan growth|team]",
+                    usage: "floo billing upgrade [--plan hobby|pro|team]",
                     requires_auth: true,
                     subcommands: vec![],
                 },

@@ -250,9 +250,9 @@ fn recommended_permissions() -> (Vec<&'static str>, Vec<&'static str>) {
         "Bash(floo apps list:*)",
         "Bash(floo apps status:*)",
         "Bash(floo apps github status:*)",
-        "Bash(floo deploy list:*)",
-        "Bash(floo deploy logs:*)",
-        "Bash(floo deploy watch:*)",
+        "Bash(floo deploys list:*)",
+        "Bash(floo deploys logs:*)",
+        "Bash(floo deploys watch:*)",
         "Bash(floo env list:*)",
         "Bash(floo services list:*)",
         "Bash(floo services info:*)",
@@ -261,7 +261,7 @@ fn recommended_permissions() -> (Vec<&'static str>, Vec<&'static str>) {
         "Bash(floo analytics:*)",
         "Bash(floo releases list:*)",
         "Bash(floo releases show:*)",
-        "Bash(floo deploy --dry-run:*)",
+        "Bash(floo redeploy --dry-run:*)",
         "Bash(floo docs:*)",
         "Bash(floo commands:*)",
         "Bash(floo version:*)",
@@ -274,7 +274,7 @@ fn recommended_permissions() -> (Vec<&'static str>, Vec<&'static str>) {
         "Bash(floo apps password:*)",
         "Bash(floo env get:*)",
         "Bash(floo deploy:*)",
-        "Bash(floo deploy rollback:*)",
+        "Bash(floo deploys rollback:*)",
         "Bash(floo init:*)",
         "Bash(floo env set:*)",
         "Bash(floo env remove:*)",
@@ -378,7 +378,7 @@ mod tests {
         let (read_only, _) = recommended_permissions();
         assert!(read_only.contains(&"Bash(floo apps list:*)"));
         assert!(read_only.contains(&"Bash(floo logs:*)"));
-        assert!(read_only.contains(&"Bash(floo deploy --dry-run:*)"));
+        assert!(read_only.contains(&"Bash(floo redeploy --dry-run:*)"));
         assert!(read_only.contains(&"Bash(floo docs:*)"));
         // Write commands should not be in read-only
         assert!(!read_only.contains(&"Bash(floo deploy:*)"));

@@ -101,7 +101,7 @@ pub fn spend_cap_get() {
         output::warn("Spend cap exceeded \u{2014} deploys are blocked.");
     }
     if org.plan.as_deref() == Some("free") {
-        eprintln!("  Upgrade: floo billing upgrade --plan growth");
+        eprintln!("  Upgrade: floo billing upgrade --plan pro");
     }
 }
 

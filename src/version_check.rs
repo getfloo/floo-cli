@@ -223,11 +223,7 @@ fn download_and_stage(current_version: &str, release_json: &serde_json::Value) -
 
     if actual != expected {
         let _ = fs::remove_file(&dl_path);
-        // Update cache so we don't re-download this version until TTL expires
-        write_cache(&VersionCache {
-            latest_version: release_asset.version.clone(),
-            checked_at: now_secs(),
-        });
+        eprintln!("Warning: Downloaded update failed checksum verification. The download may be corrupted. Will retry on next check.");
         return None;
     }
 
