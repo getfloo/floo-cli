@@ -10,7 +10,7 @@ use crate::config::load_config;
 use crate::detection::{detect_for_services, DetectionResult};
 use crate::errors::{ErrorCode, FlooApiError};
 use crate::output;
-use crate::project_config::{self, validate_service_name, AppAccessMode, AppAgentMode, AppSource, ServiceConfig};
+use crate::project_config::{self, validate_service_name, AppAccessMode, AppAgentMode, AppSource, ServiceConfig, ServiceIngress, ServiceType};
 use crate::resolve::resolve_app;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -101,7 +101,10 @@ pub fn preflight(
     let (preflight_errors, preflight_warnings) =
         validate_preflight(&project_path, &services, &resolved);
 
-    // 6. Display
+    // 6. Generate security notes
+    let security_notes = generate_security_notes(&services, &managed_services);
+
+    // 7. Display
     if output::is_json_mode() {
         let svc_json: Vec<serde_json::Value> = services
             .iter()
@@ -142,6 +145,7 @@ pub fn preflight(
                 "services": svc_json,
                 "managed_services": managed_json,
                 "warnings": warning_strings,
+                "security_notes": security_notes,
                 "valid": preflight_errors.is_empty(),
             })),
         );
@@ -160,6 +164,14 @@ pub fn preflight(
             for ms in &managed_services {
                 let tier_label = ms.tier.as_deref().unwrap_or("basic");
                 eprintln!("    {} (tier {tier_label})", ms.name);
+            }
+            eprintln!();
+        }
+
+        if !security_notes.is_empty() {
+            eprintln!("  Security:");
+            for note in &security_notes {
+                eprintln!("    \u{26a0} {note}");
             }
             eprintln!();
         }
@@ -924,6 +936,74 @@ fn validate_preflight(
     }
 
     (errors, warnings)
+}
+
+/// Generate security notes based on service configuration and managed services.
+///
+/// These are informational (not errors/warnings) — they help users and agents
+/// understand what's exposed and where secrets will be available.
+fn generate_security_notes(
+    services: &[ServiceConfig],
+    managed_services: &[project_config::ManagedServiceDeclaration],
+) -> Vec<String> {
+    let mut notes: Vec<String> = Vec::new();
+
+    // Note which services are internet-facing
+    let public_services: Vec<&str> = services
+        .iter()
+        .filter(|s| s.ingress == ServiceIngress::Public)
+        .map(|s| s.name.as_str())
+        .collect();
+    let internal_services: Vec<&str> = services
+        .iter()
+        .filter(|s| s.ingress == ServiceIngress::Internal)
+        .map(|s| s.name.as_str())
+        .collect();
+
+    if !public_services.is_empty() && services.len() > 1 {
+        notes.push(format!(
+            "Internet-facing: {}. Set ingress = \"internal\" in floo.app.toml to restrict.",
+            public_services.join(", ")
+        ));
+    }
+    if !internal_services.is_empty() {
+        notes.push(format!(
+            "Internal only (not internet-facing): {}.",
+            internal_services.join(", ")
+        ));
+    }
+
+    // Warn about managed service env vars reaching web services
+    if !managed_services.is_empty() && services.len() > 1 {
+        let web_services: Vec<&str> = services
+            .iter()
+            .filter(|s| s.service_type == ServiceType::Web)
+            .map(|s| s.name.as_str())
+            .collect();
+
+        if !web_services.is_empty() {
+            let env_var_names: Vec<&str> = managed_services
+                .iter()
+                .flat_map(|ms| match ms.name.as_str() {
+                    "postgres" => vec!["DATABASE_URL"],
+                    "redis" => vec!["REDIS_URL"],
+                    "storage" => vec!["STORAGE_BUCKET", "STORAGE_URL"],
+                    _ => vec![],
+                })
+                .collect();
+
+            if !env_var_names.is_empty() {
+                notes.push(format!(
+                    "Managed service secrets ({}) are available to all services \
+                     including {}. To restrict: floo env set <KEY>=<val> --services <backend>",
+                    env_var_names.join(", "),
+                    web_services.join(", "),
+                ));
+            }
+        }
+    }
+
+    notes
 }
 
 /// Display preflight info in human-readable format.
