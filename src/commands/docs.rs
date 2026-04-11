@@ -303,6 +303,44 @@ Floo Config Files
   [environments.prod]
   access_mode = \"accounts\"
 
+## Environment Variables in Multi-Service Apps
+
+  Env vars are scoped per service. In multi-service apps, you MUST specify
+  which service receives the variable:
+
+    floo env set DATABASE_URL=postgres://... --services api
+    floo env set REDIS_URL=redis://... --services api,worker
+
+  Scoping rules:
+
+  - Single-service app: env vars go to the only service (no flag needed)
+  - Multi-service app with 1 service: auto-targets that service
+  - Multi-service app with 2+ services: --services is REQUIRED
+
+  SECURITY: Secrets set on a frontend service (web, dashboard) end up in
+  the container runtime. Build-time vars (VITE_*, NEXT_PUBLIC_*, REACT_APP_*)
+  are baked into the JS bundle and visible to end users. Never set backend
+  secrets (DATABASE_URL, API keys) on frontend services.
+
+  Recommended pattern for multi-service apps:
+
+    # Backend secrets — api/worker only
+    floo env set DATABASE_URL=postgres://... --services api
+    floo env set LINEAR_API_KEY=lin_... --services api
+    floo env set REDIS_URL=redis://... --services api,worker
+
+    # Frontend config — web only (public, not secret)
+    floo env set VITE_API_URL=https://my-app.getfloo.com/api --services web
+
+  List env vars per service:
+
+    floo env list --services api
+    floo env list --services web
+
+  Managed service env vars (DATABASE_URL, REDIS_URL, STORAGE_BUCKET) are
+  set at app scope and available to all services. Use --services to restrict
+  access if needed.
+
 ## Commands
 
   floo init <name>   — generate config files interactively
