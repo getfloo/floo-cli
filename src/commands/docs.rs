@@ -42,6 +42,13 @@ never uploads code.
 const QUICKSTART: &str = "\
 Floo Quickstart — End-to-End Walkthrough
 
+## Prerequisites
+
+  - Your code must be in a **GitHub repository** (public or private).
+    Floo pulls source from GitHub — it does not upload local files.
+  - You need the GitHub Floo App installed on your repo (the CLI opens
+    GitHub to grant access during `floo apps github connect`).
+
 ## 1. Install and Sign Up
 
   curl -fsSL https://getfloo.com/install.sh | bash
@@ -801,6 +808,9 @@ Floo Templates — Copy-Paste App Structures
   //   server: { proxy: { \"/api\": \"http://localhost:8080\" } }
 
 ### Deploy
+
+  PREREQUISITE: Your code must be in a GitHub repo. Floo pulls source
+  from GitHub — it does not upload local files. Push your code first.
 
   1. floo auth login
   2. floo init my-app                          # from root directory
