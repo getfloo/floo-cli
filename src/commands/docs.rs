@@ -46,8 +46,20 @@ Floo Quickstart — End-to-End Walkthrough
 
   - Your code must be in a **GitHub repository** (public or private).
     Floo pulls source from GitHub — it does not upload local files.
-  - You need the GitHub Floo App installed on your repo (the CLI opens
-    GitHub to grant access during `floo apps github connect`).
+  - The Floo GitHub App must be installed on your GitHub org/account.
+    The CLI opens GitHub to grant access during `floo apps github connect`.
+
+## Agents & CI (headless environments)
+
+  Agents and CI pipelines can deploy without a browser:
+
+  1. A human installs the Floo GitHub App on the org (one-time):
+     https://github.com/apps/getfloo/installations/new
+  2. The agent authenticates: floo auth login --api-key <key>
+  3. The agent connects: floo apps github connect owner/repo --no-browser
+     (--no-browser errors cleanly if the app is not installed, instead of
+     trying to open a browser)
+  4. Subsequent deploys: git push triggers automatic deploys via webhook
 
 ## 1. Install and Sign Up
 

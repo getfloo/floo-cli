@@ -459,6 +459,10 @@ pub enum GitHubCommands {
         /// Skip triggering a deploy after connecting.
         #[arg(long)]
         no_deploy: bool,
+
+        /// Never open a browser (for agents/CI). Errors if GitHub App is not installed.
+        #[arg(long)]
+        no_browser: bool,
     },
 
     /// Disconnect a GitHub repo from an app.
@@ -961,12 +965,14 @@ pub fn run() {
                     branch,
                     skip_env_check,
                     no_deploy,
+                    no_browser,
                 } => commands::github::connect(
                     &repo,
                     app.as_deref(),
                     branch.as_deref(),
                     skip_env_check,
                     no_deploy,
+                    no_browser,
                 ),
                 GitHubCommands::Disconnect { app } => commands::github::disconnect(app.as_deref()),
                 GitHubCommands::Status { app } => commands::github::status(app.as_deref()),

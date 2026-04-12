@@ -12,6 +12,7 @@ pub fn connect(
     branch: Option<&str>,
     skip_env_check: bool,
     no_deploy: bool,
+    no_browser: bool,
 ) {
     super::require_auth();
     let client = super::init_client(None);
@@ -114,6 +115,19 @@ pub fn connect(
                 .unwrap_or("https://github.com/apps/getfloo/installations/new");
 
             let owner = repo.split('/').next().unwrap_or(repo);
+
+            if no_browser {
+                output::error(
+                    &format!("Floo GitHub App not installed on \"{owner}\"."),
+                    &ErrorCode::from_api("GITHUB_APP_NOT_INSTALLED"),
+                    Some(&format!(
+                        "Install the Floo GitHub App first: {install_url}\n\
+                         Then re-run: floo apps github connect {repo}"
+                    )),
+                );
+                process::exit(1);
+            }
+
             if !output::is_json_mode() {
                 output::warn(&format!("Floo GitHub App not installed on \"{owner}\""));
             }
@@ -139,6 +153,18 @@ pub fn connect(
             let fallback_url =
                 format!("https://github.com/organizations/{owner}/settings/installations");
             let url = settings_url.unwrap_or(&fallback_url);
+
+            if no_browser {
+                output::error(
+                    &format!("Floo GitHub App does not have access to \"{repo}\"."),
+                    &ErrorCode::from_api("GITHUB_REPO_NOT_IN_INSTALLATION"),
+                    Some(&format!(
+                        "Grant repo access at: {url}\n\
+                         Then re-run: floo apps github connect {repo}"
+                    )),
+                );
+                process::exit(1);
+            }
 
             if !output::is_json_mode() {
                 output::warn(&format!(
