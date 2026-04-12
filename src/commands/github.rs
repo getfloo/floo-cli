@@ -17,6 +17,9 @@ pub fn connect(
     super::require_auth();
     let client = super::init_client(None);
 
+    // In JSON mode, never open a browser — agents can't use one.
+    let no_browser = no_browser || output::is_json_mode();
+
     let cwd = std::env::current_dir().unwrap_or_else(|e| {
         output::error(
             &format!("Failed to read current directory: {e}"),
