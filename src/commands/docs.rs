@@ -29,6 +29,7 @@ never uploads code.
 
   floo docs golden-path — golden path and decision table
   floo docs quickstart — end-to-end walkthrough
+  floo docs templates  — copy-paste app structures (React+FastAPI, Next.js, etc.)
   floo docs services   — service types and managed services
   floo docs config     — config file formats with examples
   floo docs deploy     — detailed deploy flow and runtime detection
@@ -191,8 +192,24 @@ Multi-service apps share a single hostname with path-based routing:
   web service  → app-name.on.getfloo.com/
   api service  → app-name.on.getfloo.com/api/
 
-This is automatic — no configuration needed. All services share the same
-origin, so cookies and auth work without CORS setup.
+This is automatic — no configuration needed. The gateway strips the /api
+prefix before forwarding, so your FastAPI routes stay at the root:
+
+  React: fetch(\"/api/users\")
+    → gateway routes to api service at /users
+    → FastAPI handler: @app.get(\"/users\")
+
+Your API code does NOT need /api prefixes. The gateway handles it.
+All services share the same origin, so cookies and auth work without CORS.
+
+## Service Types
+
+  web     — serves the frontend (HTML/JS/CSS). Gets the root path (/).
+  api     — serves the backend API. Gets the /api/ path prefix.
+  worker  — background process (no incoming HTTP traffic).
+
+  The only difference between web and api is the routing path. Both are
+  HTTP servers, both can access managed services (postgres, redis, etc).
 
 ## Commands
 
@@ -384,6 +401,19 @@ Floo Deploy Flow
   Use `floo apps github connect owner/repo`. This connects GitHub and
   triggers the first deploy in one step. The app is auto-created if
   it doesn't exist.
+
+## Do I Need a Dockerfile?
+
+  Usually no. Floo auto-detects your runtime and builds your app:
+
+  - package.json → Node.js (npm install + npm run build + npm start)
+  - pyproject.toml or requirements.txt → Python (pip install + uvicorn/gunicorn)
+  - go.mod → Go (go build)
+  - index.html → Static site (served with nginx)
+
+  Write a Dockerfile ONLY when you need a custom build (e.g., multi-stage
+  builds, system packages, non-standard entrypoints). If a Dockerfile exists,
+  floo uses it instead of auto-detection.
 
 ## Runtime Detection Priority
 
@@ -581,7 +611,7 @@ Floo — Golden Path
 ## Before You Start
 
   You need:
-  - A project directory with source code and a Dockerfile
+  - A project directory with source code (Dockerfile optional — floo auto-detects runtimes)
   - The code pushed to a GitHub repository
 
   App names must be lowercase, alphanumeric, and may include hyphens (e.g., my-saas-app).
@@ -688,6 +718,169 @@ Floo — Golden Path
   Run locally with prod credentials     | floo dev --app my-app (requires dev_command)
 ";
 
+const TEMPLATES: &str = "\
+Floo Templates — Copy-Paste App Structures
+
+## React + FastAPI (Multi-Service)
+
+  A frontend (React/Vite) + backend (FastAPI) app with a shared database.
+
+### Directory Structure
+
+  my-app/
+  ├── floo.app.toml          # app-level config
+  ├── web/                   # React frontend
+  │   ├── floo.service.toml
+  │   ├── package.json
+  │   └── src/
+  └── api/                   # FastAPI backend
+      ├── floo.service.toml
+      ├── pyproject.toml     # or requirements.txt
+      └── app/
+          └── main.py
+
+### floo.app.toml (root)
+
+  [app]
+  name = \"my-app\"
+
+  [services.web]
+  path = \"./web\"
+
+  [services.api]
+  path = \"./api\"
+
+  [postgres]
+  tier = \"basic\"
+
+### web/floo.service.toml
+
+  [service]
+  name = \"web\"
+  type = \"web\"
+  port = 3000
+  ingress = \"public\"
+  dev_command = \"npm run dev\"
+
+### api/floo.service.toml
+
+  [service]
+  name = \"api\"
+  type = \"api\"
+  port = 8080
+  ingress = \"public\"
+  dev_command = \"uvicorn app.main:app --reload --port 8080\"
+  migrate_command = \"alembic upgrade head\"
+
+### api/app/main.py
+
+  from fastapi import FastAPI, Request
+
+  app = FastAPI()
+
+  @app.get(\"/users\")
+  async def list_users(request: Request):
+      # The gateway routes /api/users → /users (strips the /api prefix)
+      # Identity headers are injected when access_mode != \"public\":
+      user_email = request.headers.get(\"X-Floo-User-Email\")
+      return {\"users\": [], \"requested_by\": user_email}
+
+  @app.get(\"/health\")
+  async def health():
+      return {\"status\": \"ok\"}
+
+### web/src/App.tsx (React calling the API)
+
+  // In production, the gateway routes /api/* to the api service.
+  // No CORS needed — same origin.
+  const response = await fetch(\"/api/users\");
+  const data = await response.json();
+
+  // For local development, proxy /api/* to the FastAPI dev server.
+  // In vite.config.ts:
+  //   server: { proxy: { \"/api\": \"http://localhost:8080\" } }
+
+### Deploy
+
+  1. floo auth login
+  2. floo init my-app                          # from root directory
+  3. floo preflight                            # validate both services
+  4. git push origin main                      # push to GitHub first
+  5. floo apps github connect owner/my-app     # triggers first deploy
+  6. floo env set DATABASE_URL=<url> --services api  # managed postgres auto-sets this
+  7. floo apps status my-app                   # get your URL
+
+### Local Development (two terminals)
+
+  Terminal 1 (backend):
+    cd api && uvicorn app.main:app --reload --port 8080
+
+  Terminal 2 (frontend):
+    cd web && npm run dev
+    # vite.config.ts proxy forwards /api/* to localhost:8080
+
+  Or use floo dev for cloud-connected local development:
+    floo dev --app my-app --service api    # terminal 1
+    floo dev --app my-app --service web    # terminal 2
+
+### Env Vars
+
+  Backend secrets (api service only):
+    floo env set DATABASE_URL=postgres://... --services api
+    floo env set SECRET_KEY=... --services api
+
+  Frontend config (web service only, public — baked into JS bundle):
+    floo env set VITE_API_URL=/api --services web
+
+  SECURITY: Never set backend secrets on the web service.
+  Build-time vars (VITE_*, NEXT_PUBLIC_*) are visible to end users.
+
+## Next.js + FastAPI (Multi-Service)
+
+  Same structure as above, but replace web/ with a Next.js app:
+
+### web/floo.service.toml
+
+  [service]
+  name = \"web\"
+  type = \"web\"
+  port = 3000
+  ingress = \"public\"
+  dev_command = \"npm run dev\"
+
+### Key Differences from React
+
+  - Next.js API routes can also call the FastAPI service internally
+  - Use NEXT_PUBLIC_* prefix for client-side env vars (same security rules)
+  - Server components can read X-Floo-User-* headers directly
+
+## Single-Service App (Simplest)
+
+  For a standalone app (just a web server, no separate API):
+
+  my-app/
+  ├── floo.service.toml
+  ├── package.json
+  └── src/
+
+  floo.service.toml:
+
+  [app]
+  name = \"my-app\"
+
+  [service]
+  name = \"web\"
+  port = 3000
+  type = \"web\"
+  ingress = \"public\"
+  dev_command = \"npm run dev\"
+
+  Deploy:
+    floo auth login
+    floo init my-app
+    floo apps github connect owner/my-app
+";
+
 const TOPICS: &[(&str, &str)] = &[
     ("quickstart", QUICKSTART),
     ("golden-path", HOWTO),
@@ -696,6 +889,7 @@ const TOPICS: &[(&str, &str)] = &[
     ("deploy", DEPLOY),
     ("auth", AUTH),
     ("feedback", FEEDBACK),
+    ("templates", TEMPLATES),
 ];
 
 pub fn docs(topic: Option<&str>) {
@@ -740,6 +934,7 @@ mod tests {
         assert!(!CONFIG.is_empty());
         assert!(!DEPLOY.is_empty());
         assert!(!AUTH.is_empty());
+        assert!(!TEMPLATES.is_empty());
     }
 
     #[test]
@@ -775,5 +970,26 @@ mod tests {
     fn test_deploy_mentions_github() {
         assert!(DEPLOY.contains("GitHub"));
         assert!(!DEPLOY.contains("archive"));
+    }
+
+    #[test]
+    fn test_templates_has_react_fastapi() {
+        assert!(TEMPLATES.contains("React + FastAPI"));
+        assert!(TEMPLATES.contains("floo.app.toml"));
+        assert!(TEMPLATES.contains("floo.service.toml"));
+        assert!(TEMPLATES.contains("/api/users"));
+        assert!(TEMPLATES.contains("VITE_API_URL"));
+    }
+
+    #[test]
+    fn test_deploy_explains_dockerfiles() {
+        assert!(DEPLOY.contains("Do I Need a Dockerfile?"));
+        assert!(DEPLOY.contains("Usually no"));
+    }
+
+    #[test]
+    fn test_services_explains_routing() {
+        assert!(SERVICES.contains("gateway strips the /api"));
+        assert!(SERVICES.contains("fetch(\"/api/users\")"));
     }
 }
