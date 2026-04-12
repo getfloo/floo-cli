@@ -102,7 +102,7 @@ pub fn preflight(
         validate_preflight(&project_path, &services, &resolved);
 
     // 6. Generate security notes
-    let security_notes = generate_security_notes(&services, &managed_services);
+    let security_notes = generate_security_notes(&services, &managed_services, &resolved);
 
     // 7. Display
     if output::is_json_mode() {
@@ -945,8 +945,25 @@ fn validate_preflight(
 fn generate_security_notes(
     services: &[ServiceConfig],
     managed_services: &[project_config::ManagedServiceDeclaration],
+    resolved: &project_config::ResolvedApp,
 ) -> Vec<String> {
     let mut notes: Vec<String> = Vec::new();
+
+    // Check access_mode — warn if no auth is configured
+    let access_mode = resolved
+        .app_config
+        .as_ref()
+        .and_then(|c| c.app.access_mode);
+    match access_mode {
+        None | Some(AppAccessMode::Public) => {
+            notes.push(
+                "Access mode is 'public' (no auth). Anyone can access your app. \
+                 Set access_mode = \"accounts\" in floo.app.toml to require authentication."
+                    .to_string(),
+            );
+        }
+        _ => {} // accounts, password, sso — all have auth
+    }
 
     // Note which services are internet-facing
     let public_services: Vec<&str> = services
@@ -1003,7 +1020,54 @@ fn generate_security_notes(
         }
     }
 
+    // Check for secrets leaked to frontend services via .env files
+    for svc in services {
+        if svc.service_type != ServiceType::Web {
+            continue;
+        }
+        // Check common env file locations in the service directory
+        let svc_path = std::path::Path::new(&svc.path);
+        for env_filename in &[".env", ".env.local", ".env.production"] {
+            let env_path = svc_path.join(env_filename);
+            if let Ok(contents) = std::fs::read_to_string(&env_path) {
+                for line in contents.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() || trimmed.starts_with('#') {
+                        continue;
+                    }
+                    if let Some((key, _)) = trimmed.split_once('=') {
+                        let key = key.trim();
+                        let is_frontend_var = key.starts_with("VITE_")
+                            || key.starts_with("NEXT_PUBLIC_")
+                            || key.starts_with("REACT_APP_");
+                        if !is_frontend_var && looks_like_secret(key) {
+                            notes.push(format!(
+                                "Secret-looking var '{}' in {}/{} — if this is a backend \
+                                 secret, remove it from the web service and set it on the \
+                                 api service: floo env set {}=<val> --services api",
+                                key, svc.name, env_filename, key
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Reminder to run preflight before every deploy
+    notes.push("Run 'floo preflight' before every deploy to catch issues early.".to_string());
+
     notes
+}
+
+/// Heuristic: does this env var key look like it contains a secret?
+fn looks_like_secret(key: &str) -> bool {
+    let key_upper = key.to_uppercase();
+    let secret_patterns = [
+        "SECRET", "KEY", "TOKEN", "PASSWORD", "CREDENTIAL", "DATABASE_URL",
+        "REDIS_URL", "API_KEY", "PRIVATE", "AUTH",
+    ];
+    secret_patterns.iter().any(|p| key_upper.contains(p))
 }
 
 /// Display preflight info in human-readable format.
