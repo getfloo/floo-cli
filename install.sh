@@ -171,9 +171,56 @@ main() {
     log "Installing ${BINARY_NAME} to ${INSTALL_DIR}/${BINARY_NAME}..."
     install_binary "$binary_path"
 
+    # Verify the installed binary. Previously this was:
+    #   version_output="$(floo --version 2>/dev/null || true)"
+    #   [[ -n "$version_output" ]] || fail ...
+    # which swallowed BOTH the exit code (|| true) and stderr (2>/dev/null),
+    # and only checked "is stdout non-empty" — meaning a binary that
+    # panicked, wrote garbage to stdout, and exited 1 would still pass.
+    #
+    # v2026.04.12.1 also shipped with `floo --version` writing its output
+    # only to stderr (human status line), not stdout, so the old
+    # non-empty-stdout check failed for every fresh install. That's what
+    # forced the rewrite.
+    #
+    # The stricter contract:
+    #   1. Run with FLOO_NO_UPDATE_CHECK=1 so the verification doesn't
+    #      hit the network and doesn't try to auto-update mid-install.
+    #   2. Capture stdout and stderr to separate files so we can report
+    #      either one on failure.
+    #   3. Require exit code 0.
+    #   4. Require stdout to contain a line that matches the floo tag
+    #      format (calver `2026.04.12`, `2026.04.12.1`, or the dev tag
+    #      `0.0.0-dev`). Catches both "empty stdout" AND "stdout has
+    #      unrelated text but no version tag."
+    local version_stdout_file="${TMP_DIR}/version.stdout"
+    local version_stderr_file="${TMP_DIR}/version.stderr"
+    local version_exit=0
+    FLOO_NO_UPDATE_CHECK=1 "${INSTALL_DIR}/${BINARY_NAME}" --version \
+        >"$version_stdout_file" 2>"$version_stderr_file" || version_exit=$?
+
+    if [[ "$version_exit" -ne 0 ]]; then
+        log "stdout: $(cat "$version_stdout_file" 2>/dev/null || true)"
+        log "stderr: $(cat "$version_stderr_file" 2>/dev/null || true)"
+        fail "Installation completed but '${INSTALL_DIR}/${BINARY_NAME} --version' exited with ${version_exit}."
+    fi
+
+    # Regex covers:
+    #   - Calver releases: `2026.04.12`, `2026.04.12.1`, ...
+    #   - Calver with SemVer-style suffixes: `2026.04.12-rc1`,
+    #     `2026.04.12+build.7`, `2026.04.12-3-gabc1234`. Not used today
+    #     but cheap to allow — the alternative is that a future
+    #     pre-release channel silently breaks every install.
+    #   - The dev tag: `0.0.0-dev`
+    # LC_ALL=C ensures grep's ASCII character classes don't misbehave
+    # under a user's broken locale (e.g. LANG=garbage).
     local version_output
-    version_output="$(${INSTALL_DIR}/${BINARY_NAME} --version 2>/dev/null || true)"
-    [[ -n "$version_output" ]] || fail "Installation completed but '${INSTALL_DIR}/${BINARY_NAME} --version' failed."
+    version_output="$(LC_ALL=C grep -oE '^([0-9]{4}\.[0-9]{2}\.[0-9]{2}(\.[0-9]+)?([-+][0-9A-Za-z.-]+)?|0\.0\.0-dev)$' "$version_stdout_file" | head -n1 || true)"
+    if [[ -z "$version_output" ]]; then
+        log "stdout: $(cat "$version_stdout_file" 2>/dev/null || true)"
+        log "stderr: $(cat "$version_stderr_file" 2>/dev/null || true)"
+        fail "Installation completed but '${INSTALL_DIR}/${BINARY_NAME} --version' did not print a recognizable version tag on stdout. Expected a calver tag like '2026.04.12' or the dev tag '0.0.0-dev'."
+    fi
 
     echo
     echo "floo installed successfully (${version_output})"

@@ -120,10 +120,15 @@ main() {
     local fixture_dir
     fixture_dir="$(mktemp -d)"
 
+    # Mock binary output must match the stricter version regex in install.sh
+    # (calver like 2026.04.12[.N] or the dev tag 0.0.0-dev). The real floo
+    # binary prints the bare tag on stdout — `0.0.0-dev` for unreleased
+    # builds, `YYYY.MM.DD[.N]` for releases — so the mock uses the dev
+    # format to exercise exactly that code path.
     local asset="${fixture_dir}/floo-x86_64-unknown-linux-musl"
     cat >"$asset" <<'SH'
 #!/usr/bin/env bash
-echo "floo test-0.0.0"
+echo "0.0.0-dev"
 SH
     chmod +x "$asset"
 
@@ -165,6 +170,31 @@ SH
         "file://${asset}" \
         "file://${bad_checksum_file}" \
         "Checksum mismatch"
+
+    # Regression guard for the v2026.04.12.1 install failure: a binary
+    # that exits 0 but prints no recognizable version tag on stdout must
+    # be rejected by install.sh, not silently accepted. Uses a mock that
+    # emits only stderr (mirroring the exact bug) plus a correct checksum.
+    local stderr_only_asset="${fixture_dir}/floo-x86_64-unknown-linux-musl.stderr-only"
+    cat >"$stderr_only_asset" <<'SH'
+#!/usr/bin/env bash
+# Emits the version to stderr instead of stdout — the exact v2026.04.12.1
+# regression. install.sh must catch this and fail, not accept it.
+echo "✓ floo 0.0.0-dev" >&2
+SH
+    chmod +x "$stderr_only_asset"
+    local stderr_only_checksum
+    stderr_only_checksum="$(sha256_file "$stderr_only_asset")"
+    local stderr_only_checksum_file="${stderr_only_asset}.sha256"
+    echo "${stderr_only_checksum}  $(basename "$stderr_only_asset")" >"$stderr_only_checksum_file"
+
+    run_installer_expect_failure \
+        "stderr-only --version output rejected" \
+        "Linux" \
+        "x86_64" \
+        "file://${stderr_only_asset}" \
+        "file://${stderr_only_checksum_file}" \
+        "did not print a recognizable version tag"
 
     rm -rf "$fixture_dir"
     pass "install_script_test suite"

@@ -14,6 +14,22 @@ fn display_tag(tag: &str) -> &str {
     tag.strip_prefix('v').unwrap_or(tag)
 }
 
+/// Should `floo version` skip the network check entirely?
+///
+/// Load-bearing for install.sh: the post-install `floo --version` check
+/// runs with `FLOO_NO_UPDATE_CHECK=1` set so that a fresh install doesn't
+/// try to reach GitHub AND doesn't try to auto-update mid-install. Any
+/// change to this predicate that stops honoring the env var will make
+/// install.sh hit the network on every install, slow the install flow,
+/// and potentially cause infinite install→update→install loops if the
+/// update path itself is broken.
+///
+/// Also honored for `floo-local` dev builds so local development never
+/// attempts to auto-update over the developer's working binary.
+fn should_skip_network_check() -> bool {
+    std::env::var("FLOO_NO_UPDATE_CHECK").is_ok() || crate::config::is_local_binary()
+}
+
 /// Refresh bundled skill files and echo each refreshed path in human mode.
 /// Shared by every post-install success arm in both `version()` and
 /// `update()` so an install path can't silently drop the refresh (which
@@ -37,10 +53,7 @@ fn refresh_and_announce_skills() -> Vec<String> {
 ///
 /// Respects `FLOO_NO_UPDATE_CHECK` and `floo-local` dev builds.
 pub fn version() {
-    let skip_network =
-        std::env::var("FLOO_NO_UPDATE_CHECK").is_ok() || crate::config::is_local_binary();
-
-    if skip_network {
+    if should_skip_network_check() {
         emit_version(None);
         return;
     }
@@ -187,5 +200,50 @@ mod tests {
         assert_eq!(super::display_tag("0.4.2"), "0.4.2");
         assert_eq!(super::display_tag("v2026.04.12"), "2026.04.12");
         assert_eq!(super::display_tag(""), "");
+    }
+
+    /// `FLOO_NO_UPDATE_CHECK=1` MUST cause `should_skip_network_check()`
+    /// to return true. install.sh depends on this: the post-install
+    /// `floo --version` check runs with this env var set so that a
+    /// fresh install doesn't reach GitHub or attempt to auto-update
+    /// mid-install. If this contract ever silently breaks, every fresh
+    /// install would start hitting the network, slowing installs and
+    /// potentially causing install→update→install loops if the update
+    /// path is broken.
+    ///
+    /// The SAFETY lock for this test is its name and doc comment, not
+    /// the assertion alone — a refactor that renames the env var or
+    /// moves the check elsewhere will need a reviewer to explicitly
+    /// update this test, which is exactly the friction we want.
+    #[test]
+    fn test_floo_no_update_check_env_var_is_install_sh_contract() {
+        // Save + restore any existing value so we don't pollute other
+        // tests running in the same process.
+        let prior = std::env::var("FLOO_NO_UPDATE_CHECK").ok();
+
+        std::env::remove_var("FLOO_NO_UPDATE_CHECK");
+        // Without the env var set (and assuming the test binary name is
+        // not "floo-local"), the predicate may still return true on a
+        // local dev binary. Only assert the env-var-driven branch.
+        std::env::set_var("FLOO_NO_UPDATE_CHECK", "1");
+        assert!(
+            super::should_skip_network_check(),
+            "FLOO_NO_UPDATE_CHECK=1 must short-circuit the network check — install.sh depends on this"
+        );
+
+        // Also verify an empty string counts as "set" (matches the
+        // `is_ok()` check, not `!= \"\"`). Users and scripts set env
+        // vars to "" all the time; the contract is "set at all".
+        std::env::set_var("FLOO_NO_UPDATE_CHECK", "");
+        assert!(
+            super::should_skip_network_check(),
+            "FLOO_NO_UPDATE_CHECK=\"\" must also short-circuit — is_ok() is the semantic"
+        );
+
+        // Restore whatever the environment had before.
+        match prior {
+            Some(v) => std::env::set_var("FLOO_NO_UPDATE_CHECK", v),
+            None => std::env::remove_var("FLOO_NO_UPDATE_CHECK"),
+        }
     }
 }
