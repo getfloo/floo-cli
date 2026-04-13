@@ -151,9 +151,8 @@ pub fn login(api_key: Option<&str>, force: bool) {
                 );
                 if !output::is_json_mode() {
                     eprintln!();
-                    eprintln!(
-                        "  Tip: Run 'floo skills install --path <dir>' to set up agent integration."
-                    );
+                    eprintln!("  Tip: Run 'floo docs' to see how floo works, or 'floo --help' to explore commands.");
+                    eprintln!("  Tip: Run 'floo skills install --path <dir>' to set up agent integration.");
                 }
                 return;
             }

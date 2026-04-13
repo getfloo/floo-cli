@@ -227,7 +227,8 @@ main() {
     echo
     echo "Get started:"
     echo "  floo auth login                        log in or create an account"
-    echo "  floo --help                            see all available commands"
+    echo "  floo docs                              see how floo works"
+    echo "  floo --help                            explore all commands"
     echo
     echo "Agent integration:"
     echo "  floo skills install --path <dir>       install agent skill to a directory"
