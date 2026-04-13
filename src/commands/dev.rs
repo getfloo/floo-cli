@@ -95,12 +95,22 @@ pub fn dev(app_flag: Option<String>) {
     // --- Collect and validate service info ---
     let mut services: Vec<DevServiceInfo> = Vec::new();
     let mut missing_dev_command: Vec<String> = Vec::new();
+    let mut skipped_external: Vec<String> = Vec::new();
 
     for (name, entry) in &app_config.services {
         let dev_command = match &entry.dev_command {
             Some(cmd) => cmd.clone(),
             None => {
-                missing_dev_command.push(name.clone());
+                // External-repo services (`repo = "owner/repo"`) source their
+                // code from a different GitHub repo and can't realistically
+                // run a local dev command. Warn and skip instead of failing
+                // the entire dev session — the rest of the multi-service app
+                // can still come up locally.
+                if entry.repo.is_some() {
+                    skipped_external.push(name.clone());
+                } else {
+                    missing_dev_command.push(name.clone());
+                }
                 continue;
             }
         };
@@ -146,6 +156,14 @@ pub fn dev(app_flag: Option<String>) {
             Some("Add dev_command = \"<cmd>\" to each [services.<name>] in floo.app.toml."),
         );
         process::exit(1);
+    }
+
+    for name in &skipped_external {
+        output::warn(&format!(
+            "Skipping '{name}' (external repo, no dev_command) — \
+             the service won't run locally. Hit its prod/preview URL or add a \
+             dev_command if you want to run it locally."
+        ));
     }
 
     // Sort by name for deterministic ordering
@@ -607,5 +625,69 @@ fn cleanup_session(client: &crate::api_client::FlooClient, app_id: &str, session
                 e.message
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::project_config::{AppServiceEntry, AppServiceType};
+
+    fn entry_with(repo: Option<&str>, dev_command: Option<&str>) -> AppServiceEntry {
+        AppServiceEntry {
+            service_type: AppServiceType::Web,
+            path: Some(".".into()),
+            repo: repo.map(String::from),
+            version: None,
+            plan: None,
+            port: Some(3000),
+            ingress: None,
+            env_file: None,
+            domain: None,
+            cpu: None,
+            memory: None,
+            max_instances: None,
+            min_instances: None,
+            dev_command: dev_command.map(String::from),
+            migrate_command: None,
+        }
+    }
+
+    /// Mirror of the partition logic in `dev()` so we can assert the rule
+    /// without spinning up subprocesses. If the dev() loop changes, update
+    /// both this helper and the call sites.
+    fn classify(entry: &AppServiceEntry) -> &'static str {
+        match entry.dev_command {
+            Some(_) => "runnable",
+            None if entry.repo.is_some() => "skipped_external",
+            None => "missing",
+        }
+    }
+
+    #[test]
+    fn external_repo_without_dev_command_is_skipped_not_an_error() {
+        // Regression test for: floo-crm fixture service had `repo = ...` and
+        // no dev_command, which hard-failed `floo dev` for the entire app.
+        let entry = entry_with(Some("getfloo/floo-crm-fixture"), None);
+        assert_eq!(classify(&entry), "skipped_external");
+    }
+
+    #[test]
+    fn local_service_without_dev_command_is_a_hard_error() {
+        let entry = entry_with(None, None);
+        assert_eq!(classify(&entry), "missing");
+    }
+
+    #[test]
+    fn local_service_with_dev_command_is_runnable() {
+        let entry = entry_with(None, Some("npm run dev"));
+        assert_eq!(classify(&entry), "runnable");
+    }
+
+    #[test]
+    fn external_service_with_dev_command_still_runs() {
+        // If the user explicitly opts into running an external-repo service
+        // locally by providing a dev_command, respect it.
+        let entry = entry_with(Some("getfloo/other"), Some("./run.sh"));
+        assert_eq!(classify(&entry), "runnable");
     }
 }
