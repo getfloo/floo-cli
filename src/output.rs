@@ -189,8 +189,23 @@ pub fn prompt_with_default(prompt: &str, default: &str) -> String {
 
 /// Print a raw value to stdout for piping. Used by `env get` in human mode.
 /// In JSON mode, callers should use `success()` instead.
+/// Emit a bare scalar value to stdout in human mode. Used by commands like
+/// `floo env get <KEY>` (which wants the value piped into shell scripts) and
+/// `floo version` (which needs the tag on stdout for install.sh + Unix
+/// convention) to produce machine-readable output without breaking the
+/// dual-mode contract.
+///
+/// In JSON mode this is a no-op — the structured `output::success(...)`
+/// call in the same command already puts the value into the JSON payload
+/// on stdout, so emitting a bare line would corrupt the JSON response that
+/// agents pipe through `jq`. The debug_assert catches misuse during dev;
+/// the early return makes release builds safe even if a future caller
+/// forgets the human-mode guard.
 pub fn raw_value(value: &str) {
     debug_assert!(!is_json_mode(), "raw_value called in JSON mode");
+    if is_json_mode() {
+        return;
+    }
     println!("{value}");
 }
 

@@ -78,9 +78,19 @@ pub fn version() {
 /// completed during this invocation — in that case we report the new tag
 /// as `version` and capture the old one as `previous_version` for
 /// audit/logging. Otherwise (`None`) we report the currently-running
-/// binary with no `previous_version` field. Using an `Option` here rather
-/// than a richer enum keeps the two-state shape explicit and the payload
-/// literal readable.
+/// binary with no `previous_version` field.
+///
+/// Output routing is deliberately non-obvious because `floo version` has
+/// two consumers with different expectations:
+///   - JSON mode: the structured payload on stdout (via output::success).
+///     Agents pipe `floo version --json | jq` and need a stable shape.
+///   - Human mode: the `✓ floo X.Y.Z` status line on stderr (floo's
+///     conventional colored output) PLUS a bare `X.Y.Z` on stdout
+///     (Unix `--version` convention). Scripts and install.sh both
+///     capture stdout from `floo --version`, so stdout must be
+///     non-empty and machine-parseable. The bare tag on stdout also
+///     matches what users get from `git --version`, `curl --version`,
+///     etc.
 fn emit_version(freshly_installed: Option<&str>) {
     let (installed, payload) = match freshly_installed {
         Some(new_tag) => {
@@ -101,6 +111,14 @@ fn emit_version(freshly_installed: Option<&str>) {
             (installed.to_string(), payload)
         }
     };
+
+    // In JSON mode, output::success writes the structured payload to stdout
+    // and we're done. In human mode, it writes the colored status line to
+    // stderr — which install.sh does NOT capture — so we must also write
+    // the bare version tag to stdout via raw_value.
+    if !output::is_json_mode() {
+        output::raw_value(&installed);
+    }
     output::success(&format!("floo {installed}"), Some(payload));
 }
 

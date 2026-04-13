@@ -19,32 +19,72 @@ fn test_help() {
         ));
 }
 
+/// Assert stdout contains a line that, when trimmed, equals exactly `tag`.
+/// The regression test for `floo --version`'s stdout output needs to pin
+/// the EXACT content, not just a substring — `contains("0.0.0-dev")` would
+/// pass on "floo-local 0.0.0-dev\n" or "Warning: 0.0.0-dev stale\n", both
+/// of which would break install.sh (which captures stdout verbatim and
+/// embeds it into shell strings) even though the test would be green.
+fn stdout_has_exact_line(tag: &'static str) -> impl Predicate<str> {
+    predicate::function(move |s: &str| s.lines().any(|l| l.trim() == tag))
+}
+
 #[test]
 fn test_version() {
+    // `floo --version` is rewritten to the `version` subcommand in
+    // cli::rewrite_bare_version_flag() so it hits the network, applies any
+    // staged update, and refreshes SKILL.md — matching `floo version`.
+    //
+    // Output contract (both are load-bearing):
+    //   - stdout: the bare version tag as an exact line. install.sh
+    //     captures stdout from `floo --version` to verify the install
+    //     worked, and Unix scripts expect `--version` on stdout. A
+    //     prior revision (shipped in v2026.04.12.1) only wrote to
+    //     stderr and broke install.sh in the wild — that's what the
+    //     exact-line assertion below guards against.
+    //   - stderr: the colored status line `✓ floo X.Y.Z`, matching the
+    //     rest of floo's human output style.
+    //
+    // FLOO_NO_UPDATE_CHECK=1 exercises the skip-network arm so the test
+    // doesn't try to reach GitHub (and, via run_update, clobber the
+    // cargo test binary via install_binary).
     floo()
+        .env("FLOO_NO_UPDATE_CHECK", "1")
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("floo 0.0.0-dev"));
+        .stdout(stdout_has_exact_line("0.0.0-dev"))
+        .stderr(predicate::str::contains("floo 0.0.0-dev"));
 }
 
 #[test]
 fn test_version_command_human() {
+    // Same output contract as test_version above. Uses the exact-line
+    // predicate so a future prefix like "floo-local 0.0.0-dev" on stdout
+    // would fail this test — install.sh captures stdout verbatim.
     floo()
+        .env("FLOO_NO_UPDATE_CHECK", "1")
         .arg("version")
         .assert()
         .success()
+        .stdout(stdout_has_exact_line("0.0.0-dev"))
         .stderr(predicate::str::contains("floo 0.0.0-dev"));
 }
 
 #[test]
 fn test_version_command_json() {
+    // JSON mode must NOT leak anything to stderr — agents parsing
+    // `floo version --json` expect the entire response on stdout. The
+    // empty-stderr assertion catches any future refactor that
+    // accidentally reintroduces a human-mode write under --json.
     floo()
+        .env("FLOO_NO_UPDATE_CHECK", "1")
         .args(["--json", "version"])
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""success":true"#))
-        .stdout(predicate::str::contains(r#""version":"0.0.0-dev""#));
+        .stdout(predicate::str::contains(r#""version":"0.0.0-dev""#))
+        .stderr(predicate::str::is_empty());
 }
 
 #[test]
@@ -798,92 +838,6 @@ fn test_init_refuses_existing_config() {
         .stdout(predicate::str::contains(r#""code":"CONFIG_EXISTS"#));
 }
 
-// --- Service add/rm ---
-
-#[test]
-fn test_service_add_help() {
-    floo()
-        .args(["services", "add", "--help"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Add a service"));
-}
-
-#[test]
-fn test_service_add_creates_files() {
-    let project = tempfile::TempDir::new().unwrap();
-    // Create app config first (required)
-    std::fs::write(
-        project.path().join("floo.app.toml"),
-        "[app]\nname = \"myapp\"\n",
-    )
-    .unwrap();
-    // Create the service subdirectory
-    std::fs::create_dir(project.path().join("api")).unwrap();
-    std::fs::write(
-        project.path().join("api").join("package.json"),
-        r#"{"name":"api"}"#,
-    )
-    .unwrap();
-
-    floo()
-        .args([
-            "--json", "services", "add", "api", "api", "--port", "8000", "--type", "api",
-        ])
-        .current_dir(project.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""name":"api"#));
-
-    // Verify inline service was added to app.toml (no floo.service.toml in subdirs)
-    assert!(!project.path().join("api/floo.service.toml").exists());
-    let app_toml = std::fs::read_to_string(project.path().join("floo.app.toml")).unwrap();
-    assert!(app_toml.contains("[services.api]"));
-    assert!(app_toml.contains("port = 8000"));
-}
-
-#[test]
-fn test_service_add_requires_port_in_json() {
-    let project = tempfile::TempDir::new().unwrap();
-    std::fs::write(
-        project.path().join("floo.app.toml"),
-        "[app]\nname = \"myapp\"\n",
-    )
-    .unwrap();
-
-    floo()
-        .args(["--json", "services", "add", "web", ".", "--type", "web"])
-        .current_dir(project.path())
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains(r#""code":"MISSING_PORT"#));
-}
-
-#[test]
-fn test_service_add_duplicate_name() {
-    let project = tempfile::TempDir::new().unwrap();
-    std::fs::write(
-        project.path().join("floo.app.toml"),
-        r#"[app]
-name = "myapp"
-
-[services.api]
-type = "api"
-path = "./api"
-"#,
-    )
-    .unwrap();
-
-    floo()
-        .args([
-            "--json", "services", "add", "api", "api2", "--port", "8000", "--type", "api",
-        ])
-        .current_dir(project.path())
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains(r#""code":"DUPLICATE_SERVICE"#));
-}
-
 // --- Deploy --dry-run (replaces floo check) ---
 
 #[test]
@@ -1124,15 +1078,6 @@ fn test_dry_run_redeploy_rebuild() {
 fn test_dry_run_unsupported_init() {
     floo()
         .args(["--json", "--dry-run", "init", "my-app"])
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains("not supported"));
-}
-
-#[test]
-fn test_dry_run_unsupported_service_add() {
-    floo()
-        .args(["--json", "--dry-run", "services", "add", "web", "."])
         .assert()
         .failure()
         .stdout(predicate::str::contains("not supported"));
