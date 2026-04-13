@@ -40,7 +40,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -82,11 +82,19 @@ jobs:
           "$hash  ${{ matrix.name }}.exe" | Out-File -Encoding ascii "${{ matrix.name }}.exe.sha256"
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.name }}
           path: |
             ${{ matrix.name }}*
+          # Hard-fail if the binary or its .sha256 companion is missing.
+          # The CLI's updater verifies checksums, so silently publishing a
+          # binary without its sha would break installs for every user.
+          if-no-files-found: error
+          # Allow "re-run failed jobs" to replace an existing artifact from
+          # a prior partial run, rather than erroring on immutable-name
+          # collisions (default behavior since upload-artifact@v4).
+          overwrite: true
 
   release:
     needs: build
@@ -96,7 +104,7 @@ jobs:
 
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -104,3 +112,8 @@ jobs:
           files: |
             floo-*/*
           generate_release_notes: true
+          # Hard-fail if the glob matches zero files. Default is false,
+          # which would silently publish a release with zero assets if the
+          # artifact download ever breaks or the directory layout shifts.
+          # The CLI auto-updater depends on these assets existing.
+          fail_on_unmatched_files: true
