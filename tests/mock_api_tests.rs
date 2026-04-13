@@ -302,8 +302,16 @@ fn test_env_set_json() {
     let _resolve = mock_resolve_app(&mut server);
     let _services = mock_list_services_one(&mut server);
 
+    // The CLI sends `POST /v1/apps/{id}/env?env=dev`. Mockito's default
+    // when `.match_query` is omitted is to require an empty query string
+    // (not "match any query"), so we must explicitly match the `env`
+    // param or the mock silently fails to register and the server
+    // returns its fallback 501 — which the CLI surfaces as API_ERROR
+    // with empty message. That's how these four tests drifted into
+    // green-by-orphan: nothing runs ci.yml on push so nobody noticed.
     let _m_set = server
         .mock("POST", format!("/v1/apps/{TEST_APP_ID}/env").as_str())
+        .match_query(Matcher::UrlEncoded("env".into(), "dev".into()))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(r#"{"key":"MY_KEY","masked_value":"my_v****"}"#)
@@ -441,11 +449,14 @@ fn test_env_import_json() {
     let _resolve = mock_resolve_app(&mut server);
     let _services = mock_list_services_one(&mut server);
 
+    // CLI sends `POST /v1/apps/{id}/env/import?env=dev` — must match
+    // the env query param explicitly (see test_env_set_json comment).
     let _m_import = server
         .mock(
             "POST",
             format!("/v1/apps/{TEST_APP_ID}/env/import").as_str(),
         )
+        .match_query(Matcher::UrlEncoded("env".into(), "dev".into()))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(r#"{"imported":2}"#)
@@ -1253,11 +1264,15 @@ fn test_deploy_existing_app_by_name_json() {
         .with_body(format!(r#"{{"apps":[{app}]}}"#, app = app_json()))
         .create();
 
-    // Return status "live" immediately to skip the polling loop
-    let _m_deploy = server
+    // `floo redeploy --app X` (without --rebuild) goes through
+    // deploy_restart → POST /v1/apps/{id}/restart, NOT the old /deploys
+    // endpoint. The rebuild path (--rebuild flag) is what POSTs to
+    // /deploys via rebuild_app — see test_deploy_rebuild_json below
+    // if/when we add one.
+    let _m_restart = server
         .mock(
             "POST",
-            format!("/v1/apps/{TEST_APP_ID}/deploys").as_str(),
+            format!("/v1/apps/{TEST_APP_ID}/restart").as_str(),
         )
         .with_status(200)
         .with_header("content-type", "application/json")
@@ -1348,10 +1363,17 @@ fn test_deploy_failed_json_includes_logs_and_suggestion() {
         .with_body(format!(r#"{{"apps":[{app}]}}"#, app = app_json()))
         .create();
 
-    let _m_deploy = server
+    // Same /restart routing as test_deploy_existing_app_by_name_json —
+    // `floo redeploy --app X` (without --rebuild) calls deploy_restart,
+    // which on status=="failed" emits RESTART_FAILED (not DEPLOY_FAILED)
+    // via output::error_with_data. The data payload contains
+    // {app, deploy}, and deploy carries through the build_logs field
+    // from the API response — so the existing build_logs assertion
+    // still works because the whole deploy object gets serialized.
+    let _m_restart = server
         .mock(
             "POST",
-            format!("/v1/apps/{TEST_APP_ID}/deploys").as_str(),
+            format!("/v1/apps/{TEST_APP_ID}/restart").as_str(),
         )
         .with_status(200)
         .with_header("content-type", "application/json")
@@ -1371,9 +1393,9 @@ fn test_deploy_failed_json_includes_logs_and_suggestion() {
         .env("HOME", home.path())
         .assert()
         .failure()
-        .stdout(predicate::str::contains(r#""code":"DEPLOY_FAILED""#))
+        .stdout(predicate::str::contains(r#""code":"RESTART_FAILED""#))
         .stdout(predicate::str::contains(
-            r#""suggestion":"Check build output above, or run `floo logs` for details.""#,
+            r#""suggestion":"Run `floo logs` for details.""#,
         ))
         .stdout(predicate::str::contains(
             r#""build_logs":"build failed: npm ci exited 1""#,
