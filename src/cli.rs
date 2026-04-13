@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
@@ -831,8 +832,57 @@ fn should_check_version(cli: &Cli) -> bool {
     if std::env::var("FLOO_NO_UPDATE_CHECK").is_ok() {
         return false;
     }
-    // Only skip for update command (has its own update flow)
-    !matches!(cli.command, Commands::Update { .. })
+    // Commands that drive their own update flow synchronously — skip the
+    // background check to avoid a redundant download racing the foreground one.
+    !matches!(cli.command, Commands::Update { .. } | Commands::Version)
+}
+
+/// Rewrites `floo --version` / `floo -V` to `floo version`.
+///
+/// Clap's built-in `version = VERSION` handler short-circuits inside `parse()`
+/// before `run()` executes, so `--version` would otherwise never trigger the
+/// updater path. We intercept argv before clap sees it so the subcommand runs.
+///
+/// The rewrite **appends** `version` to the end of the non-version args. This
+/// is safe today because `Commands::Version` takes no positional arguments;
+/// do NOT add positionals to `Commands::Version` without revisiting this.
+///
+/// Non-UTF-8 `OsString` args are conservatively treated as flag-like for
+/// subcommand detection — all floo subcommand names are ASCII, so a non-UTF-8
+/// positional can't be a valid subcommand and clap will reject it downstream
+/// with its own error.
+fn rewrite_bare_version_flag(args: Vec<OsString>) -> Vec<OsString> {
+    if args.len() < 2 {
+        return args;
+    }
+
+    // If any UTF-8 non-flag token follows the binary name, a subcommand
+    // is present. See doc comment above re: non-UTF-8 handling.
+    let has_subcommand = args.iter().skip(1).any(|arg| {
+        arg.to_str()
+            .is_some_and(|s| !s.starts_with('-') && !s.is_empty())
+    });
+    if has_subcommand {
+        return args;
+    }
+
+    // No subcommand — look for --version/-V and rewrite.
+    let mut has_version = false;
+    let mut rewritten: Vec<OsString> = Vec::with_capacity(args.len() + 1);
+    for (idx, arg) in args.into_iter().enumerate() {
+        if idx == 0 {
+            rewritten.push(arg);
+            continue;
+        }
+        match arg.to_str() {
+            Some("--version" | "-V") => has_version = true,
+            _ => rewritten.push(arg),
+        }
+    }
+    if has_version {
+        rewritten.push(OsString::from("version"));
+    }
+    rewritten
 }
 
 /// Reject `--dry-run` for mutating commands that don't implement it yet.
@@ -863,7 +913,8 @@ fn reject_unsupported_dry_run(command: &Commands) {
 }
 
 pub fn run() {
-    let cli = Cli::parse();
+    let args = rewrite_bare_version_flag(std::env::args_os().collect());
+    let cli = Cli::parse_from(args);
 
     if cli.json {
         output::set_json_mode(true);
@@ -1128,5 +1179,69 @@ pub fn run() {
     // Post-command: apply any update that was downloaded during this run
     if let Some(handle) = version_handle {
         handle.apply_and_notify(VERSION, !cli.json);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn argv(parts: &[&str]) -> Vec<OsString> {
+        parts.iter().map(OsString::from).collect()
+    }
+
+    fn strs(args: &[OsString]) -> Vec<&str> {
+        args.iter().map(|a| a.to_str().unwrap()).collect()
+    }
+
+    #[test]
+    fn rewrite_version_long_flag() {
+        let out = rewrite_bare_version_flag(argv(&["floo", "--version"]));
+        assert_eq!(strs(&out), vec!["floo", "version"]);
+    }
+
+    #[test]
+    fn rewrite_version_short_flag() {
+        let out = rewrite_bare_version_flag(argv(&["floo", "-V"]));
+        assert_eq!(strs(&out), vec!["floo", "version"]);
+    }
+
+    #[test]
+    fn rewrite_version_with_json_flag() {
+        // Non-version flags keep their relative order; `version` is appended
+        // at the end regardless of where --version was in the original args.
+        let out = rewrite_bare_version_flag(argv(&["floo", "--json", "--version"]));
+        assert_eq!(strs(&out), vec!["floo", "--json", "version"]);
+
+        let out = rewrite_bare_version_flag(argv(&["floo", "--version", "--json"]));
+        assert_eq!(strs(&out), vec!["floo", "--json", "version"]);
+    }
+
+    #[test]
+    fn rewrite_leaves_subcommand_unchanged() {
+        // If a subcommand is already present, don't touch --version — let clap
+        // handle any flag validation at the subcommand level.
+        let out = rewrite_bare_version_flag(argv(&["floo", "redeploy", "--app", "my-app"]));
+        assert_eq!(strs(&out), vec!["floo", "redeploy", "--app", "my-app"]);
+    }
+
+    #[test]
+    fn rewrite_leaves_version_subcommand_unchanged() {
+        let out = rewrite_bare_version_flag(argv(&["floo", "version"]));
+        assert_eq!(strs(&out), vec!["floo", "version"]);
+    }
+
+    #[test]
+    fn rewrite_leaves_bare_invocation_unchanged() {
+        // `floo` alone should still hit clap's "missing subcommand" help path.
+        let out = rewrite_bare_version_flag(argv(&["floo"]));
+        assert_eq!(strs(&out), vec!["floo"]);
+    }
+
+    #[test]
+    fn rewrite_leaves_help_flag_alone() {
+        // --help has its own clap short-circuit and we don't need to network for it.
+        let out = rewrite_bare_version_flag(argv(&["floo", "--help"]));
+        assert_eq!(strs(&out), vec!["floo", "--help"]);
     }
 }
