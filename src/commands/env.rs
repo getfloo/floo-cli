@@ -17,7 +17,10 @@ const DEPLOY_HINT: &str =
 ///
 /// Rejects absolute paths and paths that escape the project via `..`.
 /// Returns the canonicalized path on success.
-pub(crate) fn validate_env_file_path(env_file: &str, project_root: &Path) -> Result<PathBuf, String> {
+pub(crate) fn validate_env_file_path(
+    env_file: &str,
+    project_root: &Path,
+) -> Result<PathBuf, String> {
     let p = Path::new(env_file);
     if p.is_absolute() {
         return Err(format!(
@@ -25,11 +28,14 @@ pub(crate) fn validate_env_file_path(env_file: &str, project_root: &Path) -> Res
         ));
     }
     let joined = project_root.join(env_file);
-    let canonical = joined.canonicalize().map_err(|e| {
-        format!("env_file '{}' could not be resolved: {e}", joined.display())
-    })?;
+    let canonical = joined
+        .canonicalize()
+        .map_err(|e| format!("env_file '{}' could not be resolved: {e}", joined.display()))?;
     let root_canonical = project_root.canonicalize().map_err(|e| {
-        format!("Project root '{}' could not be resolved: {e}", project_root.display())
+        format!(
+            "Project root '{}' could not be resolved: {e}",
+            project_root.display()
+        )
     })?;
     if !canonical.starts_with(&root_canonical) {
         return Err(format!(
@@ -214,7 +220,13 @@ fn parse_env_file(path: &Path) -> Vec<(String, String)> {
 // Commands
 // ---------------------------------------------------------------------------
 
-pub fn set(key_value: &str, app_flag: Option<&str>, service_names: &[String], restart: bool, env: &str) {
+pub fn set(
+    key_value: &str,
+    app_flag: Option<&str>,
+    service_names: &[String],
+    restart: bool,
+    env: &str,
+) {
     if !key_value.contains('=') {
         output::error(
             "Invalid format. Use KEY=VALUE.",
@@ -420,7 +432,12 @@ pub fn get(key: &str, app_flag: Option<&str>, service_flag: Option<&str>, env: &
     }
 }
 
-pub fn import_vars(file_flag: Option<&Path>, app_flag: Option<&str>, service_names: &[String], env: &str) {
+pub fn import_vars(
+    file_flag: Option<&Path>,
+    app_flag: Option<&str>,
+    service_names: &[String],
+    env: &str,
+) {
     let cwd = std::env::current_dir().unwrap_or_else(|e| {
         output::error(
             &format!("Failed to read current directory: {e}"),
@@ -569,7 +586,9 @@ pub fn import_all_services(app_flag: Option<&str>, env: &str) {
                 Ok(Some(svc_config)) => {
                     if let Some(ref env_file) = svc_config.service.env_file {
                         match validate_env_file_path(env_file, &svc_dir) {
-                            Ok(path) => env_file_entries.push((svc_config.service.name.clone(), path)),
+                            Ok(path) => {
+                                env_file_entries.push((svc_config.service.name.clone(), path))
+                            }
                             Err(msg) => {
                                 output::error(&msg, &ErrorCode::InvalidPath, None);
                                 process::exit(1);

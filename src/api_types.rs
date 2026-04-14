@@ -214,6 +214,10 @@ pub struct Domain {
     pub hostname: String,
     pub status: Option<String>,
     pub dns_instructions: Option<String>,
+    pub service_name: Option<String>,
+    pub ssl_status: Option<String>,
+    pub verified: Option<bool>,
+    pub created_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

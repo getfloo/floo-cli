@@ -646,6 +646,173 @@ fn test_domains_list_multi_service_with_services_flag() {
         .stdout(predicate::str::contains("api.example.com"));
 }
 
+#[test]
+fn test_domains_status_json() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _m_list = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/domains").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"domains":[{"hostname":"app.example.com","status":"pending","dns_instructions":"CNAME app.example.com -> test.getfloo.com","service_name":"web","ssl_status":"pending","verified":false,"created_at":"2024-01-01T00:00:00Z"}]}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "domains",
+            "status",
+            "app.example.com",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains("app.example.com"));
+}
+
+#[test]
+fn test_domains_status_not_found() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _m_list = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/domains").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"domains":[]}"#)
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "domains",
+            "status",
+            "missing.example.com",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("DOMAIN_NOT_FOUND"));
+}
+
+#[test]
+fn test_domains_watch_becomes_active() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _m_verify = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/domains/app.example.com/verify").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"hostname":"app.example.com","status":"active","dns_instructions":null}"#)
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "domains",
+            "watch",
+            "app.example.com",
+            "--app",
+            TEST_APP_NAME,
+            "--timeout",
+            "60",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains("active"));
+}
+
+#[test]
+fn test_domains_watch_fails_on_failed_status() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _m_verify = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/domains/app.example.com/verify").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"hostname":"app.example.com","status":"failed","dns_instructions":null}"#)
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "domains",
+            "watch",
+            "app.example.com",
+            "--app",
+            TEST_APP_NAME,
+            "--timeout",
+            "60",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("DOMAIN_VERIFICATION_FAILED"));
+}
+
+#[test]
+fn test_domains_watch_timeout() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    // Always returns pending — watch should time out.
+    let _m_verify = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/domains/app.example.com/verify").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"hostname":"app.example.com","status":"pending","dns_instructions":"CNAME app.example.com -> test.getfloo.com"}"#)
+        .create();
+
+    // --timeout 0 means the deadline is already expired after the first verify call.
+    floo()
+        .args([
+            "--json",
+            "domains",
+            "watch",
+            "app.example.com",
+            "--app",
+            TEST_APP_NAME,
+            "--timeout",
+            "0",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("DOMAIN_WATCH_TIMEOUT"));
+}
+
 // ───────────────────────── Rollbacks ─────────────────────────
 
 #[test]

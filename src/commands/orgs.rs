@@ -90,18 +90,15 @@ pub fn switch(org_slug: &str) {
         }
     };
 
-    let target = orgs.orgs.iter().find(|o| {
-        o.slug.as_deref() == Some(org_slug) || o.id == org_slug
-    });
+    let target = orgs
+        .orgs
+        .iter()
+        .find(|o| o.slug.as_deref() == Some(org_slug) || o.id == org_slug);
 
     let target = match target {
         Some(o) => o,
         None => {
-            let available: Vec<&str> = orgs
-                .orgs
-                .iter()
-                .filter_map(|o| o.slug.as_deref())
-                .collect();
+            let available: Vec<&str> = orgs.orgs.iter().filter_map(|o| o.slug.as_deref()).collect();
             output::error(
                 &format!("Organization '{org_slug}' not found."),
                 &ErrorCode::from_api("ORG_NOT_FOUND"),

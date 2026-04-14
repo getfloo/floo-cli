@@ -321,6 +321,7 @@ impl FlooClient {
 
     // --- Deploys ---
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_deploy(
         &self,
         app_id: &str,
@@ -729,6 +730,7 @@ impl FlooClient {
 
     // --- Logs ---
 
+    #[allow(clippy::too_many_arguments)]
     pub fn get_logs(
         &self,
         app_id: &str,
@@ -909,10 +911,8 @@ impl FlooClient {
         &self,
         period: &str,
     ) -> Result<OrgCostBreakdownResponse, FlooApiError> {
-        let resp = self.get_with_query(
-            "/v1/billing/orgs/me/cost-breakdown",
-            &[("period", period)],
-        )?;
+        let resp =
+            self.get_with_query("/v1/billing/orgs/me/cost-breakdown", &[("period", period)])?;
         self.handle_response(resp)
     }
 

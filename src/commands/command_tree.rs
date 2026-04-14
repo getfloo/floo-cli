@@ -251,6 +251,20 @@ fn command_tree() -> Vec<CommandInfo> {
                     requires_auth: true,
                     subcommands: vec![],
                 },
+                CommandInfo {
+                    name: "status",
+                    description: "Show detailed status for a single domain",
+                    usage: "floo domains status <hostname> --app <name>",
+                    requires_auth: true,
+                    subcommands: vec![],
+                },
+                CommandInfo {
+                    name: "watch",
+                    description: "Poll until a domain is active or the timeout expires",
+                    usage: "floo domains watch <hostname> --app <name> [--timeout <secs>]",
+                    requires_auth: true,
+                    subcommands: vec![],
+                },
             ],
         },
         CommandInfo {

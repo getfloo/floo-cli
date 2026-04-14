@@ -863,11 +863,7 @@ ingress = "public"
     .unwrap();
 
     floo()
-        .args([
-            "--json",
-            "preflight",
-            project.path().to_str().unwrap(),
-        ])
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -892,11 +888,7 @@ path = "./api"
     std::fs::create_dir(project.path().join("api")).unwrap();
 
     floo()
-        .args([
-            "--json",
-            "preflight",
-            project.path().to_str().unwrap(),
-        ])
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
@@ -934,11 +926,7 @@ ingress = "public"
     .unwrap();
 
     floo()
-        .args([
-            "--json",
-            "preflight",
-            project.path().to_str().unwrap(),
-        ])
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()

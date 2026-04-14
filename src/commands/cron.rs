@@ -22,10 +22,7 @@ pub fn list(app_flag: Option<&str>) {
     }
 
     if result.cron_jobs.is_empty() {
-        output::info(
-            "No cron jobs configured.",
-            None,
-        );
+        output::info("No cron jobs configured.", None);
         return;
     }
 
@@ -48,7 +45,14 @@ pub fn list(app_flag: Option<&str>) {
         .collect();
 
     output::table(
-        &["Name", "Schedule", "Service", "Enabled", "Last Status", "Last Run"],
+        &[
+            "Name",
+            "Schedule",
+            "Service",
+            "Enabled",
+            "Last Status",
+            "Last Run",
+        ],
         &rows,
         None,
     );

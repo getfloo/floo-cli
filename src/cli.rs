@@ -658,6 +658,30 @@ pub enum DomainsCommands {
         #[arg(long)]
         services: Option<String>,
     },
+
+    /// Show detailed status for a single custom domain.
+    Status {
+        /// Domain hostname.
+        hostname: String,
+
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+
+    /// Poll until a domain is active, failed, or the timeout expires.
+    Watch {
+        /// Domain hostname to watch.
+        hostname: String,
+
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Maximum seconds to wait (default: 300).
+        #[arg(long, default_value_t = 300)]
+        timeout: u64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1096,6 +1120,14 @@ pub fn run() {
                 app,
                 services,
             } => commands::domains::remove(&hostname, app.as_deref(), services.as_deref()),
+            DomainsCommands::Status { hostname, app } => {
+                commands::domains::status(&hostname, app.as_deref())
+            }
+            DomainsCommands::Watch {
+                hostname,
+                app,
+                timeout,
+            } => commands::domains::watch(&hostname, app.as_deref(), timeout),
         },
 
         Commands::Releases(sub) => match sub {

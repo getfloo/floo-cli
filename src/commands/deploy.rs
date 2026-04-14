@@ -10,7 +10,10 @@ use crate::config::load_config;
 use crate::detection::{detect_for_services, DetectionResult};
 use crate::errors::{ErrorCode, FlooApiError};
 use crate::output;
-use crate::project_config::{self, validate_service_name, AppAccessMode, AppAgentMode, AppSource, ServiceConfig, ServiceIngress, ServiceType};
+use crate::project_config::{
+    self, validate_service_name, AppAccessMode, AppAgentMode, AppSource, ServiceConfig,
+    ServiceIngress, ServiceType,
+};
 use crate::resolve::resolve_app;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -26,11 +29,7 @@ fn status_label(status: &str) -> &str {
     }
 }
 
-pub fn preflight(
-    path: PathBuf,
-    app: Option<String>,
-    services_filter: Vec<String>,
-) {
+pub fn preflight(path: PathBuf, app: Option<String>, services_filter: Vec<String>) {
     // 1. Canonicalize path
     let project_path = match path.canonicalize() {
         Ok(p) => p,
@@ -95,7 +94,8 @@ pub fn preflight(
         .iter()
         .map(|s| (s.name.as_str(), s.path.as_str()))
         .collect();
-    let (_primary_detection, per_service_detection) = detect_for_services(&project_path, &svc_pairs);
+    let (_primary_detection, per_service_detection) =
+        detect_for_services(&project_path, &svc_pairs);
 
     // 5. Validate
     let (preflight_errors, preflight_warnings) =
@@ -206,8 +206,7 @@ pub fn deploy(
         // Dry-run exits early — no auth or API calls needed
         if output::is_dry_run_mode() {
             let action = if rebuild { "rebuild" } else { "restart" };
-            let service_names: Vec<&str> =
-                services_filter.iter().map(|s| s.as_str()).collect();
+            let service_names: Vec<&str> = services_filter.iter().map(|s| s.as_str()).collect();
             output::dry_run_success(serde_json::json!({
                 "action": action,
                 "app": app_name,
@@ -502,10 +501,8 @@ pub fn deploy(
         });
 
     // Extract agent_mode from [app] section
-    let agent_mode: Option<AppAgentMode> = resolved
-        .app_config
-        .as_ref()
-        .and_then(|c| c.app.agent_mode);
+    let agent_mode: Option<AppAgentMode> =
+        resolved.app_config.as_ref().and_then(|c| c.app.agent_mode);
 
     // Extract auth redirect URIs from [auth] toml section
     let auth_redirect_uris: Option<Vec<String>> = resolved
@@ -515,10 +512,7 @@ pub fn deploy(
         .and_then(|auth| auth.redirect_uris.clone());
 
     // Extract reparo config from [reparo] toml section
-    let reparo_config = resolved
-        .app_config
-        .as_ref()
-        .and_then(|c| c.reparo.as_ref());
+    let reparo_config = resolved.app_config.as_ref().and_then(|c| c.reparo.as_ref());
 
     // Extract cron job definitions from [cron] toml section
     let cron_entries: Vec<crate::project_config::CronJobEntry> = resolved
@@ -544,10 +538,7 @@ pub fn deploy(
     };
 
     // Extract [github] config
-    let github_config = resolved
-        .app_config
-        .as_ref()
-        .and_then(|c| c.github.as_ref());
+    let github_config = resolved.app_config.as_ref().and_then(|c| c.github.as_ref());
 
     // Deploy
     let svc_slice = Some(services.as_slice());
@@ -613,12 +604,11 @@ pub fn deploy(
 
     if final_status == "failed" {
         let build_logs = deploy_data.build_logs.as_deref().unwrap_or("");
-        if !output::is_json_mode() {
-            if !build_logs.is_empty() && build_logs != "[no message content]" {
-                output::bold_line("Build Logs");
-                for line in build_logs.lines() {
-                    output::dim_line(line);
-                }
+        if !output::is_json_mode() && !build_logs.is_empty() && build_logs != "[no message content]"
+        {
+            output::bold_line("Build Logs");
+            for line in build_logs.lines() {
+                output::dim_line(line);
             }
         }
         output::error_with_data(
@@ -950,10 +940,7 @@ fn generate_security_notes(
     let mut notes: Vec<String> = Vec::new();
 
     // Check access_mode — warn if no auth is configured
-    let access_mode = resolved
-        .app_config
-        .as_ref()
-        .and_then(|c| c.app.access_mode);
+    let access_mode = resolved.app_config.as_ref().and_then(|c| c.app.access_mode);
     match access_mode {
         None | Some(AppAccessMode::Public) => {
             notes.push(
@@ -1064,8 +1051,16 @@ fn generate_security_notes(
 fn looks_like_secret(key: &str) -> bool {
     let key_upper = key.to_uppercase();
     let secret_patterns = [
-        "SECRET", "KEY", "TOKEN", "PASSWORD", "CREDENTIAL", "DATABASE_URL",
-        "REDIS_URL", "API_KEY", "PRIVATE", "AUTH",
+        "SECRET",
+        "KEY",
+        "TOKEN",
+        "PASSWORD",
+        "CREDENTIAL",
+        "DATABASE_URL",
+        "REDIS_URL",
+        "API_KEY",
+        "PRIVATE",
+        "AUTH",
     ];
     secret_patterns.iter().any(|p| key_upper.contains(p))
 }
@@ -1443,7 +1438,9 @@ pub(crate) fn sync_env_vars_if_needed(
                 if let Ok(Some(svc_config)) = project_config::load_service_config(&svc_dir) {
                     if let Some(ref env_file) = svc_config.service.env_file {
                         match super::env::validate_env_file_path(env_file, &svc_dir) {
-                            Ok(path) => env_file_entries.push((svc_config.service.name.clone(), path)),
+                            Ok(path) => {
+                                env_file_entries.push((svc_config.service.name.clone(), path))
+                            }
                             Err(msg) => {
                                 output::error(&msg, &ErrorCode::InvalidPath, None);
                                 process::exit(1);

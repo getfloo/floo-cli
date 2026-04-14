@@ -212,8 +212,7 @@ pub fn usage(period: &str) {
     );
     eprintln!(
         "  Compute used: ${:.2} ({})",
-        breakdown.total_cost_usd,
-        breakdown.period.label
+        breakdown.total_cost_usd, breakdown.period.label
     );
 
     match spend_cap {

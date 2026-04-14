@@ -56,8 +56,7 @@ pub fn connect(
             }
         };
         // Try to load local config for env var import (optional — not required)
-        let resolved =
-            project_config::resolve_app_context(&cwd, Some(&app_data.name)).ok();
+        let resolved = project_config::resolve_app_context(&cwd, Some(&app_data.name)).ok();
         (app_data, resolved)
     } else {
         // No --app: must resolve from local config
@@ -93,8 +92,7 @@ pub fn connect(
             }
         };
 
-        let resolved =
-            project_config::resolve_app_context(&cwd, Some(&app_data.name)).ok();
+        let resolved = project_config::resolve_app_context(&cwd, Some(&app_data.name)).ok();
         (app_data, resolved)
     };
 
@@ -552,7 +550,10 @@ fn run_initial_deploy(
         }
     } else {
         // Ambiguous status (timeout, cancelled, unknown) — report as failed
-        output::warn(&format!("Deploy ended with unexpected status: {}", final_status));
+        output::warn(&format!(
+            "Deploy ended with unexpected status: {}",
+            final_status
+        ));
         DeployOutcome::Failed {
             deploy: output::to_value(&deploy_data),
         }
