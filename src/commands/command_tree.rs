@@ -404,6 +404,13 @@ fn command_tree() -> Vec<CommandInfo> {
                     subcommands: vec![],
                 },
                 CommandInfo {
+                    name: "usage",
+                    description: "Show plan, compute credit, and per-app cost breakdown",
+                    usage: "floo billing usage [--period current_month|last_month|last_7d]",
+                    requires_auth: true,
+                    subcommands: vec![],
+                },
+                CommandInfo {
                     name: "contact",
                     description: "Print enterprise contact information",
                     usage: "floo billing contact",
