@@ -1,4 +1,6 @@
 use std::process;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use crate::api_client::FlooClient;
 use crate::errors::ErrorCode;
@@ -181,4 +183,129 @@ pub fn remove(hostname: &str, app: Option<&str>, services: Option<&str>) {
         &format!("Removed domain {hostname} from {app_name}."),
         Some(serde_json::json!({"hostname": hostname})),
     );
+}
+
+pub fn status(hostname: &str, app: Option<&str>) {
+    super::require_auth();
+    let client = super::init_client(None);
+
+    let (app_id, _app_name) = super::resolve_app_from_config(&client, app);
+
+    let result = match client.list_domains(&app_id) {
+        Ok(r) => r,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+
+    let domain = match result.domains.iter().find(|d| d.hostname == hostname) {
+        Some(d) => d,
+        None => {
+            output::error(
+                &format!("Domain '{hostname}' not found."),
+                &ErrorCode::DomainNotFound,
+                Some("Run 'floo domains list' to see available domains."),
+            );
+            process::exit(1);
+        }
+    };
+
+    if output::is_json_mode() {
+        output::success(
+            &format!("Domain {hostname}"),
+            Some(output::to_value(domain)),
+        );
+        return;
+    }
+
+    let status = domain.status.as_deref().unwrap_or("-");
+    let ssl = domain.ssl_status.as_deref().unwrap_or("-");
+    let verified = domain
+        .verified
+        .map(|v| if v { "yes" } else { "no" })
+        .unwrap_or("-");
+    let service = domain.service_name.as_deref().unwrap_or("app default");
+
+    output::info(&format!("Domain:   {hostname}"), None);
+    output::info(&format!("Status:   {status}"), None);
+    output::info(&format!("SSL:      {ssl}"), None);
+    output::info(&format!("Verified: {verified}"), None);
+    output::info(&format!("Service:  {service}"), None);
+    if let Some(dns) = domain.dns_instructions.as_deref() {
+        output::info(&format!("DNS:      {dns}"), None);
+    }
+}
+
+/// Poll until the domain is active, failed, or timeout expires.
+/// Calls `verify_domain` on each tick to trigger server-side DNS re-check.
+pub fn watch(hostname: &str, app: Option<&str>, timeout_secs: u64) {
+    super::require_auth();
+    let client = super::init_client(None);
+
+    let (app_id, _app_name) = super::resolve_app_from_config(&client, app);
+
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    let poll_interval = Duration::from_secs(5);
+
+    if !output::is_json_mode() {
+        output::info(
+            &format!("Watching {hostname} (timeout: {timeout_secs}s, polling every 5s)..."),
+            None,
+        );
+    }
+
+    loop {
+        // Re-check DNS via verify endpoint.
+        let result = match client.verify_domain(&app_id, hostname) {
+            Ok(r) => r,
+            Err(e) => {
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                process::exit(1);
+            }
+        };
+
+        let current_status = result.status.as_deref().unwrap_or("unknown");
+
+        match current_status {
+            "active" => {
+                if output::is_json_mode() {
+                    output::success(
+                        &format!("Domain {hostname} is active."),
+                        Some(output::to_value(&result)),
+                    );
+                } else {
+                    output::success(
+                        &format!("Domain {hostname} is now active."),
+                        Some(serde_json::Value::Null),
+                    );
+                }
+                return;
+            }
+            "failed" => {
+                output::error(
+                    &format!("Domain {hostname} verification failed."),
+                    &ErrorCode::DomainVerificationFailed,
+                    Some("Check your DNS CNAME record and try again with 'floo domains verify'."),
+                );
+                process::exit(1);
+            }
+            _ => {
+                if !output::is_json_mode() {
+                    output::info(&format!("  Status: {current_status} — waiting..."), None);
+                }
+            }
+        }
+
+        if Instant::now() >= deadline {
+            output::error(
+                &format!("Timed out waiting for {hostname} to become active."),
+                &ErrorCode::DomainWatchTimeout,
+                Some("DNS changes can take up to 24 hours. Re-run 'floo domains watch' to resume."),
+            );
+            process::exit(1);
+        }
+
+        thread::sleep(poll_interval);
+    }
 }

@@ -251,11 +251,7 @@ impl FlooClient {
 
     // --- Access ---
 
-    pub fn grant_app_access(
-        &self,
-        app_id: &str,
-        email: &str,
-    ) -> Result<Value, FlooApiError> {
+    pub fn grant_app_access(&self, app_id: &str, email: &str) -> Result<Value, FlooApiError> {
         let body = serde_json::json!({"email": email});
         let resp = self.post_json(&format!("/v1/apps/{app_id}/access"), &body)?;
         self.handle_response(resp)
@@ -325,6 +321,7 @@ impl FlooClient {
 
     // --- Deploys ---
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_deploy(
         &self,
         app_id: &str,
@@ -694,8 +691,10 @@ impl FlooClient {
         app_id: &str,
         hostname: &str,
     ) -> Result<AddDomainResponse, FlooApiError> {
-        let resp =
-            self.post_json(&format!("/v1/apps/{app_id}/domains/{hostname}/verify"), &serde_json::json!({}))?;
+        let resp = self.post_json(
+            &format!("/v1/apps/{app_id}/domains/{hostname}/verify"),
+            &serde_json::json!({}),
+        )?;
         self.handle_response(resp)
     }
 
@@ -731,6 +730,7 @@ impl FlooClient {
 
     // --- Logs ---
 
+    #[allow(clippy::too_many_arguments)]
     pub fn get_logs(
         &self,
         app_id: &str,
@@ -905,6 +905,17 @@ impl FlooClient {
         Ok(())
     }
 
+    // --- Billing usage ---
+
+    pub fn get_org_cost_breakdown(
+        &self,
+        period: &str,
+    ) -> Result<OrgCostBreakdownResponse, FlooApiError> {
+        let resp =
+            self.get_with_query("/v1/billing/orgs/me/cost-breakdown", &[("period", period)])?;
+        self.handle_response(resp)
+    }
+
     // --- Analytics ---
 
     pub fn get_app_analytics(
@@ -957,11 +968,7 @@ impl FlooClient {
 
     // --- Reparo ---
 
-    pub fn reparo_events(
-        &self,
-        app_id: &str,
-        status: Option<&str>,
-    ) -> Result<Value, FlooApiError> {
+    pub fn reparo_events(&self, app_id: &str, status: Option<&str>) -> Result<Value, FlooApiError> {
         let path = format!("/v1/apps/{app_id}/reparo/events");
         let resp = if let Some(s) = status {
             self.get_with_query(&path, &[("status", s)])?
@@ -996,5 +1003,4 @@ impl FlooClient {
         self.handle_response_value(resp)?;
         Ok(())
     }
-
 }

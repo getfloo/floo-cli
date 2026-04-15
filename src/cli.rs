@@ -344,8 +344,12 @@ pub enum BillingCommands {
         plan: Option<String>,
     },
 
-    /// Show current usage, spend cap, and plan details.
-    Usage,
+    /// Show current usage, spend cap, and per-app compute breakdown.
+    Usage {
+        /// Time period to show compute costs for.
+        #[arg(short, long, default_value = "current_month", value_parser = ["current_month", "last_month", "last_7d"])]
+        period: String,
+    },
 
     /// Print enterprise contact information.
     Contact,
@@ -602,7 +606,6 @@ pub enum ServicesCommands {
         #[arg(short, long)]
         app: Option<String>,
     },
-
 }
 
 #[derive(Subcommand)]
@@ -654,6 +657,30 @@ pub enum DomainsCommands {
         /// Target service name (required for multi-service apps).
         #[arg(long)]
         services: Option<String>,
+    },
+
+    /// Show detailed status for a single custom domain.
+    Status {
+        /// Domain hostname.
+        hostname: String,
+
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+
+    /// Poll until a domain is active, failed, or the timeout expires.
+    Watch {
+        /// Domain hostname to watch.
+        hostname: String,
+
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Maximum seconds to wait (default: 300).
+        #[arg(long, default_value_t = 300)]
+        timeout: u64,
     },
 }
 
@@ -735,7 +762,6 @@ pub enum DeploysSubcommands {
         force: bool,
     },
 }
-
 
 #[derive(Subcommand)]
 pub enum SkillsCommands {
@@ -991,7 +1017,7 @@ pub fn run() {
                 SpendCapCommands::Set { amount } => commands::billing::spend_cap_set(amount),
             },
             BillingCommands::Upgrade { plan } => commands::billing::upgrade(plan),
-            BillingCommands::Usage => commands::billing::usage(),
+            BillingCommands::Usage { period } => commands::billing::usage(&period),
             BillingCommands::Contact => commands::billing::contact(),
         },
 
@@ -1029,9 +1055,7 @@ pub fn run() {
                 GitHubCommands::Status { app } => commands::github::status(app.as_deref()),
             },
             AppsCommands::Password { app_name } => commands::apps::show_password(&app_name),
-            AppsCommands::Invite { email, app } => {
-                commands::apps::invite(&email, app.as_deref())
-            }
+            AppsCommands::Invite { email, app } => commands::apps::invite(&email, app.as_deref()),
         },
 
         Commands::Env(sub) => match sub {
@@ -1079,7 +1103,6 @@ pub fn run() {
             }
         },
 
-
         Commands::Domains(sub) => match sub {
             DomainsCommands::Add {
                 hostname,
@@ -1097,6 +1120,14 @@ pub fn run() {
                 app,
                 services,
             } => commands::domains::remove(&hostname, app.as_deref(), services.as_deref()),
+            DomainsCommands::Status { hostname, app } => {
+                commands::domains::status(&hostname, app.as_deref())
+            }
+            DomainsCommands::Watch {
+                hostname,
+                app,
+                timeout,
+            } => commands::domains::watch(&hostname, app.as_deref(), timeout),
         },
 
         Commands::Releases(sub) => match sub {
@@ -1114,9 +1145,12 @@ pub fn run() {
         },
 
         Commands::Db(sub) => match sub {
-            DbCommands::Query { sql, app, env, limit } => {
-                commands::db::query(app.as_deref(), &sql, &env, limit)
-            }
+            DbCommands::Query {
+                sql,
+                app,
+                env,
+                limit,
+            } => commands::db::query(app.as_deref(), &sql, &env, limit),
             DbCommands::Schema { app } => commands::db::schema(app.as_deref()),
             DbCommands::Migrate { app } => commands::db::migrate(app.as_deref()),
         },

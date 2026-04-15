@@ -62,7 +62,14 @@ pub fn list(app: Option<&str>) {
         .collect();
 
     output::table(
-        &["Deploy ID", "Status", "Env", "Triggered By", "Commit", "Created"],
+        &[
+            "Deploy ID",
+            "Status",
+            "Env",
+            "Triggered By",
+            "Commit",
+            "Created",
+        ],
         &rows,
         Some(output::to_value(&result)),
     );

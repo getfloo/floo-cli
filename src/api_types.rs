@@ -33,6 +33,28 @@ pub struct ProfileResponse {
 // --- Billing ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppCostSummary {
+    pub app_id: String,
+    pub name: String,
+    pub total_cost_usd: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CostBreakdownPeriod {
+    pub start: String,
+    pub end: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrgCostBreakdownResponse {
+    pub period: CostBreakdownPeriod,
+    pub total_cost_usd: f64,
+    pub included_cost_usd: f64,
+    pub apps: Vec<AppCostSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BillingCheckoutResponse {
     pub url: Option<String>,
     #[serde(default)]
@@ -192,6 +214,10 @@ pub struct Domain {
     pub hostname: String,
     pub status: Option<String>,
     pub dns_instructions: Option<String>,
+    pub service_name: Option<String>,
+    pub ssl_status: Option<String>,
+    pub verified: Option<bool>,
+    pub created_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -363,4 +389,3 @@ pub struct AppAnalyticsEntry {
     pub total_errors: i64,
     pub error_rate: f64,
 }
-

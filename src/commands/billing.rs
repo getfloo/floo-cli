@@ -12,7 +12,10 @@ pub fn upgrade(plan: Option<String>) {
             if result.upgraded {
                 let plan_name = result.plan.as_deref().unwrap_or("paid");
                 if output::is_json_mode() {
-                    output::success("", Some(serde_json::json!({"upgraded": true, "plan": plan_name})));
+                    output::success(
+                        "",
+                        Some(serde_json::json!({"upgraded": true, "plan": plan_name})),
+                    );
                 } else {
                     output::success(&format!("Upgraded to {plan_name}"), None);
                 }
@@ -138,7 +141,7 @@ pub fn spend_cap_set(amount: f64) {
     }
 }
 
-pub fn usage() {
+pub fn usage(period: &str) {
     super::require_auth();
     let client = super::init_client(None);
 
@@ -152,6 +155,14 @@ pub fn usage() {
 
     let limits = match client.get_billing_limits() {
         Ok(l) => l,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+
+    let breakdown = match client.get_org_cost_breakdown(period) {
+        Ok(b) => b,
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
@@ -172,20 +183,20 @@ pub fn usage() {
         _ => "$0",
     };
 
-    let included_cents: u64 = match plan {
-        "free" => 500,
-        "hobby" => 500,
-        "pro" => 2000,
-        "team" => 20000,
-        _ => 0,
-    };
-
     let data = serde_json::json!({
         "plan": plan,
         "spend_cap_cents": spend_cap,
         "max_spend_cap_cents": max_cap,
         "current_period_spend_cents": current_spend,
         "spend_cap_exceeded": exceeded,
+        "period": period,
+        "total_cost_usd": breakdown.total_cost_usd,
+        "included_cost_usd": breakdown.included_cost_usd,
+        "apps": breakdown.apps.iter().map(|a| serde_json::json!({
+            "app_id": a.app_id,
+            "name": a.name,
+            "total_cost_usd": a.total_cost_usd,
+        })).collect::<Vec<_>>(),
     });
 
     if output::is_json_mode() {
@@ -196,10 +207,13 @@ pub fn usage() {
     let plan_label = plan[..1].to_uppercase() + &plan[1..];
     eprintln!("  Plan: {} ({})", plan_label, plan_price);
     eprintln!(
-        "  Included compute: ${:.2}/month",
-        included_cents as f64 / 100.0
+        "  Compute credit: ${:.2}/month",
+        breakdown.included_cost_usd
     );
-    eprintln!("  Current spend: ${:.2}", current_spend as f64 / 100.0);
+    eprintln!(
+        "  Compute used: ${:.2} ({})",
+        breakdown.total_cost_usd, breakdown.period.label
+    );
 
     match spend_cap {
         Some(cents) if cents > 0 => {
@@ -223,7 +237,16 @@ pub fn usage() {
         _ => eprintln!("  Spend cap: none (unlimited)"),
     }
 
+    if !breakdown.apps.is_empty() {
+        eprintln!();
+        eprintln!("  By app:");
+        for app in &breakdown.apps {
+            eprintln!("    {:<30}  ${:.2}", app.name, app.total_cost_usd);
+        }
+    }
+
     if exceeded {
+        eprintln!();
         output::warn("Spend cap exceeded \u{2014} deploys are blocked.");
     }
 }

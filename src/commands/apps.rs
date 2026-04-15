@@ -21,7 +21,10 @@ pub fn list(page: u32, per_page: u32) {
 
     if result.apps.is_empty() {
         if !output::is_json_mode() {
-            output::info("No apps yet. Connect a repo: floo apps github connect <owner/repo>", None);
+            output::info(
+                "No apps yet. Connect a repo: floo apps github connect <owner/repo>",
+                None,
+            );
         } else {
             output::success(
                 "No apps.",
@@ -125,15 +128,9 @@ pub fn status(app_name: &str) {
                     format!("{}  {}", e.name, url)
                 })
                 .collect();
-            output::info(
-                &format!("  Envs:     {}", env_lines[0]),
-                None,
-            );
+            output::info(&format!("  Envs:     {}", env_lines[0]), None);
             for line in &env_lines[1..] {
-                output::info(
-                    &format!("            {line}"),
-                    None,
-                );
+                output::info(&format!("            {line}"), None);
             }
         }
     }
@@ -213,10 +210,7 @@ pub fn invite(email: &str, app_flag: Option<&str>) {
 
     match client.grant_app_access(&app_id, email) {
         Ok(result) => {
-            output::success(
-                &format!("Invited {email} to '{app_name}'."),
-                Some(result),
-            );
+            output::success(&format!("Invited {email} to '{app_name}'."), Some(result));
         }
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);

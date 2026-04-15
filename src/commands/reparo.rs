@@ -35,7 +35,11 @@ pub fn events(app_flag: Option<&str>, status_filter: Option<&str>) {
     let rows: Vec<Vec<String>> = events
         .iter()
         .map(|e| {
-            let id = e.get("id").and_then(|v| v.as_str()).unwrap_or("-").to_string();
+            let id = e
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("-")
+                .to_string();
             let status = e
                 .get("status")
                 .and_then(|v| v.as_str())

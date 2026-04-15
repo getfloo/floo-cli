@@ -376,7 +376,10 @@ impl VersionCheckHandle {
             if show_notice {
                 if let Some(meta) = read_staged_meta() {
                     // staged dir still exists = apply failed, tell user
-                    eprintln!("  floo {} downloaded but could not be applied.", meta.version);
+                    eprintln!(
+                        "  floo {} downloaded but could not be applied.",
+                        meta.version
+                    );
                     eprintln!("{MANUAL_UPDATE_HINT}");
                 } else {
                     // staged dir cleaned up = apply succeeded (already printed by apply_staged_update)

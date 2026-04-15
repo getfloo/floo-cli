@@ -293,7 +293,10 @@ Floo Config Files
   dev_command      — command to run locally for `floo dev`
                      e.g., \"npm run dev\", \"uvicorn app.main:app --reload\"
 
-  migrate_command  — optional command run after deploy and before `floo dev`
+  migrate_command  — optional command run as a Cloud Run Job after every
+                     deploy (against the dev schema) and after every promote
+                     (against the prod schema). Non-fatal: a failure is logged
+                     but does not block the deploy from going live.
                      e.g., \"alembic upgrade head\", \"npx prisma migrate deploy\"
 
   domain           — optional custom domain for this service
@@ -330,6 +333,10 @@ Floo Config Files
 
   Required when access_mode = \"accounts\". Registers the OAuth callback
   URLs that your app will use. See: floo docs auth
+
+  Note: {app_url}/auth/callback is auto-registered on every deploy and
+  promote for accounts-mode apps. You only need to list additional URIs
+  here (e.g. localhost for local development).
 
 ## Environment Overrides (in floo.app.toml)
 
@@ -557,10 +564,14 @@ Your app integrates with these endpoints (BASE = https://api.getfloo.com):
     - dev deploys use <app>-dev.on.getfloo.com, not <app>.on.getfloo.com
     - deployed apps must use https://, not http://
     - /callback is not the same as /callback/ (trailing slash matters)
-    - redirect_uri changes require a deploy to take effect
+    - floo auto-registers {app_url}/auth/callback on every deploy and promote
+      so you should not need to add these manually; if you see this error,
+      trigger a redeploy to re-sync
 
   NO_REDIRECT_URIS:
-    - add [auth] redirect_uris to floo.app.toml and redeploy
+    - floo auto-registers /auth/callback on deploy, so this error means the
+      app has never been deployed to the environment you are testing against;
+      deploy to dev or promote to prod first
 
 ## JWT Claims
 

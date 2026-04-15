@@ -63,7 +63,10 @@ pub fn query(app_flag: Option<&str>, sql: &str, environment: &str, limit: u32) {
     let header_refs: Vec<&str> = headers.iter().map(|s| s.as_str()).collect();
     let count = table_rows.len();
     output::table(&header_refs, &table_rows, None);
-    output::info(&format!("{count} row{}", if count == 1 { "" } else { "s" }), None);
+    output::info(
+        &format!("{count} row{}", if count == 1 { "" } else { "s" }),
+        None,
+    );
 }
 
 pub fn schema(app_flag: Option<&str>) {
