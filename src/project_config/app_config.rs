@@ -202,6 +202,45 @@ impl fmt::Display for AppServiceType {
     }
 }
 
+impl From<super::service_config::ServiceType> for AppServiceType {
+    fn from(st: super::service_config::ServiceType) -> Self {
+        match st {
+            super::service_config::ServiceType::Web => AppServiceType::Web,
+            super::service_config::ServiceType::Api => AppServiceType::Api,
+            super::service_config::ServiceType::Worker => AppServiceType::Worker,
+        }
+    }
+}
+
+impl AppServiceEntry {
+    /// Construct a scaffolded inline service entry for `floo init`.
+    /// All optional fields default to `None` except `path`, `port`, and `ingress` (public).
+    pub fn scaffold(
+        service_type: AppServiceType,
+        path: impl Into<String>,
+        port: u16,
+        env_file: Option<String>,
+    ) -> Self {
+        Self {
+            service_type,
+            path: Some(path.into()),
+            repo: None,
+            version: None,
+            plan: None,
+            port: Some(port),
+            ingress: Some(ServiceIngress::Public),
+            env_file,
+            domain: None,
+            cpu: None,
+            memory: None,
+            max_instances: None,
+            min_instances: None,
+            dev_command: None,
+            migrate_command: None,
+        }
+    }
+}
+
 pub fn load_app_config(dir: &Path) -> Result<Option<AppFileConfig>, FlooError> {
     let config_path = dir.join(super::APP_CONFIG_FILE);
     if !config_path.exists() {

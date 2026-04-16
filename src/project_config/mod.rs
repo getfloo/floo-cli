@@ -18,8 +18,8 @@ pub use discover::{
 };
 pub use resolve::{resolve_app_context, AppSource, ResolvedApp};
 pub use service_config::{
-    load_service_config, write_service_config, ServiceConfig, ServiceFileAppSection,
-    ServiceFileConfig, ServiceIngress, ServiceSection, ServiceType,
+    load_service_config, ServiceConfig, ServiceFileAppSection, ServiceFileConfig, ServiceIngress,
+    ServiceSection, ServiceType,
 };
 
 /// Wire-format representation of a cron job sent to the API.

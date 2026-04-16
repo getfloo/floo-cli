@@ -8,8 +8,7 @@ use crate::errors::ErrorCode;
 use crate::names::generate_name;
 use crate::output;
 use crate::project_config::{
-    self, AppFileAppSection, AppFileConfig, AppServiceEntry, AppServiceType, ServiceFileAppSection,
-    ServiceFileConfig, ServiceIngress, ServiceSection, ServiceType,
+    self, AppFileAppSection, AppFileConfig, AppServiceEntry, ServiceType,
 };
 
 pub fn init(name: Option<String>, path: PathBuf) {
@@ -136,31 +135,19 @@ fn init_non_interactive(
     };
 
     let env_file = super::detect_env_file(project_path);
-
     let service_name = default_type.to_string();
     let port = detection.default_port();
 
     // Generate Dockerfile if none exists
     let dockerfile_generated = generate_dockerfile_if_needed(project_path, detection);
 
-    let service_file = ServiceFileConfig {
-        app: ServiceFileAppSection {
-            name: app_name.clone(),
-            access_mode: None,
-        },
-        service: ServiceSection {
-            name: service_name.clone(),
-            service_type,
-            port,
-            ingress: Some(ServiceIngress::Public),
-            env_file,
-            domain: None,
-            min_instances: None,
-            dev_command: None,
-            migrate_command: None,
-        },
-        resources: None,
-    };
+    // Write a single floo.app.toml with the service inline.
+    // Agents read 'floo docs config' to understand the schema and customize it.
+    let mut services = HashMap::new();
+    services.insert(
+        service_name.clone(),
+        AppServiceEntry::scaffold(service_type.into(), ".", port, env_file),
+    );
 
     let app_file = AppFileConfig {
         app: AppFileAppSection {
@@ -176,7 +163,7 @@ fn init_non_interactive(
         resources: None,
         reparo: None,
         cron: HashMap::new(),
-        services: HashMap::new(),
+        services,
         environments: HashMap::new(),
     };
 
@@ -187,12 +174,6 @@ fn init_non_interactive(
         process::exit(1);
     }
     files_written.push(project_config::APP_CONFIG_FILE);
-
-    if let Err(e) = project_config::write_service_config(project_path, &service_file) {
-        output::error(&e.message, &e.code, None);
-        process::exit(1);
-    }
-    files_written.push(project_config::SERVICE_CONFIG_FILE);
 
     if dockerfile_generated {
         files_written.push("Dockerfile");
@@ -208,6 +189,7 @@ fn init_non_interactive(
             "port": port,
         },
         "dockerfile_generated": dockerfile_generated,
+        "hint": "Edit floo.app.toml to configure your services — run 'floo docs config' for the schema",
     });
 
     // Add suggestion when Dockerfile was not generated due to low confidence
@@ -217,6 +199,10 @@ fn init_non_interactive(
         );
     }
 
+    if !output::is_json_mode() {
+        eprintln!("  Edit floo.app.toml to configure your services, then run 'floo preflight'.");
+        eprintln!("  See 'floo docs config' for the full schema.");
+    }
     output::success(&format!("Initialized app '{app_name}'."), Some(json_data));
 }
 
@@ -248,7 +234,6 @@ fn init_interactive(
     let app_name = output::prompt_with_default("App name", &default_name);
 
     let mut services_map: HashMap<String, AppServiceEntry> = HashMap::new();
-    let mut first_service_file: Option<ServiceFileConfig> = None;
 
     // First service prompt
     if output::confirm("Add a service?") {
@@ -291,45 +276,19 @@ fn init_interactive(
                 Some(name) => {
                     let use_it =
                         output::confirm(&format!("  {name} detected. Use it for cloud deploy?"));
-                    if use_it {
-                        Some(name)
-                    } else {
-                        None
-                    }
+                    if use_it { Some(name) } else { None }
                 }
                 None => None,
             };
 
-            let app_service_type = match service_type {
-                ServiceType::Api => AppServiceType::Api,
-                ServiceType::Worker => AppServiceType::Worker,
-                ServiceType::Web => AppServiceType::Web,
+            let path_str = if svc_path == "." {
+                ".".to_string()
+            } else {
+                format!("./{svc_path}")
             };
-
-            // Add inline service entry to app.toml
             services_map.insert(
                 svc_name.clone(),
-                AppServiceEntry {
-                    service_type: app_service_type,
-                    path: if svc_path == "." {
-                        Some(".".to_string())
-                    } else {
-                        Some(format!("./{svc_path}"))
-                    },
-                    repo: None,
-                    version: None,
-                    plan: None,
-                    port: Some(port),
-                    ingress: Some(ServiceIngress::Public),
-                    env_file: env_file.clone(),
-                    domain: None,
-                    cpu: None,
-                    memory: None,
-                    max_instances: None,
-                    min_instances: None,
-                    dev_command: None,
-                    migrate_command: None,
-                },
+                AppServiceEntry::scaffold(service_type.into(), path_str, port, env_file),
             );
 
             if !output::confirm("Add another service?") {
@@ -337,31 +296,18 @@ fn init_interactive(
             }
         }
     } else {
-        // No explicit service — create a default one
+        // No explicit service — add a default inline entry so floo.app.toml is valid.
+        // The agent edits it after reading 'floo docs config'.
         let default_type = detection.default_service_type();
         let service_type = match default_type {
             "api" => ServiceType::Api,
             _ => ServiceType::Web,
         };
         let env_file = super::detect_env_file(project_path);
-        first_service_file = Some(ServiceFileConfig {
-            app: ServiceFileAppSection {
-                name: app_name.clone(),
-                access_mode: None,
-            },
-            service: ServiceSection {
-                name: default_type.to_string(),
-                service_type,
-                port: detection.default_port(),
-                ingress: Some(ServiceIngress::Public),
-                env_file,
-                domain: None,
-                min_instances: None,
-                dev_command: None,
-                migrate_command: None,
-            },
-            resources: None,
-        });
+        services_map.insert(
+            default_type.to_string(),
+            AppServiceEntry::scaffold(service_type.into(), ".", detection.default_port(), env_file),
+        );
     }
 
     // Write app config
@@ -389,17 +335,7 @@ fn init_interactive(
     }
     output::info(&format!("Wrote {}", project_config::APP_CONFIG_FILE), None);
 
-    // Write root service config
-    if let Some(svc_file) = first_service_file {
-        if let Err(e) = project_config::write_service_config(project_path, &svc_file) {
-            output::error(&e.message, &e.code, None);
-            process::exit(1);
-        }
-        output::info(
-            &format!("Wrote {}", project_config::SERVICE_CONFIG_FILE),
-            None,
-        );
-    }
-
+    eprintln!("  Edit floo.app.toml to configure your services, then run 'floo preflight'.");
+    eprintln!("  See 'floo docs config' for the full schema.");
     output::success(&format!("Initialized app '{app_name}'."), None);
 }

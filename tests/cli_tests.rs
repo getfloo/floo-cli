@@ -798,9 +798,9 @@ fn test_init_creates_config_json() {
         .stdout(predicate::str::contains(r#""app_name":"myapp"#))
         .stdout(predicate::str::contains(r#""success":true"#));
 
-    // Verify files were created
+    // Service is now inline in floo.app.toml — no separate floo.service.toml
     assert!(project.path().join("floo.app.toml").exists());
-    assert!(project.path().join("floo.service.toml").exists());
+    assert!(!project.path().join("floo.service.toml").exists());
 }
 
 #[test]
@@ -1148,10 +1148,10 @@ fn test_init_detects_floo_env() {
         .assert()
         .success();
 
-    let svc_toml = std::fs::read_to_string(project.path().join("floo.service.toml")).unwrap();
+    let app_toml = std::fs::read_to_string(project.path().join("floo.app.toml")).unwrap();
     assert!(
-        svc_toml.contains(r#"env_file = ".floo.env""#),
-        "Expected env_file = \".floo.env\" in service config, got:\n{svc_toml}"
+        app_toml.contains(r#"env_file = ".floo.env""#),
+        "Expected env_file = \".floo.env\" in floo.app.toml, got:\n{app_toml}"
     );
 }
 
@@ -1172,10 +1172,10 @@ fn test_init_falls_back_to_dot_env() {
         .assert()
         .success();
 
-    let svc_toml = std::fs::read_to_string(project.path().join("floo.service.toml")).unwrap();
+    let app_toml = std::fs::read_to_string(project.path().join("floo.app.toml")).unwrap();
     assert!(
-        svc_toml.contains(r#"env_file = ".env""#),
-        "Expected env_file = \".env\" in service config, got:\n{svc_toml}"
+        app_toml.contains(r#"env_file = ".env""#),
+        "Expected env_file = \".env\" in floo.app.toml, got:\n{app_toml}"
     );
 }
 
@@ -1197,9 +1197,9 @@ fn test_init_prefers_floo_env_over_dot_env() {
         .assert()
         .success();
 
-    let svc_toml = std::fs::read_to_string(project.path().join("floo.service.toml")).unwrap();
+    let app_toml = std::fs::read_to_string(project.path().join("floo.app.toml")).unwrap();
     assert!(
-        svc_toml.contains(r#"env_file = ".floo.env""#),
-        "Expected .floo.env to win over .env, got:\n{svc_toml}"
+        app_toml.contains(r#"env_file = ".floo.env""#),
+        "Expected .floo.env to win over .env, got:\n{app_toml}"
     );
 }

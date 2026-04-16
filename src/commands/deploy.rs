@@ -849,6 +849,7 @@ fn validate_preflight(
         if let Err(msg) = validate_service_name(&svc.name) {
             errors.push(serde_json::json!({
                 "path": svc.path,
+                "code": "INVALID_SERVICE_NAME",
                 "message": msg,
             }));
         }
@@ -857,6 +858,7 @@ fn validate_preflight(
         if seen_names.contains(&svc.name) {
             errors.push(serde_json::json!({
                 "path": svc.path,
+                "code": "DUPLICATE_SERVICE_NAME",
                 "message": format!("Duplicate service name '{}'.", svc.name),
             }));
         } else {
@@ -867,6 +869,7 @@ fn validate_preflight(
         if svc.port == 0 {
             errors.push(serde_json::json!({
                 "path": svc.path,
+                "code": "INVALID_PORT",
                 "message": format!("Service '{}' has invalid port 0. Ports must be 1-65535.", svc.name),
             }));
         }
@@ -881,6 +884,7 @@ fn validate_preflight(
                     if !env_path.exists() {
                         warnings.push(serde_json::json!({
                             "path": svc.path,
+                            "code": "ENV_FILE_NOT_FOUND",
                             "message": format!("Service '{}' env_file '{env_file}' not found on disk.", svc.name),
                         }));
                     }
@@ -888,13 +892,23 @@ fn validate_preflight(
             }
         }
 
-        // Check Dockerfile EXPOSE matches port
+        // Check Dockerfile for common issues
         let dockerfile = svc_dir.join("Dockerfile");
         if dockerfile.exists() {
             match std::fs::read_to_string(&dockerfile) {
                 Ok(content) => {
+                    let no_lockfile = !svc_dir.join("package-lock.json").exists();
+                    let mut npm_ci_flagged = false;
+
                     for line in content.lines() {
                         let trimmed = line.trim();
+
+                        // Skip comments — don't match Dockerfile comment lines
+                        if trimmed.starts_with('#') {
+                            continue;
+                        }
+
+                        // EXPOSE mismatch
                         if let Some(expose_val) = trimmed.strip_prefix("EXPOSE ") {
                             let expose_val = expose_val.trim();
                             let port_str = expose_val.split('/').next().unwrap_or(expose_val);
@@ -902,6 +916,7 @@ fn validate_preflight(
                                 if exposed_port != svc.port {
                                     warnings.push(serde_json::json!({
                                         "path": svc.path,
+                                        "code": "EXPOSE_PORT_MISMATCH",
                                         "message": format!(
                                             "Service '{}' Dockerfile EXPOSE {exposed_port} does not match configured port {}.",
                                             svc.name, svc.port
@@ -910,13 +925,45 @@ fn validate_preflight(
                                 }
                             }
                         }
+
+                        // CMD exec form with $PORT or ${PORT} — variables don't expand in exec form.
+                        // Emitted as a warning (not error) because heredoc content could produce
+                        // false positives; the runtime failure makes it obvious quickly.
+                        if trimmed.starts_with("CMD [")
+                            && (trimmed.contains("$PORT") || trimmed.contains("${PORT}"))
+                        {
+                            warnings.push(serde_json::json!({
+                                "path": svc.path,
+                                "code": "CMD_EXEC_FORM_PORT",
+                                "message": format!(
+                                    "Service '{}' Dockerfile CMD uses exec form with $PORT — $PORT won't expand at runtime.",
+                                    svc.name
+                                ),
+                                "hint": "Use shell form: CMD [\"sh\", \"-c\", \"your-command $PORT\"]",
+                            }));
+                        }
+
+                        // npm ci without package-lock.json — report once per service
+                        if !npm_ci_flagged && no_lockfile && trimmed.contains("npm ci") {
+                            errors.push(serde_json::json!({
+                                "path": svc.path,
+                                "code": "NPM_CI_NO_LOCKFILE",
+                                "message": format!(
+                                    "Service '{}' Dockerfile uses 'npm ci' but package-lock.json was not found.",
+                                    svc.name
+                                ),
+                                "hint": "Commit package-lock.json or change 'npm ci' to 'npm install' in your Dockerfile",
+                            }));
+                            npm_ci_flagged = true;
+                        }
                     }
                 }
                 Err(e) => {
                     warnings.push(serde_json::json!({
                         "path": svc.path,
+                        "code": "DOCKERFILE_READ_ERROR",
                         "message": format!(
-                            "Service '{}' Dockerfile exists but could not be read: {e}. Port check skipped.",
+                            "Service '{}' Dockerfile exists but could not be read: {e}. Checks skipped.",
                             svc.name
                         ),
                     }));
