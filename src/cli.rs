@@ -63,6 +63,33 @@ Examples:
         app: Option<String>,
     },
 
+    /// Run a one-shot command with a service's managed env vars injected.
+    ///
+    /// Creates a scoped dev session to fetch the service's env vars (DATABASE_URL,
+    /// REDIS_URL, and any custom vars set via `floo env`), authorizes Postgres for
+    /// direct connections if provisioned, runs the command in the service's directory,
+    /// then tears down the session when the command exits.
+    ///
+    /// Exit code propagates exactly — a failing test suite returns non-zero.
+    #[command(after_help = "\
+Examples:
+  floo run --service api -- pytest tests/unit/        Run tests with api env vars
+  floo run --service worker -- python seed.py         Run a script with worker env vars
+  floo run --service api --json -- pytest             Machine-readable exit code")]
+    Run {
+        /// Service name to inject env vars for (from floo.app.toml).
+        #[arg(long, required = true)]
+        service: String,
+
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// The command to run (everything after --).
+        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        command: Vec<String>,
+    },
+
     /// Validate project config, detect runtimes, and check readiness.
     #[command(after_help = "\
 Examples:
@@ -969,6 +996,12 @@ pub fn run() {
         Commands::Init { name, path } => commands::init::init(name, path),
 
         Commands::Dev { app } => commands::dev::dev(app),
+
+        Commands::Run {
+            service,
+            app,
+            command,
+        } => commands::run::run(&service, app, command),
 
         Commands::Preflight {
             path,

@@ -318,7 +318,10 @@ pub struct DatabaseInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DevSessionService {
     pub name: String,
-    pub port: u16,
+    /// Port is required for `floo dev` (used for cross-service discovery vars).
+    /// Omit (None) for `floo run` one-shot mode — the API skips discovery in that case.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

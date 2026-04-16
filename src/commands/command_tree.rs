@@ -23,6 +23,13 @@ fn command_tree() -> Vec<CommandInfo> {
             subcommands: vec![],
         },
         CommandInfo {
+            name: "run",
+            description: "Run a one-shot command with a service's managed env vars injected",
+            usage: "floo run [--service <name>] [--app <name>] -- <command...>",
+            requires_auth: true,
+            subcommands: vec![],
+        },
+        CommandInfo {
             name: "preflight",
             description: "Validate project config, detect runtimes, and check readiness (no auth required, no side effects)",
             usage: "floo preflight [PATH] [--app <name>] [--services <name>] [--json]",
@@ -620,6 +627,7 @@ mod tests {
             "redeploy",
             "releases",
             "reparo",
+            "run",
             "services",
             "skills",
             "update",

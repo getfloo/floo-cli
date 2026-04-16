@@ -193,7 +193,7 @@ pub fn dev(app_flag: Option<String>) {
         .iter()
         .map(|s| crate::api_types::DevSessionService {
             name: s.name.clone(),
-            port: s.port,
+            port: Some(s.port),
         })
         .collect();
 
