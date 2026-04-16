@@ -149,8 +149,8 @@ An app contains one or more services. Each service is independently deployable.
   api     — HTTP server for backend APIs
   worker  — background process (no incoming HTTP traffic)
 
-  These are deployed from source via git push. Each has its own
-  `floo.service.toml` with port, runtime, and ingress settings.
+  Declare services inline in floo.app.toml with type, port, and path.
+  See: floo docs config
 
 ## Platform Services (provisioned by Floo)
 
@@ -242,34 +242,23 @@ All services share the same origin, so cookies and auth work without CORS.
 const CONFIG: &str = "\
 Floo Config Files
 
-## floo.service.toml — Single-Service Apps
+## floo.app.toml — Primary Config Format
+
+  All apps use floo.app.toml. Services are declared inline with type, port, and path:
 
   [app]
   name = \"my-app\"
 
-  [service]
-  name = \"web\"
-  port = 3000
+  [services.web]
   type = \"web\"
+  path = \".\"
+  port = 3000
   ingress = \"public\"                   # public = internet-facing, internal = only other services
   env_file = \".env\"
   dev_command = \"npm run dev\"          # command to run for `floo dev`
   migrate_command = \"npx prisma migrate deploy\"  # optional, runs after deploy
 
-## floo.app.toml — Multi-Service Apps
-
-  [app]
-  name = \"my-app\"
-
-  [services.api]
-  path = \"./api\"
-
-  [services.web]
-  path = \"./web\"
-
-  Each service directory has its own floo.service.toml.
-
-## Inline Multi-Service App (in floo.app.toml)
+  Multi-service app (each service in its own subdirectory):
 
   [app]
   name = \"my-app\"
@@ -286,9 +275,23 @@ Floo Config Files
   port = 3000
   ingress = \"public\"
 
-  When type and port are set inline, no per-service floo.service.toml is needed.
+## floo.service.toml — Legacy Single-Service Format
 
-## Service Fields (floo.service.toml)
+  Still supported for backward compatibility. Single-service apps may use:
+
+  [app]
+  name = \"my-app\"
+
+  [service]
+  name = \"web\"
+  port = 3000
+  type = \"web\"
+  ingress = \"public\"
+
+  Prefer floo.app.toml for new apps — it supports managed services (postgres,
+  redis, storage), cron jobs, and multi-service apps in one file.
+
+## Service Fields (floo.app.toml inline or floo.service.toml)
 
   dev_command      — command to run locally for `floo dev`
                      e.g., \"npm run dev\", \"uvicorn app.main:app --reload\"
@@ -919,6 +922,7 @@ const TOPICS: &[(&str, &str)] = &[
     ("golden-path", HOWTO),
     ("services", SERVICES),
     ("config", CONFIG),
+    ("app-toml", CONFIG), // alias — agents can run `floo docs app-toml` after `floo init`
     ("deploy", DEPLOY),
     ("auth", AUTH),
     ("feedback", FEEDBACK),

@@ -210,10 +210,7 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
                     "{} has no deployable services (only Floo-managed services like postgres/redis).",
                     super::APP_CONFIG_FILE,
                 ),
-                format!(
-                    "Add a user-managed service with port/type/path fields, or create a {} in your project root.",
-                    super::SERVICE_CONFIG_FILE,
-                ),
+                "Add a [services.<name>] block with type, port, and path. Run 'floo docs config' for the schema.".to_string(),
             ));
         }
     };

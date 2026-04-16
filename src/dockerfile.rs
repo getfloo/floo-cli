@@ -216,7 +216,7 @@ WORKDIR /app
 RUN npm install -g serve
 COPY --from=build /app/dist ./dist
 EXPOSE $PORT
-CMD ["serve", "-s", "dist", "-l", "$PORT"]
+CMD ["sh", "-c", "serve -s dist -l $PORT"]
 "#,
         copy = pm.copy_line(),
         install = pm.install_cmd(),
@@ -262,7 +262,7 @@ COPY --from=deps /usr/local/lib/python{py_version}/site-packages /usr/local/lib/
 COPY --from=deps /usr/local/bin /usr/local/bin
 COPY . .
 EXPOSE $PORT
-CMD ["uvicorn", "{entry}", "--host", "0.0.0.0", "--port", "$PORT"]
+CMD ["sh", "-c", "uvicorn {entry} --host 0.0.0.0 --port $PORT"]
 "#,
     )
 }
@@ -285,7 +285,7 @@ COPY --from=deps /usr/local/lib/python{py_version}/site-packages /usr/local/lib/
 COPY --from=deps /usr/local/bin /usr/local/bin
 COPY . .
 EXPOSE $PORT
-CMD ["gunicorn", "{gunicorn_entry}", "--bind", "0.0.0.0:$PORT"]
+CMD ["sh", "-c", "gunicorn {gunicorn_entry} --bind 0.0.0.0:$PORT"]
 "#,
     )
 }
@@ -308,7 +308,7 @@ COPY --from=deps /usr/local/lib/python{py_version}/site-packages /usr/local/lib/
 COPY --from=deps /usr/local/bin /usr/local/bin
 COPY . .
 EXPOSE $PORT
-CMD ["gunicorn", "{wsgi_module}", "--bind", "0.0.0.0:$PORT"]
+CMD ["sh", "-c", "gunicorn {wsgi_module} --bind 0.0.0.0:$PORT"]
 "#,
     )
 }
@@ -386,7 +386,7 @@ WORKDIR /app
 RUN npm install -g serve
 COPY . .
 EXPOSE $PORT
-CMD ["serve", "-s", ".", "-l", "$PORT"]
+CMD ["sh", "-c", "serve -s . -l $PORT"]
 "#
     .to_string()
 }
