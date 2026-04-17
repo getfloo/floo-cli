@@ -958,10 +958,10 @@ impl FlooClient {
         self.handle_response_value(resp)
     }
 
-    pub fn db_migrate(&self, app_id: &str) -> Result<Value, FlooApiError> {
+    pub fn db_migrate(&self, app_id: &str, environment: &str) -> Result<Value, FlooApiError> {
         let resp = self.post_json(
             &format!("/v1/apps/{app_id}/db/migrate"),
-            &serde_json::json!({}),
+            &serde_json::json!({ "environment": environment }),
         )?;
         self.handle_response_value(resp)
     }

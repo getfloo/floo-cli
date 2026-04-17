@@ -139,16 +139,19 @@ pub fn schema(app_flag: Option<&str>) {
     }
 }
 
-pub fn migrate(app_flag: Option<&str>) {
+pub fn migrate(app_flag: Option<&str>, env: &str) {
     super::require_auth();
     let client = super::init_client(None);
     let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
 
     if !output::is_json_mode() {
-        output::info(&format!("Running migrations for {app_name}..."), None);
+        output::info(
+            &format!("Running migrations for {app_name} ({env})..."),
+            None,
+        );
     }
 
-    let result = match client.db_migrate(&app_id) {
+    let result = match client.db_migrate(&app_id, env) {
         Ok(r) => r,
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
