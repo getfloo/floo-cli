@@ -74,8 +74,8 @@ Floo Quickstart — End-to-End Walkthrough
   cd my-project
   floo init my-app
 
-  This creates config files (floo.service.toml or floo.app.toml) locally.
-  No app is registered on the platform yet.
+  This writes floo.app.toml (with your service declared inline) and a Dockerfile
+  locally. No app is registered on the platform yet.
 
 ## 3. (Optional) Add Managed Services
 
@@ -127,12 +127,12 @@ Floo Quickstart — End-to-End Walkthrough
   floo dev --app my-app --service web
 
   Runs your service locally with live Cloud SQL access and the same env vars
-  as the deployed version. Requires dev_command set in floo.service.toml.
+  as the deployed version. Requires dev_command set on the service in floo.app.toml.
 
 ## What Creates What
 
   floo init           — local config files only (no API call)
-  floo redeploy       — force a redeploy (auto-creates app if needed)
+  floo redeploy       — force a redeploy of an existing app (no code-change required)
   floo apps github connect — creates app if needed, connects GitHub, triggers first deploy
   Managed services (postgres, redis, storage, cron) are declared in floo.app.toml
   and provisioned automatically on deploy. Edit the config file directly.
@@ -154,9 +154,8 @@ An app contains one or more services. Each service is independently deployable.
 
 ## Platform Services (provisioned by Floo)
 
-  Declared in floo.app.toml (NOT floo.service.toml), auto-provisioned
-  on first deploy. If floo init created floo.service.toml, rename it to
-  floo.app.toml and move [service] to [services.web] (add path = \".\").
+  Declared in floo.app.toml (top-level, not inside [services.*]),
+  auto-provisioned on first deploy.
 
   postgres — managed PostgreSQL database
              Connection string injected as DATABASE_URL env var.
@@ -206,10 +205,13 @@ An app contains one or more services. Each service is independently deployable.
 
 ## Routing
 
-Multi-service apps share a single hostname with path-based routing:
+Multi-service apps share a single hostname with path-based routing. Each
+environment gets its own subdomain (prod has no suffix, dev appends -dev):
 
-  web service  → app-name.on.getfloo.com/
-  api service  → app-name.on.getfloo.com/api/
+  Prod:  app-name.on.getfloo.com/       → web service
+         app-name.on.getfloo.com/api/   → api service
+  Dev:   app-name-dev.on.getfloo.com/   → web (dev)
+         app-name-dev.on.getfloo.com/api/ → api (dev)
 
 This is automatic — no configuration needed. The gateway strips the /api
 prefix before forwarding, so your FastAPI routes stay at the root:
@@ -322,7 +324,10 @@ Floo Config Files
 
   Auto-provisioned on first deploy. Credentials injected as env vars.
 
-## Resource Limits (optional, in floo.service.toml)
+## Resource Limits (optional)
+
+  Place [resources] in floo.app.toml (app-wide defaults) or set per-service
+  fields inside [services.<name>] to override.
 
   [resources]
   cpu = \"1\"             # CPU cores (0.25 to 8)
@@ -493,9 +498,8 @@ The auth endpoints are live as soon as the deploy completes.
 
 ## Quickstart (exact sequence)
 
-  IMPORTANT: Auth config lives in floo.app.toml, NOT floo.service.toml.
-  If `floo init` created a floo.service.toml for your single-service app,
-  rename it to floo.app.toml and move [service] to [services.web] (add path = \".\").
+  IMPORTANT: Auth config lives in floo.app.toml. `floo init` writes a
+  floo.app.toml for every app, so you should already have one.
 
   1. Configure floo.app.toml (see config below)
   2. Deploy so auth endpoints are provisioned:
@@ -544,7 +548,12 @@ Your app integrates with these endpoints (BASE = https://api.getfloo.com):
   3. **Exchange code for tokens** — POST from your backend:
      POST BASE/v1/auth/apps/{app_id}/token
      Body: { \"grant_type\": \"authorization_code\", \"code\": \"<exchange_code>\" }
-     Returns: { \"access_token\": \"<jwt>\", \"refresh_token\": \"<token>\", \"user\": {...} }
+     Returns: {
+       \"access_token\": \"<jwt>\",
+       \"refresh_token\": \"<token>\",
+       \"expires_in\": 3600,
+       \"user\": {...}
+     }
 
   4. **Verify user** — the access_token is an RS256 JWT. Verify locally with:
      GET BASE/v1/auth/apps/{app_id}/.well-known/jwks.json
@@ -768,44 +777,33 @@ Floo Templates — Copy-Paste App Structures
 ### Directory Structure
 
   my-app/
-  ├── floo.app.toml          # app-level config
+  ├── floo.app.toml          # single config file — services declared inline
+  ├── Dockerfile
   ├── web/                   # React frontend
-  │   ├── floo.service.toml
   │   ├── package.json
   │   └── src/
   └── api/                   # FastAPI backend
-      ├── floo.service.toml
       ├── pyproject.toml     # or requirements.txt
       └── app/
           └── main.py
 
-### floo.app.toml (root)
+### floo.app.toml (single file for the whole app)
 
   [app]
   name = \"my-app\"
 
-  [services.web]
-  path = \"./web\"
-
-  [services.api]
-  path = \"./api\"
-
   [postgres]
   tier = \"basic\"
 
-### web/floo.service.toml
-
-  [service]
-  name = \"web\"
+  [services.web]
+  path = \"./web\"
   type = \"web\"
   port = 3000
   ingress = \"public\"
   dev_command = \"npm run dev\"
 
-### api/floo.service.toml
-
-  [service]
-  name = \"api\"
+  [services.api]
+  path = \"./api\"
   type = \"api\"
   port = 8080
   ingress = \"public\"
@@ -880,12 +878,11 @@ Floo Templates — Copy-Paste App Structures
 
 ## Next.js + FastAPI (Multi-Service)
 
-  Same structure as above, but replace web/ with a Next.js app:
+  Same structure as above — declare both services inline in one floo.app.toml.
+  Replace the [services.web] entry with a Next.js service:
 
-### web/floo.service.toml
-
-  [service]
-  name = \"web\"
+  [services.web]
+  path = \"./web\"
   type = \"web\"
   port = 3000
   ingress = \"public\"
@@ -902,19 +899,20 @@ Floo Templates — Copy-Paste App Structures
   For a standalone app (just a web server, no separate API):
 
   my-app/
-  ├── floo.service.toml
+  ├── floo.app.toml
+  ├── Dockerfile
   ├── package.json
   └── src/
 
-  floo.service.toml:
+  floo.app.toml:
 
   [app]
   name = \"my-app\"
 
-  [service]
-  name = \"web\"
-  port = 3000
+  [services.web]
+  path = \".\"
   type = \"web\"
+  port = 3000
   ingress = \"public\"
   dev_command = \"npm run dev\"
 
@@ -1020,7 +1018,8 @@ mod tests {
     fn test_templates_has_react_fastapi() {
         assert!(TEMPLATES.contains("React + FastAPI"));
         assert!(TEMPLATES.contains("floo.app.toml"));
-        assert!(TEMPLATES.contains("floo.service.toml"));
+        assert!(TEMPLATES.contains("[services.web]"));
+        assert!(TEMPLATES.contains("[services.api]"));
         assert!(TEMPLATES.contains("/api/users"));
         assert!(TEMPLATES.contains("VITE_API_URL"));
     }
