@@ -463,7 +463,7 @@ fn command_tree() -> Vec<CommandInfo> {
                 CommandInfo {
                     name: "migrate",
                     description: "Run database migrations for an app",
-                    usage: "floo db migrate --app <name>",
+                    usage: "floo db migrate --app <name> [--env dev|prod]",
                     requires_auth: true,
                     subcommands: vec![],
                 },

@@ -837,10 +837,18 @@ Examples:
     },
 
     /// Run database migrations for an app.
+    #[command(after_help = "\
+Examples:
+  floo db migrate --app my-app              Run migrations against dev (default)
+  floo db migrate --app my-app --env prod   Run migrations against prod")]
     Migrate {
         /// App name or ID (reads from config if omitted).
         #[arg(short, long)]
         app: Option<String>,
+
+        /// Environment to migrate: dev or prod.
+        #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
+        env: String,
     },
 }
 
@@ -1185,7 +1193,7 @@ pub fn run() {
                 limit,
             } => commands::db::query(app.as_deref(), &sql, &env, limit),
             DbCommands::Schema { app } => commands::db::schema(app.as_deref()),
-            DbCommands::Migrate { app } => commands::db::migrate(app.as_deref()),
+            DbCommands::Migrate { app, env } => commands::db::migrate(app.as_deref(), &env),
         },
 
         Commands::Cron(sub) => match sub {
