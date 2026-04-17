@@ -433,25 +433,32 @@ Floo Deploy Flow
 
 ## Do I Need a Dockerfile?
 
-  Usually no. Floo auto-detects your runtime and builds your app:
+  Yes — every service deploys from a Dockerfile. Floo does not deploy
+  without one.
 
-  - package.json → Node.js (npm install + npm run build + npm start)
-  - pyproject.toml or requirements.txt → Python (pip install + uvicorn/gunicorn)
-  - go.mod → Go (go build)
-  - index.html → Static site (served with nginx)
+  You usually do not have to write it yourself. `floo init` detects your
+  runtime (Node.js, Python, Go, static) and generates a working Dockerfile
+  that you commit alongside your code. Agents run `floo init --json` to
+  see what was detected and generated.
 
-  Write a Dockerfile ONLY when you need a custom build (e.g., multi-stage
-  builds, system packages, non-standard entrypoints). If a Dockerfile exists,
-  floo uses it instead of auto-detection.
+  Write your own Dockerfile when you need a custom build (multi-stage,
+  system packages, non-standard entrypoints). If a Dockerfile already
+  exists, `floo init` leaves it alone.
 
-## Runtime Detection Priority
+## Runtime Detection (at `floo init`)
 
-  Dockerfile       — highest priority (custom build)
+  `floo init` inspects the project directory to generate a Dockerfile:
+
+  Dockerfile       — already present, init leaves it untouched
   package.json     — Node.js (detects Express, Next.js, etc.)
   pyproject.toml   — Python (detects Django, Flask, FastAPI)
   requirements.txt — Python (fallback)
   go.mod           — Go
   index.html       — Static site (lowest priority)
+
+  If detection is low-confidence, init prompts you (or in `--json` mode,
+  suggests adding a Dockerfile manually). At deploy time, the API requires
+  a Dockerfile in the service path — missing-Dockerfile deploys fail fast.
 
 ## Preflight Validation
 
@@ -1021,7 +1028,8 @@ mod tests {
     #[test]
     fn test_deploy_explains_dockerfiles() {
         assert!(DEPLOY.contains("Do I Need a Dockerfile?"));
-        assert!(DEPLOY.contains("Usually no"));
+        assert!(DEPLOY.contains("every service deploys from a Dockerfile"));
+        assert!(DEPLOY.contains("floo init"));
     }
 
     #[test]
