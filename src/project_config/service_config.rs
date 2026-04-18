@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fmt;
 use std::path::Path;
 
@@ -21,6 +22,67 @@ pub struct ResourceConfig {
     pub max_instances: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_instances: Option<u32>,
+}
+
+// --- Env var contract ---
+
+/// Per-service declaration of which env vars the service requires.
+///
+/// Declares names and kinds only — values always live in `.env` (local) or
+/// encrypted EnvVar rows (server-side). The server-side deploy pipeline
+/// gates on `required`: if any named key is missing or empty in the target
+/// environment, the deploy fails with `MISSING_REQUIRED_ENV_VAR`. `optional`
+/// is purely documentary.
+///
+/// Attached under `[services.<name>.env]` in `floo.app.toml` (inline mode)
+/// or `[env]` at the top level of `floo.service.toml` (delegated mode).
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ServiceEnvContract {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub optional: Vec<String>,
+}
+
+impl ServiceEnvContract {
+    /// Validate that names are well-formed, non-duplicated, and non-overlapping.
+    ///
+    /// `where_` is a human-readable location string used in error messages
+    /// (e.g. `"[services.api.env]"` or `"[env] in floo.service.toml"`).
+    pub fn validate(&self, where_: &str) -> Result<(), FlooError> {
+        let mut seen = HashSet::new();
+        for (bucket, names) in [("required", &self.required), ("optional", &self.optional)] {
+            for name in names {
+                if !is_valid_env_name(name) {
+                    return Err(FlooError::with_suggestion(
+                        ErrorCode::InvalidProjectConfig,
+                        format!("{where_} {bucket} contains invalid env var name '{name}'.",),
+                        "Env var names must match /^[A-Za-z_][A-Za-z0-9_]*$/.".to_string(),
+                    ));
+                }
+                if !seen.insert(name.clone()) {
+                    return Err(FlooError::with_suggestion(
+                        ErrorCode::InvalidProjectConfig,
+                        format!(
+                            "{where_} declares '{name}' more than once (across required and optional).",
+                        ),
+                        "Each env var name may appear in at most one of required/optional.".to_string(),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn is_valid_env_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 // --- API wire format (sent to the API as JSON) ---
@@ -91,6 +153,8 @@ pub struct ServiceFileConfig {
     pub service: ServiceSection,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resources: Option<ResourceConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<ServiceEnvContract>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -170,6 +234,10 @@ pub fn load_service_config(dir: &Path) -> Result<Option<ServiceFileConfig>, Floo
             format!("See {SCHEMA_URL} for the schema reference."),
         )
     })?;
+
+    if let Some(ref env) = config.env {
+        env.validate(&format!("[env] in {}", super::SERVICE_CONFIG_FILE))?;
+    }
 
     Ok(Some(config))
 }
@@ -319,6 +387,7 @@ ingress = "internal"
                 migrate_command: None,
             },
             resources: None,
+            env: None,
         };
 
         write_service_config(dir.path(), &config).unwrap();
@@ -609,6 +678,7 @@ port = 8000
                 migrate_command: None,
             },
             resources: None,
+            env: None,
         };
 
         write_service_config(dir.path(), &config).unwrap();
@@ -706,5 +776,148 @@ port = 8000
         assert_eq!(json["cpu"], "2");
         assert_eq!(json["memory"], "4Gi");
         assert_eq!(json["max_instances"], 5);
+    }
+
+    #[test]
+    fn test_load_service_config_with_env_contract() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::SERVICE_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[service]
+name = "api"
+type = "api"
+port = 8000
+
+[env]
+required = ["STRIPE_SECRET_KEY", "JWT_SECRET"]
+optional = ["SENTRY_DSN"]
+"#,
+        )
+        .unwrap();
+
+        let config = load_service_config(dir.path()).unwrap().unwrap();
+        let env = config.env.expect("env contract present");
+        assert_eq!(env.required, vec!["STRIPE_SECRET_KEY", "JWT_SECRET"]);
+        assert_eq!(env.optional, vec!["SENTRY_DSN"]);
+    }
+
+    #[test]
+    fn test_load_service_config_env_contract_absent_is_none() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::SERVICE_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[service]
+name = "api"
+type = "api"
+port = 8000
+"#,
+        )
+        .unwrap();
+
+        let config = load_service_config(dir.path()).unwrap().unwrap();
+        assert!(config.env.is_none());
+    }
+
+    #[test]
+    fn test_load_service_config_env_contract_rejects_invalid_name() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::SERVICE_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[service]
+name = "api"
+type = "api"
+port = 8000
+
+[env]
+required = ["1INVALID"]
+"#,
+        )
+        .unwrap();
+
+        let err = load_service_config(dir.path()).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+        assert!(err.message.contains("'1INVALID'"));
+    }
+
+    #[test]
+    fn test_load_service_config_env_contract_rejects_duplicate_within_bucket() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::SERVICE_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[service]
+name = "api"
+type = "api"
+port = 8000
+
+[env]
+required = ["JWT_SECRET", "JWT_SECRET"]
+"#,
+        )
+        .unwrap();
+
+        let err = load_service_config(dir.path()).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+        assert!(err.message.contains("'JWT_SECRET'"));
+    }
+
+    #[test]
+    fn test_load_service_config_env_contract_rejects_overlap_across_buckets() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::SERVICE_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[service]
+name = "api"
+type = "api"
+port = 8000
+
+[env]
+required = ["JWT_SECRET"]
+optional = ["JWT_SECRET"]
+"#,
+        )
+        .unwrap();
+
+        let err = load_service_config(dir.path()).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+        assert!(err.message.contains("'JWT_SECRET'"));
+    }
+
+    #[test]
+    fn test_env_contract_valid_names_accepted() {
+        let contract = ServiceEnvContract {
+            required: vec!["STRIPE_KEY".into(), "_INTERNAL".into(), "A1_B2".into()],
+            optional: vec![],
+        };
+        contract.validate("[env]").unwrap();
+    }
+
+    #[test]
+    fn test_env_contract_name_with_dash_rejected() {
+        let contract = ServiceEnvContract {
+            required: vec!["MY-KEY".into()],
+            optional: vec![],
+        };
+        let err = contract.validate("[env]").unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
     }
 }
