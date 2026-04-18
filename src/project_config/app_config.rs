@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::errors::{ErrorCode, FlooError};
 
-use super::service_config::{ResourceConfig, ServiceIngress};
+use super::service_config::{ResourceConfig, ServiceEnvContract, ServiceIngress};
 use super::SCHEMA_URL;
 
 /// A single scheduled cron job declared in `[cron.<name>]`.
@@ -182,6 +182,8 @@ pub struct AppServiceEntry {
     pub dev_command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub migrate_command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<ServiceEnvContract>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
@@ -237,6 +239,7 @@ impl AppServiceEntry {
             min_instances: None,
             dev_command: None,
             migrate_command: None,
+            env: None,
         }
     }
 }
@@ -296,6 +299,9 @@ fn validate_app_config(config: &AppFileConfig) -> Result<(), FlooError> {
                     format!("Add path = \"./subdir\" to [services.{name}]."),
                 ));
             }
+        }
+        if let Some(ref env) = entry.env {
+            env.validate(&format!("[services.{name}.env]"))?;
         }
     }
     Ok(())
@@ -903,5 +909,59 @@ bad_field = true
 
         let err = load_app_config(dir.path()).unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+    }
+
+    #[test]
+    fn test_load_app_config_inline_service_with_env_contract() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[services.api]
+type = "api"
+path = "./backend"
+port = 8000
+
+[services.api.env]
+required = ["STRIPE_SECRET_KEY", "JWT_SECRET"]
+optional = ["SENTRY_DSN"]
+"#,
+        )
+        .unwrap();
+
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        let api = config.services.get("api").expect("api service present");
+        let env = api.env.as_ref().expect("env contract present");
+        assert_eq!(env.required, vec!["STRIPE_SECRET_KEY", "JWT_SECRET"]);
+        assert_eq!(env.optional, vec!["SENTRY_DSN"]);
+    }
+
+    #[test]
+    fn test_load_app_config_inline_service_env_contract_rejects_invalid_name() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[services.api]
+type = "api"
+path = "./backend"
+port = 8000
+
+[services.api.env]
+required = ["BAD-NAME"]
+"#,
+        )
+        .unwrap();
+
+        let err = load_app_config(dir.path()).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+        assert!(err.message.contains("[services.api.env]"));
+        assert!(err.message.contains("'BAD-NAME'"));
     }
 }

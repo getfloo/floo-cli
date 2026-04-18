@@ -440,6 +440,7 @@ ingress = "public"
                 migrate_command: None,
             },
             resources: None,
+            env: None,
         };
         let resolved = make_resolved(
             dir.path(),
@@ -495,6 +496,7 @@ ingress = "public"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                env: None,
             },
         );
         services_map.insert(
@@ -515,6 +517,7 @@ ingress = "public"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                env: None,
             },
         );
 
@@ -582,6 +585,7 @@ ingress = "public"
                 migrate_command: None,
             },
             resources: None,
+            env: None,
         };
 
         // Sub-service
@@ -612,6 +616,7 @@ ingress = "public"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                env: None,
             },
         );
 
@@ -674,6 +679,7 @@ ingress = "public"
                 migrate_command: None,
             },
             resources: None,
+            env: None,
         };
 
         use crate::project_config::app_config::ManagedServiceSection;
@@ -736,6 +742,7 @@ ingress = "public"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                env: None,
             },
         );
 
@@ -801,6 +808,7 @@ ingress = "public"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                env: None,
             },
         );
 
@@ -858,6 +866,7 @@ ingress = "public"
                 migrate_command: None,
             },
             resources: None,
+            env: None,
         };
 
         // Sub-service also named "api"
@@ -888,6 +897,7 @@ ingress = "public"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                env: None,
             },
         );
 
@@ -988,6 +998,7 @@ ingress = "public"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                env: None,
             },
         );
 
@@ -1162,6 +1173,7 @@ ingress = "public"
                 migrate_command: None,
             },
             resources: None,
+            env: None,
         };
 
         let mut services_map = HashMap::new();
@@ -1183,6 +1195,7 @@ ingress = "public"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                env: None,
             },
         );
 
@@ -1273,6 +1286,7 @@ ingress = "internal"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                env: None,
             },
         );
         services_map.insert(
@@ -1293,6 +1307,7 @@ ingress = "internal"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                env: None,
             },
         );
 
@@ -1367,6 +1382,7 @@ domain = "svc.example.com"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                env: None,
             },
         );
 
@@ -1442,6 +1458,7 @@ domain = "svc.example.com"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                env: None,
             },
         );
 
@@ -1507,6 +1524,7 @@ domain = "svc.example.com"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                env: None,
             },
         );
         services_map.insert(
@@ -1527,6 +1545,7 @@ domain = "svc.example.com"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                env: None,
             },
         );
 
@@ -1598,6 +1617,7 @@ domain = "svc.example.com"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                env: None,
             },
         );
 
@@ -1671,6 +1691,7 @@ domain = "svc.example.com"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                env: None,
             },
         );
 
@@ -1733,6 +1754,7 @@ domain = "svc.example.com"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                env: None,
             },
         );
         services_map.insert(
@@ -1753,6 +1775,7 @@ domain = "svc.example.com"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                env: None,
             },
         );
 
@@ -1816,6 +1839,7 @@ domain = "svc.example.com"
                 max_instances: Some(5),
                 min_instances: None,
             }),
+            env: None,
         };
 
         let resolved = make_resolved(
@@ -1874,6 +1898,7 @@ domain = "svc.example.com"
                         min_instances: None,
                         dev_command: None,
                         migrate_command: None,
+                        env: None,
                     },
                 );
                 m
@@ -1934,6 +1959,7 @@ domain = "svc.example.com"
                         min_instances: None,
                         dev_command: None,
                         migrate_command: None,
+                        env: None,
                     },
                 );
                 m

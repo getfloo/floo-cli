@@ -649,6 +649,7 @@ mod tests {
             min_instances: None,
             dev_command: dev_command.map(String::from),
             migrate_command: None,
+            env: None,
         }
     }
 
