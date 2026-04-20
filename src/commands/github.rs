@@ -405,8 +405,9 @@ fn run_installation_flow(
 ) {
     // Begin the setup session (stores pending state in Redis)
     if let Err(e) = client.github_setup_begin() {
+        let is_transient = e.status_code == 0 || e.status_code >= 500;
         // Permanent errors (4xx) mean the flow is doomed — abort early
-        if e.status_code > 0 && e.status_code < 500 {
+        if !is_transient {
             output::error(
                 &format!("Failed to start setup session: {}", e.message),
                 &ErrorCode::from_api(&e.code),
@@ -414,8 +415,22 @@ fn run_installation_flow(
             );
             process::exit(1);
         }
+
+        let setup_session_exists = match client.github_setup_poll() {
+            Ok(resp) => resp.status != GitHubSetupStatus::None,
+            Err(poll_err) => poll_err.status_code == 0 || poll_err.status_code >= 500,
+        };
+        if !setup_session_exists {
+            output::error(
+                &format!("Failed to start setup session: {}", e.message),
+                &ErrorCode::from_api(&e.code),
+                Some("Retry the command. If this keeps happening, check API health with `floo auth whoami`."),
+            );
+            process::exit(1);
+        }
+
         output::warn(&format!(
-            "Setup session may not have been created: {}. Continuing...",
+            "Setup session start was inconclusive: {}. Continuing because an active setup session still exists...",
             e.message
         ));
     }
