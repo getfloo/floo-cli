@@ -361,7 +361,7 @@ fn poll_repo_access(
             spinner.finish();
             if !output::is_json_mode() {
                 output::info(
-                    "Still waiting for repo access. If this repo belongs to a GitHub org, an admin may need to approve access.",
+                    "Still waiting for repo access. GitHub may still be applying the installation's repository permissions.",
                     None,
                 );
             }
@@ -416,10 +416,10 @@ fn run_installation_flow(
             process::exit(1);
         }
 
-        let setup_session_exists = match client.github_setup_poll() {
-            Ok(resp) => resp.status != GitHubSetupStatus::None,
-            Err(poll_err) => poll_err.status_code == 0 || poll_err.status_code >= 500,
-        };
+        let setup_session_exists = matches!(
+            client.github_setup_poll(),
+            Ok(resp) if resp.status != GitHubSetupStatus::None
+        );
         if !setup_session_exists {
             output::error(
                 &format!("Failed to start setup session: {}", e.message),
