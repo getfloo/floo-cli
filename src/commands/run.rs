@@ -43,16 +43,8 @@ pub fn run(service: &str, app_flag: Option<String>, command: Vec<String>) {
 
     // Resolve the working directory: use the service's `path` from floo.app.toml.
     let working_dir = {
-        let app_config = match project_config::load_app_config(&cwd) {
-            Ok(Some(c)) => c,
-            Ok(None) => {
-                output::error(
-                    "No floo.app.toml found in current directory.",
-                    &ErrorCode::NoConfigFound,
-                    Some("Run 'floo init' to create a project config, or cd to your project root."),
-                );
-                process::exit(1);
-            }
+        let app_config = match super::load_app_config_for_resolved_app(&resolved) {
+            Ok(c) => c,
             Err(e) => {
                 output::error(&e.message, &e.code, e.suggestion.as_deref());
                 process::exit(1);
@@ -75,7 +67,7 @@ pub fn run(service: &str, app_flag: Option<String>, command: Vec<String>) {
 
         match &entry.path {
             Some(p) => {
-                let dir = cwd.join(p);
+                let dir = resolved.config_dir.join(p);
                 if !dir.exists() {
                     output::error(
                         &format!("Service '{service}' path '{p}' does not exist."),
