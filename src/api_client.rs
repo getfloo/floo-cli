@@ -769,7 +769,7 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
-    pub fn github_setup_poll(&self) -> Result<Value, FlooApiError> {
+    pub fn github_setup_poll(&self) -> Result<GitHubSetupPollResponse, FlooApiError> {
         let resp = self.get("/v1/github/setup/poll")?;
         self.handle_response(resp)
     }
