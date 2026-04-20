@@ -67,16 +67,8 @@ pub fn dev(app_flag: Option<String>) {
     let app_name = app.name.clone();
 
     // --- Read service definitions from floo.app.toml ---
-    let app_config = match project_config::load_app_config(&cwd) {
-        Ok(Some(c)) => c,
-        Ok(None) => {
-            output::error(
-                "No floo.app.toml found in current directory.",
-                &ErrorCode::NoConfigFound,
-                Some("Run 'floo init' to create a project config, or cd to your project root."),
-            );
-            process::exit(1);
-        }
+    let app_config = match super::load_app_config_for_resolved_app(&resolved) {
+        Ok(c) => c,
         Err(e) => {
             output::error(&e.message, &e.code, e.suggestion.as_deref());
             process::exit(1);
@@ -328,7 +320,7 @@ pub fn dev(app_flag: Option<String>) {
     let mut children: Vec<(String, Child)> = Vec::new();
 
     for (idx, svc) in services.iter().enumerate() {
-        let working_dir = cwd.join(&svc.path);
+        let working_dir = resolved.config_dir.join(&svc.path);
 
         if !working_dir.exists() {
             output::error(

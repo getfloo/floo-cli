@@ -3,7 +3,7 @@ use std::process;
 use crate::api_client::FlooClient;
 use crate::api_types::App;
 use crate::config::{load_config, FlooConfig};
-use crate::errors::ErrorCode;
+use crate::errors::{ErrorCode, FlooError};
 use crate::output;
 
 pub mod analytics;
@@ -106,6 +106,23 @@ pub(crate) fn resolve_app_from_config(
     (app.id.clone(), app.name.clone())
 }
 
+pub(crate) fn load_app_config_for_resolved_app(
+    resolved: &crate::project_config::ResolvedApp,
+) -> Result<crate::project_config::AppFileConfig, FlooError> {
+    match crate::project_config::load_app_config(&resolved.config_dir)? {
+        Some(config) => Ok(config),
+        None => Err(FlooError::with_suggestion(
+            ErrorCode::NoConfigFound,
+            format!(
+                "No {} found in '{}'.",
+                crate::project_config::APP_CONFIG_FILE,
+                resolved.config_dir.display()
+            ),
+            "Run 'floo init' to create a project config, or cd to your project root.".to_string(),
+        )),
+    }
+}
+
 /// Truncate a commit SHA to 7 characters for display.
 pub(crate) fn short_sha(sha: &str) -> &str {
     if sha.len() > 7 && sha.is_ascii() {
@@ -124,5 +141,63 @@ pub(crate) fn detect_env_file(dir: &std::path::Path) -> Option<String> {
         Some(".env".to_string())
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn load_app_config_for_resolved_app_uses_resolved_config_dir() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(crate::project_config::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "nested-app"
+
+[services.web]
+type = "web"
+path = "./web"
+port = 3000
+dev_command = "npm run dev"
+"#,
+        )
+        .unwrap();
+        let nested = dir.path().join("apps/web");
+        fs::create_dir_all(&nested).unwrap();
+
+        let resolved = crate::project_config::ResolvedApp {
+            app_name: "nested-app".to_string(),
+            source: crate::project_config::AppSource::AppFile,
+            service_config: None,
+            app_config: None,
+            config_dir: dir.path().to_path_buf(),
+        };
+
+        let config = load_app_config_for_resolved_app(&resolved).unwrap();
+        assert_eq!(
+            config.services["web"].dev_command.as_deref(),
+            Some("npm run dev")
+        );
+    }
+
+    #[test]
+    fn load_app_config_for_resolved_app_reports_resolved_dir_in_error() {
+        let dir = TempDir::new().unwrap();
+        let resolved = crate::project_config::ResolvedApp {
+            app_name: "missing-app".to_string(),
+            source: crate::project_config::AppSource::AppFile,
+            service_config: None,
+            app_config: None,
+            config_dir: dir.path().to_path_buf(),
+        };
+
+        let err = load_app_config_for_resolved_app(&resolved).unwrap_err();
+        assert_eq!(err.code, ErrorCode::NoConfigFound);
+        assert!(err.message.contains(&dir.path().display().to_string()));
     }
 }

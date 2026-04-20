@@ -242,7 +242,8 @@ pub fn load_service_config(dir: &Path) -> Result<Option<ServiceFileConfig>, Floo
     Ok(Some(config))
 }
 
-pub fn write_service_config(dir: &Path, config: &ServiceFileConfig) -> Result<(), FlooError> {
+#[cfg(test)]
+fn write_service_config(dir: &Path, config: &ServiceFileConfig) -> Result<(), FlooError> {
     let config_path = dir.join(super::SERVICE_CONFIG_FILE);
     let content = toml::to_string_pretty(config).map_err(|e| {
         FlooError::new(

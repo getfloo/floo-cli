@@ -9,18 +9,17 @@ pub const LEGACY_CONFIG_FILE: &str = "floo.toml";
 const SCHEMA_URL: &str = "https://getfloo.com/docs/floo-toml";
 const MAX_WALK_UP_LEVELS: usize = 20;
 
+#[cfg(test)]
+pub use app_config::AppServiceType;
 pub use app_config::{
     load_app_config, write_app_config, AppAccessMode, AppAgentMode, AppFileAppSection,
-    AppFileConfig, AppServiceEntry, AppServiceType, GitHubConfig, ReparoConfig,
+    AppFileConfig, AppServiceEntry, GitHubConfig, ReparoConfig,
 };
 pub use discover::{
     discover_managed_services, discover_services, filter_services, ManagedServiceDeclaration,
 };
 pub use resolve::{resolve_app_context, AppSource, ResolvedApp};
-pub use service_config::{
-    load_service_config, ServiceConfig, ServiceFileAppSection, ServiceFileConfig, ServiceIngress,
-    ServiceSection, ServiceType,
-};
+pub use service_config::{load_service_config, ServiceConfig, ServiceIngress, ServiceType};
 
 /// Wire-format representation of a cron job sent to the API.
 ///
