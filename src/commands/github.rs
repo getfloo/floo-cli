@@ -1,10 +1,17 @@
 use std::path::Path;
 use std::process;
+use std::time::{Duration, Instant};
 
+use crate::api_types::GitHubSetupStatus;
 use crate::detection::detect;
 use crate::errors::ErrorCode;
 use crate::output;
 use crate::project_config;
+
+const GITHUB_WAIT_TIMEOUT: Duration = Duration::from_secs(900);
+const INSTALLATION_POLL_INTERVAL: Duration = Duration::from_secs(3);
+const REPO_ACCESS_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const APPROVAL_HINT_AFTER: Duration = Duration::from_secs(60);
 
 pub fn connect(
     repo: &str,
@@ -19,6 +26,8 @@ pub fn connect(
 
     // In JSON mode, never open a browser — agents can't use one.
     let no_browser = no_browser || output::is_json_mode();
+    let rerun_command =
+        connect_rerun_command(repo, app, branch, skip_env_check, no_deploy, no_browser);
 
     let cwd = std::env::current_dir().unwrap_or_else(|e| {
         output::error(
@@ -123,7 +132,7 @@ pub fn connect(
                     &ErrorCode::from_api("GITHUB_APP_NOT_INSTALLED"),
                     Some(&format!(
                         "Install the Floo GitHub App first: {install_url}\n\
-                         Then re-run: floo apps github connect {repo}"
+                         Then re-run: {rerun_command}"
                     )),
                 );
                 process::exit(1);
@@ -133,7 +142,7 @@ pub fn connect(
                 output::warn(&format!("Floo GitHub App not installed on \"{owner}\""));
             }
 
-            run_installation_flow(&client, install_url);
+            run_installation_flow(&client, install_url, &rerun_command);
 
             match client.github_connect(&app_id, repo, branch, skip_env_check) {
                 Ok(r) => r,
@@ -161,7 +170,7 @@ pub fn connect(
                     &ErrorCode::from_api("GITHUB_REPO_NOT_IN_INSTALLATION"),
                     Some(&format!(
                         "Grant repo access at: {url}\n\
-                         Then re-run: floo apps github connect {repo}"
+                         Then re-run: {rerun_command}"
                     )),
                 );
                 process::exit(1);
@@ -181,7 +190,7 @@ pub fn connect(
                 }
             }
 
-            poll_repo_access(&client, repo, url);
+            poll_repo_access(&client, repo, url, &rerun_command);
 
             // Repo is now accessible — connect
             match client.github_connect(&app_id, repo, branch, skip_env_check) {
@@ -333,26 +342,39 @@ pub fn status(app: Option<&str>) {
 }
 
 /// Poll the lightweight check-repo-access endpoint until the repo is accessible.
-fn poll_repo_access(client: &crate::api_client::FlooClient, repo: &str, settings_url: &str) {
-    let spinner = output::Spinner::new(&format!(
+fn poll_repo_access(
+    client: &crate::api_client::FlooClient,
+    repo: &str,
+    settings_url: &str,
+    rerun_command: &str,
+) {
+    let mut spinner = output::Spinner::new(&format!(
         "Waiting for repo access (grant at {settings_url})..."
     ));
-    let poll_interval = std::time::Duration::from_secs(1);
-    let timeout = std::time::Duration::from_secs(180);
-    let start = std::time::Instant::now();
+    let start = Instant::now();
+    let mut approval_hint_shown = false;
 
     loop {
-        std::thread::sleep(poll_interval);
+        std::thread::sleep(REPO_ACCESS_POLL_INTERVAL);
 
-        if start.elapsed() > timeout {
+        if !approval_hint_shown && start.elapsed() >= APPROVAL_HINT_AFTER {
+            spinner.finish();
+            if !output::is_json_mode() {
+                output::info(
+                    "Still waiting for repo access. GitHub may still be applying the installation's repository permissions.",
+                    None,
+                );
+            }
+            spinner = output::Spinner::new("Waiting for repo access...");
+            approval_hint_shown = true;
+        }
+
+        if start.elapsed() > GITHUB_WAIT_TIMEOUT {
             spinner.finish();
             output::error(
                 "Timed out waiting for repository access.",
                 &ErrorCode::Other("REPO_ACCESS_TIMEOUT".into()),
-                Some(&format!(
-                    "Grant access at {settings_url} then re-run: \
-                     floo apps github connect {repo}"
-                )),
+                Some(&repo_access_timeout_suggestion(settings_url, rerun_command)),
             );
             process::exit(1);
         }
@@ -376,11 +398,16 @@ fn poll_repo_access(client: &crate::api_client::FlooClient, repo: &str, settings
     }
 }
 
-fn run_installation_flow(client: &crate::api_client::FlooClient, install_url: &str) {
+fn run_installation_flow(
+    client: &crate::api_client::FlooClient,
+    install_url: &str,
+    rerun_command: &str,
+) {
     // Begin the setup session (stores pending state in Redis)
     if let Err(e) = client.github_setup_begin() {
+        let is_transient = e.status_code == 0 || e.status_code >= 500;
         // Permanent errors (4xx) mean the flow is doomed — abort early
-        if e.status_code > 0 && e.status_code < 500 {
+        if !is_transient {
             output::error(
                 &format!("Failed to start setup session: {}", e.message),
                 &ErrorCode::from_api(&e.code),
@@ -388,8 +415,22 @@ fn run_installation_flow(client: &crate::api_client::FlooClient, install_url: &s
             );
             process::exit(1);
         }
+
+        let setup_session_exists = matches!(
+            client.github_setup_poll(),
+            Ok(resp) if resp.status != GitHubSetupStatus::None
+        );
+        if !setup_session_exists {
+            output::error(
+                &format!("Failed to start setup session: {}", e.message),
+                &ErrorCode::from_api(&e.code),
+                Some("Retry the command. If this keeps happening, check API health with `floo auth whoami`."),
+            );
+            process::exit(1);
+        }
+
         output::warn(&format!(
-            "Setup session may not have been created: {}. Continuing...",
+            "Setup session start was inconclusive: {}. Continuing because an active setup session still exists...",
             e.message
         ));
     }
@@ -403,48 +444,65 @@ fn run_installation_flow(client: &crate::api_client::FlooClient, install_url: &s
         output::warn(&format!("Open this URL manually: {install_url}"));
     }
 
-    // Poll for installation completion (3s interval, 5 min timeout)
-    let spinner = output::Spinner::new("Waiting for installation...");
-    let poll_interval = std::time::Duration::from_secs(3);
-    let timeout = std::time::Duration::from_secs(300);
-    let start = std::time::Instant::now();
+    let mut spinner = output::Spinner::new("Waiting for GitHub installation...");
+    let start = Instant::now();
+    let mut approval_notice_shown = false;
 
     loop {
-        std::thread::sleep(poll_interval);
+        std::thread::sleep(INSTALLATION_POLL_INTERVAL);
 
-        if start.elapsed() > timeout {
+        if start.elapsed() > GITHUB_WAIT_TIMEOUT {
             spinner.finish();
             output::error(
                 "Timed out waiting for GitHub App installation.",
                 &ErrorCode::Other("SETUP_TIMEOUT".into()),
-                Some("Install the app manually, then re-run: floo apps github connect <owner/repo> --app <name>"),
+                Some(&setup_timeout_suggestion(rerun_command)),
             );
             process::exit(1);
         }
 
         match client.github_setup_poll() {
-            Ok(resp) => {
-                let status = resp
-                    .get("status")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("none");
-                if status == "ready" {
+            Ok(resp) => match resp.status {
+                GitHubSetupStatus::Ready => {
                     spinner.finish();
-                    if resp
-                        .get("installation_id")
-                        .and_then(|v| v.as_u64())
-                        .is_none()
-                    {
+                    if resp.installation_id.is_none() {
                         output::error(
                             "GitHub App was installed but the server did not return an installation ID.",
                             &ErrorCode::InvalidResponse,
-                            Some("Try running the command again — the installation should be detected automatically."),
+                            Some(
+                                "Try running the command again. The installation should be detected automatically.",
+                            ),
                         );
                         process::exit(1);
                     }
                     return;
                 }
-            }
+                GitHubSetupStatus::AwaitingOrgApproval => {
+                    if !approval_notice_shown {
+                        spinner.finish();
+                        if !output::is_json_mode() {
+                            output::info(
+                                "GitHub recorded the install request. Waiting for org admin approval.",
+                                None,
+                            );
+                        }
+                        spinner = output::Spinner::new(setup_spinner_message(
+                            &GitHubSetupStatus::AwaitingOrgApproval,
+                        ));
+                        approval_notice_shown = true;
+                    }
+                }
+                GitHubSetupStatus::AwaitingInstallation => {}
+                GitHubSetupStatus::None => {
+                    spinner.finish();
+                    output::error(
+                        "GitHub setup session disappeared while waiting for installation.",
+                        &ErrorCode::Other("SETUP_TIMEOUT".into()),
+                        Some(&setup_session_lost_suggestion(rerun_command)),
+                    );
+                    process::exit(1);
+                }
+            },
             Err(e) => {
                 // Only tolerate transient failures (network issues, 5xx).
                 // Permanent errors (4xx) should abort immediately.
@@ -471,6 +529,71 @@ fn import_env_vars_for_connect(
     super::deploy::sync_env_vars_if_needed(client, app_id, resolved, true);
 }
 
+fn setup_spinner_message(status: &GitHubSetupStatus) -> &'static str {
+    match status {
+        GitHubSetupStatus::AwaitingOrgApproval => "Waiting for org admin approval...",
+        GitHubSetupStatus::AwaitingInstallation => "Waiting for GitHub installation...",
+        GitHubSetupStatus::Ready => "GitHub installation ready.",
+        GitHubSetupStatus::None => "GitHub setup session missing.",
+    }
+}
+
+fn connect_rerun_command(
+    repo: &str,
+    app: Option<&str>,
+    branch: Option<&str>,
+    skip_env_check: bool,
+    no_deploy: bool,
+    no_browser: bool,
+) -> String {
+    let mut parts = vec!["floo".to_string()];
+    if output::is_json_mode() {
+        parts.push("--json".to_string());
+    }
+    parts.extend([
+        "apps".to_string(),
+        "github".to_string(),
+        "connect".to_string(),
+        repo.to_string(),
+    ]);
+    if let Some(app_name) = app {
+        parts.push("--app".to_string());
+        parts.push(app_name.to_string());
+    }
+    if let Some(branch_name) = branch {
+        parts.push("--branch".to_string());
+        parts.push(branch_name.to_string());
+    }
+    if skip_env_check {
+        parts.push("--skip-env-check".to_string());
+    }
+    if no_deploy {
+        parts.push("--no-deploy".to_string());
+    }
+    if no_browser {
+        parts.push("--no-browser".to_string());
+    }
+    parts.join(" ")
+}
+
+fn setup_timeout_suggestion(rerun_command: &str) -> String {
+    format!(
+        "If your GitHub org needs approval, leave the request in place and re-run after it lands: \
+         {rerun_command}"
+    )
+}
+
+fn setup_session_lost_suggestion(rerun_command: &str) -> String {
+    format!("Start the GitHub setup flow again: {rerun_command}")
+}
+
+fn repo_access_timeout_suggestion(settings_url: &str, rerun_command: &str) -> String {
+    format!(
+        "Grant access at {settings_url}. If your org needs approval, re-run after it lands: \
+         {rerun_command}"
+    )
+}
+
 enum DeployOutcome {
     Live {
         url: String,
@@ -479,6 +602,62 @@ enum DeployOutcome {
     Failed {
         deploy: serde_json::Value,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        connect_rerun_command, repo_access_timeout_suggestion, setup_session_lost_suggestion,
+        setup_spinner_message, setup_timeout_suggestion,
+    };
+    use crate::api_types::GitHubSetupStatus;
+
+    #[test]
+    fn test_setup_spinner_message_for_org_approval() {
+        assert_eq!(
+            setup_spinner_message(&GitHubSetupStatus::AwaitingOrgApproval),
+            "Waiting for org admin approval..."
+        );
+    }
+
+    #[test]
+    fn test_setup_timeout_suggestion_mentions_repo_and_approval() {
+        let suggestion = setup_timeout_suggestion("floo apps github connect getfloo/example");
+        assert!(suggestion.contains("getfloo/example"));
+        assert!(suggestion.contains("approval"));
+    }
+
+    #[test]
+    fn test_setup_session_lost_suggestion_points_back_to_connect() {
+        let suggestion = setup_session_lost_suggestion("floo apps github connect getfloo/example");
+        assert!(suggestion.contains("floo apps github connect getfloo/example"));
+    }
+
+    #[test]
+    fn test_repo_access_timeout_suggestion_mentions_settings_url() {
+        let suggestion = repo_access_timeout_suggestion(
+            "https://github.com/organizations/getfloo/settings/installations",
+            "floo apps github connect getfloo/example",
+        );
+        assert!(suggestion.contains("settings/installations"));
+        assert!(suggestion.contains("approval"));
+    }
+
+    #[test]
+    fn test_connect_rerun_command_preserves_flags() {
+        let command = connect_rerun_command(
+            "getfloo/example",
+            Some("demo-app"),
+            Some("release"),
+            true,
+            true,
+            true,
+        );
+        assert_eq!(
+            command,
+            "floo apps github connect getfloo/example --app demo-app --branch release --skip-env-check --no-deploy --no-browser"
+        );
+    }
 }
 
 fn run_initial_deploy(
