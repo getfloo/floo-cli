@@ -300,6 +300,21 @@ pub struct ServiceGitHubInfo {
     pub installation_id: Option<i64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GitHubSetupStatus {
+    None,
+    AwaitingInstallation,
+    AwaitingOrgApproval,
+    Ready,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitHubSetupPollResponse {
+    pub status: GitHubSetupStatus,
+    pub installation_id: Option<i64>,
+}
+
 // --- Database ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
