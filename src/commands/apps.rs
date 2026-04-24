@@ -149,12 +149,18 @@ fn resolve_org_display(client: &crate::api_client::FlooClient, org_id: Option<&s
     }
 }
 
-pub fn delete(app_name: &str, force: bool) {
+pub fn delete(app_name: &str, destroy_data_flag: bool) {
+    use crate::confirm::{confirm_tier3, ConfirmOutcome, RiskMetadata, Tier};
+
     if output::is_dry_run_mode() {
+        let risk: RiskMetadata = Tier::Three.into();
         output::dry_run_success(serde_json::json!({
             "action": "delete",
             "app": app_name,
             "warning": "This cannot be undone",
+            "destructive": risk.destructive,
+            "data_loss": risk.data_loss,
+            "tier": risk.tier,
         }));
         return;
     }
@@ -163,16 +169,29 @@ pub fn delete(app_name: &str, force: bool) {
     let client = super::init_client(None);
     let app = super::resolve_app_or_exit(&client, app_name);
 
-    if !force
-        && !output::confirm(&format!(
-            "Delete app '{}'? This cannot be undone.",
-            app.name
-        ))
-    {
-        if !output::is_json_mode() {
-            output::info("Cancelled.", None);
+    let preamble = vec![
+        format!("\u{26a0} You are about to permanently delete app '{}'.", app.name),
+        format!("    id:   {}", app.id),
+        "    This destroys all services, env vars, managed services, domains, and deploy history for the app.".to_string(),
+    ];
+
+    match confirm_tier3(&app.name, &preamble, destroy_data_flag) {
+        ConfirmOutcome::Proceed => {}
+        ConfirmOutcome::Aborted => {
+            if !output::is_json_mode() {
+                output::info("Cancelled — nothing was deleted.", None);
+            }
+            process::exit(0);
         }
-        process::exit(0);
+        ConfirmOutcome::Refused { suggestion } => {
+            crate::confirm::exit_refused(
+                &format!(
+                    "Refusing to delete app '{}' without explicit confirmation.",
+                    app.name
+                ),
+                &suggestion,
+            );
+        }
     }
 
     if let Err(e) = client.delete_app(&app.id) {
@@ -180,9 +199,15 @@ pub fn delete(app_name: &str, force: bool) {
         process::exit(1);
     }
 
+    let risk: RiskMetadata = Tier::Three.into();
     output::success(
         &format!("Deleted app '{}'.", app.name),
-        Some(serde_json::json!({"id": app.id})),
+        Some(serde_json::json!({
+            "id": app.id,
+            "destructive": risk.destructive,
+            "data_loss": risk.data_loss,
+            "tier": risk.tier,
+        })),
     );
 }
 

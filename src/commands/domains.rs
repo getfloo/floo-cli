@@ -159,11 +159,17 @@ pub fn verify(hostname: &str, app: Option<&str>) {
     }
 }
 
-pub fn remove(hostname: &str, app: Option<&str>, services: Option<&str>) {
+pub fn remove(hostname: &str, app: Option<&str>, services: Option<&str>, yes: bool) {
+    use crate::confirm::{confirm_tier2, ConfirmOutcome, RiskMetadata, Tier};
+
     if output::is_dry_run_mode() {
+        let risk: RiskMetadata = Tier::Two.into();
         output::dry_run_success(serde_json::json!({
             "action": "domain_remove",
             "hostname": hostname,
+            "destructive": risk.destructive,
+            "data_loss": risk.data_loss,
+            "tier": risk.tier,
         }));
         return;
     }
@@ -174,14 +180,42 @@ pub fn remove(hostname: &str, app: Option<&str>, services: Option<&str>) {
     let (app_id, app_name) = super::resolve_app_from_config(&client, app);
     check_services_flag(&client, &app_id, services);
 
+    match confirm_tier2(
+        "Remove domain",
+        &format!("{hostname} from {app_name}"),
+        yes,
+    ) {
+        ConfirmOutcome::Proceed => {}
+        ConfirmOutcome::Aborted => {
+            if !output::is_json_mode() {
+                output::info("Cancelled — domain not removed.", None);
+            }
+            process::exit(0);
+        }
+        ConfirmOutcome::Refused { suggestion } => {
+            crate::confirm::exit_refused(
+                &format!(
+                    "Refusing to remove domain {hostname} from {app_name} without explicit confirmation."
+                ),
+                &suggestion,
+            );
+        }
+    }
+
     if let Err(e) = client.delete_domain(&app_id, hostname) {
         output::error(&e.message, &ErrorCode::from_api(&e.code), None);
         process::exit(1);
     }
 
+    let risk: RiskMetadata = Tier::Two.into();
     output::success(
         &format!("Removed domain {hostname} from {app_name}."),
-        Some(serde_json::json!({"hostname": hostname})),
+        Some(serde_json::json!({
+            "hostname": hostname,
+            "destructive": risk.destructive,
+            "data_loss": risk.data_loss,
+            "tier": risk.tier,
+        })),
     );
 }
 
