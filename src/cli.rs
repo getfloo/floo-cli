@@ -691,6 +691,22 @@ pub enum ServicesCommands {
         #[arg(long = "yes-i-know-this-destroys-data")]
         confirmed: bool,
     },
+
+    /// Migrate legacy [postgres]/[redis]/[storage] TOML sections to CLI-managed state.
+    ///
+    /// Reads floo.app.toml, ensures each declared managed service is provisioned
+    /// (idempotent — existing services are recorded, not re-created), and writes
+    /// .floo/services.lock. Zero data impact: the underlying managed services
+    /// are not touched. Prints instructions to delete the TOML sections afterward.
+    Migrate {
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Project directory containing floo.app.toml.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1235,6 +1251,9 @@ pub fn run() {
                 name,
                 confirmed,
             } => commands::services::remove(&service_type, app.as_deref(), &name, confirmed),
+            ServicesCommands::Migrate { app, path } => {
+                commands::services::migrate(app.as_deref(), &path)
+            }
         },
 
         Commands::Domains(sub) => match sub {
