@@ -762,6 +762,21 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn get_request_logs(
+        &self,
+        app_id: &str,
+        limit: u32,
+        since: Option<&str>,
+    ) -> Result<RequestLogsResponse, FlooApiError> {
+        let limit_str = limit.to_string();
+        let mut params: Vec<(&str, &str)> = vec![("limit", &limit_str)];
+        if let Some(s) = since {
+            params.push(("since", s));
+        }
+        let resp = self.get_with_query(&format!("/v1/apps/{app_id}/requests"), &params)?;
+        self.handle_response(resp)
+    }
+
     // --- GitHub ---
 
     pub fn github_setup_begin(&self) -> Result<Value, FlooApiError> {
