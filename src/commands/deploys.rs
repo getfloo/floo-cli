@@ -306,6 +306,7 @@ fn colored_status(status: &str) -> String {
     match status {
         "live" => status.green().bold().to_string(),
         "failed" => status.red().bold().to_string(),
+        "superseded" => status.dimmed().to_string(),
         "building" | "deploying" | "pending" => status.yellow().to_string(),
         _ => status.to_string(),
     }
@@ -510,6 +511,13 @@ fn print_final_status(deploy: &Deploy) {
             Some("Check build output above, or run `floo logs` for details."),
         );
         process::exit(1);
+    } else if status == "superseded" {
+        output::success(
+            "Deploy superseded by a newer deploy.",
+            Some(serde_json::json!({
+                "deploy": output::to_value(deploy),
+            })),
+        );
     } else if !TERMINAL_STATUSES.contains(&status) {
         output::error(
             &format!("Deploy ended in unexpected state: {status}"),
@@ -576,10 +584,22 @@ mod tests {
         // Verify colored_status returns non-empty strings for all known statuses
         assert!(!colored_status("live").is_empty());
         assert!(!colored_status("failed").is_empty());
+        assert!(!colored_status("superseded").is_empty());
         assert!(!colored_status("building").is_empty());
         assert!(!colored_status("deploying").is_empty());
         assert!(!colored_status("pending").is_empty());
         assert!(!colored_status("unknown").is_empty());
+    }
+
+    #[test]
+    fn test_superseded_is_terminal_status() {
+        // TERMINAL_STATUSES must include "superseded" so poll/stream loops exit
+        // when the platform marks a deploy as superseded. Before this was added,
+        // `floo deploys watch` would spin for POLL_TIMEOUT (10 min) on superseded
+        // deploys. See feedback 1748af72 (2026-04-24).
+        assert!(TERMINAL_STATUSES.contains(&"superseded"));
+        assert!(TERMINAL_STATUSES.contains(&"live"));
+        assert!(TERMINAL_STATUSES.contains(&"failed"));
     }
 
     #[test]

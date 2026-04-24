@@ -18,7 +18,7 @@ use crate::resolve::resolve_app;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 const POLL_TIMEOUT: Duration = Duration::from_secs(600); // 10 minutes
-pub(crate) const TERMINAL_STATUSES: &[&str] = &["live", "failed"];
+pub(crate) const TERMINAL_STATUSES: &[&str] = &["live", "failed", "superseded"];
 
 fn status_label(status: &str) -> &str {
     match status {
@@ -624,6 +624,18 @@ pub fn deploy(
         process::exit(1);
     }
 
+    if final_status == "superseded" {
+        output::success(
+            "Deploy superseded by a newer deploy.",
+            Some(serde_json::json!({
+                "app": output::to_value(&app_data),
+                "deploy": output::to_value(&deploy_data),
+                "detection": detection.to_value(),
+            })),
+        );
+        return;
+    }
+
     let url = deploy_data.url.as_deref().unwrap_or("");
 
     if !output::is_json_mode() {
@@ -712,6 +724,17 @@ fn deploy_restart(
             })),
         );
         process::exit(1);
+    }
+
+    if final_status == "superseded" {
+        output::success(
+            "Restart superseded by a newer deploy.",
+            Some(serde_json::json!({
+                "app": output::to_value(app_data),
+                "deploy": deploy_data,
+            })),
+        );
+        return;
     }
 
     let env_display = deploy_data
@@ -821,6 +844,17 @@ fn deploy_rebuild(
             })),
         );
         process::exit(1);
+    }
+
+    if final_status == "superseded" {
+        output::success(
+            "Rebuild superseded by a newer deploy.",
+            Some(serde_json::json!({
+                "app": output::to_value(app_data),
+                "deploy": output::to_value(&deploy_data),
+            })),
+        );
+        return;
     }
 
     let url = deploy_data.url.as_deref().unwrap_or("");
