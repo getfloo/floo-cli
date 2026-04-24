@@ -600,6 +600,35 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn create_managed_service(
+        &self,
+        app_id: &str,
+        body: &CreateManagedServiceRequest<'_>,
+    ) -> Result<ManagedServiceDetail, FlooApiError> {
+        let value = serde_json::to_value(body).map_err(|e| {
+            FlooApiError::new(
+                500,
+                "SERIALIZE_ERROR",
+                format!("Failed to serialize managed service request: {e}"),
+            )
+        })?;
+        let resp = self.post_json(&format!("/v1/apps/{app_id}/managed-services"), &value)?;
+        self.handle_response(resp)
+    }
+
+    pub fn delete_managed_service(
+        &self,
+        app_id: &str,
+        service_id: &str,
+    ) -> Result<(), FlooApiError> {
+        let resp = self.delete(&format!("/v1/apps/{app_id}/managed-services/{service_id}"))?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            return Err(self.handle_error(resp));
+        }
+        Ok(())
+    }
+
     // --- Preflight ---
 
     pub fn preflight(

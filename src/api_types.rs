@@ -235,6 +235,14 @@ pub struct ListManagedServicesResponse {
     pub total: u32,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateManagedServiceRequest<'a> {
+    #[serde(rename = "type")]
+    pub service_type: &'a str,
+    pub name: &'a str,
+    pub tier: &'a str,
+}
+
 /// Detail response. Deliberately skips `credentials` — the CLI must never print
 /// plaintext secrets. If a future command needs them (e.g. `floo env sync`),
 /// add a separate deserialization path rather than exposing them here.

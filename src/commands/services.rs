@@ -1,5 +1,7 @@
+use std::io::{self, Write};
 use std::process;
 
+use crate::api_types::CreateManagedServiceRequest;
 use crate::errors::ErrorCode;
 use crate::output;
 
@@ -185,4 +187,194 @@ fn render_managed_service(
             None,
         );
     }
+}
+
+pub fn add(service_type: &str, app: Option<&str>, tier: &str, name: &str) {
+    super::require_auth();
+    let client = super::init_client(None);
+
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app);
+
+    let body = CreateManagedServiceRequest {
+        service_type,
+        name,
+        tier,
+    };
+
+    let detail = match client.create_managed_service(&app_id, &body) {
+        Ok(d) => d,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+
+    // Update the lock file so the managed-service state shows up in git diffs.
+    if let Err(e) = crate::services_lock::record_add(&detail) {
+        output::warn(&format!(
+            "Provisioned {service_type} for {app_name}, but failed to update .floo/services.lock: {e}. Run the command again or hand-edit nothing — the platform is the source of truth."
+        ));
+    }
+
+    if output::is_json_mode() {
+        output::success(
+            &format!("Provisioned {service_type} for {app_name}"),
+            Some(output::to_value(&detail)),
+        );
+        return;
+    }
+
+    output::info(
+        &format!(
+            "\u{2713} Provisioned {service_type} (name: {}, tier: {tier}) for {app_name}.",
+            detail.name
+        ),
+        None,
+    );
+    if !detail.env_var_keys.is_empty() {
+        output::info(
+            &format!(
+                "  Injected env vars on next deploy: {}",
+                detail.env_var_keys.join(", ")
+            ),
+            None,
+        );
+    }
+}
+
+/// Tier-3 destructive: destroying a managed service is irreversible data loss.
+///
+/// The UX contract:
+/// - Interactive: must type the service name to confirm. No y/N shortcut.
+/// - Non-interactive (CI, agents): `--yes-i-know-this-destroys-data` flag is
+///   required. The flag is deliberately verbose so it cannot be reached for by
+///   reflex. A script using this flag must have user authorization for the
+///   specific resource (per the skill rule).
+pub fn remove(service_type: &str, app: Option<&str>, name: &str, confirmed: bool) {
+    super::require_auth();
+    let client = super::init_client(None);
+
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app);
+
+    // Look up the row we're about to destroy so we can tell the user exactly
+    // what data will be lost. Also gives us the real UUID for the DELETE call.
+    let managed = match client.list_managed_services(&app_id) {
+        Ok(r) => r.managed_services,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+
+    let target = managed
+        .iter()
+        .find(|m| m.service_type == service_type && m.name == name);
+
+    let target = match target {
+        Some(t) => t,
+        None => {
+            output::error(
+                &format!(
+                    "No managed {service_type} named '{name}' on {app_name}."
+                ),
+                &ErrorCode::ManagedServiceNotFound,
+                Some("Run 'floo services list' to see what's provisioned."),
+            );
+            process::exit(1);
+        }
+    };
+
+    // Confirmation gate. Flag short-circuits interactive prompt, but only the
+    // flag — never a plain --yes. Typed-name confirmation is the fallback.
+    if !confirmed {
+        if output::is_json_mode() || !is_interactive_stdin() {
+            output::error(
+                &format!(
+                    "Refusing to destroy managed {service_type} '{name}' on {app_name} without explicit confirmation."
+                ),
+                &ErrorCode::ConfirmationRequired,
+                Some(
+                    "Pass --yes-i-know-this-destroys-data to destroy data in non-interactive mode. This flag is deliberately verbose; a script using it must have user authorization for this specific resource.",
+                ),
+            );
+            process::exit(1);
+        }
+
+        eprintln!();
+        eprintln!(
+            "\u{26a0} You are about to permanently destroy the following managed service:"
+        );
+        eprintln!("    app:   {app_name}");
+        eprintln!("    type:  {service_type}");
+        eprintln!("    name:  {name}");
+        eprintln!(
+            "    id:    {} (status={})",
+            target.id, target.status
+        );
+        if !target.env_var_keys.is_empty() {
+            eprintln!(
+                "    env vars removed from runtime: {}",
+                target.env_var_keys.join(", ")
+            );
+        }
+        eprintln!();
+        eprintln!("This is irreversible. Data will not be recoverable.");
+        eprintln!(
+            "Type the service name ({name}) to confirm, or anything else to cancel:"
+        );
+        eprint!("> ");
+        let _ = io::stderr().flush();
+
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_err() {
+            output::error(
+                "Could not read confirmation.",
+                &ErrorCode::ConfirmationRequired,
+                None,
+            );
+            process::exit(1);
+        }
+        if input.trim() != name {
+            output::info("Aborted — nothing was destroyed.", None);
+            process::exit(1);
+        }
+    }
+
+    if let Err(e) = client.delete_managed_service(&app_id, &target.id) {
+        output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+        process::exit(1);
+    }
+
+    if let Err(e) = crate::services_lock::record_remove(service_type, name) {
+        output::warn(&format!(
+            "Destroyed {service_type}/{name} on {app_name}, but failed to update .floo/services.lock: {e}."
+        ));
+    }
+
+    if output::is_json_mode() {
+        output::success(
+            &format!("Destroyed managed {service_type}/{name} on {app_name}"),
+            Some(serde_json::json!({
+                "type": service_type,
+                "name": name,
+                "app": app_name,
+                "destructive": true,
+                "data_loss": true,
+                "tier": 3,
+            })),
+        );
+        return;
+    }
+
+    output::info(
+        &format!(
+            "\u{2713} Destroyed managed {service_type}/{name} on {app_name}."
+        ),
+        None,
+    );
+}
+
+fn is_interactive_stdin() -> bool {
+    use std::io::IsTerminal;
+    io::stdin().is_terminal()
 }
