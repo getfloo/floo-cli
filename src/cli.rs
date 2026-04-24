@@ -641,6 +641,49 @@ pub enum ServicesCommands {
         #[arg(short, long)]
         app: Option<String>,
     },
+
+    /// Provision a managed service (postgres, redis, or storage).
+    Add {
+        /// Service type: postgres, redis, or storage.
+        #[arg(value_parser = ["postgres", "redis", "storage"])]
+        service_type: String,
+
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Service tier: basic, standard, or performance.
+        #[arg(long, default_value = "basic", value_parser = ["basic", "standard", "performance"])]
+        tier: String,
+
+        /// Service row name (lowercase, alphanumeric + underscores).
+        #[arg(long, default_value = "default")]
+        name: String,
+    },
+
+    /// Permanently destroy a managed service and its data.
+    ///
+    /// Tier-3 destructive: requires typing the resource name to confirm,
+    /// or --yes-i-know-this-destroys-data in automation. Never a plain --yes.
+    Remove {
+        /// Service type: postgres, redis, or storage.
+        #[arg(value_parser = ["postgres", "redis", "storage"])]
+        service_type: String,
+
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Service row name (defaults to the one matching the type).
+        #[arg(long, default_value = "default")]
+        name: String,
+
+        /// Skip interactive confirmation. Required in non-interactive contexts.
+        /// This is deliberately verbose — destroying user data must be
+        /// an explicit, acknowledged decision.
+        #[arg(long = "yes-i-know-this-destroys-data")]
+        confirmed: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1164,6 +1207,18 @@ pub fn run() {
             ServicesCommands::Info { service_name, app } => {
                 commands::services::info(&service_name, app.as_deref())
             }
+            ServicesCommands::Add {
+                service_type,
+                app,
+                tier,
+                name,
+            } => commands::services::add(&service_type, app.as_deref(), &tier, &name),
+            ServicesCommands::Remove {
+                service_type,
+                app,
+                name,
+                confirmed,
+            } => commands::services::remove(&service_type, app.as_deref(), &name, confirmed),
         },
 
         Commands::Domains(sub) => match sub {

@@ -11,6 +11,7 @@ mod names;
 mod output;
 mod project_config;
 mod resolve;
+mod services_lock;
 mod updater;
 mod version_check;
 
