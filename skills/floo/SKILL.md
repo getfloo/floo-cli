@@ -8,6 +8,43 @@ user-invocable: false
 
 Floo deploys web apps from the terminal. All management happens through `floo` commands.
 
+## Audit-loop doctrine (read this first)
+
+Agents are confident-and-wrong by default. Preflight is the mechanism that turns confident-wrong into confident-corrected. These rules are not advisory — following them is how you ship reliable work on floo.
+
+**No state change is complete until a read-only command has confirmed the change landed as expected.**
+
+1. **After any edit to `floo.app.toml` or `floo.service.toml`, run `floo preflight`.** Not "after a batch of edits" — every logical change. Read the output, confirm it matches intent.
+2. **After any mutation command (`floo env set/remove`, `floo services add/remove`, `floo domains add/remove`), run `floo preflight`.** Mutations cascade; preflight is the receipt.
+3. **Before `git push` / merge (the deploy trigger), run `floo preflight`.** Last safe checkpoint before the irreversible action. No exceptions.
+4. **If preflight shows changes you didn't intend, stop. Do not push.** Unexpected diff = silent corruption. Investigate before acting.
+5. **Use `floo preflight --json` for structured parsing.** Parse plans; don't screen-scrape.
+
+### Mutation-and-audit pairs
+
+Every mutation has a read-only partner that confirms it landed:
+
+| Mutation | Audit |
+|---|---|
+| edit `floo.app.toml` / `floo.service.toml` | `floo preflight` |
+| `floo env set/remove/import` | `floo preflight` + `floo env list` |
+| `floo services add/remove` | `floo preflight` + `floo services list` |
+| `floo domains add/remove` | `floo domains list` (verify CNAME target) |
+| merge to main (deploy) | `floo deploy watch` + `floo logs --live` |
+
+If a command you're about to run doesn't have an obvious audit partner, stop and ask before running it.
+
+## State model: stateless vs stateful
+
+Every primitive on floo belongs on one of two surfaces. Knowing which applies prevents the most common class of mistake (silent data loss):
+
+- **Stateless resources live in TOML** — Cloud Run services, gateway routes, cron jobs, build args, health checks, resource limits. Recoverable from code; removal from TOML is declarative and safe.
+- **Stateful resources live in the CLI** — managed Postgres/Redis/Storage, env vars, custom domains, API keys. Hold data or credentials; removal is an explicit command with confirmation, never a TOML edit.
+
+**Deploy never destroys a stateful resource, regardless of TOML contents.** Removing `[postgres]` from `floo.app.toml` does NOT deprovision your database — it produces a preflight warning pointing you to `floo services remove postgres`.
+
+Legacy `[postgres]`/`[redis]`/`[storage]` sections in `floo.app.toml` are deprecated. They continue to auto-provision on first deploy during the transition window, but new apps should use `floo services add <type>` directly.
+
 ## Getting Started
 
 1. `floo auth login` — sign up or log in (opens browser; use `--api-key <key>` for CI/headless)
@@ -113,14 +150,20 @@ Error: `{"success": false, "error": {"code": "...", "message": "...", "suggestio
 
 Most commands infer the app name from config files in the current directory. Use `--app <name>` to override or when running outside the project directory.
 
-## Dry Run
+## Preflight
 
-`--dry-run` previews what a command will do without executing it. Supported on: `redeploy`, `preflight`, `env set/remove/import`, `apps delete`, `domains add/remove`, `deploy rollback`.
+`floo preflight` is the canonical audit surface on floo. Two forms:
+
+- **`floo preflight`** (command, noun form) — full diff between declared state (TOML + CLI state) and what's actually deployed. Read-only. Use this as the audit step in every mutation-and-audit pair above.
+- **`--preflight`** (flag on any mutation) — simulates that one action. Shows the diff, exits without mutating. Use for spot-checking one change.
 
 ```bash
-floo preflight --json           # validate config (no auth, no side effects)
-floo redeploy --dry-run --json  # preview redeploy without executing
+floo preflight --json                    # full audit (no side effects)
+floo redeploy --preflight --json         # preview redeploy without executing
+floo env set FOO=bar --preflight         # preview a single mutation
 ```
+
+`--dry-run` is a deprecated alias for `--preflight` — it still works with a one-line deprecation notice, but new code should use `--preflight`. One word, one concept.
 
 ## Common Workflows
 
@@ -147,12 +190,36 @@ floo logs --app my-app --search "panic" --json     # search + JSON
 ### Preflight and Redeploy
 
 ```bash
-floo preflight                                     # validate config before pushing
-floo preflight --json                              # structured output for agents
+floo preflight                                     # audit declared vs deployed state
+floo preflight --json                              # structured plan for agents
 floo redeploy --app my-app                         # force redeploy (after env var changes)
 floo redeploy --restart --app my-app               # restart without rebuilding
 floo redeploy --services api --app my-app          # redeploy specific service
+floo redeploy --preflight --app my-app             # preview redeploy without executing
 ```
+
+### Managed services (postgres, redis, storage)
+
+Managed services are **stateful** — they carry data and outlive deploys. They are CLI-managed, not TOML-declared, because destroying a database on a config edit would be catastrophic.
+
+```bash
+floo services list --app my-app                    # see everything (app services + managed)
+floo services info postgres --app my-app           # inspect a managed service
+```
+
+Legacy `[postgres]`/`[redis]`/`[storage]` sections in `floo.app.toml` still auto-provision during the transition window, but emit a deprecation notice on every deploy. Prefer the CLI surface for new apps.
+
+### Destructive commands
+
+Commands that destroy state follow a tiered confirmation model:
+
+- **Tier 1 (reversible, no data):** `env remove`, scaling. Idempotent; no prompt.
+- **Tier 2 (destructive but recoverable from code):** `domains remove`, `deploy rollback`. `y/N` prompt, `--yes` to skip.
+- **Tier 3 (unrecoverable data loss):** `apps delete`, `services remove <managed>`, `orgs delete`. Typed-name confirmation, or `--yes-i-know-this-destroys-data` to skip in automation. Never a plain `--yes`.
+
+Every destructive command's `--json` output includes `destructive: true, data_loss: true|false, tier: N` so agents can reason about risk from the contract, not the prompt text.
+
+**Rule for agents:** never use `--yes-i-know-this-destroys-data` in a script without explicit user confirmation of the specific resource being destroyed.
 
 ### Deploy History
 

@@ -581,88 +581,41 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
-    // --- Databases ---
+    // --- Managed services ---
 
-    fn parse_database_response(&self, response: &Value) -> Result<DatabaseInfo, FlooApiError> {
-        let target = if response.get("host").is_some()
-            && response.get("port").is_some()
-            && response.get("database").is_some()
-        {
-            response.clone()
-        } else if let Some(database) = response.get("database") {
-            if database.is_object() {
-                database.clone()
-            } else {
-                return Err(FlooApiError::new(
-                    500,
-                    "PARSE_ERROR",
-                    "Failed to parse database info response from API.",
-                ));
-            }
-        } else {
-            return Err(FlooApiError::new(
-                500,
-                "PARSE_ERROR",
-                "Failed to parse database info response from API.",
-            ));
-        };
-
-        serde_json::from_value(target).map_err(|e| {
-            FlooApiError::new(
-                500,
-                "PARSE_ERROR",
-                format!("Failed to parse database info: {e}"),
-            )
-        })
-    }
-
-    fn parse_database_from_list_response(
+    pub fn list_managed_services(
         &self,
-        response: &Value,
-    ) -> Result<DatabaseInfo, FlooApiError> {
-        let databases = response
-            .get("databases")
-            .and_then(|value| value.as_array())
-            .ok_or_else(|| {
-                FlooApiError::new(
-                    500,
-                    "PARSE_ERROR",
-                    "Failed to parse database list response from API.",
-                )
-            })?;
-
-        let database = databases
-            .iter()
-            .find(|value| value.get("name").and_then(|v| v.as_str()) == Some("default"))
-            .or_else(|| databases.first())
-            .ok_or_else(|| {
-                FlooApiError::new(
-                    404,
-                    "DATABASE_NOT_FOUND",
-                    "Database not found for this app.",
-                )
-            })?;
-
-        serde_json::from_value(database.clone()).map_err(|e| {
-            FlooApiError::new(
-                500,
-                "PARSE_ERROR",
-                format!("Failed to parse database info: {e}"),
-            )
-        })
+        app_id: &str,
+    ) -> Result<ListManagedServicesResponse, FlooApiError> {
+        let resp = self.get(&format!("/v1/apps/{app_id}/managed-services"))?;
+        self.handle_response(resp)
     }
 
-    pub fn get_database_info(&self, app_id: &str) -> Result<DatabaseInfo, FlooApiError> {
-        let db_info_response = self.get(&format!("/v1/apps/{app_id}/db"))?;
-        match self.handle_response_value(db_info_response) {
-            Ok(response) => self.parse_database_response(&response),
-            Err(error) if error.status_code == 404 => {
-                let list_response = self.get(&format!("/v1/apps/{app_id}/databases"))?;
-                let list_body = self.handle_response_value(list_response)?;
-                self.parse_database_from_list_response(&list_body)
-            }
-            Err(error) => Err(error),
-        }
+    pub fn get_managed_service(
+        &self,
+        app_id: &str,
+        service_id: &str,
+    ) -> Result<ManagedServiceDetail, FlooApiError> {
+        let resp = self.get(&format!("/v1/apps/{app_id}/managed-services/{service_id}"))?;
+        self.handle_response(resp)
+    }
+
+    // --- Preflight ---
+
+    pub fn preflight(
+        &self,
+        app_id: &str,
+        declared: &DeclaredState,
+    ) -> Result<PreflightPlan, FlooApiError> {
+        let body = serde_json::to_value(declared).map_err(|e| {
+            FlooApiError::new(
+                500,
+                "SERIALIZE_ERROR",
+                format!("Failed to serialize preflight declared state: {e}"),
+            )
+        })?;
+        let resp = self.post_json(&format!("/v1/apps/{app_id}/preflight"), &body)?;
+        self.handle_response(resp)
     }
 
     // --- Domains ---

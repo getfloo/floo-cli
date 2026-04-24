@@ -212,6 +212,106 @@ pub struct ListServicesResponse {
     pub services: Vec<ApiService>,
 }
 
+// --- Managed services ---
+// Mirrors api/app/schemas/managed_services.py. Keep these in lock-step.
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManagedServiceSummary {
+    pub id: String,
+    pub app_id: String,
+    #[serde(rename = "type")]
+    pub service_type: String,
+    pub name: String,
+    pub status: String,
+    #[serde(default)]
+    pub env_var_keys: Vec<String>,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListManagedServicesResponse {
+    pub managed_services: Vec<ManagedServiceSummary>,
+    pub total: u32,
+}
+
+/// Detail response. Deliberately skips `credentials` — the CLI must never print
+/// plaintext secrets. If a future command needs them (e.g. `floo env sync`),
+/// add a separate deserialization path rather than exposing them here.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManagedServiceDetail {
+    pub id: String,
+    pub app_id: String,
+    #[serde(rename = "type")]
+    pub service_type: String,
+    pub name: String,
+    pub status: String,
+    #[serde(default)]
+    pub env_var_keys: Vec<String>,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+// --- Preflight ---
+// Mirrors api/app/schemas/preflight.py. Keep these two in lock-step.
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeclaredManagedService {
+    #[serde(rename = "type")]
+    pub service_type: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tier: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct DeclaredState {
+    pub managed_services: Vec<DeclaredManagedService>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ManagedServicePlanItem {
+    #[serde(rename = "type")]
+    pub service_type: String,
+    pub name: String,
+    pub tier: Option<String>,
+    pub managed_service_id: Option<String>,
+    pub data_impact: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct ManagedServicesPlan {
+    #[serde(default)]
+    pub to_provision: Vec<ManagedServicePlanItem>,
+    #[serde(default)]
+    pub to_retain: Vec<ManagedServicePlanItem>,
+    #[serde(default)]
+    pub to_orphan: Vec<ManagedServicePlanItem>,
+    #[serde(default)]
+    pub in_flight_deprovisioning: Vec<ManagedServicePlanItem>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct PlanSummary {
+    #[serde(default)]
+    pub action_count: u32,
+    #[serde(default)]
+    pub destructive_count: u32,
+    pub estimated_duration_seconds: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct PreflightPlan {
+    #[serde(default)]
+    pub managed_services: ManagedServicesPlan,
+    #[serde(default)]
+    pub summary: PlanSummary,
+    #[serde(default)]
+    pub destructive: bool,
+    #[serde(default)]
+    pub data_loss: bool,
+}
+
 // --- Domain ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -337,19 +437,6 @@ pub enum GitHubSetupStatus {
 pub struct GitHubSetupPollResponse {
     pub status: GitHubSetupStatus,
     pub installation_id: Option<i64>,
-}
-
-// --- Database ---
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DatabaseInfo {
-    pub host: String,
-    pub port: u64,
-    pub database: String,
-    pub name: Option<String>,
-    pub status: Option<String>,
-    pub username: Option<String>,
-    pub schema_name: Option<String>,
 }
 
 // --- Dev Session ---
