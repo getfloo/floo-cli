@@ -941,14 +941,38 @@ fn test_deploy_rollback_json() {
         )
         .create();
 
-    // --json auto-confirms via output::confirm()
     floo()
-        .args(["--json", "deploys", "rollback", TEST_APP_NAME, "deploy-456"])
+        .args([
+            "--json",
+            "deploys",
+            "rollback",
+            TEST_APP_NAME,
+            "deploy-456",
+            "--yes",
+        ])
         .env("HOME", home.path())
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""success":true"#))
-        .stdout(predicate::str::contains("deploy"));
+        .stdout(predicate::str::contains("deploy"))
+        .stdout(predicate::str::contains(r#""destructive":true"#))
+        .stdout(predicate::str::contains(r#""data_loss":false"#))
+        .stdout(predicate::str::contains(r#""tier":2"#));
+}
+
+#[test]
+fn test_deploy_rollback_refuses_without_yes_in_json_mode() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    // No rollback mock — the command must refuse before reaching that endpoint.
+
+    floo()
+        .args(["--json", "deploys", "rollback", TEST_APP_NAME, "deploy-456"])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("CONFIRMATION_REQUIRED"));
 }
 
 // ───────────────────────── Logs ─────────────────────────

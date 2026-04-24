@@ -858,6 +858,9 @@ pub enum DeploysSubcommands {
     },
 
     /// Rollback to a previous deploy.
+    ///
+    /// Tier-2 destructive: interactive prompts `y/N`; non-interactive
+    /// requires `--yes` to confirm.
     Rollback {
         /// App name or ID.
         app: String,
@@ -865,9 +868,9 @@ pub enum DeploysSubcommands {
         /// Deploy ID to rollback to.
         deploy_id: String,
 
-        /// Skip confirmation prompt.
-        #[arg(short, long)]
-        force: bool,
+        /// Skip the y/N prompt. Required in non-interactive contexts.
+        #[arg(long, alias = "force")]
+        yes: bool,
     },
 }
 
@@ -1133,8 +1136,8 @@ pub fn run() {
             DeploysSubcommands::Rollback {
                 app,
                 deploy_id,
-                force,
-            } => commands::rollbacks::rollback(&app, &deploy_id, force),
+                yes,
+            } => commands::rollbacks::rollback(&app, &deploy_id, yes),
         },
         Commands::Auth(sub) => match sub {
             AuthCommands::Login { api_key, force } => {

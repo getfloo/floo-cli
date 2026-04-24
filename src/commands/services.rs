@@ -1,4 +1,3 @@
-use std::io::{self, Write};
 use std::process;
 
 use crate::api_types::CreateManagedServiceRequest;
@@ -251,6 +250,8 @@ pub fn add(service_type: &str, app: Option<&str>, tier: &str, name: &str) {
 ///   reflex. A script using this flag must have user authorization for the
 ///   specific resource (per the skill rule).
 pub fn remove(service_type: &str, app: Option<&str>, name: &str, confirmed: bool) {
+    use crate::confirm::{confirm_tier3, ConfirmOutcome, RiskMetadata, Tier};
+
     super::require_auth();
     let client = super::init_client(None);
 
@@ -274,9 +275,7 @@ pub fn remove(service_type: &str, app: Option<&str>, name: &str, confirmed: bool
         Some(t) => t,
         None => {
             output::error(
-                &format!(
-                    "No managed {service_type} named '{name}' on {app_name}."
-                ),
+                &format!("No managed {service_type} named '{name}' on {app_name}."),
                 &ErrorCode::ManagedServiceNotFound,
                 Some("Run 'floo services list' to see what's provisioned."),
             );
@@ -284,59 +283,37 @@ pub fn remove(service_type: &str, app: Option<&str>, name: &str, confirmed: bool
         }
     };
 
-    // Confirmation gate. Flag short-circuits interactive prompt, but only the
-    // flag — never a plain --yes. Typed-name confirmation is the fallback.
-    if !confirmed {
-        if output::is_json_mode() || !is_interactive_stdin() {
-            output::error(
+    let mut preamble = vec![
+        format!(
+            "\u{26a0} You are about to permanently destroy the following managed service:"
+        ),
+        format!("    app:   {app_name}"),
+        format!("    type:  {service_type}"),
+        format!("    name:  {name}"),
+        format!("    id:    {} (status={})", target.id, target.status),
+    ];
+    if !target.env_var_keys.is_empty() {
+        preamble.push(format!(
+            "    env vars removed from runtime: {}",
+            target.env_var_keys.join(", ")
+        ));
+    }
+
+    match confirm_tier3(name, &preamble, confirmed) {
+        ConfirmOutcome::Proceed => {}
+        ConfirmOutcome::Aborted => {
+            if !output::is_json_mode() {
+                output::info("Aborted \u{2014} nothing was destroyed.", None);
+            }
+            process::exit(1);
+        }
+        ConfirmOutcome::Refused { suggestion } => {
+            crate::confirm::exit_refused(
                 &format!(
                     "Refusing to destroy managed {service_type} '{name}' on {app_name} without explicit confirmation."
                 ),
-                &ErrorCode::ConfirmationRequired,
-                Some(
-                    "Pass --yes-i-know-this-destroys-data to destroy data in non-interactive mode. This flag is deliberately verbose; a script using it must have user authorization for this specific resource.",
-                ),
+                &suggestion,
             );
-            process::exit(1);
-        }
-
-        eprintln!();
-        eprintln!(
-            "\u{26a0} You are about to permanently destroy the following managed service:"
-        );
-        eprintln!("    app:   {app_name}");
-        eprintln!("    type:  {service_type}");
-        eprintln!("    name:  {name}");
-        eprintln!(
-            "    id:    {} (status={})",
-            target.id, target.status
-        );
-        if !target.env_var_keys.is_empty() {
-            eprintln!(
-                "    env vars removed from runtime: {}",
-                target.env_var_keys.join(", ")
-            );
-        }
-        eprintln!();
-        eprintln!("This is irreversible. Data will not be recoverable.");
-        eprintln!(
-            "Type the service name ({name}) to confirm, or anything else to cancel:"
-        );
-        eprint!("> ");
-        let _ = io::stderr().flush();
-
-        let mut input = String::new();
-        if io::stdin().read_line(&mut input).is_err() {
-            output::error(
-                "Could not read confirmation.",
-                &ErrorCode::ConfirmationRequired,
-                None,
-            );
-            process::exit(1);
-        }
-        if input.trim() != name {
-            output::info("Aborted — nothing was destroyed.", None);
-            process::exit(1);
         }
     }
 
@@ -351,6 +328,7 @@ pub fn remove(service_type: &str, app: Option<&str>, name: &str, confirmed: bool
         ));
     }
 
+    let risk: RiskMetadata = Tier::Three.into();
     if output::is_json_mode() {
         output::success(
             &format!("Destroyed managed {service_type}/{name} on {app_name}"),
@@ -358,9 +336,9 @@ pub fn remove(service_type: &str, app: Option<&str>, name: &str, confirmed: bool
                 "type": service_type,
                 "name": name,
                 "app": app_name,
-                "destructive": true,
-                "data_loss": true,
-                "tier": 3,
+                "destructive": risk.destructive,
+                "data_loss": risk.data_loss,
+                "tier": risk.tier,
             })),
         );
         return;
@@ -372,11 +350,6 @@ pub fn remove(service_type: &str, app: Option<&str>, name: &str, confirmed: bool
         ),
         None,
     );
-}
-
-fn is_interactive_stdin() -> bool {
-    use std::io::IsTerminal;
-    io::stdin().is_terminal()
 }
 
 /// One-shot migration from legacy `[postgres]`/`[redis]`/`[storage]` TOML
