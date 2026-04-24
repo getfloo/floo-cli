@@ -2315,3 +2315,132 @@ fn test_services_remove_not_found_surfaces_clear_error() {
         .failure()
         .stdout(predicate::str::contains("MANAGED_SERVICE_NOT_FOUND"));
 }
+
+#[test]
+fn test_services_migrate_upserts_each_declared_section_and_writes_lock() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    // POST is idempotent on (app_id, type, name) — the API returns the existing
+    // row if one exists, so migrate is a "read-and-record" operation, not a
+    // "create-new" operation. Both of our declared sections get a 201.
+    let _m_postgres = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services").as_str(),
+        )
+        .match_body(mockito::Matcher::JsonString(
+            r#"{"type":"postgres","name":"default","tier":"basic"}"#.to_string(),
+        ))
+        .with_status(201)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{
+                "id":"ms-pg",
+                "app_id":"app-uuid-1234",
+                "type":"postgres",
+                "name":"default",
+                "status":"ready",
+                "env_var_keys":["DATABASE_URL"],
+                "created_at":"2026-04-24T00:00:00Z",
+                "updated_at":"2026-04-24T00:00:00Z"
+            }"#,
+        )
+        .create();
+
+    let _m_redis = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services").as_str(),
+        )
+        .match_body(mockito::Matcher::JsonString(
+            r#"{"type":"redis","name":"default","tier":"basic"}"#.to_string(),
+        ))
+        .with_status(201)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{
+                "id":"ms-rd",
+                "app_id":"app-uuid-1234",
+                "type":"redis",
+                "name":"default",
+                "status":"ready",
+                "env_var_keys":["REDIS_URL"],
+                "created_at":"2026-04-24T00:00:00Z",
+                "updated_at":"2026-04-24T00:00:00Z"
+            }"#,
+        )
+        .create();
+
+    let project = TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        format!(
+            r#"[app]
+name = "{TEST_APP_NAME}"
+
+[postgres]
+tier = "basic"
+
+[redis]
+tier = "basic"
+"#
+        ),
+    )
+    .unwrap();
+
+    floo()
+        .args([
+            "--json",
+            "services",
+            "migrate",
+            "--app",
+            TEST_APP_NAME,
+            project.path().to_str().unwrap(),
+        ])
+        .env("HOME", home.path())
+        .current_dir(project.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(r#""type":"postgres""#))
+        .stdout(predicate::str::contains(r#""type":"redis""#))
+        .stdout(predicate::str::contains("next_steps"));
+
+    // Lock file now reflects both migrated services.
+    let lock = std::fs::read_to_string(project.path().join(".floo").join("services.lock")).unwrap();
+    assert!(lock.contains(r#""type": "postgres""#), "lock missing postgres: {lock}");
+    assert!(lock.contains(r#""type": "redis""#), "lock missing redis: {lock}");
+}
+
+#[test]
+fn test_services_migrate_no_op_when_no_legacy_sections() {
+    let server = Server::new();
+    let home = setup_config(&server);
+
+    // No mocks — migrate must short-circuit before any API call when there
+    // are no legacy sections to migrate.
+    let project = TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        format!("[app]\nname = \"{TEST_APP_NAME}\"\n"),
+    )
+    .unwrap();
+
+    floo()
+        .args([
+            "--json",
+            "services",
+            "migrate",
+            "--app",
+            TEST_APP_NAME,
+            project.path().to_str().unwrap(),
+        ])
+        .env("HOME", home.path())
+        .current_dir(project.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains("migrated"));
+}

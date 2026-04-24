@@ -378,3 +378,163 @@ fn is_interactive_stdin() -> bool {
     use std::io::IsTerminal;
     io::stdin().is_terminal()
 }
+
+/// One-shot migration from legacy `[postgres]`/`[redis]`/`[storage]` TOML
+/// sections to CLI-managed state.
+///
+/// Zero data impact: the underlying managed-service rows already exist
+/// (auto-provisioned by the deprecated TOML path). This command just:
+/// 1. Reads the TOML sections.
+/// 2. Calls POST for each (idempotent — the API returns the existing row).
+/// 3. Writes `.floo/services.lock` with the final state.
+/// 4. Prints instructions to delete the TOML sections going forward.
+///
+/// See docs/knowledge/domains/managed-services.md for the full doctrine.
+pub fn migrate(app: Option<&str>, path: &std::path::Path) {
+    use crate::api_types::CreateManagedServiceRequest;
+    use crate::project_config;
+
+    super::require_auth();
+    let client = super::init_client(None);
+
+    let canonical_path = match path.canonicalize() {
+        Ok(p) => p,
+        Err(_) => {
+            output::error(
+                &format!("Path '{}' is not a directory.", path.display()),
+                &ErrorCode::InvalidPath,
+                Some("Provide a valid project directory."),
+            );
+            process::exit(1);
+        }
+    };
+
+    let resolved = match project_config::resolve_app_context(&canonical_path, app) {
+        Ok(r) => r,
+        Err(e) => {
+            output::error(&e.message, &e.code, e.suggestion.as_deref());
+            process::exit(1);
+        }
+    };
+
+    let declarations = project_config::discover_managed_services(&resolved);
+    if declarations.is_empty() {
+        if output::is_json_mode() {
+            output::success(
+                "No legacy managed-service sections to migrate.",
+                Some(serde_json::json!({
+                    "migrated": [],
+                    "app": resolved.app_name,
+                })),
+            );
+        } else {
+            output::info(
+                &format!(
+                    "No [postgres]/[redis]/[storage] sections in floo.app.toml for {}. Nothing to migrate.",
+                    resolved.app_name
+                ),
+                None,
+            );
+        }
+        return;
+    }
+
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app);
+
+    let mut migrated: Vec<serde_json::Value> = Vec::new();
+    for decl in &declarations {
+        // `name` in ManagedServiceDeclaration is the type ("postgres"/"redis"/"storage").
+        let service_type = decl.name.as_str();
+        let tier = decl.tier.as_deref().unwrap_or("basic");
+
+        let request = CreateManagedServiceRequest {
+            service_type,
+            name: "default",
+            tier,
+        };
+
+        let detail = match client.create_managed_service(&app_id, &request) {
+            Ok(d) => d,
+            Err(e) => {
+                output::error(
+                    &format!(
+                        "Failed to migrate {service_type}: {message}",
+                        message = e.message
+                    ),
+                    &ErrorCode::from_api(&e.code),
+                    Some(
+                        "The managed service row may already exist; check 'floo services list'. \
+                         If this persists, file feedback via 'floo feedback --category bug'.",
+                    ),
+                );
+                process::exit(1);
+            }
+        };
+
+        if let Err(e) = crate::services_lock::record_add(&detail) {
+            output::warn(&format!(
+                "Migrated {service_type} but failed to update .floo/services.lock: {e}"
+            ));
+        }
+
+        migrated.push(serde_json::json!({
+            "type": service_type,
+            "name": detail.name,
+            "status": detail.status,
+            "tier": tier,
+        }));
+    }
+
+    let sections: Vec<&str> = declarations.iter().map(|d| d.name.as_str()).collect();
+    let sections_display = sections
+        .iter()
+        .map(|s| format!("[{s}]"))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    if output::is_json_mode() {
+        output::success(
+            &format!(
+                "Migrated {} managed service(s) for {app_name}.",
+                migrated.len()
+            ),
+            Some(serde_json::json!({
+                "app": app_name,
+                "migrated": migrated,
+                "next_steps": [
+                    format!("Delete the {sections_display} sections from floo.app.toml"),
+                    "Commit the updated .floo/services.lock".to_string(),
+                    "Push — the deprecation warning will stop firing on next deploy".to_string(),
+                ],
+            })),
+        );
+        return;
+    }
+
+    output::info(
+        &format!(
+            "\u{2713} Migrated {} managed service(s) for {app_name}.",
+            migrated.len()
+        ),
+        None,
+    );
+    for item in &migrated {
+        if let (Some(t), Some(n)) = (
+            item.get("type").and_then(|v| v.as_str()),
+            item.get("name").and_then(|v| v.as_str()),
+        ) {
+            output::info(&format!("    {t}/{n}"), None);
+        }
+    }
+    output::info("", None);
+    output::info("Next steps:", None);
+    output::info(
+        &format!("  1. Delete the {sections_display} sections from floo.app.toml"),
+        None,
+    );
+    output::info("  2. Commit the updated .floo/services.lock", None);
+    output::info(
+        "  3. Push — the deprecation warning will stop firing on next deploy",
+        None,
+    );
+}
