@@ -76,7 +76,7 @@ pub fn info(service_name: &str, app: Option<&str>) {
     // Application-service name didn't match. Try managed services (postgres, redis, storage).
     // Both the type name (e.g. "postgres") and the row name (default = "default") are accepted.
     let managed = match client.list_managed_services(app_id) {
-        Ok(r) => r.services,
+        Ok(r) => r.managed_services,
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
@@ -165,7 +165,6 @@ fn render_managed_service(
         return;
     }
 
-    let tier = detail.tier.as_deref().unwrap_or("basic");
     let created = detail.created_at.as_deref().unwrap_or("-");
     output::info(
         &format!(
@@ -175,7 +174,6 @@ fn render_managed_service(
         None,
     );
     output::info(&format!("  Status:   {}", detail.status), None);
-    output::info(&format!("  Tier:     {tier}"), None);
     output::info(&format!("  Created:  {created}"), None);
     if !detail.env_var_keys.is_empty() {
         output::info(

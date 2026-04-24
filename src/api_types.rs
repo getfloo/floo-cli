@@ -213,6 +213,7 @@ pub struct ListServicesResponse {
 }
 
 // --- Managed services ---
+// Mirrors api/app/schemas/managed_services.py. Keep these in lock-step.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManagedServiceSummary {
@@ -230,9 +231,13 @@ pub struct ManagedServiceSummary {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListManagedServicesResponse {
-    pub services: Vec<ManagedServiceSummary>,
+    pub managed_services: Vec<ManagedServiceSummary>,
+    pub total: u32,
 }
 
+/// Detail response. Deliberately skips `credentials` — the CLI must never print
+/// plaintext secrets. If a future command needs them (e.g. `floo env sync`),
+/// add a separate deserialization path rather than exposing them here.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManagedServiceDetail {
     pub id: String,
@@ -241,7 +246,6 @@ pub struct ManagedServiceDetail {
     pub service_type: String,
     pub name: String,
     pub status: String,
-    pub tier: Option<String>,
     #[serde(default)]
     pub env_var_keys: Vec<String>,
     pub created_at: Option<String>,

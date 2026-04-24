@@ -1189,7 +1189,7 @@ fn test_services_info_routes_to_managed_service_by_type() {
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
-            r#"{"services":[{"id":"ms-1","app_id":"1","type":"postgres","name":"default","status":"ready","env_var_keys":["DATABASE_URL"],"created_at":"2026-04-24T00:00:00Z","updated_at":"2026-04-24T00:00:00Z"}]}"#,
+            r#"{"managed_services":[{"id":"ms-1","app_id":"1","type":"postgres","name":"default","status":"ready","env_var_keys":["DATABASE_URL"],"created_at":"2026-04-24T00:00:00Z","updated_at":"2026-04-24T00:00:00Z"}],"total":1}"#,
         )
         .create();
 
@@ -1201,7 +1201,7 @@ fn test_services_info_routes_to_managed_service_by_type() {
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
-            r#"{"id":"ms-1","app_id":"1","type":"postgres","name":"default","status":"ready","tier":"basic","env_var_keys":["DATABASE_URL"],"created_at":"2026-04-24T00:00:00Z","updated_at":"2026-04-24T00:00:00Z"}"#,
+            r#"{"id":"ms-1","app_id":"1","type":"postgres","name":"default","status":"ready","env_var_keys":["DATABASE_URL"],"credentials":{"DATABASE_URL":"postgresql://redacted"},"created_at":"2026-04-24T00:00:00Z","updated_at":"2026-04-24T00:00:00Z"}"#,
         )
         .create();
 
@@ -1219,7 +1219,9 @@ fn test_services_info_routes_to_managed_service_by_type() {
         .success()
         .stdout(predicate::str::contains(r#""success":true"#))
         .stdout(predicate::str::contains(r#""type":"postgres""#))
-        .stdout(predicate::str::contains(r#""tier":"basic""#));
+        // Credentials must NEVER appear in CLI output — the CLI struct deliberately
+        // skips the credentials field so plaintext secrets can't leak into logs.
+        .stdout(predicate::str::contains("redacted").not());
 }
 
 #[test]
@@ -1246,7 +1248,7 @@ fn test_services_info_nothing_matches_lists_available() {
         )
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"services":[{"id":"ms-1","app_id":"1","type":"redis","name":"default","status":"ready","env_var_keys":["REDIS_URL"],"created_at":null,"updated_at":null}]}"#)
+        .with_body(r#"{"managed_services":[{"id":"ms-1","app_id":"1","type":"redis","name":"default","status":"ready","env_var_keys":["REDIS_URL"],"created_at":null,"updated_at":null}],"total":1}"#)
         .create();
 
     floo()
