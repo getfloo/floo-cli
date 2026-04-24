@@ -1227,11 +1227,23 @@ fn test_logs_single_service_no_prefix() {
 // ───────────────────────── Services ─────────────────────────
 
 #[test]
-fn test_services_list_json() {
+fn test_services_list_json_returns_both_app_and_managed_services() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
     let _services = mock_services_single(&mut server);
+
+    let _m_managed = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"managed_services":[{"id":"ms-1","app_id":"app-uuid-1234","type":"postgres","name":"default","status":"ready","env_var_keys":["DATABASE_URL"],"created_at":null,"updated_at":null}],"total":1}"#,
+        )
+        .create();
 
     floo()
         .args(["--json", "services", "list", "--app", TEST_APP_NAME])
@@ -1239,8 +1251,77 @@ fn test_services_list_json() {
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""success":true"#))
-        .stdout(predicate::str::contains("services"))
-        .stdout(predicate::str::contains("web"));
+        .stdout(predicate::str::contains("app_services"))
+        .stdout(predicate::str::contains("managed_services"))
+        .stdout(predicate::str::contains("web"))
+        .stdout(predicate::str::contains("postgres"));
+}
+
+#[test]
+fn test_services_list_partial_view_when_managed_services_fetch_fails() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_services_single(&mut server);
+
+    // Managed services endpoint is broken. `list` must degrade gracefully:
+    // app services render, managed_services is empty, a warning fires.
+    let _m_managed = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services").as_str(),
+        )
+        .with_status(500)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":{"code":"INTERNAL_ERROR","message":"boom"}}"#)
+        .create();
+
+    floo()
+        .args(["--json", "services", "list", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains("web"))
+        .stdout(predicate::str::contains(r#""managed_services":[]"#));
+}
+
+#[test]
+fn test_services_list_empty_when_no_services_of_either_kind() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _m_app = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/services").as_str())
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+            Matcher::UrlEncoded("environment".into(), "dev".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"services":[]}"#)
+        .create();
+
+    let _m_managed = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"managed_services":[],"total":0}"#)
+        .create();
+
+    floo()
+        .args(["--json", "services", "list", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(r#""app_services":[]"#))
+        .stdout(predicate::str::contains(r#""managed_services":[]"#));
 }
 
 #[test]

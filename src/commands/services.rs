@@ -4,6 +4,11 @@ use crate::api_types::CreateManagedServiceRequest;
 use crate::errors::ErrorCode;
 use crate::output;
 
+/// List every service on an app — both the user-authored app services
+/// (Cloud Run revisions) and the platform-managed services (postgres,
+/// redis, storage). The two live on different authoring surfaces but
+/// belong in one read model so `floo services list` is a complete view.
+/// Matches the info command's "both surfaces" routing landed in #110.
 pub fn list(app: Option<&str>, env: &str) {
     super::require_auth();
     let client = super::init_client(None);
@@ -12,7 +17,7 @@ pub fn list(app: Option<&str>, env: &str) {
     let app_id = app_id.as_str();
     let app_name = app_name.as_str();
 
-    let result = match client.list_services(app_id, Some(env)) {
+    let app_services = match client.list_services(app_id, Some(env)) {
         Ok(r) => r,
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
@@ -20,37 +25,78 @@ pub fn list(app: Option<&str>, env: &str) {
         }
     };
 
-    if result.services.is_empty() {
+    // Managed services fetch failure is non-fatal — app services still render
+    // and we surface the error as a warning so the user knows the view is
+    // partial, not wrong.
+    let managed_services = match client.list_managed_services(app_id) {
+        Ok(r) => Some(r.managed_services),
+        Err(e) => {
+            output::warn(&format!(
+                "Could not fetch managed services (partial view): {}",
+                e.message
+            ));
+            None
+        }
+    };
+    let managed_services = managed_services.unwrap_or_default();
+
+    if app_services.services.is_empty() && managed_services.is_empty() {
         if output::is_json_mode() {
             output::success(
                 &format!("No services on {app_name}."),
-                Some(serde_json::json!({"services": []})),
+                Some(serde_json::json!({
+                    "app_services": [],
+                    "managed_services": [],
+                })),
             );
         } else {
-            output::info(&format!("No services on {app_name}."), None);
+            output::info(
+                &format!(
+                    "No services on {app_name}. Add one with 'floo services add <type>' or by declaring services in floo.app.toml."
+                ),
+                None,
+            );
         }
         return;
     }
 
-    let rows: Vec<Vec<String>> = result
-        .services
-        .iter()
-        .map(|s| {
-            vec![
-                s.name.clone(),
-                s.service_type.as_deref().unwrap_or("-").to_string(),
-                s.status.as_deref().unwrap_or("-").to_string(),
-                s.ingress.as_deref().unwrap_or("-").to_string(),
-                s.cloud_run_url.as_deref().unwrap_or("-").to_string(),
-            ]
-        })
-        .collect();
+    if output::is_json_mode() {
+        output::success(
+            &format!("Services for {app_name}"),
+            Some(serde_json::json!({
+                "app_services": output::to_value(&app_services.services),
+                "managed_services": output::to_value(&managed_services),
+            })),
+        );
+        return;
+    }
 
-    output::table(
-        &["Name", "Type", "Status", "Ingress", "URL"],
-        &rows,
-        Some(output::to_value(&result)),
+    // Human mode: render unified table rows. Managed services show their
+    // type as the "Type" cell and "managed" as the ingress so users see them
+    // as a distinct class without a second table.
+    let mut rows: Vec<Vec<String>> = Vec::with_capacity(
+        app_services.services.len() + managed_services.len(),
     );
+    for s in &app_services.services {
+        rows.push(vec![
+            s.name.clone(),
+            s.service_type.as_deref().unwrap_or("-").to_string(),
+            s.status.as_deref().unwrap_or("-").to_string(),
+            s.ingress.as_deref().unwrap_or("-").to_string(),
+            s.cloud_run_url.as_deref().unwrap_or("-").to_string(),
+        ]);
+    }
+    for ms in &managed_services {
+        rows.push(vec![
+            ms.name.clone(),
+            ms.service_type.clone(),
+            ms.status.clone(),
+            "managed".to_string(),
+            "\u{2014}".to_string(),
+        ]);
+    }
+
+    output::table(&["Name", "Type", "Status", "Ingress", "URL"], &rows, None);
 }
 
 pub fn info(service_name: &str, app: Option<&str>) {
