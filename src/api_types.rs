@@ -248,6 +248,66 @@ pub struct ManagedServiceDetail {
     pub updated_at: Option<String>,
 }
 
+// --- Preflight ---
+// Mirrors api/app/schemas/preflight.py. Keep these two in lock-step.
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeclaredManagedService {
+    #[serde(rename = "type")]
+    pub service_type: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tier: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct DeclaredState {
+    pub managed_services: Vec<DeclaredManagedService>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ManagedServicePlanItem {
+    #[serde(rename = "type")]
+    pub service_type: String,
+    pub name: String,
+    pub tier: Option<String>,
+    pub managed_service_id: Option<String>,
+    pub data_impact: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct ManagedServicesPlan {
+    #[serde(default)]
+    pub to_provision: Vec<ManagedServicePlanItem>,
+    #[serde(default)]
+    pub to_retain: Vec<ManagedServicePlanItem>,
+    #[serde(default)]
+    pub to_orphan: Vec<ManagedServicePlanItem>,
+    #[serde(default)]
+    pub in_flight_deprovisioning: Vec<ManagedServicePlanItem>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct PlanSummary {
+    #[serde(default)]
+    pub action_count: u32,
+    #[serde(default)]
+    pub destructive_count: u32,
+    pub estimated_duration_seconds: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct PreflightPlan {
+    #[serde(default)]
+    pub managed_services: ManagedServicesPlan,
+    #[serde(default)]
+    pub summary: PlanSummary,
+    #[serde(default)]
+    pub destructive: bool,
+    #[serde(default)]
+    pub data_loss: bool,
+}
+
 // --- Domain ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

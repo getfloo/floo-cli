@@ -2011,3 +2011,97 @@ fn test_update_json_success() {
         binary_bytes.as_slice()
     );
 }
+
+#[test]
+fn test_preflight_surfaces_orphaned_managed_service() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _m_preflight = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/preflight").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{
+                "managed_services":{
+                    "to_provision":[],
+                    "to_retain":[],
+                    "to_orphan":[{"type":"postgres","name":"default","tier":"basic","managed_service_id":"ms-1","data_impact":"Postgres schema app_xyz and role floo_app_xyz"}],
+                    "in_flight_deprovisioning":[]
+                },
+                "summary":{"action_count":1,"destructive_count":1,"estimated_duration_seconds":null},
+                "destructive":true,
+                "data_loss":false
+            }"#,
+        )
+        .create();
+
+    let project = TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        format!("[app]\nname = \"{TEST_APP_NAME}\"\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        project.path().join("floo.service.toml"),
+        format!(
+            r#"[app]
+name = "{TEST_APP_NAME}"
+
+[service]
+name = "web"
+type = "web"
+port = 3000
+ingress = "public"
+"#
+        ),
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""valid":true"#))
+        .stdout(predicate::str::contains(r#""to_orphan""#))
+        .stdout(predicate::str::contains("app_xyz"))
+        .stdout(predicate::str::contains(r#""destructive":true"#));
+}
+
+#[test]
+fn test_preflight_degrades_gracefully_when_app_not_resolvable() {
+    // Unauthenticated-style: local-only config, no mock endpoints wired.
+    // The plan fetch is best-effort; local validation still ships.
+    let project = TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        "[app]\nname = \"some-app\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project.path().join("floo.service.toml"),
+        r#"[app]
+name = "some-app"
+
+[service]
+name = "web"
+type = "web"
+port = 3000
+ingress = "public"
+"#,
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent-preflight")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""valid":true"#))
+        .stdout(predicate::str::contains(r#""plan":null"#));
+}

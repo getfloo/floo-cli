@@ -104,7 +104,11 @@ pub fn preflight(path: PathBuf, app: Option<String>, services_filter: Vec<String
     // 6. Generate security notes
     let security_notes = generate_security_notes(&services, &managed_services, &resolved);
 
-    // 7. Display
+    // 7. Remote preflight audit (declared vs deployed). Best-effort — auth/resolution
+    // failures degrade to a note; local validation still ships.
+    let remote_plan = fetch_remote_preflight(&app_name, &managed_services);
+
+    // 8. Display
     if output::is_json_mode() {
         let svc_json: Vec<serde_json::Value> = services
             .iter()
@@ -146,6 +150,7 @@ pub fn preflight(path: PathBuf, app: Option<String>, services_filter: Vec<String
                 "managed_services": managed_json,
                 "warnings": warning_strings,
                 "security_notes": security_notes,
+                "plan": remote_plan.as_ref().map(crate::output::to_value),
                 "valid": preflight_errors.is_empty(),
             })),
         );
@@ -160,12 +165,16 @@ pub fn preflight(path: PathBuf, app: Option<String>, services_filter: Vec<String
         );
 
         if !managed_services.is_empty() {
-            eprintln!("  Managed services:");
+            eprintln!("  Managed services (declared):");
             for ms in &managed_services {
                 let tier_label = ms.tier.as_deref().unwrap_or("basic");
                 eprintln!("    {} (tier {tier_label})", ms.name);
             }
             eprintln!();
+        }
+
+        if let Some(ref plan) = remote_plan {
+            render_plan_human(plan);
         }
 
         if !security_notes.is_empty() {
@@ -1637,6 +1646,68 @@ pub(crate) fn sync_env_vars_if_needed(
                 e.message
             ));
         }
+    }
+}
+
+fn fetch_remote_preflight(
+    app_name: &str,
+    managed: &[project_config::ManagedServiceDeclaration],
+) -> Option<crate::api_types::PreflightPlan> {
+    use crate::api_types::{DeclaredManagedService, DeclaredState};
+    use crate::config::load_config;
+
+    load_config().api_key.as_ref()?;
+
+    let client = crate::api_client::FlooClient::new(None).ok()?;
+    let app = crate::resolve::resolve_app(&client, app_name).ok()?;
+
+    let declared = DeclaredState {
+        managed_services: managed
+            .iter()
+            .map(|ms| DeclaredManagedService {
+                service_type: ms.name.clone(),
+                name: "default".to_string(),
+                tier: ms.tier.clone(),
+            })
+            .collect(),
+    };
+
+    client.preflight(&app.id, &declared).ok()
+}
+
+fn render_plan_human(plan: &crate::api_types::PreflightPlan) {
+    let ms = &plan.managed_services;
+    if !ms.to_provision.is_empty() {
+        eprintln!("  Will provision on next deploy:");
+        for item in &ms.to_provision {
+            let tier = item.tier.as_deref().unwrap_or("basic");
+            eprintln!(
+                "    + {} (tier {tier})",
+                format_args!("{}/{}", item.service_type, item.name)
+            );
+        }
+        eprintln!();
+    }
+    if !ms.to_orphan.is_empty() {
+        eprintln!("  \u{26a0} Orphaned managed services (deploy will NOT remove these):");
+        for item in &ms.to_orphan {
+            let impact = item.data_impact.as_deref().unwrap_or("managed service data");
+            eprintln!(
+                "    - {}/{}  [{}]",
+                item.service_type, item.name, impact
+            );
+        }
+        eprintln!(
+            "    Run 'floo services remove <type> --app <name>' to deprovision explicitly."
+        );
+        eprintln!();
+    }
+    if !ms.in_flight_deprovisioning.is_empty() {
+        eprintln!("  \u{26a0} Deprovisioning in flight:");
+        for item in &ms.in_flight_deprovisioning {
+            eprintln!("    … {}/{}", item.service_type, item.name);
+        }
+        eprintln!();
     }
 }
 

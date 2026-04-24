@@ -600,6 +600,24 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    // --- Preflight ---
+
+    pub fn preflight(
+        &self,
+        app_id: &str,
+        declared: &DeclaredState,
+    ) -> Result<PreflightPlan, FlooApiError> {
+        let body = serde_json::to_value(declared).map_err(|e| {
+            FlooApiError::new(
+                500,
+                "SERIALIZE_ERROR",
+                format!("Failed to serialize preflight declared state: {e}"),
+            )
+        })?;
+        let resp = self.post_json(&format!("/v1/apps/{app_id}/preflight"), &body)?;
+        self.handle_response(resp)
+    }
+
     // --- Domains ---
 
     pub fn add_domain(
