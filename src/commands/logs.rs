@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use colored::Colorize;
 
-use crate::api_types::LogEntry;
+use crate::api_types::{LogEntry, RequestLogEntry};
 use crate::errors::ErrorCode;
 use crate::output;
 use crate::project_config::{self, AppSource};
@@ -508,6 +508,110 @@ fn live_logs(
             }
             update_last_timestamp(&mut last_timestamp, entry);
         }
+    }
+}
+
+// ─── floo logs --requests ──────────────────────────────────────────────────
+
+pub struct RequestLogsArgs {
+    pub app_flag: Option<String>,
+    pub tail: u32,
+    pub since: Option<String>,
+}
+
+fn format_request_line(entry: &RequestLogEntry) -> String {
+    let status_str = entry.status_code.to_string();
+    let colored_status = match entry.status_code / 100 {
+        2 => status_str.green().to_string(),
+        3 => status_str.cyan().to_string(),
+        4 => status_str.yellow().to_string(),
+        5 => status_str.red().bold().to_string(),
+        _ => status_str,
+    };
+    let latency = if entry.latency_ms < 1000 {
+        format!("{}ms", entry.latency_ms)
+    } else {
+        format!("{:.2}s", entry.latency_ms as f64 / 1000.0)
+    };
+    let url = match (&entry.host, &entry.path) {
+        (Some(h), Some(p)) => format!("https://{h}{p}"),
+        (Some(h), None) => format!("https://{h}"),
+        (None, Some(p)) => p.clone(),
+        (None, None) => "-".to_string(),
+    };
+    format!(
+        "{} {} {} {} ({})",
+        entry.timestamp,
+        entry.method.bold(),
+        colored_status,
+        url,
+        latency,
+    )
+}
+
+pub fn request_logs(args: RequestLogsArgs) {
+    super::require_auth();
+    let client = super::init_client(None);
+
+    let app_data = if let Some(ref app_flag) = args.app_flag {
+        match resolve_app(&client, app_flag) {
+            Ok(a) => a,
+            Err(e) => {
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                process::exit(1);
+            }
+        }
+    } else {
+        let cwd = std::env::current_dir().unwrap_or_else(|e| {
+            output::error(
+                &format!("Failed to read current directory: {e}"),
+                &ErrorCode::FileError,
+                None,
+            );
+            process::exit(1);
+        });
+        let resolved = match project_config::resolve_app_context(&cwd, None) {
+            Ok(r) => r,
+            Err(e) => {
+                output::error(&e.message, &e.code, e.suggestion.as_deref());
+                process::exit(1);
+            }
+        };
+        match resolve_app(&client, &resolved.app_name) {
+            Ok(a) => a,
+            Err(e) => {
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                process::exit(1);
+            }
+        }
+    };
+
+    let result = match client.get_request_logs(&app_data.id, args.tail, args.since.as_deref()) {
+        Ok(r) => r,
+        Err(e) => {
+            output::error(
+                &format!("Failed to fetch request logs: {e}"),
+                &ErrorCode::from_api("REQUESTS_FETCH_FAILED"),
+                None,
+            );
+            process::exit(1);
+        }
+    };
+
+    if output::is_json_mode() {
+        output::print_json(&output::to_value(&result));
+        return;
+    }
+
+    if result.requests.is_empty() {
+        output::dim_line(&format!("No requests yet for {}.", app_data.name));
+        return;
+    }
+
+    // Newest-first from the API — reverse so the console reads top-to-bottom
+    // oldest-to-newest, like `tail -f`.
+    for entry in result.requests.iter().rev() {
+        output::dim_line(&format_request_line(entry));
     }
 }
 

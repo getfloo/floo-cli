@@ -247,6 +247,25 @@ pub struct LogsResponse {
     pub logs: Vec<LogEntry>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestLogEntry {
+    pub timestamp: String,
+    pub method: String,
+    pub path: Option<String>,
+    pub host: Option<String>,
+    pub status_code: i32,
+    pub latency_ms: i32,
+    pub access_mode: String,
+    pub user_identity: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestLogsResponse {
+    pub requests: Vec<RequestLogEntry>,
+    pub total: i32,
+    pub app_name: String,
+}
+
 // --- Release ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

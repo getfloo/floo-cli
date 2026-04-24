@@ -250,6 +250,12 @@ Examples:
         /// Environment to query: dev or prod.
         #[arg(long, value_parser = ["dev", "prod"])]
         env: Option<String>,
+
+        /// Show HTTP requests captured by floo's gateway instead of app-level
+        /// log output. Each line is one proxied request with the public URL,
+        /// status, and latency.
+        #[arg(long)]
+        requests: bool,
     },
 
     /// Install agent skills for AI coding assistants.
@@ -1229,23 +1235,32 @@ pub fn run() {
             live,
             output,
             env,
+            requests,
         } => {
-            let severity = if error {
-                Some("ERROR".to_string())
+            if requests {
+                commands::logs::request_logs(commands::logs::RequestLogsArgs {
+                    app_flag: app,
+                    tail,
+                    since,
+                });
             } else {
-                severity
-            };
-            commands::logs::logs(commands::logs::LogsArgs {
-                app_flag: app,
-                tail,
-                since,
-                severity,
-                services,
-                search,
-                live,
-                output_path: output,
-                env,
-            });
+                let severity = if error {
+                    Some("ERROR".to_string())
+                } else {
+                    severity
+                };
+                commands::logs::logs(commands::logs::LogsArgs {
+                    app_flag: app,
+                    tail,
+                    since,
+                    severity,
+                    services,
+                    search,
+                    live,
+                    output_path: output,
+                    env,
+                });
+            }
         }
         Commands::Version => commands::update::version(),
         Commands::Update { version } => commands::update::update(version.as_deref()),
