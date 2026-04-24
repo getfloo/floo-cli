@@ -60,7 +60,7 @@ pub fn info(service_name: &str, app: Option<&str>) {
     let app_id = app_id.as_str();
     let app_name = app_name.as_str();
 
-    let result = match client.list_services(app_id, None) {
+    let app_services = match client.list_services(app_id, None) {
         Ok(r) => r,
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
@@ -68,94 +68,123 @@ pub fn info(service_name: &str, app: Option<&str>) {
         }
     };
 
-    // Check if any user-managed service matches the given name
-    let matched = result.services.iter().find(|s| s.name == service_name);
-
-    if let Some(svc) = matched {
-        // User-managed service found — display its details
-        if output::is_json_mode() {
-            output::success(
-                &format!("Service {service_name} on {app_name}"),
-                Some(output::to_value(svc)),
-            );
-            return;
-        }
-
-        let svc_type = svc.service_type.as_deref().unwrap_or("-");
-        let status = svc.status.as_deref().unwrap_or("-");
-        let ingress = svc.ingress.as_deref().unwrap_or("-");
-        let url = svc.cloud_run_url.as_deref().unwrap_or("-");
-        let port = svc
-            .port
-            .map(|p| p.to_string())
-            .unwrap_or_else(|| "-".to_string());
-
-        output::info(&format!("Service {service_name} ({app_name}):"), None);
-        output::info(&format!("  Type:    {svc_type}"), None);
-        output::info(&format!("  Status:  {status}"), None);
-        output::info(&format!("  Ingress: {ingress}"), None);
-        output::info(&format!("  URL:     {url}"), None);
-        output::info(&format!("  Port:    {port}"), None);
+    if let Some(svc) = app_services.services.iter().find(|s| s.name == service_name) {
+        render_app_service(svc, service_name, app_name);
         return;
     }
 
-    // No user-managed service found with that name.
-    // If the app has user-managed services, the name is simply wrong.
-    if !result.services.is_empty() {
-        let names: Vec<&str> = result.services.iter().map(|s| s.name.as_str()).collect();
-        let suggestion = format!(
-            "Available services: {}. Run 'floo services list' for details.",
-            names.join(", ")
-        );
-        output::error(
-            &format!("Service '{service_name}' not found on {app_name}."),
-            &ErrorCode::ServiceNotFound,
-            Some(&suggestion),
-        );
-        process::exit(1);
-    }
-
-    // No user-managed services at all — try Floo-managed database.
-    let db_data = match client.get_database_info(app_id) {
-        Ok(db) => db,
+    // Application-service name didn't match. Try managed services (postgres, redis, storage).
+    // Both the type name (e.g. "postgres") and the row name (default = "default") are accepted.
+    let managed = match client.list_managed_services(app_id) {
+        Ok(r) => r.services,
         Err(e) => {
-            if e.code == "DATABASE_NOT_FOUND" {
-                output::error(
-                    &format!("Service '{service_name}' not found on {app_name}."),
-                    &ErrorCode::ServiceNotFound,
-                    Some("Run 'floo services list' to see available services."),
-                );
-            } else {
-                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-            }
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
 
+    let managed_match = managed.iter().find(|m| {
+        m.service_type == service_name
+            || m.name == service_name
+            || format!("{}-{}", m.service_type, m.name) == service_name
+    });
+
+    if let Some(ms) = managed_match {
+        let detail = match client.get_managed_service(app_id, &ms.id) {
+            Ok(d) => d,
+            Err(e) => {
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                process::exit(1);
+            }
+        };
+        render_managed_service(&detail, service_name, app_name);
+        return;
+    }
+
+    // Nothing matched. Build a helpful "did you mean?" listing both surfaces.
+    let mut available: Vec<String> = app_services
+        .services
+        .iter()
+        .map(|s| s.name.clone())
+        .collect();
+    for m in &managed {
+        available.push(m.service_type.clone());
+    }
+    let suggestion = if available.is_empty() {
+        "This app has no services yet. Run 'floo services list' to verify.".to_string()
+    } else {
+        format!(
+            "Available services: {}. Run 'floo services list' for details.",
+            available.join(", ")
+        )
+    };
+    output::error(
+        &format!("Service '{service_name}' not found on {app_name}."),
+        &ErrorCode::ServiceNotFound,
+        Some(&suggestion),
+    );
+    process::exit(1);
+}
+
+fn render_app_service(svc: &crate::api_types::ApiService, service_name: &str, app_name: &str) {
     if output::is_json_mode() {
         output::success(
             &format!("Service {service_name} on {app_name}"),
-            Some(output::to_value(&db_data)),
+            Some(output::to_value(svc)),
         );
         return;
     }
 
-    let host = &db_data.host;
-    let port = db_data.port.to_string();
-    let database = &db_data.database;
-    let status = db_data.status.as_deref().unwrap_or("-");
+    let svc_type = svc.service_type.as_deref().unwrap_or("-");
+    let status = svc.status.as_deref().unwrap_or("-");
+    let ingress = svc.ingress.as_deref().unwrap_or("-");
+    let url = svc.cloud_run_url.as_deref().unwrap_or("-");
+    let port = svc
+        .port
+        .map(|p| p.to_string())
+        .unwrap_or_else(|| "-".to_string());
 
     output::info(&format!("Service {service_name} ({app_name}):"), None);
-    output::info(&format!("  Host:     {host}"), None);
-    output::info(&format!("  Port:     {port}"), None);
-    output::info(&format!("  Database: {database}"), None);
-    output::info(&format!("  Status:   {status}"), None);
-    if let Some(username) = db_data.username.as_deref() {
-        output::info(&format!("  Username: {username}"), None);
+    output::info(&format!("  Type:    {svc_type}"), None);
+    output::info(&format!("  Status:  {status}"), None);
+    output::info(&format!("  Ingress: {ingress}"), None);
+    output::info(&format!("  URL:     {url}"), None);
+    output::info(&format!("  Port:    {port}"), None);
+}
+
+fn render_managed_service(
+    detail: &crate::api_types::ManagedServiceDetail,
+    service_name: &str,
+    app_name: &str,
+) {
+    if output::is_json_mode() {
+        output::success(
+            &format!("Managed service {service_name} on {app_name}"),
+            Some(output::to_value(detail)),
+        );
+        return;
     }
-    if let Some(schema) = db_data.schema_name.as_deref() {
-        output::info(&format!("  Schema:   {schema}"), None);
+
+    let tier = detail.tier.as_deref().unwrap_or("basic");
+    let created = detail.created_at.as_deref().unwrap_or("-");
+    output::info(
+        &format!(
+            "Managed service {} (name: {}, app: {app_name}):",
+            detail.service_type, detail.name
+        ),
+        None,
+    );
+    output::info(&format!("  Status:   {}", detail.status), None);
+    output::info(&format!("  Tier:     {tier}"), None);
+    output::info(&format!("  Created:  {created}"), None);
+    if !detail.env_var_keys.is_empty() {
+        output::info(
+            &format!("  Env vars: {}", detail.env_var_keys.join(", ")),
+            None,
+        );
+        output::info(
+            "  (credentials are injected at runtime; use 'floo env list' to see keys)",
+            None,
+        );
     }
-    output::info("", None);
-    output::info("DATABASE_URL is injected as an environment variable.", None);
 }

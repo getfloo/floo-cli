@@ -1165,13 +1165,12 @@ fn test_services_info_user_managed() {
 }
 
 #[test]
-fn test_services_info_db_uses_db_endpoint() {
+fn test_services_info_routes_to_managed_service_by_type() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
 
-    // No user-managed services
-    let _m_services = server
+    let _m_app_services = server
         .mock("GET", format!("/v1/apps/{TEST_APP_ID}/services").as_str())
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("page".into(), "1".into()),
@@ -1182,32 +1181,54 @@ fn test_services_info_db_uses_db_endpoint() {
         .with_body(r#"{"services":[]}"#)
         .create();
 
-    let _m_db = server
-        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/db").as_str())
+    let _m_list_managed = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services").as_str(),
+        )
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
-            r#"{"host":"db.example.internal","port":5432,"database":"floo_apps","status":"READY","username":"floo_user","schema_name":"app_1234"}"#,
+            r#"{"services":[{"id":"ms-1","app_id":"1","type":"postgres","name":"default","status":"ready","env_var_keys":["DATABASE_URL"],"created_at":"2026-04-24T00:00:00Z","updated_at":"2026-04-24T00:00:00Z"}]}"#,
+        )
+        .create();
+
+    let _m_get_managed = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services/ms-1").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"id":"ms-1","app_id":"1","type":"postgres","name":"default","status":"ready","tier":"basic","env_var_keys":["DATABASE_URL"],"created_at":"2026-04-24T00:00:00Z","updated_at":"2026-04-24T00:00:00Z"}"#,
         )
         .create();
 
     floo()
-        .args(["--json", "services", "info", "db", "--app", TEST_APP_NAME])
+        .args([
+            "--json",
+            "services",
+            "info",
+            "postgres",
+            "--app",
+            TEST_APP_NAME,
+        ])
         .env("HOME", home.path())
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""success":true"#))
-        .stdout(predicate::str::contains("db.example.internal"))
-        .stdout(predicate::str::contains(r#""database":"floo_apps""#));
+        .stdout(predicate::str::contains(r#""type":"postgres""#))
+        .stdout(predicate::str::contains(r#""tier":"basic""#));
 }
 
 #[test]
-fn test_services_info_db_falls_back_to_databases_endpoint() {
+fn test_services_info_nothing_matches_lists_available() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
 
-    let _m_services = server
+    let _m_app_services = server
         .mock("GET", format!("/v1/apps/{TEST_APP_ID}/services").as_str())
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("page".into(), "1".into()),
@@ -1215,32 +1236,34 @@ fn test_services_info_db_falls_back_to_databases_endpoint() {
         ]))
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"services":[]}"#)
+        .with_body(r#"{"services":[{"id":"svc-1","name":"web","type":"web","status":"ready","ingress":"public","cloud_run_url":"https://web.example","port":8080}]}"#)
         .create();
 
-    let _m_db_not_found = server
-        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/db").as_str())
-        .with_status(404)
-        .with_header("content-type", "application/json")
-        .with_body(r#"{"detail":{"code":"NOT_FOUND","message":"Not found"}}"#)
-        .create();
-
-    let _m_databases = server
-        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/databases").as_str())
+    let _m_list_managed = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services").as_str(),
+        )
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(
-            r#"{"databases":[{"id":"db-1","name":"default","host":"fallback-db.internal","port":5432,"database":"floo_apps","status":"READY","username":"floo_user","schema_name":"app_5678"}],"total":1}"#,
-        )
+        .with_body(r#"{"services":[{"id":"ms-1","app_id":"1","type":"redis","name":"default","status":"ready","env_var_keys":["REDIS_URL"],"created_at":null,"updated_at":null}]}"#)
         .create();
 
     floo()
-        .args(["--json", "services", "info", "db", "--app", TEST_APP_NAME])
+        .args([
+            "--json",
+            "services",
+            "info",
+            "nope",
+            "--app",
+            TEST_APP_NAME,
+        ])
         .env("HOME", home.path())
         .assert()
-        .success()
-        .stdout(predicate::str::contains("fallback-db.internal"))
-        .stdout(predicate::str::contains(r#""name":"default""#));
+        .failure()
+        .stdout(predicate::str::contains("SERVICE_NOT_FOUND"))
+        .stdout(predicate::str::contains("web"))
+        .stdout(predicate::str::contains("redis"));
 }
 
 #[test]
@@ -1285,7 +1308,14 @@ fn test_services_info_surfaces_api_errors() {
         .create();
 
     floo()
-        .args(["--json", "services", "info", "db", "--app", TEST_APP_NAME])
+        .args([
+            "--json",
+            "services",
+            "info",
+            "postgres",
+            "--app",
+            TEST_APP_NAME,
+        ])
         .env("HOME", home.path())
         .assert()
         .failure()

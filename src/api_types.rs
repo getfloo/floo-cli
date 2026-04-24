@@ -212,6 +212,42 @@ pub struct ListServicesResponse {
     pub services: Vec<ApiService>,
 }
 
+// --- Managed services ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManagedServiceSummary {
+    pub id: String,
+    pub app_id: String,
+    #[serde(rename = "type")]
+    pub service_type: String,
+    pub name: String,
+    pub status: String,
+    #[serde(default)]
+    pub env_var_keys: Vec<String>,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListManagedServicesResponse {
+    pub services: Vec<ManagedServiceSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManagedServiceDetail {
+    pub id: String,
+    pub app_id: String,
+    #[serde(rename = "type")]
+    pub service_type: String,
+    pub name: String,
+    pub status: String,
+    pub tier: Option<String>,
+    #[serde(default)]
+    pub env_var_keys: Vec<String>,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
 // --- Domain ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -337,19 +373,6 @@ pub enum GitHubSetupStatus {
 pub struct GitHubSetupPollResponse {
     pub status: GitHubSetupStatus,
     pub installation_id: Option<i64>,
-}
-
-// --- Database ---
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DatabaseInfo {
-    pub host: String,
-    pub port: u64,
-    pub database: String,
-    pub name: Option<String>,
-    pub status: Option<String>,
-    pub username: Option<String>,
-    pub schema_name: Option<String>,
 }
 
 // --- Dev Session ---
