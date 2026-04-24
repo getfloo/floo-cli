@@ -7,9 +7,7 @@ use crate::dockerfile;
 use crate::errors::ErrorCode;
 use crate::names::generate_name;
 use crate::output;
-use crate::project_config::{
-    self, AppFileAppSection, AppFileConfig, AppServiceEntry, ServiceType,
-};
+use crate::project_config::{self, AppFileAppSection, AppFileConfig, AppServiceEntry, ServiceType};
 
 pub fn init(name: Option<String>, path: PathBuf) {
     let project_path = match path.canonicalize() {
@@ -276,7 +274,11 @@ fn init_interactive(
                 Some(name) => {
                     let use_it =
                         output::confirm(&format!("  {name} detected. Use it for cloud deploy?"));
-                    if use_it { Some(name) } else { None }
+                    if use_it {
+                        Some(name)
+                    } else {
+                        None
+                    }
                 }
                 None => None,
             };

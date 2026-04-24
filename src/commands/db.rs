@@ -154,7 +154,24 @@ pub fn migrate(app_flag: Option<&str>, env: &str) {
     let result = match client.db_migrate(&app_id, env) {
         Ok(r) => r,
         Err(e) => {
-            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            let suggestion = match e.code.as_str() {
+                "AGENT_MODE_DDL_BLOCKED" => Some(
+                    "Migrations run DDL, which requires agent_mode = \"autonomous\". \
+                     Set agent_mode in [app] in floo.app.toml (or omit it to default \
+                     to autonomous), commit, then push to redeploy before re-running.",
+                ),
+                "AGENT_MODE_READONLY" => Some(
+                    "Agent mode is \"readonly\". Set agent_mode = \"autonomous\" in \
+                     [app] in floo.app.toml to run migrations.",
+                ),
+                "AGENT_MODE_SUPERVISED" => Some(
+                    "Agent mode is \"supervised\", which blocks prod migrations. \
+                     Run against --env dev, or set agent_mode = \"autonomous\" in \
+                     [app] in floo.app.toml.",
+                ),
+                _ => None,
+            };
+            output::error(&e.message, &ErrorCode::from_api(&e.code), suggestion);
             process::exit(1);
         }
     };

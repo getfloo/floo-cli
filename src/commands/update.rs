@@ -143,7 +143,10 @@ pub fn update(version: Option<&str>) {
         match updater::check_update(version) {
             Ok(plan) => {
                 let message = if plan.already_up_to_date {
-                    format!("floo {} is already the latest version.", plan.current_version)
+                    format!(
+                        "floo {} is already the latest version.",
+                        plan.current_version
+                    )
                 } else {
                     format!(
                         "Would update floo from {} to {}.",

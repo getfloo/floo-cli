@@ -183,9 +183,14 @@ pub struct ListEnvVarsResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetEnvVarResponse {
-    pub key: Option<String>,
+    pub id: String,
+    pub app_id: String,
+    pub environment_id: String,
+    pub service_id: Option<String>,
+    pub key: String,
     pub masked_value: Option<String>,
-    pub status: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 // --- Service ---
@@ -389,21 +394,42 @@ pub struct AnalyticsSummary {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppAnalyticsResponse {
+    pub app_id: Option<String>,
+    pub period: Option<String>,
     pub summary: AnalyticsSummary,
-    pub time_series: Option<Vec<TimeSeriesPoint>>,
-    pub apps: Option<Vec<AppAnalyticsEntry>>,
+    #[serde(default)]
+    pub time_series: Vec<TimeSeriesPoint>,
+    #[serde(default)]
+    pub top_users: Vec<TopUser>,
+    // org-level response reuses this struct and supplies `apps`; for app-level
+    // it stays an empty array. `#[serde(default)]` keeps it [] in JSON output
+    // instead of null.
+    #[serde(default)]
+    pub apps: Vec<AppAnalyticsEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimeSeriesPoint {
+    pub period_start: String,
     pub request_count: i64,
-    pub timestamp: Option<String>,
+    #[serde(default)]
+    pub error_count: i64,
+    #[serde(default)]
+    pub error_rate: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TopUser {
+    pub identity: String,
+    pub count: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppAnalyticsEntry {
+    pub app_id: Option<String>,
     pub app_name: String,
     pub total_requests: i64,
     pub total_errors: i64,
     pub error_rate: f64,
+    pub avg_latency_ms: Option<i64>,
 }
