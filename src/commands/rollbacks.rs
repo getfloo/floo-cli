@@ -1,14 +1,19 @@
 use std::process;
 
+use crate::confirm::{confirm_tier2, ConfirmOutcome, RiskMetadata, Tier};
 use crate::errors::ErrorCode;
 use crate::output;
 
-pub fn rollback(app_name: &str, deploy_id: &str, force: bool) {
+pub fn rollback(app_name: &str, deploy_id: &str, yes: bool) {
     if output::is_dry_run_mode() {
+        let risk: RiskMetadata = Tier::Two.into();
         output::dry_run_success(serde_json::json!({
             "action": "rollback",
             "app": app_name,
             "to_deploy": deploy_id,
+            "destructive": risk.destructive,
+            "data_loss": risk.data_loss,
+            "tier": risk.tier,
         }));
         return;
     }
@@ -20,17 +25,28 @@ pub fn rollback(app_name: &str, deploy_id: &str, force: bool) {
     let name = &app_data.name;
     let app_id = &app_data.id;
 
-    if !force
-        && !output::confirm(&format!(
-            "Rollback '{name}' to deploy {deploy_id}? This will replace the current version."
-        ))
-    {
-        if output::is_json_mode() {
-            output::success("Cancelled.", Some(serde_json::json!({"cancelled": true})));
-        } else {
-            output::info("Cancelled.", None);
+    match confirm_tier2(
+        "Rollback",
+        &format!("{name} to deploy {deploy_id}"),
+        yes,
+    ) {
+        ConfirmOutcome::Proceed => {}
+        ConfirmOutcome::Aborted => {
+            if output::is_json_mode() {
+                output::success("Cancelled.", Some(serde_json::json!({"cancelled": true})));
+            } else {
+                output::info("Cancelled.", None);
+            }
+            process::exit(0);
         }
-        process::exit(0);
+        ConfirmOutcome::Refused { suggestion } => {
+            crate::confirm::exit_refused(
+                &format!(
+                    "Refusing to rollback '{name}' to deploy {deploy_id} without explicit confirmation."
+                ),
+                &suggestion,
+            );
+        }
     }
 
     let spinner = output::Spinner::new("Rolling back...");
@@ -46,8 +62,14 @@ pub fn rollback(app_name: &str, deploy_id: &str, force: bool) {
 
     spinner.finish();
 
+    let risk: RiskMetadata = Tier::Two.into();
     output::success(
         &format!("Rolled back {name} to deploy {deploy_id}."),
-        Some(serde_json::json!({"deploy": result})),
+        Some(serde_json::json!({
+            "deploy": result,
+            "destructive": risk.destructive,
+            "data_loss": risk.data_loss,
+            "tier": risk.tier,
+        })),
     );
 }
