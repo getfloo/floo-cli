@@ -177,7 +177,8 @@ Note: To trigger a deploy, use `floo redeploy` or push to GitHub.
 Examples:
   floo apps list --json                    List all apps
   floo apps status my-app --json           App details and service info
-  floo apps delete my-app --force          Delete without confirmation"
+  floo apps delete my-app                  Delete (typed-name confirmation)
+  floo apps delete my-app --yes-i-know-this-destroys-data  Skip prompt (CI-only)"
     )]
     Apps(AppsCommands),
 

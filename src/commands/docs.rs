@@ -79,15 +79,18 @@ Floo Quickstart — End-to-End Walkthrough
 
 ## 3. (Optional) Add Managed Services
 
-  Edit floo.app.toml to add a database, cache, or storage:
+  Managed services are authored via the CLI, not floo.app.toml. This
+  keeps stateful resources explicit — destroying a database is always an
+  intentional command, never a TOML edit.
 
-  [postgres]
-  tier = \"basic\"
+  floo services add postgres --app my-app
+  floo services add redis --app my-app
+  floo services add storage --app my-app
 
-  [redis]
-
-  Managed services are auto-provisioned on the first deploy.
-  Their credentials arrive as env vars (DATABASE_URL, REDIS_URL, STORAGE_BUCKET + STORAGE_URL).
+  Credentials arrive as runtime env vars (DATABASE_URL, REDIS_URL,
+  STORAGE_BUCKET + STORAGE_URL). The commands write .floo/services.lock,
+  which you should commit so managed-service state changes are visible
+  in `git diff` alongside code.
 
 ## 4. Validate Config
 
@@ -131,17 +134,28 @@ Floo Quickstart — End-to-End Walkthrough
 
 ## What Creates What
 
-  floo init           — local config files only (no API call)
-  floo redeploy       — force a redeploy of an existing app (no code-change required)
+  floo init                — local config files only (no API call)
+  floo redeploy            — force a redeploy of an existing app (no code-change required)
   floo apps github connect — creates app if needed, connects GitHub, triggers first deploy
-  Managed services (postgres, redis, storage, cron) are declared in floo.app.toml
-  and provisioned automatically on deploy. Edit the config file directly.
+  floo services add        — provisions a managed service (postgres/redis/storage) for the app
+  Cron jobs are still declared in floo.app.toml ([cron.<name>]) and
+  provisioned automatically on deploy — they're stateless and config-driven.
 ";
 
 const SERVICES: &str = "\
 Floo Services
 
-An app contains one or more services. Each service is independently deployable.
+An app contains one or more services. Each service is independently
+deployable. Floo distinguishes two kinds by how they are authored:
+
+  App services      — your code, declared in floo.app.toml (stateless)
+  Managed services  — postgres/redis/storage, authored via `floo services`
+                      commands (stateful)
+
+The split matters: removing a line from floo.app.toml that deleted a
+database would be catastrophic, so managed services are never coupled to
+config-file edits. Destruction is always an explicit CLI command with
+confirmation. See also: floo docs state-model.
 
 ## App Services (your code)
 
@@ -149,41 +163,33 @@ An app contains one or more services. Each service is independently deployable.
   api     — HTTP server for backend APIs
   worker  — background process (no incoming HTTP traffic)
 
-  Declare services inline in floo.app.toml with type, port, and path.
+  Declare inline in floo.app.toml with type, port, and path. Removing a
+  service from floo.app.toml tears down the Cloud Run service on next
+  deploy — recoverable from code, so declarative semantics are safe here.
+
   See: floo docs config
 
-## Platform Services (provisioned by Floo)
+## Managed Services (postgres, redis, storage)
 
-  Declared in floo.app.toml (top-level, not inside [services.*]),
-  auto-provisioned on first deploy.
+  Managed services are stateful. They hold your data and outlive any
+  single deploy, so they live on the CLI surface — not in floo.app.toml.
 
-  postgres — managed PostgreSQL database
-             Connection string injected as DATABASE_URL env var.
+  floo services add postgres --app <name>         # provision
+  floo services info postgres --app <name>        # inspect
+  floo services list --app <name>                 # see everything
+  floo services remove postgres --app <name>      # tier-3 destructive
+  floo services migrate --app <name>              # convert legacy TOML to CLI-managed
 
-  redis    — managed Redis instance (Upstash, TLS-enabled)
-             Connection string injected as REDIS_URL env var.
+  On success, `floo services add/remove` updates .floo/services.lock
+  (commit this file) so PR reviewers see managed-service state changes
+  in `git diff` alongside code changes. The lock file is a record of
+  state, not a source — platform is the source of truth.
 
-  storage  — managed object storage (GCS bucket)
-             Bucket name injected as STORAGE_BUCKET + STORAGE_URL env vars.
-             Use STORAGE_URL for signed URL requests (upload/download).
-
-  cron     — scheduled tasks that run inside a service's container
-             Declare as [cron.<name>] sections with schedule, command, service.
-
-  Example floo.app.toml:
-
-  [postgres]
-  tier = \"basic\"
-
-  [redis]
-
-  [storage]
-
-  [cron.daily-report]
-  schedule = \"0 9 * * *\"
-  command = \"python scripts/report.py\"
-  service = \"web\"
-  timeout = 600
+  Connection credentials are injected at runtime, never stored in the
+  lock file or in your repo:
+    postgres → DATABASE_URL
+    redis    → REDIS_URL
+    storage  → STORAGE_BUCKET + STORAGE_URL (use STORAGE_URL for signed URLs)
 
 ## Managed Service Tiers
 
@@ -199,9 +205,32 @@ An app contains one or more services. Each service is independently deployable.
   Start with basic. Upgrade to standard for multi-service apps or
   reporting queries. Use performance for high-concurrency workloads.
 
-  Redis and storage tiers default to basic (no difference today).
+  Pass --tier on add: floo services add postgres --tier standard
 
-  Inspect with: floo services info <name> --app <app>
+## Legacy [postgres] / [redis] / [storage] in floo.app.toml
+
+  The deprecated TOML surface is still honored during the transition
+  window — apps with these sections auto-provision on first deploy and
+  emit a deprecation warning on every subsequent deploy. To migrate:
+
+    floo services migrate --app <name>   # zero data impact
+    # Then delete the [postgres]/[redis]/[storage] sections from floo.app.toml
+    # Commit the updated .floo/services.lock and push.
+
+  The warning stops on the next deploy once the sections are gone.
+
+## Cron Jobs
+
+  cron     — scheduled tasks that run inside a service's container
+             Declare as [cron.<name>] sections in floo.app.toml with
+             schedule, command, service. Still config-driven because
+             crons are stateless reconcilable resources.
+
+  [cron.daily-report]
+  schedule = \"0 9 * * *\"
+  command = \"python scripts/report.py\"
+  service = \"web\"
+  timeout = 600
 
 ## Routing
 
@@ -232,13 +261,20 @@ All services share the same origin, so cookies and auth work without CORS.
   The only difference between web and api is the routing path. Both are
   HTTP servers, both can access managed services (postgres, redis, etc).
 
+## The audit loop: every change ends with floo preflight
+
+  Before calling any state change done, run `floo preflight` to confirm
+  the resulting state matches intent. Unexpected diffs = silent
+  corruption; investigate before pushing. The skill rule (see
+  `.claude/skills/floo/SKILL.md`) makes this non-negotiable for agents.
+
 ## Commands
 
-  floo services list --app <name>            — list all services
-  floo services info <service> --app <name>  — service details (connection info for managed)
-
-  All services are declared in config files and provisioned on deploy.
-  Edit floo.app.toml directly to add or remove services.
+  floo services list --app <name>            — list all services (app + managed)
+  floo services info <service> --app <name>  — details (no credentials in output)
+  floo services add <type> --app <name>      — provision a managed service
+  floo services remove <type> --app <name>   — permanently destroy (tier-3)
+  floo services migrate --app <name>         — move legacy TOML → CLI state
 ";
 
 const CONFIG: &str = "\
