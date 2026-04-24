@@ -374,6 +374,41 @@ pub fn run_update(version: Option<&str>) -> Result<UpdateResult, FlooError> {
     run_update_with(&client, version, &api_base, &install_path)
 }
 
+pub struct UpdatePlan {
+    pub current_version: String,
+    pub target_version: String,
+    pub install_path: PathBuf,
+    pub already_up_to_date: bool,
+}
+
+/// Dry-run equivalent of `run_update`: resolves which release WOULD be installed
+/// without downloading the binary, verifying its checksum, or touching disk.
+/// Reports the release the updater would have targeted so `--dry-run` callers
+/// can see the plan without mutating the binary. See feedback 7b98b798.
+pub fn check_update(version: Option<&str>) -> Result<UpdatePlan, FlooError> {
+    let client = build_http_client()?;
+    let api_base = releases_api_base();
+    let install_path = resolve_install_path()?;
+    let asset_name = target_asset_name()?;
+    let release_json = fetch_release_json(&client, &api_base, version)?;
+    let release_asset = release_asset_from_json(&release_json, &asset_name)?;
+
+    let current = crate::constants::VERSION.to_string();
+    let remote = release_asset
+        .version
+        .strip_prefix('v')
+        .unwrap_or(&release_asset.version)
+        .to_string();
+    let already_up_to_date = version.is_none() && remote == current;
+
+    Ok(UpdatePlan {
+        current_version: current,
+        target_version: release_asset.version,
+        install_path,
+        already_up_to_date,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

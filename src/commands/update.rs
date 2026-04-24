@@ -136,6 +136,41 @@ fn emit_version(freshly_installed: Option<&str>) {
 }
 
 pub fn update(version: Option<&str>) {
+    // Dry-run: resolve the target release but never download or install.
+    // Previously --dry-run silently fell through to run_update(), which
+    // replaces the binary on disk. See feedback 7b98b798.
+    if output::is_dry_run_mode() {
+        match updater::check_update(version) {
+            Ok(plan) => {
+                let message = if plan.already_up_to_date {
+                    format!(
+                        "floo {} is already the latest version.",
+                        plan.current_version
+                    )
+                } else {
+                    format!(
+                        "Would update floo from {} to {}.",
+                        plan.current_version,
+                        display_tag(&plan.target_version),
+                    )
+                };
+                output::dry_run_success(serde_json::json!({
+                    "action": "update",
+                    "current_version": plan.current_version,
+                    "target_version": display_tag(&plan.target_version),
+                    "install_path": plan.install_path,
+                    "already_up_to_date": plan.already_up_to_date,
+                    "message": message,
+                }));
+            }
+            Err(err) => {
+                output::error(&err.message, &err.code, err.suggestion.as_deref());
+                process::exit(1);
+            }
+        }
+        return;
+    }
+
     if !output::is_json_mode() {
         let label = version.unwrap_or("latest");
         output::info(&format!("Checking for Floo updates ({label})..."), None);

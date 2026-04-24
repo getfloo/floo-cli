@@ -92,12 +92,10 @@ fn render_app_analytics(name: &str, period: &str, data: &AppAnalyticsResponse) {
         }
     }
 
-    if let Some(time_series) = &data.time_series {
-        if !time_series.is_empty() {
-            eprintln!();
-            eprintln!("Traffic");
-            render_sparkline(time_series);
-        }
+    if !data.time_series.is_empty() {
+        eprintln!();
+        eprintln!("Traffic");
+        render_sparkline(&data.time_series);
     }
 
     eprintln!();
@@ -130,32 +128,29 @@ fn render_org_analytics(period: &str, data: &AppAnalyticsResponse) {
         format_number(apps_with_traffic)
     );
 
-    if let Some(apps) = &data.apps {
-        if !apps.is_empty() {
-            eprintln!();
+    if !data.apps.is_empty() {
+        eprintln!();
 
-            let rows: Vec<Vec<String>> = apps
-                .iter()
-                .map(|a| {
-                    vec![
-                        a.app_name.clone(),
-                        format_number(a.total_requests),
-                        format_number(a.total_errors),
-                        format!("{:.2}%", a.error_rate * 100.0),
-                    ]
-                })
-                .collect();
+        let rows: Vec<Vec<String>> = data
+            .apps
+            .iter()
+            .map(|a| {
+                vec![
+                    a.app_name.clone(),
+                    format_number(a.total_requests),
+                    format_number(a.total_errors),
+                    format!("{:.2}%", a.error_rate * 100.0),
+                ]
+            })
+            .collect();
 
-            output::table(&["App", "Requests", "Errors", "Error Rate"], &rows, None);
-        }
+        output::table(&["App", "Requests", "Errors", "Error Rate"], &rows, None);
     }
 
-    if let Some(time_series) = &data.time_series {
-        if !time_series.is_empty() {
-            eprintln!();
-            eprintln!("Traffic");
-            render_sparkline(time_series);
-        }
+    if !data.time_series.is_empty() {
+        eprintln!();
+        eprintln!("Traffic");
+        render_sparkline(&data.time_series);
     }
 
     eprintln!();

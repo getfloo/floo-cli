@@ -18,7 +18,7 @@ use crate::resolve::resolve_app;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 const POLL_TIMEOUT: Duration = Duration::from_secs(600); // 10 minutes
-pub(crate) const TERMINAL_STATUSES: &[&str] = &["live", "failed"];
+pub(crate) const TERMINAL_STATUSES: &[&str] = &["live", "failed", "superseded"];
 
 fn status_label(status: &str) -> &str {
     match status {
@@ -624,6 +624,18 @@ pub fn deploy(
         process::exit(1);
     }
 
+    if final_status == "superseded" {
+        output::success(
+            "Deploy superseded by a newer deploy.",
+            Some(serde_json::json!({
+                "app": output::to_value(&app_data),
+                "deploy": output::to_value(&deploy_data),
+                "detection": detection.to_value(),
+            })),
+        );
+        return;
+    }
+
     let url = deploy_data.url.as_deref().unwrap_or("");
 
     if !output::is_json_mode() {
@@ -680,7 +692,7 @@ fn deploy_restart(
     };
 
     let spinner = output::Spinner::new("Restarting...");
-    let deploy_data = match client.restart_app(app_id, svcs) {
+    let raw_deploy = match client.restart_app(app_id, svcs) {
         Ok(d) => {
             spinner.finish();
             d
@@ -692,14 +704,54 @@ fn deploy_restart(
         }
     };
 
-    let final_status = deploy_data
-        .get("status")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let url = deploy_data
-        .get("url")
-        .and_then(|v| v.as_str())
-        .unwrap_or("(no URL)");
+    // The restart endpoint returns 202 with a DeployResponse — the pipeline
+    // runs out-of-band, so the status is typically "pending" at this point.
+    // Match the main deploy path and wait for a terminal status before
+    // reporting back. Otherwise `floo redeploy --json` returns while the
+    // deploy is still in progress and agents have to poll manually. See
+    // feedback 966b2a4a.
+    let mut deploy_data: Deploy = match serde_json::from_value(raw_deploy.clone()) {
+        Ok(d) => d,
+        Err(_) => {
+            // Server response didn't match the Deploy shape — surface what we
+            // got instead of silently pretending restart succeeded.
+            output::error_with_data(
+                "Restart returned an unexpected response shape.",
+                &ErrorCode::RestartFailed,
+                Some("Run `floo deploys list --app <name>` to check deploy status."),
+                Some(serde_json::json!({
+                    "app": output::to_value(app_data),
+                    "deploy": raw_deploy,
+                })),
+            );
+            process::exit(1);
+        }
+    };
+
+    let initial_status = deploy_data.status.as_deref().unwrap_or("");
+    if !TERMINAL_STATUSES.contains(&initial_status) {
+        let deploy_id = deploy_data.id.clone();
+        deploy_data = if !output::is_json_mode() {
+            match stream_deploy(client, app_id, &deploy_id) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!(
+                        "Stream unavailable ({}), falling back to polling...",
+                        e.code
+                    );
+                    poll_deploy(client, app_id, &deploy_data)
+                }
+            }
+        } else {
+            match stream_deploy_json(client, app_id, &deploy_id) {
+                Ok(d) => d,
+                Err(_) => poll_deploy(client, app_id, &deploy_data),
+            }
+        };
+    }
+
+    let final_status = deploy_data.status.as_deref().unwrap_or("");
+    let url = deploy_data.url.as_deref().unwrap_or("(no URL)");
 
     if final_status == "failed" {
         output::error_with_data(
@@ -708,22 +760,33 @@ fn deploy_restart(
             Some("Run `floo logs` for details."),
             Some(serde_json::json!({
                 "app": output::to_value(app_data),
-                "deploy": deploy_data,
+                "deploy": output::to_value(&deploy_data),
             })),
         );
         process::exit(1);
     }
 
+    if final_status == "superseded" {
+        output::success(
+            "Restart superseded by a newer deploy.",
+            Some(serde_json::json!({
+                "app": output::to_value(app_data),
+                "deploy": output::to_value(&deploy_data),
+            })),
+        );
+        return;
+    }
+
     let env_display = deploy_data
-        .get("environment_name")
-        .and_then(|v| v.as_str())
+        .environment_name
+        .as_deref()
         .map(|e| format!("{e} \u{2192} "))
         .unwrap_or_default();
     output::success(
         &format!("Restarted {env_display}{url}"),
         Some(serde_json::json!({
             "app": output::to_value(app_data),
-            "deploy": deploy_data,
+            "deploy": output::to_value(&deploy_data),
         })),
     );
 }
@@ -821,6 +884,17 @@ fn deploy_rebuild(
             })),
         );
         process::exit(1);
+    }
+
+    if final_status == "superseded" {
+        output::success(
+            "Rebuild superseded by a newer deploy.",
+            Some(serde_json::json!({
+                "app": output::to_value(app_data),
+                "deploy": output::to_value(&deploy_data),
+            })),
+        );
+        return;
     }
 
     let url = deploy_data.url.as_deref().unwrap_or("");

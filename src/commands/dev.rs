@@ -180,6 +180,39 @@ pub fn dev(app_flag: Option<String>) {
         }
     }
 
+    // --- Dry run short-circuit ---
+    //
+    // Dry-run must NOT call create_dev_session. That endpoint has two real
+    // side effects: (1) it registers a dev session row on the platform, and
+    // (2) it returns managed-service credentials (DATABASE_URL, REDIS_URL, …).
+    // Previously `floo dev --dry-run --json` did both — the returned env vars
+    // then landed in stdout / agent logs. See feedback 6af7c0c2.
+    //
+    // Dry-run emits a plan describing which services WOULD start on which
+    // ports, with no session, no env vars, and no child processes.
+    if output::is_dry_run_mode() {
+        let plan_services: Vec<serde_json::Value> = services
+            .iter()
+            .map(|svc| {
+                serde_json::json!({
+                    "name": svc.name,
+                    "port": svc.port,
+                    "url": format!("http://localhost:{}", svc.port),
+                    "path": svc.path,
+                    "dev_command": svc.dev_command,
+                    "migrate_command": svc.migrate_command,
+                })
+            })
+            .collect();
+        output::dry_run_success(serde_json::json!({
+            "action": "start_dev_session",
+            "app": app_name,
+            "services": plan_services,
+            "skipped_external": skipped_external,
+        }));
+        return;
+    }
+
     // --- Create dev session via API ---
     let api_services: Vec<crate::api_types::DevSessionService> = services
         .iter()

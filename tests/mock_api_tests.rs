@@ -314,7 +314,18 @@ fn test_env_set_json() {
         .match_query(Matcher::UrlEncoded("env".into(), "dev".into()))
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"key":"MY_KEY","masked_value":"my_v****"}"#)
+        .with_body(
+            r#"{
+                "id":"00000000-0000-0000-0000-000000000001",
+                "app_id":"00000000-0000-0000-0000-0000000000aa",
+                "environment_id":"00000000-0000-0000-0000-0000000000ee",
+                "service_id":null,
+                "key":"MY_KEY",
+                "masked_value":"my_v****",
+                "created_at":"2026-04-24T00:00:00Z",
+                "updated_at":"2026-04-24T00:00:00Z"
+            }"#,
+        )
         .create();
 
     floo()
@@ -687,10 +698,7 @@ fn test_domains_status_not_found() {
     let _resolve = mock_resolve_app(&mut server);
 
     let _m_list = server
-        .mock(
-            "GET",
-            format!("/v1/apps/{TEST_APP_ID}/domains").as_str(),
-        )
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/domains").as_str())
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(r#"{"domains":[]}"#)

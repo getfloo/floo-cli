@@ -144,6 +144,7 @@ need to apply env var changes or force a rebuild without a code change.")]
     /// View and manage deploy history.
     #[command(
         name = "deploys",
+        alias = "deploy",
         subcommand,
         after_help = "\
 Examples:
@@ -152,7 +153,8 @@ Examples:
   floo deploys watch --app my-app           Stream deploy progress
   floo deploys rollback my-app abc123       Rollback to a previous deploy
 
-Note: To trigger a deploy, use `floo redeploy` or push to GitHub."
+Note: To trigger a deploy, use `floo redeploy` or push to GitHub.
+`floo deploy ...` is a backwards-compatible alias for `floo deploys ...`."
     )]
     Deploys(DeploysSubcommands),
 
@@ -968,12 +970,26 @@ fn reject_unsupported_dry_run(command: &Commands) {
             )
             | Commands::Apps(AppsCommands::Invite { .. })
             | Commands::Billing(BillingCommands::SpendCap(SpendCapCommands::Set { .. }))
+            | Commands::Run { .. }
+            | Commands::Db(DbCommands::Migrate { .. })
+            | Commands::Cron(CronCommands::Run { .. })
+            | Commands::Feedback { .. }
+            | Commands::Skills(SkillsCommands::Install { .. })
+            | Commands::Auth(
+                AuthCommands::Login { .. }
+                    | AuthCommands::Logout
+                    | AuthCommands::Register { .. }
+                    | AuthCommands::UpdateProfile { .. }
+            )
     );
     if unsupported {
         output::error(
             "--dry-run is not supported for this command.",
             &crate::errors::ErrorCode::InvalidFormat,
-            Some("Supported commands: redeploy, preflight, env set/remove/import, apps delete, domains add/remove, deploy rollback."),
+            Some(
+                "Supported: redeploy, preflight, dev, update, env set/remove/import, \
+                 apps delete, domains add/remove, cron add, deploys rollback.",
+            ),
         );
         std::process::exit(1);
     }

@@ -251,6 +251,20 @@ pub fn connect(
                 })),
             );
         }
+        DeployOutcome::Superseded { deploy } => {
+            output::success(
+                &format!("Connected {name} to {repo} — deploy superseded by a newer deploy."),
+                Some(serde_json::json!({
+                    "connected": true,
+                    "app": name,
+                    "repo": repo,
+                    "branch": connected_branch,
+                    "deployed": false,
+                    "deploy_status": "superseded",
+                    "deploy": deploy,
+                })),
+            );
+        }
         DeployOutcome::Failed { deploy } => {
             output::error_with_data(
                 &format!("Connected {name} to {repo} but deploy failed."),
@@ -599,6 +613,9 @@ enum DeployOutcome {
         url: String,
         deploy: serde_json::Value,
     },
+    Superseded {
+        deploy: serde_json::Value,
+    },
     Failed {
         deploy: serde_json::Value,
     },
@@ -725,6 +742,10 @@ fn run_initial_deploy(
         let url = deploy_data.url.as_deref().unwrap_or("").to_string();
         DeployOutcome::Live {
             url,
+            deploy: output::to_value(&deploy_data),
+        }
+    } else if final_status == "superseded" {
+        DeployOutcome::Superseded {
             deploy: output::to_value(&deploy_data),
         }
     } else {
