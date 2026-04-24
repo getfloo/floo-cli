@@ -446,14 +446,21 @@ pub enum AppsCommands {
         app_name: String,
     },
 
-    /// Delete an app.
+    /// Permanently delete an app and all its data.
+    ///
+    /// Tier-3 destructive: interactive mode requires typing the app name
+    /// to confirm; non-interactive requires --yes-i-know-this-destroys-data.
+    /// Never a plain --yes or --force — destroying user data must be an
+    /// explicit, acknowledged decision.
     Delete {
         /// App name or ID.
         app_name: String,
 
-        /// Skip confirmation.
-        #[arg(short, long)]
-        force: bool,
+        /// Skip interactive confirmation. Required in non-interactive contexts
+        /// (JSON mode, CI, pipes). This flag is deliberately verbose; a script
+        /// using it must have user authorization for this specific app.
+        #[arg(long = "yes-i-know-this-destroys-data", alias = "force")]
+        confirmed: bool,
     },
 
     /// Manage GitHub integration.
@@ -724,6 +731,9 @@ pub enum DomainsCommands {
     },
 
     /// Remove a custom domain from an app.
+    ///
+    /// Tier-2 destructive: interactive prompts `y/N`; non-interactive
+    /// requires `--yes` to confirm.
     Remove {
         /// Domain hostname to remove.
         hostname: String,
@@ -735,6 +745,10 @@ pub enum DomainsCommands {
         /// Target service name (required for multi-service apps).
         #[arg(long)]
         services: Option<String>,
+
+        /// Skip the y/N prompt. Required in non-interactive contexts.
+        #[arg(long)]
+        yes: bool,
     },
 
     /// Show detailed status for a single custom domain.
@@ -1140,7 +1154,9 @@ pub fn run() {
         Commands::Apps(sub) => match sub {
             AppsCommands::List { page, per_page } => commands::apps::list(page, per_page),
             AppsCommands::Status { app_name } => commands::apps::status(&app_name),
-            AppsCommands::Delete { app_name, force } => commands::apps::delete(&app_name, force),
+            AppsCommands::Delete { app_name, confirmed } => {
+                commands::apps::delete(&app_name, confirmed)
+            }
             AppsCommands::Github(gh_sub) => match gh_sub {
                 GitHubCommands::Connect {
                     repo,
@@ -1237,7 +1253,8 @@ pub fn run() {
                 hostname,
                 app,
                 services,
-            } => commands::domains::remove(&hostname, app.as_deref(), services.as_deref()),
+                yes,
+            } => commands::domains::remove(&hostname, app.as_deref(), services.as_deref(), yes),
             DomainsCommands::Status { hostname, app } => {
                 commands::domains::status(&hostname, app.as_deref())
             }

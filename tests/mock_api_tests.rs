@@ -212,7 +212,23 @@ fn test_apps_status_json() {
 }
 
 #[test]
-fn test_apps_delete_json() {
+fn test_apps_delete_requires_explicit_confirmation_in_json_mode() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    // No DELETE mock — the command must refuse before reaching that endpoint.
+    floo()
+        .args(["--json", "apps", "delete", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("CONFIRMATION_REQUIRED"))
+        .stdout(predicate::str::contains("yes-i-know-this-destroys-data"));
+}
+
+#[test]
+fn test_apps_delete_json_with_explicit_flag() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
@@ -222,14 +238,43 @@ fn test_apps_delete_json() {
         .with_status(204)
         .create();
 
-    // --json auto-confirms via output::confirm()
     floo()
-        .args(["--json", "apps", "delete", TEST_APP_NAME])
+        .args([
+            "--json",
+            "apps",
+            "delete",
+            TEST_APP_NAME,
+            "--yes-i-know-this-destroys-data",
+        ])
         .env("HOME", home.path())
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""success":true"#))
-        .stdout(predicate::str::contains(TEST_APP_ID));
+        .stdout(predicate::str::contains(TEST_APP_ID))
+        .stdout(predicate::str::contains(r#""destructive":true"#))
+        .stdout(predicate::str::contains(r#""data_loss":true"#))
+        .stdout(predicate::str::contains(r#""tier":3"#));
+}
+
+#[test]
+fn test_apps_delete_force_alias_still_works() {
+    // `--force` was the legacy flag. Keep as alias so existing scripts don't
+    // break. New code should reach for --yes-i-know-this-destroys-data.
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _m_delete = server
+        .mock("DELETE", format!("/v1/apps/{TEST_APP_ID}").as_str())
+        .with_status(204)
+        .create();
+
+    floo()
+        .args(["--json", "apps", "delete", TEST_APP_NAME, "--force"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#));
 }
 
 #[test]
@@ -578,7 +623,30 @@ fn test_domains_list_json() {
 }
 
 #[test]
-fn test_domains_remove_json() {
+fn test_domains_remove_refuses_without_yes_flag_in_json_mode() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_services_single(&mut server);
+
+    // No DELETE mock — command must refuse before reaching that endpoint.
+    floo()
+        .args([
+            "--json",
+            "domains",
+            "remove",
+            "app.example.com",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("CONFIRMATION_REQUIRED"));
+}
+
+#[test]
+fn test_domains_remove_json_with_yes_flag() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
@@ -600,12 +668,16 @@ fn test_domains_remove_json() {
             "app.example.com",
             "--app",
             TEST_APP_NAME,
+            "--yes",
         ])
         .env("HOME", home.path())
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""success":true"#))
-        .stdout(predicate::str::contains("app.example.com"));
+        .stdout(predicate::str::contains("app.example.com"))
+        .stdout(predicate::str::contains(r#""destructive":true"#))
+        .stdout(predicate::str::contains(r#""data_loss":false"#))
+        .stdout(predicate::str::contains(r#""tier":2"#));
 }
 
 #[test]

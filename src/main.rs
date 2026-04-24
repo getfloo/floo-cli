@@ -3,6 +3,7 @@ mod api_types;
 mod cli;
 mod commands;
 mod config;
+mod confirm;
 mod constants;
 mod detection;
 mod dockerfile;
