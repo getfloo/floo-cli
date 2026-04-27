@@ -629,6 +629,18 @@ impl FlooClient {
         Ok(())
     }
 
+    pub fn managed_postgres_connection_usage(
+        &self,
+        app_id: &str,
+        service_id: &str,
+        env: &str,
+    ) -> Result<Value, FlooApiError> {
+        let resp = self.get(&format!(
+            "/v1/apps/{app_id}/managed-services/{service_id}/connection-usage?env={env}"
+        ))?;
+        self.handle_response(resp)
+    }
+
     // --- Preflight ---
 
     pub fn preflight(

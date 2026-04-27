@@ -10,7 +10,7 @@ use crate::output;
 #[derive(Parser)]
 #[command(
     name = "floo",
-    about = "Deploy, manage, and observe web apps.",
+    about = "Manage and observe web apps. Deploys are git-driven.",
     version = VERSION,
 )]
 pub struct Cli {
@@ -53,6 +53,11 @@ Examples:
     },
 
     /// Run all services locally with managed-service credentials.
+    ///
+    /// `--json` emits managed-service credentials (DATABASE_URL, REDIS_URL, custom env
+    /// vars) in plaintext. Treat the JSON stream as sensitive: do not commit, paste it
+    /// into chat, or pipe it to a service that retains logs. Redact the `env_vars`
+    /// block before sharing.
     #[command(after_help = "\
 Examples:
   floo dev                                 Start all services defined in floo.app.toml
@@ -329,6 +334,11 @@ Examples:
     Version,
 
     /// Update the CLI binary in-place.
+    ///
+    /// Downloads the target release and overwrites the file at `floo`'s current path
+    /// on disk. There is no automatic rollback — to revert, reinstall the desired
+    /// version with the installer or download the binary directly. Use `--dry-run` to
+    /// preview the release without touching the binary.
     Update {
         /// Specific release tag to install (e.g. v0.2.0).
         #[arg(long)]
@@ -660,7 +670,10 @@ pub enum ServicesCommands {
         #[arg(short, long)]
         app: Option<String>,
 
-        /// Service tier: basic, standard, or performance.
+        /// Deprecated. Every managed Postgres service now ships with the
+        /// same defaults (25 connections, 60s statement timeout); the tier
+        /// value is recorded but ignored. For sustained higher concurrency,
+        /// email team@getfloo.com for a dedicated instance.
         #[arg(long, default_value = "basic", value_parser = ["basic", "standard", "performance"])]
         tier: String,
 
@@ -932,6 +945,27 @@ Examples:
         app: Option<String>,
 
         /// Environment to migrate: dev or prod.
+        #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
+        env: String,
+    },
+
+    /// Show current Postgres connection usage versus the role's limit.
+    ///
+    /// Useful for diagnosing "too many connections" errors and for
+    /// deciding whether the app needs more capacity. Prints a percentage
+    /// and surfaces team@getfloo.com when the role is near-saturated so
+    /// you can request a dedicated instance without context-switching.
+    #[command(after_help = "\
+Examples:
+  floo db connections --app my-app                Show dev connection usage
+  floo db connections --app my-app --env prod     Show prod connection usage
+  floo db connections --app my-app --json         Machine-readable output")]
+    Connections {
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Environment to query: dev or prod.
         #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
         env: String,
     },
@@ -1311,6 +1345,9 @@ pub fn run() {
             } => commands::db::query(app.as_deref(), &sql, &env, limit),
             DbCommands::Schema { app } => commands::db::schema(app.as_deref()),
             DbCommands::Migrate { app, env } => commands::db::migrate(app.as_deref(), &env),
+            DbCommands::Connections { app, env } => {
+                commands::db::connections(app.as_deref(), &env)
+            }
         },
 
         Commands::Cron(sub) => match sub {
