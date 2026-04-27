@@ -204,6 +204,80 @@ pub fn migrate(app_flag: Option<&str>, env: &str) {
     }
 }
 
+pub fn connections(app_flag: Option<&str>, env: &str) {
+    super::require_auth();
+    let client = super::init_client(None);
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
+
+    // Find the app's managed Postgres service.
+    let listing = match client.list_managed_services(&app_id) {
+        Ok(r) => r,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+    let postgres_service = listing
+        .managed_services
+        .iter()
+        .find(|s| s.service_type == "postgres");
+
+    let Some(service) = postgres_service else {
+        output::error(
+            &format!("{app_name} has no managed Postgres service to inspect."),
+            &ErrorCode::Other("NO_POSTGRES_SERVICE".into()),
+            Some("Provision one with `floo services add postgres --app <name>`."),
+        );
+        process::exit(1);
+    };
+
+    let usage = match client.managed_postgres_connection_usage(&app_id, &service.id, env) {
+        Ok(v) => v,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+
+    if output::is_json_mode() {
+        output::success("Connection usage retrieved.", Some(usage));
+        return;
+    }
+
+    let used = usage.get("active_connections").and_then(|v| v.as_u64()).unwrap_or(0);
+    let limit = usage.get("connection_limit").and_then(|v| v.as_u64()).unwrap_or(0);
+    let ratio = usage.get("ratio").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let near = usage.get("near_capacity").and_then(|v| v.as_bool()).unwrap_or(false);
+    let support_email = usage
+        .get("support_email")
+        .and_then(|v| v.as_str())
+        .unwrap_or("team@getfloo.com");
+
+    let percent = (ratio * 100.0).round() as u32;
+
+    output::info(
+        &format!(
+            "{app_name} ({env}): {used}/{limit} Postgres connections in use ({percent}%)"
+        ),
+        None,
+    );
+
+    if near {
+        output::info(
+            &format!(
+                "Heads up — you're near capacity. Most apps that hit this either need \
+                 connection pooling at the application layer (PgBouncer, SQLAlchemy pool \
+                 tuning) or more raw capacity."
+            ),
+            None,
+        );
+        output::info(
+            &format!("Need more? Email {support_email} — we can provision a dedicated instance."),
+            None,
+        );
+    }
+}
+
 fn value_to_display(v: &Value) -> String {
     match v {
         Value::Null => "NULL".to_string(),
