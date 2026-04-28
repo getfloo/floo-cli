@@ -187,6 +187,17 @@ fn download_and_stage(current_version: &str, release_json: &serde_json::Value) -
         return None;
     }
 
+    let signature_bytes = updater::download_bytes(&client, &release_asset.signature_url).ok()?;
+    if updater::verify_release_signature(&release_asset.asset_name, &binary_bytes, &signature_bytes)
+        .is_err()
+    {
+        let _ = fs::remove_file(&dl_path);
+        eprintln!(
+            "Warning: Downloaded update failed signature verification. Will retry on next check."
+        );
+        return None;
+    }
+
     // Write to temp file, then rename atomically
     fs::write(&dl_path, &binary_bytes).ok()?;
 

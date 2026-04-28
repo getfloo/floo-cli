@@ -45,12 +45,28 @@ SH
     chmod +x "${dir}/uname"
 }
 
+make_signing_keypair() {
+    local dir="$1"
+    openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "${dir}/signing-private.pem" >/dev/null 2>&1
+    openssl rsa -pubout -in "${dir}/signing-private.pem" -out "${dir}/signing-public.pem" >/dev/null 2>&1
+}
+
+sign_asset() {
+    local fixture_dir="$1"
+    local asset="$2"
+    local signature="${asset}.sig"
+    openssl dgst -sha256 -sign "${fixture_dir}/signing-private.pem" -out "$signature" "$asset"
+    echo "$signature"
+}
+
 run_installer_expect_success() {
     local name="$1"
     local mock_os="$2"
     local mock_arch="$3"
     local binary_url="$4"
     local checksum_url="$5"
+    local signature_url="$6"
+    local verify_key_path="$7"
 
     local tmp
     tmp="$(mktemp -d)"
@@ -66,6 +82,8 @@ run_installer_expect_success() {
         PATH="${mock_dir}:${PATH}" \
         FLOO_INSTALL_BINARY_URL="$binary_url" \
         FLOO_INSTALL_CHECKSUM_URL="$checksum_url" \
+        FLOO_INSTALL_SIGNATURE_URL="$signature_url" \
+        FLOO_INSTALL_VERIFY_KEY_PATH="$verify_key_path" \
         FLOO_INSTALL_DIR="$install_dir" \
         bash "$INSTALLER" >"$log_path" 2>&1; then
         cat "$log_path" >&2
@@ -85,7 +103,9 @@ run_installer_expect_failure() {
     local mock_arch="$3"
     local binary_url="$4"
     local checksum_url="$5"
-    local expected_text="$6"
+    local signature_url="$6"
+    local verify_key_path="$7"
+    local expected_text="$8"
 
     local tmp
     tmp="$(mktemp -d)"
@@ -101,6 +121,8 @@ run_installer_expect_failure() {
         PATH="${mock_dir}:${PATH}" \
         FLOO_INSTALL_BINARY_URL="$binary_url" \
         FLOO_INSTALL_CHECKSUM_URL="$checksum_url" \
+        FLOO_INSTALL_SIGNATURE_URL="$signature_url" \
+        FLOO_INSTALL_VERIFY_KEY_PATH="$verify_key_path" \
         FLOO_INSTALL_DIR="$install_dir" \
         bash "$INSTALLER" >"$log_path" 2>&1; then
         cat "$log_path" >&2
@@ -117,8 +139,12 @@ run_installer_expect_failure() {
 }
 
 main() {
+    command -v openssl >/dev/null 2>&1 || fail "openssl is required for install script signature tests"
+
     local fixture_dir
     fixture_dir="$(mktemp -d)"
+    make_signing_keypair "$fixture_dir"
+    local verify_key_path="${fixture_dir}/signing-public.pem"
 
     # Mock binary output must match the stricter version regex in install.sh
     # (calver like 2026.04.12[.N] or the dev tag 0.0.0-dev). The real floo
@@ -136,16 +162,22 @@ SH
     checksum="$(sha256_file "$asset")"
     local checksum_file="${asset}.sha256"
     echo "${checksum}  $(basename "$asset")" >"$checksum_file"
+    local signature_file
+    signature_file="$(sign_asset "$fixture_dir" "$asset")"
 
     local bad_checksum_file="${asset}.bad.sha256"
     echo "0000000000000000000000000000000000000000000000000000000000000000  $(basename "$asset")" >"$bad_checksum_file"
+    local bad_signature_file="${asset}.bad.sig"
+    printf 'not-a-valid-signature' >"$bad_signature_file"
 
     run_installer_expect_success \
         "linux x86_64 success" \
         "Linux" \
         "x86_64" \
         "file://${asset}" \
-        "file://${checksum_file}"
+        "file://${checksum_file}" \
+        "file://${signature_file}" \
+        "$verify_key_path"
 
     run_installer_expect_failure \
         "unsupported os" \
@@ -153,6 +185,8 @@ SH
         "x86_64" \
         "file://${asset}" \
         "file://${checksum_file}" \
+        "file://${signature_file}" \
+        "$verify_key_path" \
         "Unsupported operating system"
 
     run_installer_expect_failure \
@@ -161,6 +195,8 @@ SH
         "mips64" \
         "file://${asset}" \
         "file://${checksum_file}" \
+        "file://${signature_file}" \
+        "$verify_key_path" \
         "Unsupported architecture"
 
     run_installer_expect_failure \
@@ -169,7 +205,19 @@ SH
         "x86_64" \
         "file://${asset}" \
         "file://${bad_checksum_file}" \
+        "file://${signature_file}" \
+        "$verify_key_path" \
         "Checksum mismatch"
+
+    run_installer_expect_failure \
+        "signature mismatch" \
+        "Linux" \
+        "x86_64" \
+        "file://${asset}" \
+        "file://${checksum_file}" \
+        "file://${bad_signature_file}" \
+        "$verify_key_path" \
+        "Signature verification failed"
 
     # Regression guard for the v2026.04.12.1 install failure: a binary
     # that exits 0 but prints no recognizable version tag on stdout must
@@ -187,6 +235,8 @@ SH
     stderr_only_checksum="$(sha256_file "$stderr_only_asset")"
     local stderr_only_checksum_file="${stderr_only_asset}.sha256"
     echo "${stderr_only_checksum}  $(basename "$stderr_only_asset")" >"$stderr_only_checksum_file"
+    local stderr_only_signature_file
+    stderr_only_signature_file="$(sign_asset "$fixture_dir" "$stderr_only_asset")"
 
     run_installer_expect_failure \
         "stderr-only --version output rejected" \
@@ -194,6 +244,8 @@ SH
         "x86_64" \
         "file://${stderr_only_asset}" \
         "file://${stderr_only_checksum_file}" \
+        "file://${stderr_only_signature_file}" \
+        "$verify_key_path" \
         "did not print a recognizable version tag"
 
     rm -rf "$fixture_dir"

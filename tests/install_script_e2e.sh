@@ -57,6 +57,7 @@ cleanup() {
 
 main() {
     cd "$REPO_ROOT"
+    command -v openssl >/dev/null 2>&1 || fail "openssl is required for install script e2e signature verification"
 
     local target
     target="$(detect_target)"
@@ -74,6 +75,9 @@ main() {
 
     local asset_path="${TMP_DIR}/${asset_name}"
     local checksum_path="${asset_path}.sha256"
+    local signature_path="${asset_path}.sig"
+    local signing_key_path="${TMP_DIR}/signing-private.pem"
+    local verify_key_path="${TMP_DIR}/signing-public.pem"
     local install_dir="${TMP_DIR}/install"
 
     cp "$binary_source" "$asset_path"
@@ -82,15 +86,20 @@ main() {
     local checksum
     checksum="$(sha256_file "$asset_path")"
     echo "${checksum}  ${asset_name}" >"$checksum_path"
+    openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$signing_key_path" >/dev/null 2>&1
+    openssl rsa -pubout -in "$signing_key_path" -out "$verify_key_path" >/dev/null 2>&1
+    openssl dgst -sha256 -sign "$signing_key_path" -out "$signature_path" "$asset_path"
 
     FLOO_INSTALL_BINARY_URL="file://${asset_path}" \
     FLOO_INSTALL_CHECKSUM_URL="file://${checksum_path}" \
+    FLOO_INSTALL_SIGNATURE_URL="file://${signature_path}" \
+    FLOO_INSTALL_VERIFY_KEY_PATH="$verify_key_path" \
     FLOO_INSTALL_DIR="$install_dir" \
     bash "$INSTALLER" >/dev/null
 
     [[ -x "${install_dir}/floo" ]] || fail "Installed binary missing"
 
-    "${install_dir}/floo" --help | grep -q "Deploy, manage, and observe web apps." \
+    "${install_dir}/floo" --help | grep -q "Manage and observe web apps. Deploys are git-driven." \
         || fail "Installed binary failed help output check"
 
     echo "[pass] install_script_e2e"

@@ -25,11 +25,7 @@ pub fn rollback(app_name: &str, deploy_id: &str, yes: bool) {
     let name = &app_data.name;
     let app_id = &app_data.id;
 
-    match confirm_tier2(
-        "Rollback",
-        &format!("{name} to deploy {deploy_id}"),
-        yes,
-    ) {
+    match confirm_tier2("Rollback", &format!("{name} to deploy {deploy_id}"), yes) {
         ConfirmOutcome::Proceed => {}
         ConfirmOutcome::Aborted => {
             if output::is_json_mode() {

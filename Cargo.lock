@@ -414,6 +414,7 @@ version = "0.0.0-dev"
 dependencies = [
  "anyhow",
  "assert_cmd",
+ "base64",
  "chrono",
  "clap",
  "colored 2.2.0",
@@ -425,6 +426,7 @@ dependencies = [
  "predicates",
  "rand 0.8.5",
  "reqwest",
+ "ring",
  "serde",
  "serde_json",
  "sha2",

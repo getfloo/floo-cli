@@ -1576,7 +1576,10 @@ mod tests {
             ("django", DJANGO),
             ("express", EXPRESS),
         ] {
-            assert!(content.contains("floo init"), "{stack}: missing 'floo init'");
+            assert!(
+                content.contains("floo init"),
+                "{stack}: missing 'floo init'"
+            );
             assert!(
                 content.contains("services add postgres"),
                 "{stack}: missing 'services add postgres'"

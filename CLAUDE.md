@@ -86,5 +86,5 @@ The skill file (`skills/floo/SKILL.md`) is a tiny intro (~30 lines). Platform kn
 
 1. Tag `v*` on main branch
 2. CI builds binaries for 5 targets (macOS x86/arm, Linux x86/arm, Windows x86)
-3. GitHub Release created with binaries + SHA256 checksums
-4. Install script downloads from these releases
+3. GitHub Release created with binaries + SHA256 checksums + RSA signatures
+4. Install script downloads from these releases and verifies checksum + signature before install

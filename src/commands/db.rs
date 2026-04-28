@@ -244,10 +244,19 @@ pub fn connections(app_flag: Option<&str>, env: &str) {
         return;
     }
 
-    let used = usage.get("active_connections").and_then(|v| v.as_u64()).unwrap_or(0);
-    let limit = usage.get("connection_limit").and_then(|v| v.as_u64()).unwrap_or(0);
+    let used = usage
+        .get("active_connections")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let limit = usage
+        .get("connection_limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
     let ratio = usage.get("ratio").and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let near = usage.get("near_capacity").and_then(|v| v.as_bool()).unwrap_or(false);
+    let near = usage
+        .get("near_capacity")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let support_email = usage
         .get("support_email")
         .and_then(|v| v.as_str())
@@ -256,19 +265,15 @@ pub fn connections(app_flag: Option<&str>, env: &str) {
     let percent = (ratio * 100.0).round() as u32;
 
     output::info(
-        &format!(
-            "{app_name} ({env}): {used}/{limit} Postgres connections in use ({percent}%)"
-        ),
+        &format!("{app_name} ({env}): {used}/{limit} Postgres connections in use ({percent}%)"),
         None,
     );
 
     if near {
         output::info(
-            &format!(
-                "Heads up — you're near capacity. Most apps that hit this either need \
-                 connection pooling at the application layer (PgBouncer, SQLAlchemy pool \
-                 tuning) or more raw capacity."
-            ),
+            "Heads up — you're near capacity. Most apps that hit this either need \
+             connection pooling at the application layer (PgBouncer, SQLAlchemy pool \
+             tuning) or more raw capacity.",
             None,
         );
         output::info(

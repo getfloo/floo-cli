@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use mockito::{Matcher, Mock, Server};
 use predicates::prelude::*;
 use sha2::{Digest, Sha256};
@@ -7,6 +8,7 @@ use tempfile::TempDir;
 const TEST_APP_ID: &str = "app-uuid-1234";
 const TEST_APP_NAME: &str = "my-app";
 const TEST_ORG_ID: &str = "org-uuid-5678";
+const UPDATE_SUCCESS_SIGNATURE_B64: &str = "J6XvKzQVWSMxsnLl4sAkqMhCXAtDI7AZ/ckGf7BeD+KSiM2YtCjQlsV7cwpNypzRyCd9HU87U5sGeuG4NiJ4TqMHpLdoljLuhR9zXuyDyGgqasRSvqawmbpkrs+YsDaD7scj80uA/eUOKH0XmWu6yJA15gUXq97H+XJSXI1aciDN5jeOdqaMAgZfYhIvINzxi2O59iTnv4+EdFeBT4MHWdO5WknsAhk13kQYMLoUbbXBQmWjGTrLlJhLiNcfsub8yJvJG347It2To4/Bz6oUrfNyS8jAmxUhYoJjn+8dOOd8x8rmzHyCa7sCuUgk3UThTEzkKhHjhAieMVatm/+L8W3bE3LKIKYwQlclNmAdXcHlUmwXLxJnVBbJdf1juqqsPh8Nz0/0BqSu5WmxA4/w/WoRCXfegsiM8fUeacbpx44DjLDhye8zkc/LnXrqkL5u+x5TOwlb+GRu5x+BvyocXp4xBF8Yw/kExWk54fSPSNUkGZSFACqSSHY9CkBtqQy1";
 
 fn floo() -> Command {
     Command::cargo_bin("floo-local").unwrap()
@@ -68,6 +70,12 @@ fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
+}
+
+fn update_success_signature() -> Vec<u8> {
+    BASE64_STANDARD
+        .decode(UPDATE_SUCCESS_SIGNATURE_B64)
+        .expect("test update signature decodes")
 }
 
 /// Write a floo.service.toml to the project dir (required for --json deploy).
@@ -1429,14 +1437,7 @@ fn test_services_info_nothing_matches_lists_available() {
         .create();
 
     floo()
-        .args([
-            "--json",
-            "services",
-            "info",
-            "nope",
-            "--app",
-            TEST_APP_NAME,
-        ])
+        .args(["--json", "services", "info", "nope", "--app", TEST_APP_NAME])
         .env("HOME", home.path())
         .assert()
         .failure()
@@ -2154,6 +2155,10 @@ fn test_update_json_success() {
                     {
                         "name": format!("{asset_name}.sha256"),
                         "browser_download_url": format!("{}/downloads/{}.sha256", server.url(), asset_name),
+                    },
+                    {
+                        "name": format!("{asset_name}.sig"),
+                        "browser_download_url": format!("{}/downloads/{}.sig", server.url(), asset_name),
                     }
                 ],
             })
@@ -2171,6 +2176,13 @@ fn test_update_json_success() {
         .mock("GET", format!("/downloads/{asset_name}.sha256").as_str())
         .with_status(200)
         .with_body(format!("{checksum}  {asset_name}"))
+        .create();
+
+    let signature = update_success_signature();
+    let _m_signature = server
+        .mock("GET", format!("/downloads/{asset_name}.sig").as_str())
+        .with_status(200)
+        .with_body(signature.as_slice())
         .create();
 
     let install_dir = TempDir::new().unwrap();
@@ -2448,9 +2460,11 @@ fn test_services_remove_with_explicit_flag_destroys_and_updates_lock() {
         .stdout(predicate::str::contains(r#""data_loss":true"#))
         .stdout(predicate::str::contains(r#""tier":3"#));
 
-    let lock =
-        std::fs::read_to_string(project.path().join(".floo").join("services.lock")).unwrap();
-    assert!(!lock.contains(r#""postgres""#), "lock file should no longer have the postgres entry, got: {lock}");
+    let lock = std::fs::read_to_string(project.path().join(".floo").join("services.lock")).unwrap();
+    assert!(
+        !lock.contains(r#""postgres""#),
+        "lock file should no longer have the postgres entry, got: {lock}"
+    );
 }
 
 #[test]
@@ -2587,8 +2601,14 @@ tier = "basic"
 
     // Lock file now reflects both migrated services.
     let lock = std::fs::read_to_string(project.path().join(".floo").join("services.lock")).unwrap();
-    assert!(lock.contains(r#""type": "postgres""#), "lock missing postgres: {lock}");
-    assert!(lock.contains(r#""type": "redis""#), "lock missing redis: {lock}");
+    assert!(
+        lock.contains(r#""type": "postgres""#),
+        "lock missing postgres: {lock}"
+    );
+    assert!(
+        lock.contains(r#""type": "redis""#),
+        "lock missing redis: {lock}"
+    );
 }
 
 #[test]
