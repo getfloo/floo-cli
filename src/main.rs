@@ -4,6 +4,7 @@ mod cli;
 mod commands;
 mod config;
 mod confirm;
+mod dev_proxy;
 mod constants;
 mod detection;
 mod dockerfile;

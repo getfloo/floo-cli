@@ -29,6 +29,12 @@ never uploads code.
 
   floo docs golden-path — golden path and decision table
   floo docs quickstart — end-to-end walkthrough
+  floo docs build      — stack-specific build journeys (Next.js, Rails, FastAPI, Django, Express)
+  floo docs nextjs     — build and deploy a Next.js app on floo (end-to-end)
+  floo docs rails      — build and deploy a Rails app on floo (end-to-end)
+  floo docs fastapi    — build and deploy a FastAPI app on floo (end-to-end)
+  floo docs django     — build and deploy a Django app on floo (end-to-end)
+  floo docs express    — build and deploy an Express app on floo (end-to-end)
   floo docs templates  — copy-paste app structures (React+FastAPI, Next.js, etc.)
   floo docs services   — service types and managed services
   floo docs config     — config file formats with examples
@@ -370,18 +376,6 @@ Floo Config Files
   memory = \"512Mi\"      # Memory (128Mi to 32Gi)
   max_instances = 10    # Max autoscale instances
 
-## Auth Section (in floo.app.toml)
-
-  [auth]
-  redirect_uris = [\"http://localhost:3000/callback\"]
-
-  Required when access_mode = \"accounts\". Registers the OAuth callback
-  URLs that your app will use. See: floo docs auth
-
-  Note: {app_url}/auth/callback is auto-registered on every deploy and
-  promote for accounts-mode apps. You only need to list additional URIs
-  here (e.g. localhost for local development).
-
 ## Environment Overrides (in floo.app.toml)
 
   [environments.dev]
@@ -525,131 +519,124 @@ Floo Deploy Flow
 const AUTH: &str = "\
 App Auth — Add User Authentication to Your App
 
-Floo can manage user authentication for your deployed apps. When you set
-access_mode = \"accounts\", floo provides a hosted OAuth flow powered by
-WorkOS so your users can sign in with email, Google, GitHub, and more.
+Floo manages user authentication for your deployed apps. Set
+access_mode = \"accounts\" and floo's gateway puts a hosted sign-in
+flow in front of your app, validates each user's session, and injects
+identity headers into every request before it reaches your code.
 
-No separate WorkOS account is needed — floo manages this for you.
-The auth endpoints are live as soon as the deploy completes.
+You write no auth code. No login pages. No OAuth flow. Your app reads
+X-Floo-User-Email from the request headers — that is the entire
+integration.
 
-## Quickstart (exact sequence)
+## Quickstart
 
-  IMPORTANT: Auth config lives in floo.app.toml. `floo init` writes a
-  floo.app.toml for every app, so you should already have one.
+  1. Set the access mode in floo.app.toml:
 
-  1. Configure floo.app.toml (see config below)
-  2. Deploy so auth endpoints are provisioned:
-     git push origin main
-  3. Get your app ID:
-     floo apps list --json | jq '.data.apps[] | select(.name == \"my-app\") | .id'
-  4. Set FLOO_APP_ID so your app can reference it:
-     floo env set FLOO_APP_ID=<app-id> --app my-app
-     floo redeploy --app my-app
+       [app]
+       name = \"my-app\"
+       access_mode = \"accounts\"
 
-  Each step depends on the previous one. Do not skip ahead.
-  Use `floo redeploy` (not `floo deploy`) to redeploy after config changes.
+  2. Deploy:
 
-## Domain Naming Convention
+       git push origin main
 
-  dev:         <app-name>-dev.on.getfloo.com
-  production:  <app-name>.on.getfloo.com
+  3. Read identity headers in your app code (every authenticated
+     request has them):
 
-  Use these exact hostnames when registering redirect URIs.
+       X-Floo-User-Email: jane@acme.com
+       X-Floo-User-Id:    01HQK4...
+       X-Floo-User-Name:  Jane Doe
+       X-Floo-User-Role:  member
 
-## Config
+That is the entire setup. There is no [auth] section to configure,
+no callback URLs to register, no client ID to provision, no token
+exchange to implement.
 
-     [app]
-     name = \"my-app\"
-     access_mode = \"accounts\"
+## What you get
 
-     [auth]
-     redirect_uris = [
-       \"http://localhost:3000/callback\",
-       \"https://my-app-dev.on.getfloo.com/callback\",
-       \"https://my-app.on.getfloo.com/callback\"
-     ]
+  - Hosted sign-in page (email magic link, Google, GitHub, SAML/OIDC)
+    — branded; gateway redirects unauthenticated visitors to it
+  - Session cookie (__floo_session) validated on every request,
+    rolled forward as users stay active, revoked on sign-out
+  - Identity headers (X-Floo-User-Email/Id/Name/Role) injected on
+    every authenticated request
+  - GET /__floo/me            — signed-in user as JSON
+  - POST /__floo/logout       — clear session and redirect
+  - Per-app user list in the dashboard (first-seen, last-active,
+    sign-in count)
 
-## OAuth Flow
+## Restricting who can sign in
 
-Your app integrates with these endpoints (BASE = https://api.getfloo.com):
+By default, anyone with a valid email can sign in. Restrict access
+in the dashboard or in floo.app.toml:
 
-  1. **Start login** — redirect users to:
-     GET BASE/v1/auth/apps/{app_id}/authorize?redirect_uri=<your_callback_url>
+  [auth]
+  access_policy = \"domain\"          # \"open\", \"invite\", or \"domain\"
+  allowed_domains = [\"acme.com\"]    # required when access_policy = \"domain\"
 
-     The redirect_uri must EXACTLY match a registered URI (protocol, host, path).
-
-  2. **Receive callback** — floo redirects back to your redirect_uri with a code:
-     https://my-app-dev.on.getfloo.com/callback?code=<exchange_code>
-
-  3. **Exchange code for tokens** — POST from your backend:
-     POST BASE/v1/auth/apps/{app_id}/token
-     Body: { \"grant_type\": \"authorization_code\", \"code\": \"<exchange_code>\" }
-     Returns: {
-       \"access_token\": \"<jwt>\",
-       \"refresh_token\": \"<token>\",
-       \"expires_in\": 3600,
-       \"user\": {...}
-     }
-
-  4. **Verify user** — the access_token is an RS256 JWT. Verify locally with:
-     GET BASE/v1/auth/apps/{app_id}/.well-known/jwks.json
-
-  5. **Refresh tokens** — when the access_token expires:
-     POST BASE/v1/auth/apps/{app_id}/token
-     Body: { \"grant_type\": \"refresh\", \"refresh_token\": \"<token>\" }
-
-  6. **Logout** — revoke the refresh token:
-     POST BASE/v1/auth/apps/{app_id}/session/logout
-     Body: { \"refresh_token\": \"<token>\" }
-
-## Constructing Redirect URIs
-
-  Your app receives the public hostname via X-Forwarded-Host header.
-  Use it to build the redirect_uri dynamically:
-
-  Node.js:
-    const host = req.headers['x-forwarded-host'] || req.headers.host;
-    const redirectUri = `https://${host}/callback`;
-
-  This works in all environments (local, dev, prod) without hardcoding.
-
-## Troubleshooting
-
-  INVALID_REDIRECT_URI:
-    - dev deploys use <app>-dev.on.getfloo.com, not <app>.on.getfloo.com
-    - deployed apps must use https://, not http://
-    - /callback is not the same as /callback/ (trailing slash matters)
-    - floo auto-registers {app_url}/auth/callback on every deploy and promote
-      so you should not need to add these manually; if you see this error,
-      trigger a redeploy to re-sync
-
-  NO_REDIRECT_URIS:
-    - floo auto-registers /auth/callback on deploy, so this error means the
-      app has never been deployed to the environment you are testing against;
-      deploy to dev or promote to prod first
-
-## JWT Claims
-
-  sub    — app user ID (UUID)
-  email  — user's email address
-  name   — user's display name
-  iss    — https://auth.getfloo.com
-  aud    — your app ID
-  iat    — issued at timestamp
-  exp    — expiration timestamp
+  - open    — anyone with a valid email
+  - invite  — invited users only (manage in dashboard's per-app
+              Access tab, or assign on first deploy)
+  - domain  — restricted to allowed_domains (Pro+; consumer
+              mailboxes like gmail.com rejected by default)
 
 ## Access Modes
 
   public    — no auth, anyone can access (default)
   password  — shared password for simple protection (Pro+)
-  accounts  — per-user auth via floo's hosted OAuth (Pro+)
+  accounts  — per-user auth, gateway-managed (Pro+)
   sso       — enterprise SSO via SAML/OIDC (Enterprise, coming soon)
 
-## Convenience Endpoint
+Per-environment overrides work too:
 
-  GET BASE/v1/auth/apps/{app_id}/session/me
-  Header: Authorization: Bearer <access_token>
-  Returns the authenticated user's info without decoding the JWT yourself.
+  [environments.dev]
+  access_mode = \"public\"
+
+For password-protected apps, set access_mode = \"password\" in
+floo.app.toml. The platform generates the shared password on the
+next deploy. Retrieve it with:
+
+  floo apps password my-app
+
+## Reading the user in your code
+
+Stack-specific examples are in the build journey guides:
+
+  floo docs rails    — Ruby on Rails
+  floo docs nextjs   — Next.js (App Router)
+  floo docs fastapi  — FastAPI
+  floo docs django   — Django
+  floo docs express  — Express (Node.js)
+
+The pattern is the same in every stack: read X-Floo-User-Email
+from request headers in a middleware or controller hook.
+
+## Local development
+
+For accounts-mode apps, `floo dev --fixture-user EMAIL` starts a
+small in-process proxy in front of each service that injects the
+same X-Floo-User-* headers the gateway adds in production:
+
+  floo dev --app my-app --fixture-user you@example.com
+
+The output shows two URLs per service — the raw service URL and an
+auth-proxied URL. Hit the auth-proxied URL when you want to test
+signed-in flows; your app sees the four identity headers exactly
+as it would behind the gateway. Hit the raw URL for quick checks
+or unauthenticated paths.
+
+Optional flags (with defaults):
+
+  --fixture-id ID      default: dev-fixture-<email-localpart>
+  --fixture-name NAME  default: the email
+  --fixture-role ROLE  default: member
+
+The proxy only runs when access_mode = \"accounts\". For one-off
+curl testing or scripts, send the headers yourself:
+
+  curl -H \"X-Floo-User-Email: you@example.com\" \\
+       -H \"X-Floo-User-Id: dev-user-1\" \\
+       http://localhost:3000/dashboard
 
 Full docs: https://docs.getfloo.com/guides/app-auth
 ";
@@ -958,9 +945,475 @@ Floo Templates — Copy-Paste App Structures
     floo apps github connect owner/my-app
 ";
 
+const BUILD: &str = "\
+Floo — Build with your stack
+
+Stack-specific journey guides walk a real app from local code to a live
+production URL with a database, per-user auth, and a custom domain. Each
+guide is end-to-end with runnable code in your stack.
+
+## Available stack guides
+
+  floo docs nextjs   — build and deploy a Next.js (App Router) app on floo
+  floo docs rails    — build and deploy a Ruby on Rails app on floo
+  floo docs fastapi  — build and deploy a FastAPI app on floo
+  floo docs django   — build and deploy a Django app on floo
+  floo docs express  — build and deploy an Express (Node.js) app on floo
+
+  Want a stack added (Go, SvelteKit, Phoenix, etc.)?
+  `floo feedback --category feature_request \"docs: add <stack> stack guide\"`
+
+## What a stack guide covers
+
+Every stack guide walks the same arc, with stack-specific code:
+
+  1. Add a Dockerfile (or use the framework's default)
+  2. Initialize floo config (floo init)
+  3. Connect the GitHub repo and ship the first deploy
+  4. Add a Postgres sibling service
+  5. Add per-user auth (gateway-managed — zero app code)
+  6. Add a custom domain
+  7. Run locally with prod credentials
+
+## Why stack guides vs reference docs
+
+Capability guides (floo docs auth, floo docs services, floo docs config)
+explain how floo features work. Stack guides show how to use them
+end-to-end in a real Rails / Next.js / Django / etc. project.
+
+If you know which capability you need, jump to the capability guide. If
+you're starting a new project, start with the stack guide.
+
+Full guides: https://docs.getfloo.com/build/
+";
+
+const RAILS: &str = "\
+Floo — Build a Rails app on floo
+
+End-to-end Rails journey: deploy, add Postgres, add per-user auth, add a
+custom domain. Every step has runnable Ruby code.
+
+## 1. Add a Dockerfile
+
+Rails 7.1+ ships a production Dockerfile from `rails new`. Otherwise:
+
+  bin/rails generate dockerfile
+
+Bind to 0.0.0.0 (not localhost). Cloud Run only routes traffic to
+processes bound to all interfaces. Expose the same port you set in
+floo.app.toml (3000 below).
+
+## 2. Initialize floo config
+
+  floo init my-rails-app
+
+Resulting floo.app.toml:
+
+  [app]
+  name = \"my-rails-app\"
+
+  [services.web]
+  type = \"web\"
+  path = \".\"
+  port = 3000
+  ingress = \"public\"
+  dev_command = \"bin/rails server -p 3000\"
+  migrate_command = \"bin/rails db:migrate\"
+
+migrate_command runs after every deploy (against dev) and after every
+promote (against prod). Rails migrations stay in sync with deploys.
+
+## 3. Connect repo and deploy
+
+  git add . && git commit -m \"feat: floo config\"
+  git push origin main
+  floo apps github connect owner/my-rails-app
+  floo deploys watch --app my-rails-app
+
+App is live at https://my-rails-app-dev.on.getfloo.com.
+
+## 4. Add Postgres
+
+  floo services add postgres --app my-rails-app --tier basic
+  git add .floo/services.lock && git commit -m \"feat: add postgres\"
+  git push origin main
+
+Rails reads DATABASE_URL automatically. Confirm config/database.yml has:
+
+  production:
+    primary:
+      url: <%= ENV[\"DATABASE_URL\"] %>
+
+## 5. Add per-user auth
+
+floo manages user authentication. Set access_mode = \"accounts\" in floo.app.toml — that is the entire auth config:
+
+  [app]
+  name = \"my-rails-app\"
+  access_mode = \"accounts\"
+
+Push, deploy. Gateway sits in front of your app, redirects unauth'd users
+to a hosted login, validates session on every request, injects
+identity headers. Your Rails controllers read them:
+
+  class ApplicationController < ActionController::Base
+    before_action :load_floo_user
+
+    private
+
+    def load_floo_user
+      @current_user_email = request.headers[\"X-Floo-User-Email\"]
+      @current_user_id    = request.headers[\"X-Floo-User-Id\"]
+      @current_user_name  = request.headers[\"X-Floo-User-Name\"]
+    end
+  end
+
+## 6. Add a custom domain
+
+  floo domains add app.example.com --app my-rails-app
+
+Add the CNAME shown in the output at your DNS provider.
+
+## 7. Local dev with prod data
+
+  floo dev --app my-rails-app --service web
+
+Runs your dev_command locally with DATABASE_URL and other env vars
+sourced from floo. Real Cloud SQL connection, no exported credentials.
+
+## Common gotchas
+
+  - /healthz is reserved by Cloud Run — use /health or /livez
+  - bind: 0.0.0.0 (Rails defaults vary)
+  - asset compilation runs in the Dockerfile (RAILS_SERVE_STATIC_FILES=1)
+  - Rails 7+ force_ssl works correctly behind floo's edge (X-Forwarded-Proto)
+
+Full guide with complete Ruby code: https://docs.getfloo.com/build/rails
+";
+
+const NEXTJS: &str = "\
+Floo — Build a Next.js app on floo
+
+End-to-end Next.js 14+ App Router journey: deploy, add Postgres, add
+per-user auth, add a custom domain. Every step has runnable TypeScript
+code in the published guide.
+
+## 1. Dockerfile (standalone)
+
+Set output: \"standalone\" in next.config.js, then a multi-stage Dockerfile
+ending with `CMD [\"node\", \"server.js\"]`. Set HOSTNAME=0.0.0.0 (Next.js
+standalone defaults to localhost — Cloud Run won't reach it).
+
+## 2. NEXT_PUBLIC_* build-arg trap
+
+Any NEXT_PUBLIC_* var is baked into the JS bundle at BUILD TIME. Thread
+it through the Dockerfile as ARG + ENV in the build stage AND pass it
+on every build:
+
+  floo env set NEXT_PUBLIC_API_URL=https://my-app.on.getfloo.com \\
+    --app my-app --build-arg
+
+Skipping this is the most common Next.js footgun on floo.
+
+## 3. floo init + deploy
+
+  floo init my-nextjs-app
+
+  [services.web]
+  type = \"web\"
+  path = \".\"
+  port = 3000
+  ingress = \"public\"
+  dev_command = \"npm run dev\"
+  migrate_command = \"npx prisma migrate deploy\"   # if you use Prisma
+
+  git push origin main
+  floo apps github connect owner/my-nextjs-app
+
+## 4. Postgres
+
+  floo services add postgres --app my-nextjs-app --tier basic
+  # Prisma reads DATABASE_URL automatically
+
+## 5. Per-user auth
+
+  [app]
+  access_mode = \"accounts\"
+
+Then in a Server Component or Route Handler:
+
+  import { headers } from \"next/headers\";
+  const h = await headers();
+  const email = h.get(\"x-floo-user-email\");
+
+## 6. Custom domain
+
+  floo domains add app.example.com --app my-nextjs-app
+
+## 7. Local dev
+
+  floo dev --app my-nextjs-app --service web
+
+## Gotchas
+
+  - /healthz is reserved by Cloud Run — use /health
+  - HOSTNAME=0.0.0.0 (standalone defaults to localhost)
+  - NEXT_PUBLIC_* must be threaded via --build-arg
+  - output: \"standalone\" in next.config.js
+  - Never expose tokens to client components
+
+Full guide with complete TypeScript code: https://docs.getfloo.com/build/nextjs
+";
+
+const FASTAPI: &str = "\
+Floo — Build a FastAPI app on floo
+
+End-to-end FastAPI journey: deploy, add Postgres, add per-user auth,
+add a custom domain. Every step has runnable Python code in the
+published guide.
+
+## 1. Dockerfile
+
+  FROM python:3.12-slim
+  ...
+  CMD [\"uvicorn\", \"app.main:app\", \"--host\", \"0.0.0.0\", \"--port\", \"8000\"]
+
+Bind to 0.0.0.0 — 127.0.0.1 won't accept Cloud Run traffic.
+
+## 2. floo init + deploy
+
+  floo init my-fastapi-app
+
+  [services.web]
+  type = \"web\"
+  path = \".\"
+  port = 8000
+  ingress = \"public\"
+  dev_command = \"uvicorn app.main:app --reload --port 8000\"
+  migrate_command = \"alembic upgrade head\"   # if you use Alembic
+
+  git push origin main
+  floo apps github connect owner/my-fastapi-app
+
+## 3. Postgres
+
+  floo services add postgres --app my-fastapi-app --tier basic
+
+  # Async SQLAlchemy — convert to asyncpg URL:
+  DATABASE_URL = os.environ[\"DATABASE_URL\"].replace(
+      \"postgresql://\", \"postgresql+asyncpg://\", 1)
+
+## 4. Per-user auth — pick a model
+
+  [app]
+  access_mode = \"accounts\"
+
+Then a FastAPI dependency:
+
+  def require_user(
+      email: Annotated[str | None, Header(alias=\"X-Floo-User-Email\")] = None,
+      user_id: Annotated[str | None, Header(alias=\"X-Floo-User-Id\")] = None,
+  ):
+      if not email: raise HTTPException(401)
+      return FlooUser(email=email, user_id=user_id)
+
+  @app.get(\"/dashboard\")
+  async def dashboard(user = Depends(require_user)): ...
+
+## 5. Custom domain
+
+  floo domains add app.example.com --app my-fastapi-app
+
+## 6. Local dev
+
+  floo dev --app my-fastapi-app --service web
+
+## Gotchas
+
+  - /healthz is reserved by Cloud Run — use /health
+  - Bind to 0.0.0.0
+  - Don't mix asyncpg and psycopg2 — pick one
+  - X-Forwarded-Proto: build absolute URLs from forwarded scheme
+
+Full guide with complete Python code: https://docs.getfloo.com/build/fastapi
+";
+
+const DJANGO: &str = "\
+Floo — Build a Django app on floo
+
+End-to-end Django 4+ journey: deploy, add Postgres, add per-user auth,
+add a custom domain. Every step has runnable Python code in the
+published guide.
+
+## 1. Dockerfile
+
+  FROM python:3.12-slim
+  ...
+  RUN python manage.py collectstatic --noinput
+  CMD [\"gunicorn\", \"mysite.wsgi:application\", \"--bind\", \"0.0.0.0:8000\", \"--workers\", \"3\"]
+
+Use whitenoise for static files, gunicorn for the WSGI server.
+
+## 2. settings.py for production
+
+  import dj_database_url
+
+  SECRET_KEY = os.environ[\"DJANGO_SECRET_KEY\"]
+  DEBUG = os.environ.get(\"DJANGO_DEBUG\", \"false\").lower() == \"true\"
+  ALLOWED_HOSTS = [\".on.getfloo.com\", *os.environ.get(\"DJANGO_ALLOWED_HOSTS\", \"\").split(\",\")]
+
+  SECURE_PROXY_SSL_HEADER = (\"HTTP_X_FORWARDED_PROTO\", \"https\")
+  USE_X_FORWARDED_HOST = True
+  SESSION_COOKIE_SECURE = True
+  SESSION_COOKIE_HTTPONLY = True
+  SESSION_COOKIE_SAMESITE = \"Lax\"
+
+  DATABASES = {\"default\": dj_database_url.config(conn_max_age=600)}
+
+## 3. floo init + deploy
+
+  floo init my-django-app
+
+  [services.web]
+  type = \"web\"
+  path = \".\"
+  port = 8000
+  ingress = \"public\"
+  dev_command = \"python manage.py runserver 0.0.0.0:8000\"
+  migrate_command = \"python manage.py migrate --noinput\"
+
+  git push origin main
+  floo apps github connect owner/my-django-app
+
+  # Set the secret key after first deploy
+  floo env set DJANGO_SECRET_KEY=\"$(python -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())')\" --app my-django-app
+  floo redeploy --app my-django-app
+
+## 4. Postgres
+
+  floo services add postgres --app my-django-app --tier basic
+  # dj-database-url parses DATABASE_URL automatically
+
+## 5. Per-user auth
+
+  [app]
+  access_mode = \"accounts\"
+
+Add a tiny middleware that reads X-Floo-User-Email / X-Floo-User-Id /
+X-Floo-User-Name from request.META (Django prefixes incoming HTTP
+headers with HTTP_ and uppercases them):
+
+  class FlooUserMiddleware:
+      def __init__(self, get_response): self.get_response = get_response
+      def __call__(self, request):
+          email = request.META.get(\"HTTP_X_FLOO_USER_EMAIL\")
+          request.floo_user = FlooUser(email=email, ...) if email else None
+          return self.get_response(request)
+
+## 6. Custom domain
+
+  floo domains add app.example.com --app my-django-app
+  floo env set DJANGO_ALLOWED_HOSTS=app.example.com --app my-django-app
+  floo redeploy --app my-django-app
+
+## 7. Local dev
+
+  floo dev --app my-django-app --service web
+
+## Gotchas
+
+  - /healthz is reserved by Cloud Run — use /health
+  - Bind to 0.0.0.0 in gunicorn
+  - DEBUG=False in prod (the default above is False)
+  - DJANGO_SECRET_KEY must be set or sessions can be forged
+  - SECURE_PROXY_SSL_HEADER required for is_secure() to work behind floo
+
+Full guide with complete Python code: https://docs.getfloo.com/build/django
+";
+
+const EXPRESS: &str = "\
+Floo — Build an Express app on floo
+
+End-to-end Express 4/5 journey: deploy, add Postgres, add per-user
+auth, add a custom domain. Every step has runnable JavaScript code
+in the published guide.
+
+## 1. Dockerfile
+
+  FROM node:20-slim AS deps
+  ...
+  CMD [\"node\", \"server.js\"]
+
+## 2. Trust the proxy
+
+  app.set(\"trust proxy\", true);
+  app.listen(port, \"0.0.0.0\", ...);
+
+Without trust proxy, req.protocol is always 'http' and secure cookies
+won't get set behind floo's edge.
+
+## 3. floo init + deploy
+
+  floo init my-express-app
+
+  [services.web]
+  type = \"web\"
+  path = \".\"
+  port = 3000
+  ingress = \"public\"
+  dev_command = \"node --watch server.js\"
+
+  git push origin main
+  floo apps github connect owner/my-express-app
+
+## 4. Postgres
+
+  floo services add postgres --app my-express-app --tier basic
+
+  import pg from \"pg\";
+  export const pool = new pg.Pool({
+    connectionString: process.env.DATABASE_URL, max: 10
+  });
+
+## 5. Per-user auth
+
+  [app]
+  access_mode = \"accounts\"
+
+  app.use((req, _res, next) => {
+    const email = req.get(\"x-floo-user-email\");
+    req.flooUser = email ? { email, id: req.get(\"x-floo-user-id\") } : null;
+    next();
+  });
+
+## 6. Custom domain
+
+  floo domains add app.example.com --app my-express-app
+
+## 7. Local dev
+
+  floo dev --app my-express-app --service web
+
+## Gotchas
+
+  - /healthz is reserved by Cloud Run — use /health
+  - app.listen(port, \"0.0.0.0\", ...) explicitly
+  - app.set(\"trust proxy\", true) is required
+  - SESSION_SECRET required for cookie-session
+  - For server-side sessions: floo services add redis + connect-redis
+
+Full guide with complete JavaScript code: https://docs.getfloo.com/build/express
+";
+
 const TOPICS: &[(&str, &str)] = &[
     ("quickstart", QUICKSTART),
     ("golden-path", HOWTO),
+    ("build", BUILD),
+    ("nextjs", NEXTJS),
+    ("rails", RAILS),
+    ("fastapi", FASTAPI),
+    ("django", DJANGO),
+    ("express", EXPRESS),
     ("services", SERVICES),
     ("config", CONFIG),
     ("app-toml", CONFIG), // alias — agents can run `floo docs app-toml` after `floo init`
@@ -1013,6 +1466,12 @@ mod tests {
         assert!(!DEPLOY.is_empty());
         assert!(!AUTH.is_empty());
         assert!(!TEMPLATES.is_empty());
+        assert!(!BUILD.is_empty());
+        assert!(!NEXTJS.is_empty());
+        assert!(!RAILS.is_empty());
+        assert!(!FASTAPI.is_empty());
+        assert!(!DJANGO.is_empty());
+        assert!(!EXPRESS.is_empty());
     }
 
     #[test]
@@ -1024,11 +1483,16 @@ mod tests {
 
     #[test]
     fn test_auth_docs_has_key_concepts() {
-        assert!(AUTH.contains("redirect_uris"));
-        assert!(AUTH.contains("authorize"));
-        assert!(AUTH.contains("access_token"));
-        assert!(AUTH.contains("accounts"));
-        assert!(AUTH.contains("app_id"));
+        // Gateway-managed accounts mode is the only documented public auth product.
+        assert!(AUTH.contains("access_mode = \"accounts\""));
+        assert!(AUTH.contains("X-Floo-User-Email"));
+        assert!(AUTH.contains("/__floo/me"));
+        assert!(AUTH.contains("/__floo/logout"));
+        // OAuth-toolkit terminology must NOT appear in the public CLI docs.
+        assert!(!AUTH.contains("redirect_uris"));
+        assert!(!AUTH.contains("/v1/auth/apps"));
+        assert!(!AUTH.contains("FLOO_APP_ID"));
+        assert!(!AUTH.contains("access_token"));
     }
 
     #[test]
@@ -1071,5 +1535,106 @@ mod tests {
     fn test_services_explains_routing() {
         assert!(SERVICES.contains("gateway strips the /api"));
         assert!(SERVICES.contains("fetch(\"/api/users\")"));
+    }
+
+    #[test]
+    fn test_build_topic_lists_stack_guides() {
+        assert!(BUILD.contains("floo docs nextjs"));
+        assert!(BUILD.contains("floo docs rails"));
+        assert!(BUILD.contains("floo docs fastapi"));
+        assert!(BUILD.contains("floo docs django"));
+        assert!(BUILD.contains("floo docs express"));
+        assert!(BUILD.contains("docs.getfloo.com/build/"));
+    }
+
+    #[test]
+    fn test_rails_topic_covers_full_journey() {
+        // Stack-journey shape: deploy → DB → auth → domain → local dev
+        assert!(RAILS.contains("floo init"));
+        assert!(RAILS.contains("services add postgres"));
+        assert!(RAILS.contains("access_mode = \"accounts\""));
+        assert!(RAILS.contains("domains add"));
+        assert!(RAILS.contains("floo dev"));
+    }
+
+    #[test]
+    fn test_overview_lists_build_journeys() {
+        assert!(OVERVIEW.contains("floo docs build"));
+        assert!(OVERVIEW.contains("floo docs nextjs"));
+        assert!(OVERVIEW.contains("floo docs rails"));
+        assert!(OVERVIEW.contains("floo docs fastapi"));
+        assert!(OVERVIEW.contains("floo docs django"));
+        assert!(OVERVIEW.contains("floo docs express"));
+    }
+
+    #[test]
+    fn test_all_stacks_cover_full_journey() {
+        for (stack, content) in [
+            ("nextjs", NEXTJS),
+            ("rails", RAILS),
+            ("fastapi", FASTAPI),
+            ("django", DJANGO),
+            ("express", EXPRESS),
+        ] {
+            assert!(content.contains("floo init"), "{stack}: missing 'floo init'");
+            assert!(
+                content.contains("services add postgres"),
+                "{stack}: missing 'services add postgres'"
+            );
+            assert!(
+                content.contains("access_mode = \"accounts\""),
+                "{stack}: missing access_mode"
+            );
+            assert!(
+                content.contains("domains add"),
+                "{stack}: missing 'domains add'"
+            );
+            assert!(content.contains("floo dev"), "{stack}: missing 'floo dev'");
+            assert!(
+                content.contains("docs.getfloo.com/build/"),
+                "{stack}: missing link to full guide"
+            );
+        }
+    }
+
+    #[test]
+    fn test_all_stacks_use_gateway_managed_auth_only() {
+        // Every stack guide shows gateway-managed accounts mode and NOTHING else
+        // — the OAuth toolkit is not a documented public product.
+        for (stack, content) in [
+            ("nextjs", NEXTJS),
+            ("rails", RAILS),
+            ("fastapi", FASTAPI),
+            ("django", DJANGO),
+            ("express", EXPRESS),
+        ] {
+            // Gateway-managed: app reads injected identity header.
+            assert!(
+                content.to_lowercase().contains("x-floo-user-email")
+                    || content.contains("X-Floo-User-Email"),
+                "{stack}: missing X-Floo-User-Email"
+            );
+            // OAuth-toolkit terminology must NOT appear.
+            assert!(
+                !content.contains("redirect_uris"),
+                "{stack}: leaked redirect_uris"
+            );
+            assert!(
+                !content.contains("/v1/auth/apps"),
+                "{stack}: leaked OAuth endpoint"
+            );
+            assert!(
+                !content.contains("FLOO_APP_ID"),
+                "{stack}: leaked FLOO_APP_ID"
+            );
+            assert!(
+                !content.contains("hosted app OAuth"),
+                "{stack}: leaked 'hosted app OAuth'"
+            );
+            assert!(
+                !content.contains("Hosted app OAuth"),
+                "{stack}: leaked 'Hosted app OAuth'"
+            );
+        }
     }
 }
