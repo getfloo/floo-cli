@@ -60,12 +60,39 @@ Examples:
     /// block before sharing.
     #[command(after_help = "\
 Examples:
-  floo dev                                 Start all services defined in floo.app.toml
-  floo dev --app my-app                    Explicitly specify the app")]
+  floo dev                                              Start all services defined in floo.app.toml
+  floo dev --app my-app                                 Explicitly specify the app
+  floo dev --fixture-user you@example.com               Front each accounts-mode service with a local
+                                                        proxy that injects X-Floo-User-* identity
+                                                        headers, mirroring what floo's gateway does
+                                                        in production. Prints both the raw service
+                                                        URL and the auth-proxied URL.")]
     Dev {
         /// App name or ID (reads from config if omitted).
         #[arg(short, long)]
         app: Option<String>,
+
+        /// Email of the fixture user to inject as X-Floo-User-Email on every
+        /// request to an accounts-mode service. When set, `floo dev` starts a
+        /// local proxy in front of each accounts-mode service that adds the
+        /// four identity headers (Email/Id/Name/Role) so your app sees the
+        /// same shape it sees in production behind the floo gateway.
+        ///
+        /// No effect on non-accounts-mode apps.
+        #[arg(long, value_name = "EMAIL")]
+        fixture_user: Option<String>,
+
+        /// Fixture user id to inject as X-Floo-User-Id (default: dev-fixture-<email-localpart>).
+        #[arg(long, value_name = "ID", requires = "fixture_user")]
+        fixture_id: Option<String>,
+
+        /// Fixture user display name to inject as X-Floo-User-Name (default: the email).
+        #[arg(long, value_name = "NAME", requires = "fixture_user")]
+        fixture_name: Option<String>,
+
+        /// Fixture user role to inject as X-Floo-User-Role (default: "member").
+        #[arg(long, value_name = "ROLE", requires = "fixture_user")]
+        fixture_role: Option<String>,
     },
 
     /// Run a one-shot command with a service's managed env vars injected.
@@ -1136,7 +1163,19 @@ pub fn run() {
 
         Commands::Init { name, path } => commands::init::init(name, path),
 
-        Commands::Dev { app } => commands::dev::dev(app),
+        Commands::Dev {
+            app,
+            fixture_user,
+            fixture_id,
+            fixture_name,
+            fixture_role,
+        } => commands::dev::dev(commands::dev::DevArgs {
+            app,
+            fixture_user,
+            fixture_id,
+            fixture_name,
+            fixture_role,
+        }),
 
         Commands::Run {
             service,

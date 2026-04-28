@@ -9,9 +9,11 @@ use std::time::Duration;
 use colored::Colorize;
 
 use crate::config::load_config;
+use crate::dev_proxy::{self, FixtureUser};
 use crate::errors::ErrorCode;
 use crate::output;
 use crate::project_config;
+use crate::project_config::AppAccessMode;
 
 /// Color palette for service prefixes (cycles for >6 services).
 const SERVICE_COLORS: &[&str] = &["blue", "green", "magenta", "cyan", "yellow", "red"];
@@ -38,7 +40,40 @@ struct DevServiceInfo {
     migrate_command: Option<String>,
 }
 
-pub fn dev(app_flag: Option<String>) {
+pub struct DevArgs {
+    pub app: Option<String>,
+    pub fixture_user: Option<String>,
+    pub fixture_id: Option<String>,
+    pub fixture_name: Option<String>,
+    pub fixture_role: Option<String>,
+}
+
+/// Build a FixtureUser from CLI flags, filling sensible defaults.
+fn build_fixture_user(args: &DevArgs) -> Option<FixtureUser> {
+    let email = args.fixture_user.as_ref()?.clone();
+    let local_part = email
+        .split('@')
+        .next()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("user");
+    Some(FixtureUser {
+        id: args
+            .fixture_id
+            .clone()
+            .unwrap_or_else(|| format!("dev-fixture-{local_part}")),
+        name: args.fixture_name.clone().unwrap_or_else(|| email.clone()),
+        role: args
+            .fixture_role
+            .clone()
+            .unwrap_or_else(|| "member".to_string()),
+        email,
+    })
+}
+
+pub fn dev(args: DevArgs) {
+    let DevArgs { app: app_flag, .. } = &args;
+    let app_flag = app_flag.clone();
+
     super::require_auth();
 
     let config = load_config();
@@ -158,6 +193,26 @@ pub fn dev(app_flag: Option<String>) {
         ));
     }
 
+    // Determine whether identity-header injection should run for this session.
+    // The proxy is only useful for accounts-mode apps: those are the apps that
+    // sit behind floo's gateway in production and read X-Floo-User-* headers.
+    // Other access modes don't get the headers in production either, so there
+    // is nothing to mirror locally.
+    let is_accounts_mode = matches!(
+        app_config.app.access_mode,
+        Some(AppAccessMode::Accounts)
+    );
+    let fixture_user = build_fixture_user(&args);
+    let fixture_active = fixture_user.is_some() && is_accounts_mode;
+
+    if fixture_user.is_some() && !is_accounts_mode {
+        output::warn(
+            "--fixture-user was set but access_mode is not \"accounts\" — \
+             the identity-header proxy only runs for accounts-mode apps. \
+             Skipping proxy setup.",
+        );
+    }
+
     // Sort by name for deterministic ordering
     services.sort_by(|a, b| a.name.cmp(&b.name));
 
@@ -263,16 +318,58 @@ pub fn dev(app_flag: Option<String>) {
         output::info("  Redis: connection env vars injected", None);
     }
 
+    // --- Start fixture-user proxies (accounts-mode + --fixture-user) ---
+    //
+    // Started BEFORE the table is printed so the auth-proxied URL is known.
+    // Started BEFORE child processes so the proxy port is bound by the time
+    // the user copies the URL — the upstream connection will fail until the
+    // dev_command actually listens, but the bind itself succeeds immediately.
+    let mut proxy_ports: HashMap<String, u16> = HashMap::new();
+    if fixture_active {
+        let user = fixture_user.clone().expect("fixture_active implies Some");
+        output::info(
+            &format!(
+                "  Identity headers: injecting X-Floo-User-* as {} on accounts-mode services",
+                user.email
+            ),
+            None,
+        );
+        for svc in &services {
+            match dev_proxy::start_proxy(0, svc.port, user.clone()) {
+                Ok((_handle, bound_port)) => {
+                    proxy_ports.insert(svc.name.clone(), bound_port);
+                }
+                Err(e) => {
+                    output::warn(&format!(
+                        "Failed to start identity-header proxy for '{}': {e}. \
+                         The raw service URL still works — your app just won't \
+                         see X-Floo-User-* headers.",
+                        svc.name
+                    ));
+                }
+            }
+        }
+    }
+
     // --- Print service URL table ---
-    let headers = &["Service", "Port", "URL"];
+    let headers: &[&str] = if proxy_ports.is_empty() {
+        &["Service", "Port", "URL"]
+    } else {
+        &["Service", "Port", "URL", "Auth-proxied URL"]
+    };
     let rows: Vec<Vec<String>> = services
         .iter()
         .map(|svc| {
-            vec![
-                svc.name.clone(),
-                svc.port.to_string(),
-                format!("http://localhost:{}", svc.port),
-            ]
+            let raw_url = format!("http://localhost:{}", svc.port);
+            let mut row = vec![svc.name.clone(), svc.port.to_string(), raw_url];
+            if !proxy_ports.is_empty() {
+                let auth_cell = match proxy_ports.get(&svc.name) {
+                    Some(p) => format!("http://localhost:{p}"),
+                    None => String::from("—"),
+                };
+                row.push(auth_cell);
+            }
+            row
         })
         .collect();
 
@@ -281,10 +378,14 @@ pub fn dev(app_flag: Option<String>) {
             .iter()
             .map(|svc| {
                 let env_vars = session.services.get(&svc.name).cloned().unwrap_or_default();
+                let auth_url = proxy_ports
+                    .get(&svc.name)
+                    .map(|p| format!("http://localhost:{p}"));
                 serde_json::json!({
                     "name": svc.name,
                     "port": svc.port,
                     "url": format!("http://localhost:{}", svc.port),
+                    "auth_proxied_url": auth_url,
                     "env_vars": env_vars,
                 })
             })
