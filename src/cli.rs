@@ -1247,9 +1247,10 @@ pub fn run() {
         Commands::Apps(sub) => match sub {
             AppsCommands::List { page, per_page } => commands::apps::list(page, per_page),
             AppsCommands::Status { app_name } => commands::apps::status(&app_name),
-            AppsCommands::Delete { app_name, confirmed } => {
-                commands::apps::delete(&app_name, confirmed)
-            }
+            AppsCommands::Delete {
+                app_name,
+                confirmed,
+            } => commands::apps::delete(&app_name, confirmed),
             AppsCommands::Github(gh_sub) => match gh_sub {
                 GitHubCommands::Connect {
                     repo,
@@ -1384,9 +1385,7 @@ pub fn run() {
             } => commands::db::query(app.as_deref(), &sql, &env, limit),
             DbCommands::Schema { app } => commands::db::schema(app.as_deref()),
             DbCommands::Migrate { app, env } => commands::db::migrate(app.as_deref(), &env),
-            DbCommands::Connections { app, env } => {
-                commands::db::connections(app.as_deref(), &env)
-            }
+            DbCommands::Connections { app, env } => commands::db::connections(app.as_deref(), &env),
         },
 
         Commands::Cron(sub) => match sub {

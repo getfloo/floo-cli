@@ -74,9 +74,8 @@ pub fn list(app: Option<&str>, env: &str) {
     // Human mode: render unified table rows. Managed services show their
     // type as the "Type" cell and "managed" as the ingress so users see them
     // as a distinct class without a second table.
-    let mut rows: Vec<Vec<String>> = Vec::with_capacity(
-        app_services.services.len() + managed_services.len(),
-    );
+    let mut rows: Vec<Vec<String>> =
+        Vec::with_capacity(app_services.services.len() + managed_services.len());
     for s in &app_services.services {
         rows.push(vec![
             s.name.clone(),
@@ -115,7 +114,11 @@ pub fn info(service_name: &str, app: Option<&str>) {
         }
     };
 
-    if let Some(svc) = app_services.services.iter().find(|s| s.name == service_name) {
+    if let Some(svc) = app_services
+        .services
+        .iter()
+        .find(|s| s.name == service_name)
+    {
         render_app_service(svc, service_name, app_name);
         return;
     }
@@ -330,9 +333,7 @@ pub fn remove(service_type: &str, app: Option<&str>, name: &str, confirmed: bool
     };
 
     let mut preamble = vec![
-        format!(
-            "\u{26a0} You are about to permanently destroy the following managed service:"
-        ),
+        format!("\u{26a0} You are about to permanently destroy the following managed service:"),
         format!("    app:   {app_name}"),
         format!("    type:  {service_type}"),
         format!("    name:  {name}"),
@@ -391,9 +392,7 @@ pub fn remove(service_type: &str, app: Option<&str>, name: &str, confirmed: bool
     }
 
     output::info(
-        &format!(
-            "\u{2713} Destroyed managed {service_type}/{name} on {app_name}."
-        ),
+        &format!("\u{2713} Destroyed managed {service_type}/{name} on {app_name}."),
         None,
     );
 }

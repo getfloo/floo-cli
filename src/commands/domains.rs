@@ -180,11 +180,7 @@ pub fn remove(hostname: &str, app: Option<&str>, services: Option<&str>, yes: bo
     let (app_id, app_name) = super::resolve_app_from_config(&client, app);
     check_services_flag(&client, &app_id, services);
 
-    match confirm_tier2(
-        "Remove domain",
-        &format!("{hostname} from {app_name}"),
-        yes,
-    ) {
+    match confirm_tier2("Remove domain", &format!("{hostname} from {app_name}"), yes) {
         ConfirmOutcome::Proceed => {}
         ConfirmOutcome::Aborted => {
             if !output::is_json_mode() {

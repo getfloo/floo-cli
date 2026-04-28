@@ -83,9 +83,8 @@ pub fn confirm_tier2(action: &str, subject: &str, yes_flag: bool) -> ConfirmOutc
 
     if !io::stdin().is_terminal() {
         return ConfirmOutcome::Refused {
-            suggestion:
-                "Pass --yes to confirm when stdin isn't a terminal (CI, pipes, etc.)."
-                    .to_string(),
+            suggestion: "Pass --yes to confirm when stdin isn't a terminal (CI, pipes, etc.)."
+                .to_string(),
         };
     }
 

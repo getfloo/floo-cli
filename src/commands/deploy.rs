@@ -1691,15 +1691,13 @@ fn render_plan_human(plan: &crate::api_types::PreflightPlan) {
     if !ms.to_orphan.is_empty() {
         eprintln!("  \u{26a0} Orphaned managed services (deploy will NOT remove these):");
         for item in &ms.to_orphan {
-            let impact = item.data_impact.as_deref().unwrap_or("managed service data");
-            eprintln!(
-                "    - {}/{}  [{}]",
-                item.service_type, item.name, impact
-            );
+            let impact = item
+                .data_impact
+                .as_deref()
+                .unwrap_or("managed service data");
+            eprintln!("    - {}/{}  [{}]", item.service_type, item.name, impact);
         }
-        eprintln!(
-            "    Run 'floo services remove <type> --app <name>' to deprovision explicitly."
-        );
+        eprintln!("    Run 'floo services remove <type> --app <name>' to deprovision explicitly.");
         eprintln!();
     }
     if !ms.in_flight_deprovisioning.is_empty() {

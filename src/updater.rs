@@ -3,14 +3,29 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use reqwest::blocking::Client;
 use reqwest::header::{ACCEPT, USER_AGENT};
+use ring::signature;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::errors::{ErrorCode, FlooError};
 
 const DEFAULT_RELEASES_API_BASE: &str = "https://api.github.com/repos/getfloo/floo-cli/releases";
+// ring verifies RSA signatures against PKCS#1 DER, so keep this as
+// "RSA PUBLIC KEY" rather than SubjectPublicKeyInfo "PUBLIC KEY" PEM.
+const DEFAULT_RELEASE_PUBLIC_KEY_PEM: &str = r#"-----BEGIN RSA PUBLIC KEY-----
+MIIBigKCAYEAoxTcA648/UUTEcmZbiZbwGsQJIjI/CwEda/3Zwky26hOdu3ccQKD
+U3lXj7c/cAvr0Y+ISnf23YvBr68q0kI0IhihYE74MoOKe0QjRv7aK0cYgIWKj5SZ
+xcw0CLvMm36rNG7iZBHJb3Jbew5ebMpaRyCZBnruHQocHQammzUkuDjeJ753ZFmu
+Y8Fyr/CLO+F2V7Bou/qh4DA0tJ8Ams4HLTUGAfXHgj3Q5L9DIZC6iDzGqg70DblC
+wNrr/n+zx6TCjonKraYxDUXruR6Za6XrKSbTrq6Bh1DFYK5DM3m9OIdiMx2EC+yD
+3iY/CZRC/auqq4CQeXLQyxTsExxnvG3O4Ci77MTZH4NSnngkkw5KrcvqCC9KVI9J
+IViei4zB3GoTGDm9+FC02cCozhKiTvAqzdb+ieszMNsavQNdOy1qO9bQfObWWvay
+Z4rrRM3hE+rKyk5WHrPZcR77YiqZ6cwXVl7g8gJ0JIQi2a8oHzmjQc7n+j1Nmglh
+Wk6BmNyJThezAgMBAAE=
+-----END RSA PUBLIC KEY-----"#;
 
 #[derive(Debug, Clone)]
 pub(crate) struct ReleaseAsset {
@@ -18,6 +33,7 @@ pub(crate) struct ReleaseAsset {
     pub(crate) asset_name: String,
     pub(crate) binary_url: String,
     pub(crate) checksum_url: String,
+    pub(crate) signature_url: String,
 }
 
 #[derive(Debug, Clone)]
@@ -159,11 +175,27 @@ pub(crate) fn release_asset_from_json(
             )
         })?;
 
+    let signature_name = format!("{asset_name}.sig");
+    let signature_url = assets
+        .iter()
+        .find(|asset| asset.get("name").and_then(Value::as_str) == Some(signature_name.as_str()))
+        .and_then(|asset| asset.get("browser_download_url"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .ok_or_else(|| {
+            FlooError::with_suggestion(
+                ErrorCode::ReleaseSignatureMissing,
+                format!("No signature asset found for '{asset_name}'."),
+                "Try again once release artifacts are fully published.",
+            )
+        })?;
+
     Ok(ReleaseAsset {
         version,
         asset_name: asset_name.to_string(),
         binary_url,
         checksum_url,
+        signature_url,
     })
 }
 
@@ -223,6 +255,50 @@ pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
+}
+
+fn decode_public_key_pem(pem: &str) -> Result<Vec<u8>, FlooError> {
+    let body = pem
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with("-----"))
+        .collect::<String>();
+
+    if body.is_empty() {
+        return Err(FlooError::with_suggestion(
+            ErrorCode::ReleaseSignatureInvalid,
+            "Release verification public key is empty.".to_string(),
+            "Reinstall via curl -fsSL https://getfloo.com/install.sh | bash. If this persists, contact support.",
+        ));
+    }
+
+    BASE64_STANDARD.decode(body).map_err(|e| {
+        FlooError::with_suggestion(
+            ErrorCode::ReleaseSignatureInvalid,
+            format!("Release verification public key is invalid: {e}"),
+            "Reinstall via curl -fsSL https://getfloo.com/install.sh | bash. If this persists, contact support.",
+        )
+    })
+}
+
+pub(crate) fn verify_release_signature(
+    asset_name: &str,
+    binary_bytes: &[u8],
+    signature_bytes: &[u8],
+) -> Result<(), FlooError> {
+    let public_key_der = decode_public_key_pem(DEFAULT_RELEASE_PUBLIC_KEY_PEM)?;
+    let public_key =
+        signature::UnparsedPublicKey::new(&signature::RSA_PKCS1_2048_8192_SHA256, public_key_der);
+
+    public_key
+        .verify(binary_bytes, signature_bytes)
+        .map_err(|_| {
+            FlooError::with_suggestion(
+                ErrorCode::ReleaseSignatureInvalid,
+                format!("Signature verification failed for '{asset_name}'."),
+                "Do not run this binary. Retry update later or reinstall via curl -fsSL https://getfloo.com/install.sh | bash",
+            )
+        })
 }
 
 #[cfg(unix)]
@@ -358,6 +434,9 @@ fn run_update_with(
         ));
     }
 
+    let signature_bytes = download_bytes(client, &release_asset.signature_url)?;
+    verify_release_signature(&release_asset.asset_name, &binary_bytes, &signature_bytes)?;
+
     install_binary(&binary_bytes, install_path)?;
 
     Ok(UpdateResult {
@@ -416,6 +495,13 @@ mod tests {
     use std::sync::{Mutex, OnceLock};
 
     static ENV_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+    const FAKE_BINARY_SIGNATURE_B64: &str = "asvfjb0bQYA5IrimKSPkA+BgWNHyuP3ax4H4qDQPM3jbsHL1C1fQvjmeKbgadkR3t1QxdDF+62s4pJ81LlDFzW6Iz/BXY9nUUabDSVRLVDqN9F21RWxIor/m89snTJSnanhvbh1+nJ3SeYDJSmKVBqRlNld1ACykNVBlU6eXOcD+hc2faJD4m3VSdaQvRUZsXCGTL5YzyyHV86PbUk4tYt9LQsGsa/CAA0h5TX2UMNmkk12byCh7IbV9tt58lXr3+e26+54UhjDSPX29jLcHEATDPgpnllXDGUyZLtJO1GsT7ojyWrlj18M1zvNg7el9l794HSaK8uTFq2bhvURRsGKjOe3NH13+fZYvL/azLrnvT8/zOrAbpToHVcJeuNo4DUHRJMc/U6ulykHYpeF4ebafr6JREmzOQ9VVUP8vBSco7Ocw7fCxyc77dfmZnTMGooIoifKKUhIjk9ZFIUykXU9BRRuZWVap8vNy6NHZw+EM3wxk4o+vA4/wAgAvliU5";
+
+    fn fake_binary_signature() -> Vec<u8> {
+        BASE64_STANDARD
+            .decode(FAKE_BINARY_SIGNATURE_B64)
+            .expect("test signature decodes")
+    }
 
     fn sample_release_json(asset_name: &str, base_url: &str) -> Value {
         serde_json::json!({
@@ -428,6 +514,10 @@ mod tests {
                 {
                     "name": format!("{asset_name}.sha256"),
                     "browser_download_url": format!("{base_url}/download/{asset_name}.sha256"),
+                },
+                {
+                    "name": format!("{asset_name}.sig"),
+                    "browser_download_url": format!("{base_url}/download/{asset_name}.sig"),
                 }
             ]
         })
@@ -454,6 +544,7 @@ mod tests {
         let asset_name = target_asset_name().unwrap();
         let binary_bytes = b"fake-binary-content";
         let checksum = sha256_hex(binary_bytes);
+        let signature = fake_binary_signature();
 
         let mut server = Server::new();
         let release = sample_release_json(&asset_name, &server.url());
@@ -480,6 +571,13 @@ mod tests {
             .with_body(format!("{checksum}  {asset_name}"))
             .create();
 
+        let _signature_mock = server
+            .mock("GET", format!("/download/{asset_name}.sig").as_str())
+            .match_header("user-agent", "floo-cli-updater")
+            .with_status(200)
+            .with_body(signature.as_slice())
+            .create();
+
         let client = build_http_client().unwrap();
         let temp_dir = tempfile::tempdir().unwrap();
         let install_path = temp_dir.path().join("floo");
@@ -496,6 +594,85 @@ mod tests {
         assert_eq!(result.install_path, install_path);
         assert!(install_path.exists());
         assert_eq!(fs::read(install_path).unwrap(), binary_bytes.as_slice());
+    }
+
+    #[test]
+    fn test_run_update_with_signature_mismatch() {
+        let asset_name = target_asset_name().unwrap();
+        let binary_bytes = b"fake-binary-content";
+        let checksum = sha256_hex(binary_bytes);
+
+        let mut server = Server::new();
+        let release = sample_release_json(&asset_name, &server.url());
+
+        let _release_mock = server
+            .mock("GET", "/releases/latest")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(release.to_string())
+            .create();
+
+        let _binary_mock = server
+            .mock("GET", format!("/download/{asset_name}").as_str())
+            .with_status(200)
+            .with_body(binary_bytes.as_slice())
+            .create();
+
+        let _checksum_mock = server
+            .mock("GET", format!("/download/{asset_name}.sha256").as_str())
+            .with_status(200)
+            .with_body(format!("{checksum}  {asset_name}"))
+            .create();
+
+        let _signature_mock = server
+            .mock("GET", format!("/download/{asset_name}.sig").as_str())
+            .with_status(200)
+            .with_body(b"not-a-valid-signature".as_slice())
+            .create();
+
+        let client = build_http_client().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let install_path = temp_dir.path().join("floo");
+
+        let result = run_update_with(
+            &client,
+            None,
+            &format!("{}/releases", server.url()),
+            &install_path,
+        );
+
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            crate::errors::ErrorCode::ReleaseSignatureInvalid
+        );
+        assert!(!install_path.exists());
+    }
+
+    #[test]
+    fn test_release_asset_requires_signature() {
+        let asset_name = target_asset_name().unwrap();
+        let release = serde_json::json!({
+            "tag_name": "v0.2.0",
+            "assets": [
+                {
+                    "name": asset_name,
+                    "browser_download_url": "https://example.test/floo",
+                },
+                {
+                    "name": format!("{asset_name}.sha256"),
+                    "browser_download_url": "https://example.test/floo.sha256",
+                }
+            ]
+        });
+
+        let result = release_asset_from_json(&release, &asset_name);
+
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            crate::errors::ErrorCode::ReleaseSignatureMissing
+        );
     }
 
     #[test]

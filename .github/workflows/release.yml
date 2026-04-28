@@ -106,6 +106,55 @@ jobs:
       - name: Download all artifacts
         uses: actions/download-artifact@v7
 
+      - name: Sign release artifacts
+        env:
+          FLOO_RELEASE_SIGNING_KEY: ${{ secrets.FLOO_RELEASE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${FLOO_RELEASE_SIGNING_KEY}" ]]; then
+            echo "FLOO_RELEASE_SIGNING_KEY is required to publish signed CLI releases." >&2
+            exit 1
+          fi
+
+          key_path="${RUNNER_TEMP}/floo-release-signing-key.pem"
+          public_key_path="${RUNNER_TEMP}/floo-release-signing-public-key.pem"
+          expected_public_key_path="${RUNNER_TEMP}/floo-release-expected-public-key.pem"
+          printf '%s\n' "${FLOO_RELEASE_SIGNING_KEY}" >"${key_path}"
+          chmod 600 "${key_path}"
+          openssl rsa -RSAPublicKey_out -in "${key_path}" -out "${public_key_path}"
+          cat >"${expected_public_key_path}" <<'PEM'
+          -----BEGIN RSA PUBLIC KEY-----
+          MIIBigKCAYEAoxTcA648/UUTEcmZbiZbwGsQJIjI/CwEda/3Zwky26hOdu3ccQKD
+          U3lXj7c/cAvr0Y+ISnf23YvBr68q0kI0IhihYE74MoOKe0QjRv7aK0cYgIWKj5SZ
+          xcw0CLvMm36rNG7iZBHJb3Jbew5ebMpaRyCZBnruHQocHQammzUkuDjeJ753ZFmu
+          Y8Fyr/CLO+F2V7Bou/qh4DA0tJ8Ams4HLTUGAfXHgj3Q5L9DIZC6iDzGqg70DblC
+          wNrr/n+zx6TCjonKraYxDUXruR6Za6XrKSbTrq6Bh1DFYK5DM3m9OIdiMx2EC+yD
+          3iY/CZRC/auqq4CQeXLQyxTsExxnvG3O4Ci77MTZH4NSnngkkw5KrcvqCC9KVI9J
+          IViei4zB3GoTGDm9+FC02cCozhKiTvAqzdb+ieszMNsavQNdOy1qO9bQfObWWvay
+          Z4rrRM3hE+rKyk5WHrPZcR77YiqZ6cwXVl7g8gJ0JIQi2a8oHzmjQc7n+j1Nmglh
+          Wk6BmNyJThezAgMBAAE=
+          -----END RSA PUBLIC KEY-----
+          PEM
+          if ! cmp -s "${expected_public_key_path}" "${public_key_path}"; then
+            echo "FLOO_RELEASE_SIGNING_KEY does not match the public key pinned into the CLI." >&2
+            exit 1
+          fi
+
+          found=0
+          while IFS= read -r -d '' asset; do
+            case "${asset}" in
+              *.sha256|*.sig) continue ;;
+            esac
+            found=1
+            openssl dgst -sha256 -sign "${key_path}" -out "${asset}.sig" "${asset}"
+            openssl dgst -sha256 -verify "${public_key_path}" -signature "${asset}.sig" "${asset}"
+          done < <(find floo-* -type f -name 'floo-*' -print0)
+
+          if [[ "${found}" -ne 1 ]]; then
+            echo "No release binaries found to sign." >&2
+            exit 1
+          fi
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:

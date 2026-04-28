@@ -99,6 +99,55 @@ release_checksum_url() {
     fi
 }
 
+release_signature_url() {
+    local binary_url="$1"
+
+    if [[ -n "${FLOO_INSTALL_SIGNATURE_URL:-}" ]]; then
+        echo "${FLOO_INSTALL_SIGNATURE_URL}"
+    else
+        echo "${binary_url}.sig"
+    fi
+}
+
+write_release_public_key() {
+    local destination="$1"
+
+    if [[ -n "${FLOO_INSTALL_VERIFY_KEY_PATH:-}" ]]; then
+        cp "${FLOO_INSTALL_VERIFY_KEY_PATH}" "$destination" || fail "Failed to read release verification public key."
+        return
+    fi
+
+    if [[ -n "${FLOO_INSTALL_VERIFY_KEY_PEM:-}" ]]; then
+        printf '%s\n' "${FLOO_INSTALL_VERIFY_KEY_PEM}" >"$destination"
+        return
+    fi
+
+    cat >"$destination" <<'PEM'
+-----BEGIN RSA PUBLIC KEY-----
+MIIBigKCAYEAoxTcA648/UUTEcmZbiZbwGsQJIjI/CwEda/3Zwky26hOdu3ccQKD
+U3lXj7c/cAvr0Y+ISnf23YvBr68q0kI0IhihYE74MoOKe0QjRv7aK0cYgIWKj5SZ
+xcw0CLvMm36rNG7iZBHJb3Jbew5ebMpaRyCZBnruHQocHQammzUkuDjeJ753ZFmu
+Y8Fyr/CLO+F2V7Bou/qh4DA0tJ8Ams4HLTUGAfXHgj3Q5L9DIZC6iDzGqg70DblC
+wNrr/n+zx6TCjonKraYxDUXruR6Za6XrKSbTrq6Bh1DFYK5DM3m9OIdiMx2EC+yD
+3iY/CZRC/auqq4CQeXLQyxTsExxnvG3O4Ci77MTZH4NSnngkkw5KrcvqCC9KVI9J
+IViei4zB3GoTGDm9+FC02cCozhKiTvAqzdb+ieszMNsavQNdOy1qO9bQfObWWvay
+Z4rrRM3hE+rKyk5WHrPZcR77YiqZ6cwXVl7g8gJ0JIQi2a8oHzmjQc7n+j1Nmglh
+Wk6BmNyJThezAgMBAAE=
+-----END RSA PUBLIC KEY-----
+PEM
+}
+
+verify_release_signature() {
+    local binary_path="$1"
+    local signature_path="$2"
+    local public_key_path="$3"
+    local asset="$4"
+
+    if ! openssl dgst -sha256 -verify "$public_key_path" -signature "$signature_path" "$binary_path" >/dev/null 2>&1; then
+        fail "Signature verification failed for ${asset}. Do not run this binary."
+    fi
+}
+
 install_binary() {
     local source_path="$1"
     local destination_path="${INSTALL_DIR}/${BINARY_NAME}"
@@ -135,6 +184,7 @@ main() {
     local target
     target="$(detect_target)"
     local asset="floo-${target}"
+    need_cmd openssl
 
     log "Detected platform: ${target}"
 
@@ -142,18 +192,25 @@ main() {
     binary_url="$(release_binary_url "$asset")"
     local checksum_url
     checksum_url="$(release_checksum_url "$binary_url")"
+    local signature_url
+    signature_url="$(release_signature_url "$binary_url")"
 
     TMP_DIR="$(mktemp -d)"
     trap cleanup EXIT
 
     local binary_path="${TMP_DIR}/${asset}"
     local checksum_path="${TMP_DIR}/${asset}.sha256"
+    local signature_path="${TMP_DIR}/${asset}.sig"
+    local public_key_path="${TMP_DIR}/release-public-key.pem"
 
     log "Downloading ${asset}..."
     curl -fsSL -o "$binary_path" "$binary_url" || fail "Failed to download binary from ${binary_url}"
 
     log "Downloading checksum..."
     curl -fsSL -o "$checksum_path" "$checksum_url" || fail "Failed to download checksum from ${checksum_url}"
+
+    log "Downloading signature..."
+    curl -fsSL -o "$signature_path" "$signature_url" || fail "Failed to download signature from ${signature_url}"
 
     local expected_checksum
     expected_checksum="$(awk 'NF {print tolower($1); exit}' "$checksum_path")"
@@ -165,6 +222,9 @@ main() {
     if [[ "$actual_checksum" != "$expected_checksum" ]]; then
         fail "Checksum mismatch for ${asset}. Expected ${expected_checksum}, got ${actual_checksum}."
     fi
+
+    write_release_public_key "$public_key_path"
+    verify_release_signature "$binary_path" "$signature_path" "$public_key_path" "$asset"
 
     chmod +x "$binary_path"
 

@@ -141,8 +141,9 @@ pub fn record_add_at(project_root: &Path, detail: &ManagedServiceDetail) -> Resu
     }
 
     // Keep deterministic order so diffs stay stable.
-    lock.managed_services
-        .sort_by(|a, b| (a.service_type.as_str(), a.name.as_str()).cmp(&(&b.service_type, &b.name)));
+    lock.managed_services.sort_by(|a, b| {
+        (a.service_type.as_str(), a.name.as_str()).cmp(&(&b.service_type, &b.name))
+    });
 
     write(project_root, &lock)
 }
@@ -183,11 +184,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn mk_project(dir: &TempDir) -> PathBuf {
-        fs::write(
-            dir.path().join("floo.app.toml"),
-            "[app]\nname = \"test\"\n",
-        )
-        .unwrap();
+        fs::write(dir.path().join("floo.app.toml"), "[app]\nname = \"test\"\n").unwrap();
         dir.path().to_path_buf()
     }
 

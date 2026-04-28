@@ -15,7 +15,7 @@ fn test_help() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "Deploy, manage, and observe web apps.",
+            "Manage and observe web apps. Deploys are git-driven.",
         ));
 }
 

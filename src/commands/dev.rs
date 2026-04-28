@@ -198,10 +198,7 @@ pub fn dev(args: DevArgs) {
     // sit behind floo's gateway in production and read X-Floo-User-* headers.
     // Other access modes don't get the headers in production either, so there
     // is nothing to mirror locally.
-    let is_accounts_mode = matches!(
-        app_config.app.access_mode,
-        Some(AppAccessMode::Accounts)
-    );
+    let is_accounts_mode = matches!(app_config.app.access_mode, Some(AppAccessMode::Accounts));
     let fixture_user = build_fixture_user(&args);
     let fixture_active = fixture_user.is_some() && is_accounts_mode;
 
