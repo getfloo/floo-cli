@@ -90,7 +90,46 @@ pub struct ManagedServiceSection {
 #[serde(deny_unknown_fields)]
 pub struct AuthSection {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub access_policy: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_domains: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub redirect_uris: Option<Vec<String>>,
+}
+
+const VALID_ACCESS_POLICIES: &[&str] = &["invite", "domain", "open"];
+
+impl AuthSection {
+    pub fn validate(&self) -> Result<(), FlooError> {
+        if let Some(ref policy) = self.access_policy {
+            if !VALID_ACCESS_POLICIES.contains(&policy.as_str()) {
+                return Err(FlooError::with_suggestion(
+                    ErrorCode::InvalidProjectConfig,
+                    format!(
+                        "[auth] access_policy must be one of {:?}, got {policy:?}.",
+                        VALID_ACCESS_POLICIES
+                    ),
+                    "Set access_policy to one of \"invite\", \"domain\", or \"open\".".to_string(),
+                ));
+            }
+            if policy == "domain" {
+                let has_domains = self
+                    .allowed_domains
+                    .as_ref()
+                    .map(|d| !d.is_empty())
+                    .unwrap_or(false);
+                if !has_domains {
+                    return Err(FlooError::with_suggestion(
+                        ErrorCode::InvalidProjectConfig,
+                        "[auth] allowed_domains is required when access_policy = \"domain\"."
+                            .to_string(),
+                        "Add allowed_domains = [\"example.com\"] to [auth], or change access_policy.".to_string(),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Default)]
@@ -303,6 +342,9 @@ fn validate_app_config(config: &AppFileConfig) -> Result<(), FlooError> {
         if let Some(ref env) = entry.env {
             env.validate(&format!("[services.{name}.env]"))?;
         }
+    }
+    if let Some(ref auth) = config.auth {
+        auth.validate()?;
     }
     Ok(())
 }
@@ -815,6 +857,94 @@ redirect_uris = ["http://localhost:3000/callback", "https://myapp.com/callback"]
         let uris = auth.redirect_uris.unwrap();
         assert_eq!(uris.len(), 2);
         assert_eq!(uris[0], "http://localhost:3000/callback");
+    }
+
+    #[test]
+    fn test_load_app_config_with_auth_access_policy_open() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+access_mode = "accounts"
+
+[auth]
+access_policy = "open"
+"#,
+        )
+        .unwrap();
+
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        let auth = config.auth.unwrap();
+        assert_eq!(auth.access_policy.as_deref(), Some("open"));
+        assert!(auth.allowed_domains.is_none());
+    }
+
+    #[test]
+    fn test_load_app_config_with_auth_access_policy_domain() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+access_mode = "accounts"
+
+[auth]
+access_policy = "domain"
+allowed_domains = ["acme.com", "acme.io"]
+"#,
+        )
+        .unwrap();
+
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        let auth = config.auth.unwrap();
+        assert_eq!(auth.access_policy.as_deref(), Some("domain"));
+        let domains = auth.allowed_domains.unwrap();
+        assert_eq!(domains, vec!["acme.com".to_string(), "acme.io".to_string()]);
+    }
+
+    #[test]
+    fn test_load_app_config_rejects_unknown_access_policy() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+access_mode = "accounts"
+
+[auth]
+access_policy = "unknown"
+"#,
+        )
+        .unwrap();
+
+        let err = load_app_config(dir.path()).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+        assert!(err.message.contains("access_policy"));
+    }
+
+    #[test]
+    fn test_load_app_config_rejects_domain_policy_without_domains() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+access_mode = "accounts"
+
+[auth]
+access_policy = "domain"
+"#,
+        )
+        .unwrap();
+
+        let err = load_app_config(dir.path()).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+        assert!(err.message.contains("allowed_domains"));
     }
 
     #[test]
