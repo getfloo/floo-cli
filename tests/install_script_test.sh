@@ -48,7 +48,7 @@ SH
 make_signing_keypair() {
     local dir="$1"
     openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "${dir}/signing-private.pem" >/dev/null 2>&1
-    openssl rsa -pubout -in "${dir}/signing-private.pem" -out "${dir}/signing-public.pem" >/dev/null 2>&1
+    openssl rsa -RSAPublicKey_out -in "${dir}/signing-private.pem" -out "${dir}/signing-public.pem" >/dev/null 2>&1
 }
 
 sign_asset() {
