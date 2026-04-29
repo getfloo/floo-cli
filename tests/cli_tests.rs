@@ -933,6 +933,138 @@ ingress = "public"
         .stdout(predicate::str::contains("EXPOSE 8080"));
 }
 
+#[test]
+fn test_preflight_warns_for_rails_cloudsql_socket_database_url() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "railsapp"
+
+[postgres]
+tier = "basic"
+
+[services.web]
+type = "web"
+path = "."
+port = 3000
+ingress = "public"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        project.path().join("Gemfile"),
+        "source \"https://rubygems.org\"\ngem \"rails\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project.path().join(".env"),
+        "DATABASE_URL=postgresql://user:pass@/floo_apps?host=/cloudsql/project:region:instance\n",
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Cloud SQL socket-style DATABASE_URL",
+        ))
+        .stdout(predicate::str::contains("Rails parses DATABASE_URL"));
+}
+
+#[test]
+fn test_preflight_json_shows_managed_env_injection_plan() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[postgres]
+tier = "basic"
+
+[redis]
+tier = "basic"
+
+[services.web]
+type = "web"
+path = "./web"
+port = 3000
+ingress = "public"
+
+[services.web.env]
+managed = []
+
+[services.api]
+type = "api"
+path = "./api"
+port = 8000
+ingress = "internal"
+
+[services.api.env]
+required = ["STRIPE_SECRET_KEY"]
+managed = ["postgres", "redis"]
+"#,
+    )
+    .unwrap();
+    std::fs::create_dir(project.path().join("web")).unwrap();
+    std::fs::create_dir(project.path().join("api")).unwrap();
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""env_injection_plan""#))
+        .stdout(predicate::str::contains(r#""mode":"explicit""#))
+        .stdout(predicate::str::contains(r#""service":"api""#))
+        .stdout(predicate::str::contains(r#""handle":"postgres""#))
+        .stdout(predicate::str::contains(
+            r#""keys":["DATABASE_URL","PGHOST""#,
+        ))
+        .stdout(predicate::str::contains(
+            r#""managed":[],"optional":[],"required":[],"service":"web""#,
+        ));
+}
+
+#[test]
+fn test_preflight_env_injection_plan_reads_services_lock() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[services.api]
+type = "api"
+path = "./api"
+port = 8000
+ingress = "public"
+"#,
+    )
+    .unwrap();
+    std::fs::create_dir(project.path().join("api")).unwrap();
+    std::fs::create_dir(project.path().join(".floo")).unwrap();
+    std::fs::write(
+        project.path().join(".floo").join("services.lock"),
+        r#"{"version":1,"managed_services":[{"type":"postgres","name":"default","status":"ready","created_at":null}]}"#,
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""mode":"implicit_all""#))
+        .stdout(predicate::str::contains(r#""handle":"postgres""#))
+        .stdout(predicate::str::contains(
+            r#""keys":["DATABASE_URL","PGHOST""#,
+        ));
+}
+
 // --- Dry-run ---
 
 #[test]

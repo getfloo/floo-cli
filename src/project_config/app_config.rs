@@ -928,6 +928,7 @@ port = 8000
 [services.api.env]
 required = ["STRIPE_SECRET_KEY", "JWT_SECRET"]
 optional = ["SENTRY_DSN"]
+managed = ["postgres", "redis:cache"]
 "#,
         )
         .unwrap();
@@ -937,6 +938,10 @@ optional = ["SENTRY_DSN"]
         let env = api.env.as_ref().expect("env contract present");
         assert_eq!(env.required, vec!["STRIPE_SECRET_KEY", "JWT_SECRET"]);
         assert_eq!(env.optional, vec!["SENTRY_DSN"]);
+        assert_eq!(
+            env.normalized_managed("[services.api.env]").unwrap(),
+            Some(vec!["postgres".to_string(), "redis:cache".to_string()])
+        );
     }
 
     #[test]
