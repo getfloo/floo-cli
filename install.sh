@@ -143,9 +143,17 @@ verify_release_signature() {
     local public_key_path="$3"
     local asset="$4"
 
-    if ! openssl dgst -sha256 -verify "$public_key_path" -signature "$signature_path" "$binary_path" >/dev/null 2>&1; then
-        fail "Signature verification failed for ${asset}. Do not run this binary."
+    if openssl dgst -sha256 -verify "$public_key_path" -signature "$signature_path" "$binary_path" >/dev/null 2>&1; then
+        return
     fi
+
+    local normalized_public_key_path="${public_key_path}.spki"
+    if openssl rsa -RSAPublicKey_in -in "$public_key_path" -pubout -out "$normalized_public_key_path" >/dev/null 2>&1 &&
+        openssl dgst -sha256 -verify "$normalized_public_key_path" -signature "$signature_path" "$binary_path" >/dev/null 2>&1; then
+        return
+    fi
+
+    fail "Signature verification failed for ${asset}. Do not run this binary."
 }
 
 install_binary() {

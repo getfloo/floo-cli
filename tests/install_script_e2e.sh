@@ -87,7 +87,7 @@ main() {
     checksum="$(sha256_file "$asset_path")"
     echo "${checksum}  ${asset_name}" >"$checksum_path"
     openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$signing_key_path" >/dev/null 2>&1
-    openssl rsa -pubout -in "$signing_key_path" -out "$verify_key_path" >/dev/null 2>&1
+    openssl rsa -RSAPublicKey_out -in "$signing_key_path" -out "$verify_key_path" >/dev/null 2>&1
     openssl dgst -sha256 -sign "$signing_key_path" -out "$signature_path" "$asset_path"
 
     FLOO_INSTALL_BINARY_URL="file://${asset_path}" \
