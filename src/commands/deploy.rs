@@ -130,7 +130,7 @@ pub fn preflight(path: PathBuf, app: Option<String>, services_filter: Vec<String
 
     // 7. Remote preflight audit (declared vs deployed). Best-effort — auth/resolution
     // failures degrade to a note; local validation still ships.
-    let remote_plan = fetch_remote_preflight(&app_name, &managed_services);
+    let remote_plan = fetch_remote_preflight(&app_name, &managed_services, &resolved.config_dir);
 
     // 8. Display
     if output::is_json_mode() {
@@ -1923,8 +1923,9 @@ pub(crate) fn sync_env_vars_if_needed(
 fn fetch_remote_preflight(
     app_name: &str,
     managed: &[project_config::ManagedServiceDeclaration],
+    project_root: &Path,
 ) -> Option<crate::api_types::PreflightPlan> {
-    use crate::api_types::{DeclaredManagedService, DeclaredState};
+    use crate::api_types::DeclaredState;
     use crate::config::load_config;
 
     load_config().api_key.as_ref()?;
@@ -1933,17 +1934,57 @@ fn fetch_remote_preflight(
     let app = crate::resolve::resolve_app(&client, app_name).ok()?;
 
     let declared = DeclaredState {
-        managed_services: managed
-            .iter()
-            .map(|ms| DeclaredManagedService {
-                service_type: ms.name.clone(),
-                name: "default".to_string(),
-                tier: ms.tier.clone(),
-            })
-            .collect(),
+        managed_services: collect_declared_managed_services(managed, project_root),
     };
 
     client.preflight(&app.id, &declared).ok()
+}
+
+/// Build the full list of declared managed services for preflight by merging:
+///
+/// - Legacy top-level `[postgres]` / `[redis]` / `[storage]` sections in
+///   `floo.app.toml` (passed in as `managed`).
+/// - `.floo/services.lock` entries written by `floo services add`.
+///
+/// The lock file is the canonical record for the new explicit-attachment
+/// model — services provisioned via the CLI never appear in `floo.app.toml`,
+/// so leaving them out of the preflight request body would make every
+/// CLI-managed service look like drift (`to_orphan`) and flip the plan
+/// destructive. See feedback id `0cadb329`.
+///
+/// Dedup by (service_type, name): when the same `(type, name)` appears in
+/// both sources, the TOML version wins because it carries an explicit `tier`.
+fn collect_declared_managed_services(
+    managed: &[project_config::ManagedServiceDeclaration],
+    project_root: &Path,
+) -> Vec<crate::api_types::DeclaredManagedService> {
+    use crate::api_types::DeclaredManagedService;
+
+    let mut declared: Vec<DeclaredManagedService> = managed
+        .iter()
+        .map(|ms| DeclaredManagedService {
+            service_type: ms.name.clone(),
+            name: "default".to_string(),
+            tier: ms.tier.clone(),
+        })
+        .collect();
+
+    if let Ok(lock) = crate::services_lock::read(project_root) {
+        for entry in lock.managed_services {
+            let already_present = declared.iter().any(|d| {
+                d.service_type == entry.service_type && d.name == entry.name
+            });
+            if !already_present {
+                declared.push(DeclaredManagedService {
+                    service_type: entry.service_type,
+                    name: entry.name,
+                    tier: None,
+                });
+            }
+        }
+    }
+
+    declared
 }
 
 fn render_plan_human(plan: &crate::api_types::PreflightPlan) {
@@ -1986,6 +2027,103 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    fn write_lock(dir: &Path, body: &str) {
+        let lock_dir = dir.join(".floo");
+        fs::create_dir_all(&lock_dir).unwrap();
+        fs::write(lock_dir.join("services.lock"), body).unwrap();
+    }
+
+    #[test]
+    fn test_collect_declared_managed_services_empty_when_nothing_declared() {
+        let dir = TempDir::new().unwrap();
+        let result = collect_declared_managed_services(&[], dir.path());
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_collect_declared_managed_services_pulls_lock_entries() {
+        let dir = TempDir::new().unwrap();
+        write_lock(
+            dir.path(),
+            r#"{
+              "version": 1,
+              "managed_services": [
+                {"type": "postgres", "name": "default", "status": "ready", "created_at": null},
+                {"type": "redis", "name": "default", "status": "ready", "created_at": null},
+                {"type": "storage", "name": "default", "status": "ready", "created_at": null}
+              ]
+            }"#,
+        );
+        let result = collect_declared_managed_services(&[], dir.path());
+        let pairs: Vec<(String, String)> = result
+            .iter()
+            .map(|d| (d.service_type.clone(), d.name.clone()))
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("postgres".to_string(), "default".to_string()),
+                ("redis".to_string(), "default".to_string()),
+                ("storage".to_string(), "default".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_collect_declared_managed_services_preserves_named_services() {
+        let dir = TempDir::new().unwrap();
+        write_lock(
+            dir.path(),
+            r#"{
+              "version": 1,
+              "managed_services": [
+                {"type": "postgres", "name": "default", "status": "ready", "created_at": null},
+                {"type": "postgres", "name": "analytics", "status": "ready", "created_at": null}
+              ]
+            }"#,
+        );
+        let result = collect_declared_managed_services(&[], dir.path());
+        let names: Vec<String> = result.iter().map(|d| d.name.clone()).collect();
+        assert!(names.contains(&"default".to_string()));
+        assert!(names.contains(&"analytics".to_string()));
+    }
+
+    #[test]
+    fn test_collect_declared_managed_services_dedups_against_toml() {
+        let dir = TempDir::new().unwrap();
+        write_lock(
+            dir.path(),
+            r#"{
+              "version": 1,
+              "managed_services": [
+                {"type": "postgres", "name": "default", "status": "ready", "created_at": null}
+              ]
+            }"#,
+        );
+        let toml_decl = vec![project_config::ManagedServiceDeclaration {
+            name: "postgres".to_string(),
+            tier: Some("basic".to_string()),
+        }];
+        let result = collect_declared_managed_services(&toml_decl, dir.path());
+        assert_eq!(result.len(), 1);
+        // TOML wins because it carries an explicit tier.
+        assert_eq!(result[0].tier.as_deref(), Some("basic"));
+    }
+
+    #[test]
+    fn test_collect_declared_managed_services_no_lock_file() {
+        let dir = TempDir::new().unwrap();
+        // No .floo/services.lock — only TOML declarations come through.
+        let toml_decl = vec![project_config::ManagedServiceDeclaration {
+            name: "postgres".to_string(),
+            tier: None,
+        }];
+        let result = collect_declared_managed_services(&toml_decl, dir.path());
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].service_type, "postgres");
+        assert_eq!(result[0].name, "default");
+    }
 
     #[test]
     fn test_parse_env_file_soft_basic() {
