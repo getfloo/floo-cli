@@ -4,6 +4,8 @@ use std::process;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use serde::Serialize;
+
 use crate::api_client::FlooClient;
 use crate::api_types::Deploy;
 use crate::config::load_config;
@@ -19,6 +21,27 @@ use crate::resolve::resolve_app;
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 const POLL_TIMEOUT: Duration = Duration::from_secs(600); // 10 minutes
 pub(crate) const TERMINAL_STATUSES: &[&str] = &["live", "failed", "superseded"];
+
+#[derive(Debug, Serialize)]
+struct EnvInjectionPlan {
+    mode: String,
+    services: Vec<ServiceEnvInjectionPlan>,
+    notes: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ServiceEnvInjectionPlan {
+    service: String,
+    managed: Vec<ManagedEnvInjection>,
+    required: Vec<String>,
+    optional: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ManagedEnvInjection {
+    handle: String,
+    keys: Vec<String>,
+}
 
 fn status_label(status: &str) -> &str {
     match status {
@@ -99,10 +122,11 @@ pub fn preflight(path: PathBuf, app: Option<String>, services_filter: Vec<String
 
     // 5. Validate
     let (preflight_errors, preflight_warnings) =
-        validate_preflight(&project_path, &services, &resolved);
+        validate_preflight(&project_path, &services, &resolved, &managed_services);
 
     // 6. Generate security notes
     let security_notes = generate_security_notes(&services, &managed_services, &resolved);
+    let env_injection_plan = build_env_injection_plan(&services, &managed_services, &resolved);
 
     // 7. Remote preflight audit (declared vs deployed). Best-effort — auth/resolution
     // failures degrade to a note; local validation still ships.
@@ -148,6 +172,7 @@ pub fn preflight(path: PathBuf, app: Option<String>, services_filter: Vec<String
                 "app": app_name,
                 "services": svc_json,
                 "managed_services": managed_json,
+                "env_injection_plan": env_injection_plan,
                 "warnings": warning_strings,
                 "security_notes": security_notes,
                 "plan": remote_plan.as_ref().map(crate::output::to_value),
@@ -160,6 +185,7 @@ pub fn preflight(path: PathBuf, app: Option<String>, services_filter: Vec<String
             &resolved,
             &services,
             &per_service_detection,
+            &env_injection_plan,
             &preflight_warnings,
             &preflight_errors,
         );
@@ -332,7 +358,8 @@ pub fn deploy(
 
     // 5. Validate per-service (port, name, Dockerfile EXPOSE, env_file)
     let (preflight_errors, preflight_warnings) =
-        validate_preflight(&project_path, &services, &resolved);
+        validate_preflight(&project_path, &services, &resolved, &managed_services);
+    let env_injection_plan = build_env_injection_plan(&services, &managed_services, &resolved);
 
     // 6. Display preflight info
     if !output::is_json_mode() {
@@ -341,6 +368,7 @@ pub fn deploy(
             &resolved,
             &services,
             &per_service_detection,
+            &env_injection_plan,
             &preflight_warnings,
             &preflight_errors,
         );
@@ -394,6 +422,7 @@ pub fn deploy(
             "app": app_name,
             "services": svc_json,
             "managed_services": managed_json,
+            "env_injection_plan": env_injection_plan,
             "warnings": warning_strings,
             "valid": preflight_errors.is_empty(),
         }));
@@ -916,16 +945,80 @@ fn deploy_rebuild(
     );
 }
 
+fn service_looks_like_rails(service_dir: &Path) -> bool {
+    let gemfile = service_dir.join("Gemfile");
+    if let Ok(contents) = std::fs::read_to_string(&gemfile) {
+        let lower = contents.to_lowercase();
+        if lower.contains("gem \"rails\"") || lower.contains("gem 'rails'") {
+            return true;
+        }
+    }
+
+    let app_config = service_dir.join("config").join("application.rb");
+    if let Ok(contents) = std::fs::read_to_string(app_config) {
+        return contents.contains("Rails::Application") || contents.contains("require \"rails\"");
+    }
+
+    false
+}
+
+fn env_files_for_service(
+    service_dir: &Path,
+    configured_env_file: Option<&str>,
+) -> Vec<(String, PathBuf)> {
+    let mut files: Vec<(String, PathBuf)> = Vec::new();
+    let mut labels: Vec<String> = Vec::new();
+    if let Some(env_file) = configured_env_file {
+        labels.push(env_file.to_string());
+    }
+    labels.extend(
+        [".env", ".env.local", ".env.production", ".env.development"]
+            .iter()
+            .map(|label| label.to_string()),
+    );
+
+    for label in labels {
+        if files.iter().any(|(existing, _)| existing == &label) {
+            continue;
+        }
+        files.push((label.clone(), service_dir.join(label)));
+    }
+    files
+}
+
+fn parse_env_assignment(line: &str) -> Option<(&str, &str)> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return None;
+    }
+    let (key, value) = trimmed.split_once('=')?;
+    Some((
+        key.trim(),
+        value.trim().trim_matches('"').trim_matches('\''),
+    ))
+}
+
+fn is_cloudsql_socket_database_url(value: &str) -> bool {
+    let lower = value.to_lowercase();
+    lower.contains("@/")
+        && (lower.contains("/cloudsql/")
+            || lower.contains("host=/cloudsql")
+            || lower.contains("%2fcloudsql%2f")
+            || lower.contains("host=%2fcloudsql"))
+}
+
 /// Validate services for common config errors. Returns (errors, warnings).
 /// Absorbs the validation logic that was previously in `floo check`.
 fn validate_preflight(
     project_path: &Path,
     services: &[ServiceConfig],
     resolved: &project_config::ResolvedApp,
+    managed_services: &[project_config::ManagedServiceDeclaration],
 ) -> (Vec<serde_json::Value>, Vec<serde_json::Value>) {
     let mut errors: Vec<serde_json::Value> = Vec::new();
     let mut warnings: Vec<serde_json::Value> = Vec::new();
     let mut seen_names: Vec<String> = Vec::new();
+    let has_managed_postgres = managed_services.iter().any(|ms| ms.name == "postgres");
 
     for svc in services {
         // Validate service name
@@ -958,6 +1051,11 @@ fn validate_preflight(
         }
 
         let svc_dir = project_path.join(&svc.path);
+        let configured_env_file = resolved
+            .app_config
+            .as_ref()
+            .and_then(|app_cfg| app_cfg.services.get(&svc.name))
+            .and_then(|entry| entry.env_file.as_deref());
 
         // Check env_file exists
         if let Some(ref app_cfg) = resolved.app_config {
@@ -970,6 +1068,31 @@ fn validate_preflight(
                             "code": "ENV_FILE_NOT_FOUND",
                             "message": format!("Service '{}' env_file '{env_file}' not found on disk.", svc.name),
                         }));
+                    }
+                }
+            }
+        }
+
+        if has_managed_postgres && service_looks_like_rails(&svc_dir) {
+            for (env_label, env_path) in env_files_for_service(&svc_dir, configured_env_file) {
+                let Ok(contents) = std::fs::read_to_string(&env_path) else {
+                    continue;
+                };
+                for line in contents.lines() {
+                    let Some((key, value)) = parse_env_assignment(line) else {
+                        continue;
+                    };
+                    if key == "DATABASE_URL" && is_cloudsql_socket_database_url(value) {
+                        warnings.push(serde_json::json!({
+                            "path": svc.path,
+                            "code": "RAILS_DATABASE_URL_SOCKET_DSN",
+                            "message": format!(
+                                "Service '{}' looks like Rails and {env_label} contains a Cloud SQL socket-style DATABASE_URL. Rails parses DATABASE_URL with Ruby's URI parser before app code runs, so postgresql://user:pass@/db?host=/cloudsql/... can fail at boot. Remove the stale local override or use floo's framework-compatible managed Postgres URL.",
+                                svc.name
+                            ),
+                            "hint": "Managed Postgres now injects DATABASE_URL plus PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD. The DATABASE_URL value should have a normal host, for example postgresql://user:pass@127.0.0.1:5432/db.",
+                        }));
+                        break;
                     }
                 }
             }
@@ -1107,32 +1230,36 @@ fn generate_security_notes(
         ));
     }
 
-    // Warn about managed service env vars reaching web services
-    if !managed_services.is_empty() && services.len() > 1 {
-        let web_services: Vec<&str> = services
+    // Warn about managed service env vars reaching frontend services.
+    let env_plan = build_env_injection_plan(services, managed_services, resolved);
+    if services.len() > 1 {
+        let web_service_names: Vec<&str> = services
             .iter()
             .filter(|s| s.service_type == ServiceType::Web)
             .map(|s| s.name.as_str())
             .collect();
-
-        if !web_services.is_empty() {
-            let env_var_names: Vec<&str> = managed_services
-                .iter()
-                .flat_map(|ms| match ms.name.as_str() {
-                    "postgres" => vec!["DATABASE_URL"],
-                    "redis" => vec!["REDIS_URL"],
-                    "storage" => vec!["STORAGE_BUCKET", "STORAGE_URL"],
-                    _ => vec![],
-                })
-                .collect();
-
-            if !env_var_names.is_empty() {
-                notes.push(format!(
-                    "Managed service secrets ({}) are available to all services \
-                     including {}. To restrict: floo env set <KEY>=<val> --services <backend>",
-                    env_var_names.join(", "),
-                    web_services.join(", "),
-                ));
+        if env_plan.mode == "implicit_all"
+            && !web_service_names.is_empty()
+            && env_plan.services.iter().any(|svc| !svc.managed.is_empty())
+        {
+            notes.push(format!(
+                "Managed service credentials are implicitly available to every service, including {}. Add [services.<name>.env] managed = [...] to attach them only where needed.",
+                web_service_names.join(", "),
+            ));
+        } else {
+            for svc_plan in &env_plan.services {
+                let Some(svc) = services.iter().find(|s| s.name == svc_plan.service) else {
+                    continue;
+                };
+                if svc.service_type == ServiceType::Web && !svc_plan.managed.is_empty() {
+                    let handles: Vec<&str> =
+                        svc_plan.managed.iter().map(|m| m.handle.as_str()).collect();
+                    notes.push(format!(
+                        "Web service '{}' receives managed credentials: {}. Keep this only if browser-facing code really needs them server-side.",
+                        svc.name,
+                        handles.join(", "),
+                    ));
+                }
             }
         }
     }
@@ -1195,12 +1322,154 @@ fn looks_like_secret(key: &str) -> bool {
     secret_patterns.iter().any(|p| key_upper.contains(p))
 }
 
+fn env_contract_for_service(
+    resolved: &project_config::ResolvedApp,
+    svc: &ServiceConfig,
+) -> Option<project_config::ServiceEnvContract> {
+    if let Some(app_cfg) = resolved.app_config.as_ref() {
+        if let Some(entry) = app_cfg.services.get(&svc.name) {
+            if entry.env.is_some() {
+                return entry.env.clone();
+            }
+        }
+    }
+
+    let service_dir = if svc.path == "." {
+        resolved.config_dir.clone()
+    } else {
+        resolved.config_dir.join(&svc.path)
+    };
+    project_config::load_service_env_contract(&service_dir)
+        .ok()
+        .flatten()
+}
+
+fn build_env_injection_plan(
+    services: &[ServiceConfig],
+    managed_services: &[project_config::ManagedServiceDeclaration],
+    resolved: &project_config::ResolvedApp,
+) -> EnvInjectionPlan {
+    let contracts: Vec<Option<project_config::ServiceEnvContract>> = services
+        .iter()
+        .map(|svc| env_contract_for_service(resolved, svc))
+        .collect();
+    let explicit_managed = contracts
+        .iter()
+        .any(|contract| contract.as_ref().and_then(|c| c.managed.as_ref()).is_some());
+    let declared_handles = managed_env_handles(resolved, managed_services);
+
+    let mut notes = Vec::new();
+    let mode = if explicit_managed {
+        "explicit".to_string()
+    } else if !declared_handles.is_empty() {
+        notes.push(
+            "No service declares env.managed, so managed service credentials use legacy implicit injection."
+                .to_string(),
+        );
+        "implicit_all".to_string()
+    } else {
+        "none".to_string()
+    };
+
+    let service_plans = services
+        .iter()
+        .zip(contracts.iter())
+        .map(|(svc, contract)| {
+            let required = contract
+                .as_ref()
+                .map(|c| c.required.clone())
+                .unwrap_or_default();
+            let optional = contract
+                .as_ref()
+                .map(|c| c.optional.clone())
+                .unwrap_or_default();
+            let handles = if explicit_managed {
+                contract
+                    .as_ref()
+                    .and_then(|c| c.normalized_managed("[env]").ok().flatten())
+                    .unwrap_or_default()
+            } else {
+                declared_handles.clone()
+            };
+            let managed = handles
+                .iter()
+                .map(|handle| ManagedEnvInjection {
+                    handle: handle.clone(),
+                    keys: project_config::managed_env_attachment_keys(handle),
+                })
+                .collect();
+            ServiceEnvInjectionPlan {
+                service: svc.name.clone(),
+                managed,
+                required,
+                optional,
+            }
+        })
+        .collect();
+
+    EnvInjectionPlan {
+        mode,
+        services: service_plans,
+        notes,
+    }
+}
+
+fn managed_env_handles(
+    resolved: &project_config::ResolvedApp,
+    managed_services: &[project_config::ManagedServiceDeclaration],
+) -> Vec<String> {
+    let mut handles: Vec<String> = managed_services.iter().map(|ms| ms.name.clone()).collect();
+    if let Ok(lock) = crate::services_lock::read(&resolved.config_dir) {
+        for managed in lock.managed_services {
+            let handle = if managed.name == "default" {
+                managed.service_type
+            } else {
+                format!("{}:{}", managed.service_type, managed.name)
+            };
+            handles.push(handle);
+        }
+    }
+    handles.sort();
+    handles.dedup();
+    handles
+}
+
+fn display_env_injection_plan(plan: &EnvInjectionPlan) {
+    eprintln!("  Env injection plan:");
+    match plan.mode.as_str() {
+        "explicit" => eprintln!("    mode: explicit per-service env.managed"),
+        "implicit_all" => eprintln!("    mode: legacy implicit managed env on every service"),
+        _ => eprintln!("    mode: no managed service credentials declared locally"),
+    }
+    for note in &plan.notes {
+        eprintln!("    note: {note}");
+    }
+    for svc in &plan.services {
+        eprintln!("    {}", svc.service);
+        if svc.managed.is_empty() {
+            eprintln!("      managed: none");
+        } else {
+            for managed in &svc.managed {
+                eprintln!("      {} -> {}", managed.handle, managed.keys.join(", "));
+            }
+        }
+        if !svc.required.is_empty() {
+            eprintln!("      required: {}", svc.required.join(", "));
+        }
+        if !svc.optional.is_empty() {
+            eprintln!("      optional: {}", svc.optional.join(", "));
+        }
+    }
+    eprintln!();
+}
+
 /// Display preflight info in human-readable format.
 fn display_preflight_human(
     app_name: &str,
     resolved: &project_config::ResolvedApp,
     services: &[ServiceConfig],
     per_service_detection: &[(String, DetectionResult)],
+    env_injection_plan: &EnvInjectionPlan,
     warnings: &[serde_json::Value],
     errors: &[serde_json::Value],
 ) {
@@ -1258,6 +1527,8 @@ fn display_preflight_human(
         );
         eprintln!();
     }
+
+    display_env_injection_plan(env_injection_plan);
 
     // Show global [resources] if present
     if let Some(ref app_cfg) = resolved.app_config {

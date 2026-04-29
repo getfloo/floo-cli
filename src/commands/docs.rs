@@ -93,8 +93,8 @@ Floo Quickstart — End-to-End Walkthrough
   floo services add redis --app my-app
   floo services add storage --app my-app
 
-  Credentials arrive as runtime env vars (DATABASE_URL, REDIS_URL,
-  STORAGE_BUCKET + STORAGE_URL). The commands write .floo/services.lock,
+  Credentials arrive as runtime env vars (Postgres: DATABASE_URL + PG*,
+  Redis: REDIS_URL, Storage: STORAGE_BUCKET + STORAGE_URL). The commands write .floo/services.lock,
   which you should commit so managed-service state changes are visible
   in `git diff` alongside code.
 
@@ -193,9 +193,19 @@ confirmation. See also: floo docs state-model.
 
   Connection credentials are injected at runtime, never stored in the
   lock file or in your repo:
-    postgres → DATABASE_URL
+    postgres → DATABASE_URL + PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD
     redis    → REDIS_URL
     storage  → STORAGE_BUCKET + STORAGE_URL (use STORAGE_URL for signed URLs)
+
+  In multi-service apps, attach those credentials per service:
+    [services.api.env]
+    managed = [\"postgres\", \"redis\"]
+
+    [services.web.env]
+    managed = []
+
+  Single-service apps can use top-level [env] managed = [] in
+  floo.service.toml to opt out of managed credentials entirely.
 
 ## Managed Service Tiers
 
@@ -418,9 +428,19 @@ Floo Config Files
     floo env list --services api
     floo env list --services web
 
-  Managed service env vars (DATABASE_URL, REDIS_URL, STORAGE_BUCKET) are
-  set at app scope and available to all services. Use --services to restrict
-  access if needed.
+  Managed service env vars are generated at app scope, then attached to
+  services by [services.<name>.env] managed:
+
+    [services.web.env]
+    managed = []
+
+    [services.api.env]
+    required = [\"STRIPE_SECRET_KEY\"]
+    managed = [\"postgres\", \"redis\"]
+
+  If no service declares managed, floo preserves legacy all-service injection.
+  Once any service declares it, omitted services receive no managed credentials.
+  `floo preflight --json` shows the exact env_injection_plan.
 
 ## Commands
 
@@ -499,6 +519,11 @@ Floo Deploy Flow
 
   floo preflight                   — validate config, detect runtimes, check readiness
   floo preflight --json            — structured output for agents
+
+  JSON includes env_injection_plan: per-service managed attachments, generated
+  env keys (DATABASE_URL + PG*, REDIS_URL, STORAGE_BUCKET/STORAGE_URL),
+  required keys, optional keys, and whether the app is in explicit or legacy
+  implicit mode.
 
 ## Redeploy Options
 
@@ -729,16 +754,16 @@ Floo — Golden Path
 
 ## How to Add a Database
 
-  Add to floo.app.toml:
+  Run:
 
-  [postgres]
-  tier = \"basic\"
+  floo services add postgres --app my-app
 
-  Commit the change and push to GitHub:
-  git add floo.app.toml && git commit -m \"feat: add postgres\"
+  Commit the generated lock file and push to GitHub:
+  git add .floo/services.lock && git commit -m \"feat: add postgres\"
   git push origin main
 
-  The database is auto-provisioned on the next deploy. Credentials arrive as DATABASE_URL.
+  The database is available on the next deploy. Credentials arrive as a
+  standard DATABASE_URL plus PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD.
 
 ## How to Add a Custom Domain
 
@@ -1038,7 +1063,11 @@ App is live at https://my-rails-app-dev.on.getfloo.com.
   git add .floo/services.lock && git commit -m \"feat: add postgres\"
   git push origin main
 
-Rails reads DATABASE_URL automatically. Confirm config/database.yml has:
+Rails reads DATABASE_URL automatically. floo injects a normal PostgreSQL
+URI, so ActiveRecord can parse it without custom Cloud SQL socket code.
+`floo preflight` warns if a local env file still contains the old Cloud
+SQL socket-style DATABASE_URL that Ruby's URI parser rejects.
+Confirm config/database.yml has:
 
   production:
     primary:

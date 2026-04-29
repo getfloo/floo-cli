@@ -19,7 +19,16 @@ pub use discover::{
     discover_managed_services, discover_services, filter_services, ManagedServiceDeclaration,
 };
 pub use resolve::{resolve_app_context, AppSource, ResolvedApp};
-pub use service_config::{load_service_config, ServiceConfig, ServiceIngress, ServiceType};
+pub use service_config::{
+    load_service_config, managed_env_attachment_keys, ServiceConfig, ServiceEnvContract,
+    ServiceIngress, ServiceType,
+};
+
+pub fn load_service_env_contract(
+    dir: &std::path::Path,
+) -> Result<Option<ServiceEnvContract>, crate::errors::FlooError> {
+    Ok(load_service_config(dir)?.and_then(|cfg| cfg.env))
+}
 
 /// Wire-format representation of a cron job sent to the API.
 ///

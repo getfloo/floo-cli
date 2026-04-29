@@ -31,8 +31,9 @@ pub struct ResourceConfig {
 /// Declares names and kinds only — values always live in `.env` (local) or
 /// encrypted EnvVar rows (server-side). The server-side deploy pipeline
 /// gates on `required`: if any named key is missing or empty in the target
-/// environment, the deploy fails with `MISSING_REQUIRED_ENV_VAR`. `optional`
-/// is purely documentary.
+/// environment, the deploy fails with `MISSING_REQUIRED_ENV_VAR`. `managed`
+/// names floo-managed service credentials to inject into this service, and
+/// `optional` is purely documentary.
 ///
 /// Attached under `[services.<name>.env]` in `floo.app.toml` (inline mode)
 /// or `[env]` at the top level of `floo.service.toml` (delegated mode).
@@ -43,6 +44,8 @@ pub struct ServiceEnvContract {
     pub required: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub optional: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed: Option<Vec<String>>,
 }
 
 impl ServiceEnvContract {
@@ -72,7 +75,17 @@ impl ServiceEnvContract {
                 }
             }
         }
+        if let Some(managed) = &self.managed {
+            normalize_managed_env_attachments(managed, where_)?;
+        }
         Ok(())
+    }
+
+    pub fn normalized_managed(&self, where_: &str) -> Result<Option<Vec<String>>, FlooError> {
+        self.managed
+            .as_ref()
+            .map(|managed| normalize_managed_env_attachments(managed, where_))
+            .transpose()
     }
 }
 
@@ -83,6 +96,101 @@ fn is_valid_env_name(name: &str) -> bool {
         _ => return false,
     }
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+pub fn normalize_managed_env_attachment(raw: &str, where_: &str) -> Result<String, FlooError> {
+    let handle = raw.trim().to_ascii_lowercase();
+    if handle.is_empty() {
+        return Err(FlooError::with_suggestion(
+            ErrorCode::InvalidProjectConfig,
+            format!("{where_} managed contains an empty attachment handle."),
+            "Use postgres, redis, storage, or type:name for named managed services.".to_string(),
+        ));
+    }
+
+    let mut parts = handle.splitn(2, ':');
+    let service_type = parts.next().unwrap_or_default();
+    let service_name = parts.next().unwrap_or("default");
+    if !["postgres", "redis", "storage"].contains(&service_type) {
+        return Err(FlooError::with_suggestion(
+            ErrorCode::InvalidProjectConfig,
+            format!("{where_} managed contains unknown attachment '{raw}'."),
+            "Supported managed attachments are postgres, redis, storage, or type:name.".to_string(),
+        ));
+    }
+    if !is_valid_managed_service_name(service_name) {
+        return Err(FlooError::with_suggestion(
+            ErrorCode::InvalidProjectConfig,
+            format!("{where_} managed contains invalid attachment '{raw}'."),
+            "Managed service names must match /^[a-z][a-z0-9_]*$/ and be at most 63 chars."
+                .to_string(),
+        ));
+    }
+    if service_name == "default" {
+        Ok(service_type.to_string())
+    } else {
+        Ok(format!("{service_type}:{service_name}"))
+    }
+}
+
+pub fn normalize_managed_env_attachments(
+    handles: &[String],
+    where_: &str,
+) -> Result<Vec<String>, FlooError> {
+    let mut seen = HashSet::new();
+    let mut normalized = Vec::with_capacity(handles.len());
+    for raw in handles {
+        let handle = normalize_managed_env_attachment(raw, where_)?;
+        if !seen.insert(handle.clone()) {
+            return Err(FlooError::with_suggestion(
+                ErrorCode::InvalidProjectConfig,
+                format!("{where_} managed declares '{handle}' more than once."),
+                "Each managed service attachment may appear at most once.".to_string(),
+            ));
+        }
+        normalized.push(handle);
+    }
+    Ok(normalized)
+}
+
+pub fn managed_env_attachment_keys(handle: &str) -> Vec<String> {
+    let (service_type, service_name) = handle
+        .split_once(':')
+        .map_or((handle, "default"), |(kind, name)| (kind, name));
+    let suffix = if service_name == "default" {
+        String::new()
+    } else {
+        format!("_{}", service_name.to_ascii_uppercase())
+    };
+    match service_type {
+        "postgres" if service_name == "default" => vec![
+            "DATABASE_URL".to_string(),
+            "PGHOST".to_string(),
+            "PGPORT".to_string(),
+            "PGDATABASE".to_string(),
+            "PGUSER".to_string(),
+            "PGPASSWORD".to_string(),
+        ],
+        "postgres" => vec![format!("DATABASE_URL{suffix}")],
+        "redis" => vec![format!("REDIS_URL{suffix}")],
+        "storage" => vec![
+            format!("STORAGE_BUCKET{suffix}"),
+            format!("STORAGE_URL{suffix}"),
+        ],
+        _ => Vec::new(),
+    }
+}
+
+fn is_valid_managed_service_name(name: &str) -> bool {
+    if name.is_empty() || name.len() > 63 {
+        return false;
+    }
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_lowercase() => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
 // --- API wire format (sent to the API as JSON) ---
@@ -908,8 +1016,13 @@ optional = ["JWT_SECRET"]
         let contract = ServiceEnvContract {
             required: vec!["STRIPE_KEY".into(), "_INTERNAL".into(), "A1_B2".into()],
             optional: vec![],
+            managed: Some(vec!["postgres".into(), "redis:cache".into()]),
         };
         contract.validate("[env]").unwrap();
+        assert_eq!(
+            contract.normalized_managed("[env]").unwrap(),
+            Some(vec!["postgres".into(), "redis:cache".into()])
+        );
     }
 
     #[test]
@@ -917,8 +1030,21 @@ optional = ["JWT_SECRET"]
         let contract = ServiceEnvContract {
             required: vec!["MY-KEY".into()],
             optional: vec![],
+            managed: None,
         };
         let err = contract.validate("[env]").unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+    }
+
+    #[test]
+    fn test_env_contract_invalid_managed_attachment_rejected() {
+        let contract = ServiceEnvContract {
+            required: vec![],
+            optional: vec![],
+            managed: Some(vec!["mysql".into()]),
+        };
+        let err = contract.validate("[env]").unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+        assert!(err.message.contains("unknown attachment"));
     }
 }
