@@ -113,6 +113,12 @@ pub fn status(app_name: &str) {
             ),
             None,
         );
+        if let Some(runtime_url) = app.runtime_url.as_deref() {
+            output::info(&format!("  Runtime URL:  {runtime_url}"), None);
+            output::dim_line(
+                "              \u{21b3} direct Cloud Run URL — debug only, not for clients",
+            );
+        }
         output::info(&format!("  Org:      {org_display}"), None);
         output::info(&format!("  ID:       {}", app.id), None);
         output::info(
