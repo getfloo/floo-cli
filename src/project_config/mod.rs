@@ -9,6 +9,43 @@ pub const LEGACY_CONFIG_FILE: &str = "floo.toml";
 const SCHEMA_URL: &str = "https://getfloo.com/docs/floo-toml";
 const MAX_WALK_UP_LEVELS: usize = 20;
 
+/// Convert a `toml::de::Error` from project-config parsing into a FlooError
+/// with a helpful suggestion. When serde reports an `unknown field` (the
+/// `deny_unknown_fields` failure mode), surface a CLI-version-skew hint:
+/// the most common cause is a TOML key that exists in newer docs but the
+/// locally-installed CLI doesn't recognize yet, and the previous "see schema"
+/// suggestion sent users to the docs that already document the rejected key.
+pub(super) fn toml_parse_error(file_label: &str, err: toml::de::Error) -> crate::errors::FlooError {
+    let raw = err.to_string();
+    let suggestion = match extract_unknown_field(&raw) {
+        Some(field) => format!(
+            "Unknown key `{field}` may require a newer CLI \
+             (you're on {version}). Try `floo update` and re-run preflight. \
+             If the key is correct for your installed version, see {SCHEMA_URL}.",
+            version = crate::constants::VERSION,
+        ),
+        None => format!("See {SCHEMA_URL} for the schema reference."),
+    };
+
+    crate::errors::FlooError::with_suggestion(
+        crate::errors::ErrorCode::InvalidProjectConfig,
+        format!("Invalid {file_label}: {raw}"),
+        suggestion,
+    )
+}
+
+/// Extract the field name from the `toml` crate's "unknown field" message.
+///
+/// The crate emits errors like:
+///   `unknown field \`access_policy\`, expected one of \`name\`, ...`
+fn extract_unknown_field(msg: &str) -> Option<&str> {
+    const PREFIX: &str = "unknown field `";
+    let start = msg.find(PREFIX)? + PREFIX.len();
+    let rest = &msg[start..];
+    let end = rest.find('`')?;
+    Some(&rest[..end])
+}
+
 #[cfg(test)]
 pub use app_config::AppServiceType;
 pub use app_config::{
@@ -126,5 +163,59 @@ mod tests {
         assert!(validate_service_name("my_service").is_err());
         assert!(validate_service_name("my.service").is_err());
         assert!(validate_service_name("my service").is_err());
+    }
+
+    #[test]
+    fn test_extract_unknown_field_typical_message() {
+        let msg = "TOML parse error at line 4, column 1\n  |\n4 | access_policy = \"domain\"\n  | ^^^^^^^^^^^^^\nunknown field `access_policy`, expected `name`";
+        assert_eq!(extract_unknown_field(msg), Some("access_policy"));
+    }
+
+    #[test]
+    fn test_extract_unknown_field_returns_none_when_no_match() {
+        let msg = "TOML parse error: missing field `name`";
+        assert_eq!(extract_unknown_field(msg), None);
+    }
+
+    #[test]
+    fn test_toml_parse_error_unknown_field_suggests_update() {
+        // Synthesize the same path real callers hit.
+        #[derive(serde::Deserialize, Debug)]
+        #[serde(deny_unknown_fields)]
+        #[allow(dead_code)]
+        struct Probe {
+            name: String,
+        }
+        let err = toml::from_str::<Probe>("name = \"x\"\nfoo = 1\n").unwrap_err();
+        let floo_err = toml_parse_error("floo.app.toml", err);
+        let suggestion = floo_err
+            .suggestion
+            .expect("unknown-field path always sets a suggestion");
+        assert!(suggestion.contains("`foo`"), "got: {suggestion}");
+        assert!(suggestion.contains("floo update"), "got: {suggestion}");
+        // Falls back to schema link when the user is on a current CLI.
+        assert!(suggestion.contains(SCHEMA_URL), "got: {suggestion}");
+    }
+
+    #[test]
+    fn test_toml_parse_error_non_unknown_field_uses_schema_url() {
+        // A non-`unknown field` parse error (here: type mismatch) should fall
+        // back to the schema-reference suggestion. Sending users to
+        // `floo update` for a typo would be misleading.
+        #[derive(serde::Deserialize, Debug)]
+        #[allow(dead_code)]
+        struct Probe {
+            count: u32,
+        }
+        let err = toml::from_str::<Probe>("count = \"not a number\"\n").unwrap_err();
+        let floo_err = toml_parse_error("floo.app.toml", err);
+        let suggestion = floo_err
+            .suggestion
+            .expect("non-unknown-field path still sets a suggestion");
+        assert!(suggestion.contains(SCHEMA_URL), "got: {suggestion}");
+        assert!(
+            !suggestion.contains("floo update"),
+            "should not suggest update for non-schema-skew errors, got: {suggestion}"
+        );
     }
 }

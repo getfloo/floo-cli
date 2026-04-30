@@ -335,13 +335,8 @@ pub fn load_service_config(dir: &Path) -> Result<Option<ServiceFileConfig>, Floo
         )
     })?;
 
-    let config: ServiceFileConfig = toml::from_str(&content).map_err(|e| {
-        FlooError::with_suggestion(
-            ErrorCode::InvalidProjectConfig,
-            format!("Invalid {}: {e}", super::SERVICE_CONFIG_FILE),
-            format!("See {SCHEMA_URL} for the schema reference."),
-        )
-    })?;
+    let config: ServiceFileConfig = toml::from_str(&content)
+        .map_err(|e| super::toml_parse_error(super::SERVICE_CONFIG_FILE, e))?;
 
     if let Some(ref env) = config.env {
         env.validate(&format!("[env] in {}", super::SERVICE_CONFIG_FILE))?;
