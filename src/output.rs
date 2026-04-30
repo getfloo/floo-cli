@@ -9,6 +9,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::errors::ErrorCode;
+use crate::redact;
 
 static JSON_MODE: AtomicBool = AtomicBool::new(false);
 static DRY_RUN: AtomicBool = AtomicBool::new(false);
@@ -69,8 +70,26 @@ pub fn is_interactive() -> bool {
     !is_json_mode() && io::stdin().is_terminal()
 }
 
+/// Single chokepoint for everything the CLI writes to stdout in JSON
+/// mode.
+///
+/// Every `--json` payload runs through `redact::process_in_place` here.
+/// If the payload contains any credential-shaped value the top-level
+/// object also gets a `contains_secrets: true` marker — fired
+/// regardless of whether the value was redacted or revealed, so agent
+/// harnesses can refuse the payload before it lands in a transcript.
+/// This is the secret-leakage doctrine for the CLI: callers do not need
+/// to remember to redact, the boundary does it.
 pub fn print_json(data: &Value) {
-    println!("{}", serde_json::to_string(data).unwrap_or_default());
+    let mut owned = data.clone();
+    let contains_secrets = redact::process_in_place(&mut owned);
+    if contains_secrets {
+        if let Value::Object(map) = &mut owned {
+            map.entry(redact::CONTAINS_SECRETS_KEY.to_string())
+                .or_insert(Value::Bool(true));
+        }
+    }
+    println!("{}", serde_json::to_string(&owned).unwrap_or_default());
 }
 
 pub fn success(message: &str, data: Option<Value>) {
