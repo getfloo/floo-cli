@@ -376,6 +376,21 @@ read-only + manual trigger; new jobs are added by editing config and deploying."
     #[command(subcommand)]
     Reparo(ReparoCommands),
 
+    /// Diagnose an app's posture in one round trip.
+    #[command(
+        subcommand,
+        long_about = "\
+Diagnose an app's posture in one round trip.
+
+Read-only diagnostic surface — answers questions like 'why isn't accounts
+mode active?' without requiring agents to curl the gateway, parse request
+logs, and join four database tables by hand.
+
+The endpoint is intentionally narrow: no env-var values, no secret
+material, no Cloud Run audit payloads. Those live on dedicated surfaces."
+    )]
+    Doctor(DoctorCommands),
+
     /// List all commands (structured for agents in --json mode).
     #[command(name = "commands")]
     Discover,
@@ -1074,6 +1089,24 @@ pub enum ReparoCommands {
 }
 
 #[derive(Subcommand)]
+pub enum DoctorCommands {
+    /// Diagnose an app's accounts-mode posture (feedback 64268e05).
+    #[command(after_help = "\
+Examples:
+  floo doctor accounts                Use the app from floo.app.toml
+  floo doctor accounts --app foo      Diagnose a specific app
+  floo doctor accounts --json         Machine-readable output for agents
+
+Exit code is non-zero when drift is detected, so scripts can branch on
+`floo doctor accounts --json && deploy_things` without parsing the body.")]
+    Accounts {
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum CronCommands {
     /// List all cron jobs for an app and their last run status.
     List {
@@ -1507,6 +1540,10 @@ pub fn run() {
             }
         },
 
+        Commands::Doctor(sub) => match sub {
+            DoctorCommands::Accounts { app } => commands::doctor::accounts(app.as_deref()),
+        },
+
         Commands::Feedback {
             message,
             category,
@@ -1646,12 +1683,27 @@ mod tests {
             ("update", &["floo", "update", "--dry-run"]),
             ("env set", &["floo", "env", "set", "K=V", "--dry-run"]),
             ("env remove", &["floo", "env", "remove", "K", "--dry-run"]),
-            ("env import", &["floo", "env", "import", ".env", "--dry-run"]),
-            ("apps delete", &["floo", "apps", "delete", "myapp", "--dry-run"]),
-            ("domains add", &["floo", "domains", "add", "x.com", "--dry-run"]),
-            ("domains remove", &["floo", "domains", "remove", "x.com", "--dry-run"]),
+            (
+                "env import",
+                &["floo", "env", "import", ".env", "--dry-run"],
+            ),
+            (
+                "apps delete",
+                &["floo", "apps", "delete", "myapp", "--dry-run"],
+            ),
+            (
+                "domains add",
+                &["floo", "domains", "add", "x.com", "--dry-run"],
+            ),
+            (
+                "domains remove",
+                &["floo", "domains", "remove", "x.com", "--dry-run"],
+            ),
             ("cron run", &["floo", "cron", "run", "myjob", "--dry-run"]),
-            ("deploys rollback", &["floo", "deploys", "rollback", "myapp", "abc", "--dry-run"]),
+            (
+                "deploys rollback",
+                &["floo", "deploys", "rollback", "myapp", "abc", "--dry-run"],
+            ),
         ];
 
         let listed: std::collections::HashSet<&str> =

@@ -17,6 +17,7 @@ pub mod deploy;
 pub mod deploys;
 pub mod dev;
 pub mod docs;
+pub mod doctor;
 pub mod domains;
 pub mod env;
 pub mod feedback;
