@@ -342,10 +342,22 @@ Examples:
     /// List and trigger scheduled cron jobs for an app.
     #[command(
         subcommand,
+        long_about = "\
+List and trigger scheduled cron jobs for an app.
+
+Cron jobs are declared in floo.app.toml under [cron.<name>] sections — they
+are not created with the CLI. This command surface is read-only (`list`) plus
+manual trigger (`run`); jobs are reconciled from config on every deploy.
+
+See `floo docs app-toml` (look for 'Cron Jobs') for the full [cron.<name>]
+schema, or https://getfloo.com/docs/guides/cron-jobs for the long-form guide.",
         after_help = "\
 Examples:
   floo cron list --app my-app              List all cron jobs and their last run status
-  floo cron run daily-report --app my-app  Manually trigger a cron job"
+  floo cron run daily-report --app my-app  Manually trigger a cron job
+
+Schedules are declared in floo.app.toml under [cron.<name>]. This CLI is
+read-only + manual trigger; new jobs are added by editing config and deploying."
     )]
     Cron(CronCommands),
 
@@ -1092,10 +1104,17 @@ fn rewrite_bare_version_flag(args: Vec<OsString>) -> Vec<OsString> {
     rewritten
 }
 
-/// Reject `--dry-run` for mutating commands that don't implement it yet.
-/// Read-only commands silently ignore the flag; unsupported mutators error early.
-fn reject_unsupported_dry_run(command: &Commands) {
-    let unsupported = matches!(
+/// Mutating commands that have not implemented `--dry-run`.
+///
+/// Read-only commands silently ignore the flag (they don't mutate, so a
+/// preview of "do nothing" is a no-op). Mutating commands either implement
+/// `--dry-run` themselves (handled in their own command module) or are
+/// listed here so we error early instead of partially executing.
+///
+/// Tested via `dry_run_unsupported_matches_intent` so a stale entry here
+/// (e.g. a command grew dry-run support but was never removed) fails fast.
+fn dry_run_is_unsupported(command: &Commands) -> bool {
+    matches!(
         command,
         Commands::Init { .. }
             | Commands::Apps(AppsCommands::Github(
@@ -1110,7 +1129,6 @@ fn reject_unsupported_dry_run(command: &Commands) {
             | Commands::Billing(BillingCommands::SpendCap(SpendCapCommands::Set { .. }))
             | Commands::Run { .. }
             | Commands::Db(DbCommands::Migrate { .. })
-            | Commands::Cron(CronCommands::Run { .. })
             | Commands::Feedback { .. }
             | Commands::Skills(SkillsCommands::Install { .. })
             | Commands::Auth(
@@ -1119,18 +1137,40 @@ fn reject_unsupported_dry_run(command: &Commands) {
                     | AuthCommands::Register { .. }
                     | AuthCommands::UpdateProfile { .. }
             )
-    );
-    if unsupported {
-        output::error(
-            "--dry-run is not supported for this command.",
-            &crate::errors::ErrorCode::InvalidFormat,
-            Some(
-                "Supported: redeploy, preflight, dev, update, env set/remove/import, \
-                 apps delete, domains add/remove, cron add, deploys rollback.",
-            ),
-        );
-        std::process::exit(1);
+    )
+}
+
+/// Comma-joinable names of mutating commands that DO support `--dry-run`.
+///
+/// Single source of truth used in the error suggestion. Each entry must be
+/// a real subcommand path (parseable by clap) — guarded by
+/// `dry_run_supported_names_are_real_subcommands`.
+const DRY_RUN_SUPPORTED_COMMANDS: &[&str] = &[
+    "redeploy",
+    "preflight",
+    "dev",
+    "update",
+    "env set",
+    "env remove",
+    "env import",
+    "apps delete",
+    "domains add",
+    "domains remove",
+    "cron run",
+    "deploys rollback",
+];
+
+fn reject_unsupported_dry_run(command: &Commands) {
+    if !dry_run_is_unsupported(command) {
+        return;
     }
+    let suggestion = format!("Supported: {}.", DRY_RUN_SUPPORTED_COMMANDS.join(", "));
+    output::error(
+        "--dry-run is not supported for this command.",
+        &crate::errors::ErrorCode::InvalidFormat,
+        Some(&suggestion),
+    );
+    std::process::exit(1);
 }
 
 pub fn run() {
@@ -1520,5 +1560,56 @@ mod tests {
         // --help has its own clap short-circuit and we don't need to network for it.
         let out = rewrite_bare_version_flag(argv(&["floo", "--help"]));
         assert_eq!(strs(&out), vec!["floo", "--help"]);
+    }
+
+    /// Each entry in DRY_RUN_SUPPORTED_COMMANDS must be a real subcommand path
+    /// (parseable by clap) AND must NOT be in the unsupported set. This catches
+    /// drift between the suggestion text and the matches! list — the original
+    /// 2026-04-30 bug where the error string listed `cron add` (no such
+    /// subcommand) and the matches! list rejected `cron run` (which actually
+    /// implements --dry-run).
+    #[test]
+    fn dry_run_supported_names_are_real_subcommands() {
+        // Minimal required positionals so each invocation parses.
+        let invocations: &[(&str, &[&str])] = &[
+            ("redeploy", &["floo", "redeploy", "--dry-run"]),
+            ("preflight", &["floo", "preflight", "--dry-run"]),
+            ("dev", &["floo", "dev", "--dry-run"]),
+            ("update", &["floo", "update", "--dry-run"]),
+            ("env set", &["floo", "env", "set", "K=V", "--dry-run"]),
+            ("env remove", &["floo", "env", "remove", "K", "--dry-run"]),
+            ("env import", &["floo", "env", "import", ".env", "--dry-run"]),
+            ("apps delete", &["floo", "apps", "delete", "myapp", "--dry-run"]),
+            ("domains add", &["floo", "domains", "add", "x.com", "--dry-run"]),
+            ("domains remove", &["floo", "domains", "remove", "x.com", "--dry-run"]),
+            ("cron run", &["floo", "cron", "run", "myjob", "--dry-run"]),
+            ("deploys rollback", &["floo", "deploys", "rollback", "myapp", "abc", "--dry-run"]),
+        ];
+
+        let listed: std::collections::HashSet<&str> =
+            DRY_RUN_SUPPORTED_COMMANDS.iter().copied().collect();
+        let invoked: std::collections::HashSet<&str> =
+            invocations.iter().map(|(name, _)| *name).collect();
+        assert_eq!(
+            listed, invoked,
+            "DRY_RUN_SUPPORTED_COMMANDS and the test invocation table must list the same names",
+        );
+
+        for (label, args) in invocations {
+            let cli = Cli::try_parse_from(args.iter().copied())
+                .unwrap_or_else(|e| panic!("clap rejected '{label}' invocation {args:?}: {e}"));
+            assert!(cli.dry_run, "expected --dry-run set for '{label}'");
+            assert!(
+                !dry_run_is_unsupported(&cli.command),
+                "'{label}' is listed as supported but dry_run_is_unsupported() returns true",
+            );
+        }
+    }
+
+    #[test]
+    fn dry_run_unsupported_for_known_mutator() {
+        // `floo init` does not implement --dry-run; the gate must catch it.
+        let cli = Cli::try_parse_from(["floo", "init", "x", "--dry-run"]).unwrap();
+        assert!(dry_run_is_unsupported(&cli.command));
     }
 }

@@ -38,6 +38,7 @@ never uploads code.
   floo docs templates  — copy-paste app structures (React+FastAPI, Next.js, etc.)
   floo docs services   — service types and managed services
   floo docs config     — config file formats with examples
+  floo docs cron       — [cron.<name>] schema, schedules, and CLI surface
   floo docs deploy     — detailed deploy flow and runtime detection
   floo docs auth       — add user authentication to your app
   floo docs feedback   — report bugs, friction, or feature requests
@@ -93,8 +94,8 @@ Floo Quickstart — End-to-End Walkthrough
   floo services add redis --app my-app
   floo services add storage --app my-app
 
-  Credentials arrive as runtime env vars (DATABASE_URL, REDIS_URL,
-  STORAGE_BUCKET + STORAGE_URL). The commands write .floo/services.lock,
+  Credentials arrive as runtime env vars (Postgres: DATABASE_URL + PG*,
+  Redis: REDIS_URL, Storage: STORAGE_BUCKET + STORAGE_URL). The commands write .floo/services.lock,
   which you should commit so managed-service state changes are visible
   in `git diff` alongside code.
 
@@ -170,8 +171,8 @@ confirmation. See also: floo docs state-model.
   worker  — background process (no incoming HTTP traffic)
 
   Declare inline in floo.app.toml with type, port, and path. Removing a
-  service from floo.app.toml tears down the Cloud Run service on next
-  deploy — recoverable from code, so declarative semantics are safe here.
+  service from floo.app.toml does not destroy the live Cloud Run service;
+  retire services explicitly so accidental config edits do not create drift.
 
   See: floo docs config
 
@@ -193,25 +194,33 @@ confirmation. See also: floo docs state-model.
 
   Connection credentials are injected at runtime, never stored in the
   lock file or in your repo:
-    postgres → DATABASE_URL
+    postgres → DATABASE_URL + PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD
     redis    → REDIS_URL
     storage  → STORAGE_BUCKET + STORAGE_URL (use STORAGE_URL for signed URLs)
 
-## Managed Service Tiers
+  In multi-service apps, attach those credentials per service:
+    [services.api.env]
+    managed = [\"postgres\", \"redis\"]
 
-  All tiers are available on every plan. Only Postgres tiers have
-  functional differences today:
+    [services.web.env]
+    managed = []
 
-                Basic (default)   Standard        Performance
-  Connections   5                 15              50
-  Query timeout 30s               60s             120s
-  Idle timeout  60s               120s            300s
-  work_mem      64 MB             128 MB          256 MB
+  Single-service apps can use top-level [env] managed = [] in
+  floo.service.toml to opt out of managed credentials entirely.
 
-  Start with basic. Upgrade to standard for multi-service apps or
-  reporting queries. Use performance for high-concurrency workloads.
+## Managed Service Capacity
 
-  Pass --tier on add: floo services add postgres --tier standard
+  Managed Postgres uses one default capacity profile today:
+
+    Connections      25
+    Query timeout    60s
+    Idle timeout     120s
+    Lock timeout     10s
+    work_mem         128 MB
+
+  The --tier flag is accepted for backwards compatibility but ignored.
+  For sustained higher concurrency, email team@getfloo.com for a
+  dedicated Postgres instance.
 
 ## Legacy [postgres] / [redis] / [storage] in floo.app.toml
 
@@ -332,8 +341,8 @@ Floo Config Files
   type = \"web\"
   ingress = \"public\"
 
-  Prefer floo.app.toml for new apps — it supports managed services (postgres,
-  redis, storage), cron jobs, and multi-service apps in one file.
+  Prefer floo.app.toml for new apps. It supports managed credential
+  attachments, cron jobs, and multi-service apps in one file.
 
 ## Service Fields (floo.app.toml inline or floo.service.toml)
 
@@ -355,16 +364,22 @@ Floo Config Files
   port inline in floo.app.toml, there must not be a floo.service.toml in
   that service's subdirectory. The CLI fails preflight if both are present.
 
-## Managed Services (in floo.app.toml)
+## Managed Service Attachments
 
-  [postgres]
-  tier = \"basic\"
+  Provision durable resources with the CLI:
 
-  [redis]
+    floo services add postgres --app my-app
+    floo services add redis --app my-app
+    floo services add storage --app my-app
 
-  [storage]
+  Attach credentials to the services that need them:
 
-  Auto-provisioned on first deploy. Credentials injected as env vars.
+    [services.api.env]
+    managed = [\"postgres\", \"redis\"]
+
+  Legacy [postgres], [redis], and [storage] sections in floo.app.toml
+  still work during the deprecation window, but `floo services add`
+  is the canonical authoring surface.
 
 ## Resource Limits (optional)
 
@@ -383,6 +398,38 @@ Floo Config Files
 
   [environments.prod]
   access_mode = \"accounts\"
+
+## Cron Jobs ([cron.<name>])
+
+  Scheduled jobs are declared in floo.app.toml — never created by the CLI.
+  Each [cron.<name>] section becomes a managed cron job that's reconciled
+  on every deploy (added, updated, or removed to match config).
+
+  [cron.daily-report]
+  schedule = \"0 9 * * *\"                  # cron expression: 9am UTC daily
+  command  = \"python -m reports.daily\"    # executed inside the service container
+  service  = \"api\"                         # which service's image to run in
+  timeout  = 600                            # max seconds (default 300, optional)
+
+  [cron.cleanup]
+  schedule = \"*/5 * * * *\"                 # every 5 minutes
+  command  = \"node scripts/cleanup.js\"
+  service  = \"worker\"
+
+  Fields:
+
+  - schedule (required) — standard cron expression in UTC
+  - command  (required) — shell command run inside the target service's container
+  - service  (required) — name of a [services.<name>] entry; that image is reused
+  - timeout  (optional) — max execution seconds; default 300
+
+  CLI surface (read-only + manual trigger):
+
+    floo cron list --app my-app              # list jobs and last run status
+    floo cron run daily-report --app my-app  # trigger one off-schedule
+
+  Long-form guide: https://getfloo.com/docs/guides/cron-jobs
+  Full config schema: https://getfloo.com/docs/reference/config-spec
 
 ## Environment Variables in Multi-Service Apps
 
@@ -418,9 +465,19 @@ Floo Config Files
     floo env list --services api
     floo env list --services web
 
-  Managed service env vars (DATABASE_URL, REDIS_URL, STORAGE_BUCKET) are
-  set at app scope and available to all services. Use --services to restrict
-  access if needed.
+  Managed service env vars are generated at app scope, then attached to
+  services by [services.<name>.env] managed:
+
+    [services.web.env]
+    managed = []
+
+    [services.api.env]
+    required = [\"STRIPE_SECRET_KEY\"]
+    managed = [\"postgres\", \"redis\"]
+
+  If no service declares managed, floo preserves legacy all-service injection.
+  Once any service declares it, omitted services receive no managed credentials.
+  `floo preflight --json` shows the exact env_injection_plan.
 
 ## Commands
 
@@ -499,6 +556,11 @@ Floo Deploy Flow
 
   floo preflight                   — validate config, detect runtimes, check readiness
   floo preflight --json            — structured output for agents
+
+  JSON includes env_injection_plan: per-service managed attachments, generated
+  env keys (DATABASE_URL + PG*, REDIS_URL, STORAGE_BUCKET/STORAGE_URL),
+  required keys, optional keys, and whether the app is in explicit or legacy
+  implicit mode.
 
 ## Redeploy Options
 
@@ -729,16 +791,16 @@ Floo — Golden Path
 
 ## How to Add a Database
 
-  Add to floo.app.toml:
+  Run:
 
-  [postgres]
-  tier = \"basic\"
+  floo services add postgres --app my-app
 
-  Commit the change and push to GitHub:
-  git add floo.app.toml && git commit -m \"feat: add postgres\"
+  Commit the generated lock file and push to GitHub:
+  git add .floo/services.lock && git commit -m \"feat: add postgres\"
   git push origin main
 
-  The database is auto-provisioned on the next deploy. Credentials arrive as DATABASE_URL.
+  The database is available on the next deploy. Credentials arrive as a
+  standard DATABASE_URL plus PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD.
 
 ## How to Add a Custom Domain
 
@@ -815,9 +877,6 @@ Floo Templates — Copy-Paste App Structures
   [app]
   name = \"my-app\"
 
-  [postgres]
-  tier = \"basic\"
-
   [services.web]
   path = \"./web\"
   type = \"web\"
@@ -832,6 +891,9 @@ Floo Templates — Copy-Paste App Structures
   ingress = \"public\"
   dev_command = \"uvicorn app.main:app --reload --port 8080\"
   migrate_command = \"alembic upgrade head\"
+
+  [services.api.env]
+  managed = [\"postgres\"]
 
 ### api/app/main.py
 
@@ -1034,11 +1096,15 @@ App is live at https://my-rails-app-dev.on.getfloo.com.
 
 ## 4. Add Postgres
 
-  floo services add postgres --app my-rails-app --tier basic
+  floo services add postgres --app my-rails-app
   git add .floo/services.lock && git commit -m \"feat: add postgres\"
   git push origin main
 
-Rails reads DATABASE_URL automatically. Confirm config/database.yml has:
+Rails reads DATABASE_URL automatically. floo injects a normal PostgreSQL
+URI, so ActiveRecord can parse it without custom Cloud SQL socket code.
+`floo preflight` warns if a local env file still contains the old Cloud
+SQL socket-style DATABASE_URL that Ruby's URI parser rejects.
+Confirm config/database.yml has:
 
   production:
     primary:
@@ -1132,7 +1198,7 @@ Skipping this is the most common Next.js footgun on floo.
 
 ## 4. Postgres
 
-  floo services add postgres --app my-nextjs-app --tier basic
+  floo services add postgres --app my-nextjs-app
   # Prisma reads DATABASE_URL automatically
 
 ## 5. Per-user auth
@@ -1197,7 +1263,7 @@ Bind to 0.0.0.0 — 127.0.0.1 won't accept Cloud Run traffic.
 
 ## 3. Postgres
 
-  floo services add postgres --app my-fastapi-app --tier basic
+  floo services add postgres --app my-fastapi-app
 
   # Async SQLAlchemy — convert to asyncpg URL:
   DATABASE_URL = os.environ[\"DATABASE_URL\"].replace(
@@ -1291,7 +1357,7 @@ Use whitenoise for static files, gunicorn for the WSGI server.
 
 ## 4. Postgres
 
-  floo services add postgres --app my-django-app --tier basic
+  floo services add postgres --app my-django-app
   # dj-database-url parses DATABASE_URL automatically
 
 ## 5. Per-user auth
@@ -1368,7 +1434,7 @@ won't get set behind floo's edge.
 
 ## 4. Postgres
 
-  floo services add postgres --app my-express-app --tier basic
+  floo services add postgres --app my-express-app
 
   import pg from \"pg\";
   export const pool = new pg.Pool({
@@ -1405,6 +1471,77 @@ won't get set behind floo's edge.
 Full guide with complete JavaScript code: https://docs.getfloo.com/build/express
 ";
 
+const CRON: &str = "\
+Floo Cron Jobs
+
+Cron jobs are declared in floo.app.toml — never created by the CLI. Each
+[cron.<name>] section becomes a managed cron job, reconciled on every
+deploy (added, updated, or removed to match config).
+
+## Declare in floo.app.toml
+
+  [cron.daily-report]
+  schedule = \"0 9 * * *\"                  # 9am UTC daily
+  command  = \"python -m reports.daily\"
+  service  = \"api\"                         # which service's image to run in
+
+  [cron.cleanup]
+  schedule = \"*/5 * * * *\"                 # every 5 minutes
+  command  = \"node scripts/cleanup.js\"
+  service  = \"worker\"
+  timeout  = 600                            # max seconds (default 300, optional)
+
+## Fields
+
+  schedule  required  Standard cron expression in UTC.
+  command   required  Shell command executed inside the target service's container.
+  service   required  Name of a [services.<name>] entry; that image is reused.
+  timeout   optional  Max execution time in seconds. Default 300.
+
+## Common schedules
+
+  * * * * *     every minute
+  */5 * * * *   every 5 minutes
+  0 * * * *     every hour
+  0 9 * * *     daily at 9am UTC
+  0 9 * * 1-5   weekdays at 9am UTC
+  0 0 * * 0     weekly on Sunday at midnight UTC
+  0 0 1 * *     monthly on the 1st at midnight UTC
+
+## Deploy and verify
+
+  Push to GitHub or run `floo redeploy`. New jobs are created, changed jobs
+  updated, removed jobs deleted — all on the deploy itself.
+
+    git push origin main && floo deploys watch --app my-app
+    floo cron list --app my-app                # see jobs + last run status
+
+## Manually trigger a job (off-schedule)
+
+  Useful for testing or one-off catch-up runs:
+
+    floo cron run daily-report --app my-app
+    floo cron run daily-report --app my-app --dry-run   # preview, no API call
+
+## CLI surface
+
+  The `floo cron` CLI is read-only + manual trigger. Schedules and commands
+  are config-driven; the CLI never adds, removes, or edits them.
+
+    floo cron list --app <name>            list jobs and last run status
+    floo cron run <name> --app <app>       trigger a job off-schedule
+
+## Environment
+
+  Jobs run inside the specified service's container image with the same
+  env vars as the service — same DATABASE_URL, REDIS_URL, secrets, etc.
+
+## Long-form guide
+
+  https://getfloo.com/docs/guides/cron-jobs   — examples, agent workflow, troubleshooting
+  https://getfloo.com/docs/reference/config-spec   — full [cron.<name>] schema reference
+";
+
 const TOPICS: &[(&str, &str)] = &[
     ("quickstart", QUICKSTART),
     ("golden-path", HOWTO),
@@ -1417,6 +1554,7 @@ const TOPICS: &[(&str, &str)] = &[
     ("services", SERVICES),
     ("config", CONFIG),
     ("app-toml", CONFIG), // alias — agents can run `floo docs app-toml` after `floo init`
+    ("cron", CRON),
     ("deploy", DEPLOY),
     ("auth", AUTH),
     ("feedback", FEEDBACK),
@@ -1463,6 +1601,7 @@ mod tests {
         assert!(!QUICKSTART.is_empty());
         assert!(!SERVICES.is_empty());
         assert!(!CONFIG.is_empty());
+        assert!(!CRON.is_empty());
         assert!(!DEPLOY.is_empty());
         assert!(!AUTH.is_empty());
         assert!(!TEMPLATES.is_empty());
@@ -1472,6 +1611,41 @@ mod tests {
         assert!(!FASTAPI.is_empty());
         assert!(!DJANGO.is_empty());
         assert!(!EXPRESS.is_empty());
+    }
+
+    /// The 2026-04-30 cron-docs feedback: `floo docs app-toml` mentioned cron
+    /// as a feature but never showed the [cron.<name>] schema. CONFIG must
+    /// document the schema (fields + example) so agents can author cron jobs
+    /// without leaving the cheatsheet, and a dedicated `cron` topic gives the
+    /// short answer for `floo docs cron`.
+    #[test]
+    fn test_cron_schema_documented_in_config_and_cron_topics() {
+        for (label, content) in [("config/app-toml", CONFIG), ("cron", CRON)] {
+            assert!(
+                content.contains("[cron."),
+                "{label} must show the [cron.<name>] section header",
+            );
+            for field in ["schedule", "command", "service", "timeout"] {
+                assert!(
+                    content.contains(field),
+                    "{label} must document the '{field}' field",
+                );
+            }
+            assert!(
+                content.contains("floo cron list"),
+                "{label} must show the read-only CLI surface",
+            );
+        }
+        // The CONFIG cheatsheet must link to the long-form guide so agents
+        // can route to it from `floo docs app-toml`.
+        assert!(CONFIG.contains("getfloo.com/docs/guides/cron-jobs"));
+    }
+
+    #[test]
+    fn test_cron_topic_in_overview_listing() {
+        // The overview cheatsheet is the entry point; missing the cron topic
+        // here was part of the original discoverability gap.
+        assert!(OVERVIEW.contains("floo docs cron"));
     }
 
     #[test]
