@@ -496,6 +496,55 @@ pub struct CronJobRunResponse {
     pub message: Option<String>,
 }
 
+// --- Doctor (`floo doctor accounts`) ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountsDoctorRoute {
+    pub host: String,
+    pub path_prefix: String,
+    pub backend_url: String,
+    pub serving_access_mode: String,
+    pub expected_access_mode: String,
+    pub floo_endpoints_wired: bool,
+    pub identity_headers_injected: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountsDoctorRequested {
+    pub access_mode: String,
+    pub access_policy: String,
+    pub allowed_domains: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountsDoctorLatestDeploy {
+    pub id: String,
+    pub status: String,
+    pub requested_app_access_mode: Option<String>,
+    pub propagated: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountsDoctorDrift {
+    /// Drift kind from the API. `String` (not enum) so a CLI built against
+    /// an older schema doesn't refuse to render new drift kinds — the API
+    /// owns the closed set; the CLI tolerates additions.
+    pub kind: String,
+    pub summary: String,
+    pub likely_fix: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountsDoctorResponse {
+    pub app_id: String,
+    pub app_name: String,
+    pub requested: AccountsDoctorRequested,
+    pub serving: Vec<AccountsDoctorRoute>,
+    pub latest_deploy: Option<AccountsDoctorLatestDeploy>,
+    pub drift: Vec<AccountsDoctorDrift>,
+}
+
 // --- Analytics ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

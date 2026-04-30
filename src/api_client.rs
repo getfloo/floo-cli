@@ -409,6 +409,16 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    // --- Doctor ---
+
+    pub fn diagnose_accounts(
+        &self,
+        app_id: &str,
+    ) -> Result<crate::api_types::AccountsDoctorResponse, FlooApiError> {
+        let resp = self.get(&format!("/v1/apps/{app_id}/doctor/accounts"))?;
+        self.handle_response(resp)
+    }
+
     // --- Cron Jobs ---
 
     pub fn list_cron_jobs(&self, app_id: &str) -> Result<CronJobListResponse, FlooApiError> {

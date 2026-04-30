@@ -1991,9 +1991,9 @@ fn collect_declared_managed_services(
 
     if let Ok(lock) = crate::services_lock::read(project_root) {
         for entry in lock.managed_services {
-            let already_present = declared.iter().any(|d| {
-                d.service_type == entry.service_type && d.name == entry.name
-            });
+            let already_present = declared
+                .iter()
+                .any(|d| d.service_type == entry.service_type && d.name == entry.name);
             if !already_present {
                 declared.push(DeclaredManagedService {
                     service_type: entry.service_type,
