@@ -898,6 +898,24 @@ pub enum DeploysSubcommands {
         commit: Option<String>,
     },
 
+    /// Print a compact, agent-safe deploy status summary.
+    ///
+    /// Emits the latest deploy's id, commit, derived phase booleans
+    /// (image_built / service_ready / host_bound), the gateway URL, and a
+    /// next recommended command — without dumping build logs, Cloud Run
+    /// audit payloads, or env-var values. Use this from agents and
+    /// scripts that need to know "what state is the deploy in?" without
+    /// risking secret exfiltration through verbose log output.
+    Status {
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Deploy ID. Defaults to the latest deploy for the app.
+        #[arg(long)]
+        id: Option<String>,
+    },
+
     /// Rollback to a previous deploy.
     ///
     /// Tier-2 destructive: interactive prompts `y/N`; non-interactive
@@ -1206,6 +1224,9 @@ pub fn run() {
             } => commands::deploys::logs(deploy_id.as_deref(), app.as_deref(), follow),
             DeploysSubcommands::Watch { app, commit } => {
                 commands::deploys::watch(app.as_deref(), commit.as_deref())
+            }
+            DeploysSubcommands::Status { app, id } => {
+                commands::deploys::status(app.as_deref(), id.as_deref())
             }
             DeploysSubcommands::Rollback {
                 app,
