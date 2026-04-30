@@ -256,12 +256,31 @@ pub fn dev(args: DevArgs) {
                 })
             })
             .collect();
-        output::dry_run_success(serde_json::json!({
-            "action": "start_dev_session",
-            "app": app_name,
-            "services": plan_services,
-            "skipped_external": skipped_external,
-        }));
+        let mut preview = format!(
+            "Would start {} service(s) for '{app_name}':",
+            services.len()
+        );
+        for svc in &services {
+            preview.push_str(&format!(
+                "\n    {} on http://localhost:{}",
+                svc.name, svc.port
+            ));
+        }
+        if !skipped_external.is_empty() {
+            preview.push_str(&format!(
+                "\nSkipping external service(s): {}",
+                skipped_external.join(", ")
+            ));
+        }
+        output::dry_run_preview(
+            &preview,
+            serde_json::json!({
+                "action": "start_dev_session",
+                "app": app_name,
+                "services": plan_services,
+                "skipped_external": skipped_external,
+            }),
+        );
         return;
     }
 

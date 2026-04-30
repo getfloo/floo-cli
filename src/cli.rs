@@ -1212,7 +1212,6 @@ fn dry_run_is_unsupported(command: &Commands) -> bool {
             | Commands::Apps(AppsCommands::Invite { .. })
             | Commands::Billing(BillingCommands::SpendCap(SpendCapCommands::Set { .. }))
             | Commands::Run { .. }
-            | Commands::Db(DbCommands::Migrate { .. })
             | Commands::Feedback { .. }
             | Commands::Skills(SkillsCommands::Install { .. })
             | Commands::Auth(
@@ -1247,6 +1246,7 @@ const DRY_RUN_SUPPORTED_COMMANDS: &[&str] = &[
     "domains remove",
     "cron run",
     "deploys rollback",
+    "db migrate",
 ];
 
 fn reject_unsupported_dry_run(command: &Commands) {
@@ -1703,6 +1703,10 @@ mod tests {
             (
                 "deploys rollback",
                 &["floo", "deploys", "rollback", "myapp", "abc", "--dry-run"],
+            ),
+            (
+                "db migrate",
+                &["floo", "db", "migrate", "--app", "myapp", "--dry-run"],
             ),
         ];
 

@@ -258,12 +258,26 @@ pub fn deploy(
         if output::is_dry_run_mode() {
             let action = if rebuild { "rebuild" } else { "restart" };
             let service_names: Vec<&str> = services_filter.iter().map(|s| s.as_str()).collect();
-            output::dry_run_success(serde_json::json!({
-                "action": action,
-                "app": app_name,
-                "services": service_names,
-                "skip_migrations": skip_migrations,
-            }));
+            let svc_clause = if service_names.is_empty() {
+                String::new()
+            } else {
+                format!(" (services: {})", service_names.join(", "))
+            };
+            let mig_clause = if skip_migrations {
+                " (skip migrations)"
+            } else {
+                ""
+            };
+            let preview = format!("Would {action} app '{app_name}'{svc_clause}{mig_clause}.");
+            output::dry_run_preview(
+                &preview,
+                serde_json::json!({
+                    "action": action,
+                    "app": app_name,
+                    "services": service_names,
+                    "skip_migrations": skip_migrations,
+                }),
+            );
             return;
         }
 
@@ -434,15 +448,30 @@ pub fn deploy(
             })
             .collect();
 
-        output::dry_run_success(serde_json::json!({
-            "action": "deploy",
-            "app": app_name,
-            "services": svc_json,
-            "managed_services": managed_json,
-            "env_injection_plan": env_injection_plan,
-            "warnings": warning_strings,
-            "valid": preflight_errors.is_empty(),
-        }));
+        // Preflight already printed the human-friendly service table via
+        // display_preflight_human() above (gated on !is_json_mode). Keep the
+        // preview line tight so we don't duplicate it.
+        let svc_count = services.len();
+        let preview = format!(
+            "Would deploy app '{app_name}' with {svc_count} service(s){}.",
+            if preflight_errors.is_empty() {
+                ""
+            } else {
+                "; preflight errors must be fixed first"
+            }
+        );
+        output::dry_run_preview(
+            &preview,
+            serde_json::json!({
+                "action": "deploy",
+                "app": app_name,
+                "services": svc_json,
+                "managed_services": managed_json,
+                "env_injection_plan": env_injection_plan,
+                "warnings": warning_strings,
+                "valid": preflight_errors.is_empty(),
+            }),
+        );
         return;
     }
 
@@ -733,11 +762,20 @@ fn deploy_restart(
 
     if output::is_dry_run_mode() {
         let service_names: Vec<&str> = services_filter.iter().map(|s| s.as_str()).collect();
-        output::dry_run_success(serde_json::json!({
-            "action": "restart",
-            "app": app_data.name,
-            "services": service_names,
-        }));
+        let svc_clause = if service_names.is_empty() {
+            String::new()
+        } else {
+            format!(" (services: {})", service_names.join(", "))
+        };
+        let preview = format!("Would restart app '{}'{svc_clause}.", app_data.name);
+        output::dry_run_preview(
+            &preview,
+            serde_json::json!({
+                "action": "restart",
+                "app": app_data.name,
+                "services": service_names,
+            }),
+        );
         return;
     }
 
@@ -860,13 +898,30 @@ fn deploy_rebuild(
 
     if output::is_dry_run_mode() {
         let service_names: Vec<&str> = services_filter.iter().map(|s| s.as_str()).collect();
-        output::dry_run_success(serde_json::json!({
-            "action": "rebuild",
-            "app": app_data.name,
-            "runtime": runtime,
-            "services": service_names,
-            "skip_migrations": skip_migrations,
-        }));
+        let svc_clause = if service_names.is_empty() {
+            String::new()
+        } else {
+            format!(" (services: {})", service_names.join(", "))
+        };
+        let mig_clause = if skip_migrations {
+            " (skip migrations)"
+        } else {
+            ""
+        };
+        let preview = format!(
+            "Would rebuild app '{}' (runtime: {runtime}){svc_clause}{mig_clause}.",
+            app_data.name
+        );
+        output::dry_run_preview(
+            &preview,
+            serde_json::json!({
+                "action": "rebuild",
+                "app": app_data.name,
+                "runtime": runtime,
+                "services": service_names,
+                "skip_migrations": skip_migrations,
+            }),
+        );
         return;
     }
 

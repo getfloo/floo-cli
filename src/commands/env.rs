@@ -240,11 +240,20 @@ pub fn set(
     let key = key.to_uppercase();
 
     if output::is_dry_run_mode() {
-        output::dry_run_success(serde_json::json!({
-            "action": "env_set",
-            "key": key,
-            "will_restart": restart,
-        }));
+        let target = app_flag.unwrap_or("(reads from config)");
+        let restart_clause = if restart { " and restart" } else { "" };
+        let preview = format!("Would set {key} on {target}{restart_clause}.");
+        output::dry_run_preview(
+            &preview,
+            serde_json::json!({
+                "action": "env_set",
+                "key": key,
+                "app": app_flag,
+                "services": service_names,
+                "env": env,
+                "will_restart": restart,
+            }),
+        );
         return;
     }
 
@@ -369,10 +378,18 @@ pub fn remove(key: &str, app_flag: Option<&str>, service_names: &[String], env: 
     let key = key.to_uppercase();
 
     if output::is_dry_run_mode() {
-        output::dry_run_success(serde_json::json!({
-            "action": "env_remove",
-            "key": key,
-        }));
+        let target = app_flag.unwrap_or("(reads from config)");
+        let preview = format!("Would remove {key} from {target}.");
+        output::dry_run_preview(
+            &preview,
+            serde_json::json!({
+                "action": "env_remove",
+                "key": key,
+                "app": app_flag,
+                "services": service_names,
+                "env": env,
+            }),
+        );
         return;
     }
 
@@ -487,12 +504,27 @@ pub fn import_vars(
         let vars = parse_env_file(&env_file_path);
         let keys: Vec<&str> = vars.iter().map(|(k, _)| k.as_str()).collect();
         let count = vars.len();
-        output::dry_run_success(serde_json::json!({
-            "action": "env_import",
-            "file": env_file_path.display().to_string(),
-            "keys": keys,
-            "count": count,
-        }));
+        let target = app_flag
+            .map(String::from)
+            .or_else(|| resolved.as_ref().map(|r| r.app_name.clone()))
+            .unwrap_or_else(|| "(reads from config)".to_string());
+        let preview = format!(
+            "Would import {count} variable(s) from {} to {target}.\nKeys: {}",
+            env_file_path.display(),
+            keys.join(", "),
+        );
+        output::dry_run_preview(
+            &preview,
+            serde_json::json!({
+                "action": "env_import",
+                "file": env_file_path.display().to_string(),
+                "app": target,
+                "services": service_names,
+                "env": env,
+                "keys": keys,
+                "count": count,
+            }),
+        );
         return;
     }
 

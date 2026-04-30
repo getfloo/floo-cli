@@ -7,14 +7,18 @@ use crate::output;
 pub fn rollback(app_name: &str, deploy_id: &str, yes: bool) {
     if output::is_dry_run_mode() {
         let risk: RiskMetadata = Tier::Two.into();
-        output::dry_run_success(serde_json::json!({
-            "action": "rollback",
-            "app": app_name,
-            "to_deploy": deploy_id,
-            "destructive": risk.destructive,
-            "data_loss": risk.data_loss,
-            "tier": risk.tier,
-        }));
+        let preview = format!("Would roll back app '{app_name}' to deploy {deploy_id}.");
+        output::dry_run_preview(
+            &preview,
+            serde_json::json!({
+                "action": "rollback",
+                "app": app_name,
+                "to_deploy": deploy_id,
+                "destructive": risk.destructive,
+                "data_loss": risk.data_loss,
+                "tier": risk.tier,
+            }),
+        );
         return;
     }
 

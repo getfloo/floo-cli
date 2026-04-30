@@ -154,14 +154,17 @@ pub fn update(version: Option<&str>) {
                         display_tag(&plan.target_version),
                     )
                 };
-                output::dry_run_success(serde_json::json!({
-                    "action": "update",
-                    "current_version": plan.current_version,
-                    "target_version": display_tag(&plan.target_version),
-                    "install_path": plan.install_path,
-                    "already_up_to_date": plan.already_up_to_date,
-                    "message": message,
-                }));
+                output::dry_run_preview(
+                    &message,
+                    serde_json::json!({
+                        "action": "update",
+                        "current_version": plan.current_version,
+                        "target_version": display_tag(&plan.target_version),
+                        "install_path": plan.install_path,
+                        "already_up_to_date": plan.already_up_to_date,
+                        "message": message,
+                    }),
+                );
             }
             Err(err) => {
                 output::error(&err.message, &err.code, err.suggestion.as_deref());

@@ -1065,7 +1065,15 @@ ingress = "public"
         ));
 }
 
-// --- Dry-run ---
+// --- Dry-run matrix ---
+//
+// Every command that advertises --dry-run gets two assertions:
+//   - JSON mode: stdout has the structured action payload (real preview)
+//   - Human mode: stderr has both the standardized "Dry run" header AND a
+//     "Would <verb>" preview line that names the action (no theater).
+//
+// The "Would" line is what blocks regression to the prior bug where dry-run
+// human output was just "✓ Dry run — no changes made." with the data dropped.
 
 #[test]
 fn test_dry_run_env_set() {
@@ -1087,6 +1095,37 @@ fn test_dry_run_env_set() {
 }
 
 #[test]
+fn test_dry_run_env_set_human_has_preview() {
+    floo()
+        .args(["--dry-run", "env", "set", "KEY=value", "--app", "test"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Dry run"))
+        .stderr(predicate::str::contains("Would set KEY on test"));
+}
+
+#[test]
+fn test_dry_run_env_set_restart_human() {
+    floo()
+        .args([
+            "--dry-run",
+            "env",
+            "set",
+            "KEY=value",
+            "--app",
+            "test",
+            "--restart",
+        ])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Would set KEY on test and restart.",
+        ));
+}
+
+#[test]
 fn test_dry_run_env_remove() {
     floo()
         .args([
@@ -1105,6 +1144,62 @@ fn test_dry_run_env_remove() {
 }
 
 #[test]
+fn test_dry_run_env_remove_human_has_preview() {
+    floo()
+        .args(["--dry-run", "env", "remove", "KEY", "--app", "test"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Dry run"))
+        .stderr(predicate::str::contains("Would remove KEY from test"));
+}
+
+#[test]
+fn test_dry_run_env_import() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let env_file = dir.path().join(".env");
+    std::fs::write(&env_file, "KEY=value\nFOO=bar\n").unwrap();
+
+    floo()
+        .args([
+            "--json",
+            "--dry-run",
+            "env",
+            "import",
+            env_file.to_str().unwrap(),
+            "--app",
+            "test",
+        ])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""action":"env_import"#))
+        .stdout(predicate::str::contains(r#""count":2"#));
+}
+
+#[test]
+fn test_dry_run_env_import_human_has_preview() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let env_file = dir.path().join(".env");
+    std::fs::write(&env_file, "KEY=value\nFOO=bar\n").unwrap();
+
+    floo()
+        .args([
+            "--dry-run",
+            "env",
+            "import",
+            env_file.to_str().unwrap(),
+            "--app",
+            "test",
+        ])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Would import 2 variable(s)"))
+        .stderr(predicate::str::contains("Keys: KEY, FOO"));
+}
+
+#[test]
 fn test_dry_run_apps_delete() {
     floo()
         .args(["--json", "--dry-run", "apps", "delete", "my-app"])
@@ -1112,6 +1207,18 @@ fn test_dry_run_apps_delete() {
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""action":"delete"#));
+}
+
+#[test]
+fn test_dry_run_apps_delete_human_has_preview() {
+    floo()
+        .args(["--dry-run", "apps", "delete", "my-app"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Would permanently delete app 'my-app'",
+        ));
 }
 
 #[test]
@@ -1133,6 +1240,25 @@ fn test_dry_run_domains_add() {
 }
 
 #[test]
+fn test_dry_run_domains_add_human_has_preview() {
+    floo()
+        .args([
+            "--dry-run",
+            "domains",
+            "add",
+            "example.com",
+            "--app",
+            "test",
+        ])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Would add domain example.com to test",
+        ));
+}
+
+#[test]
 fn test_dry_run_domains_remove() {
     floo()
         .args([
@@ -1148,6 +1274,55 @@ fn test_dry_run_domains_remove() {
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""action":"domain_remove"#));
+}
+
+#[test]
+fn test_dry_run_domains_remove_human_has_preview() {
+    floo()
+        .args([
+            "--dry-run",
+            "domains",
+            "remove",
+            "example.com",
+            "--app",
+            "test",
+        ])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Would remove domain example.com from test",
+        ));
+}
+
+#[test]
+fn test_dry_run_cron_run() {
+    floo()
+        .args([
+            "--json",
+            "--dry-run",
+            "cron",
+            "run",
+            "myjob",
+            "--app",
+            "test",
+        ])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""action":"run_cron_job"#));
+}
+
+#[test]
+fn test_dry_run_cron_run_human_has_preview() {
+    floo()
+        .args(["--dry-run", "cron", "run", "myjob", "--app", "test"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Would trigger cron job 'myjob' on test",
+        ));
 }
 
 #[test]
@@ -1168,6 +1343,18 @@ fn test_dry_run_rollback() {
 }
 
 #[test]
+fn test_dry_run_rollback_human_has_preview() {
+    floo()
+        .args(["--dry-run", "deploys", "rollback", "my-app", "deploy-123"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Would roll back app 'my-app' to deploy deploy-123",
+        ));
+}
+
+#[test]
 fn test_dry_run_redeploy_restart() {
     floo()
         .args(["--json", "--dry-run", "redeploy", "--app", "test-app"])
@@ -1175,6 +1362,16 @@ fn test_dry_run_redeploy_restart() {
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""action":"restart"#));
+}
+
+#[test]
+fn test_dry_run_redeploy_restart_human_has_preview() {
+    floo()
+        .args(["--dry-run", "redeploy", "--app", "test-app"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Would restart app 'test-app'"));
 }
 
 #[test]
@@ -1195,12 +1392,85 @@ fn test_dry_run_redeploy_rebuild() {
 }
 
 #[test]
+fn test_dry_run_redeploy_rebuild_human_has_preview() {
+    floo()
+        .args(["--dry-run", "redeploy", "--app", "test-app", "--rebuild"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Would rebuild app 'test-app'"));
+}
+
+#[test]
+fn test_dry_run_db_migrate() {
+    floo()
+        .args([
+            "--json",
+            "--dry-run",
+            "db",
+            "migrate",
+            "--app",
+            "test",
+            "--env",
+            "dev",
+        ])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""action":"db_migrate"#))
+        .stdout(predicate::str::contains(r#""env":"dev"#));
+}
+
+#[test]
+fn test_dry_run_db_migrate_human_has_preview() {
+    floo()
+        .args([
+            "--dry-run",
+            "db",
+            "migrate",
+            "--app",
+            "test",
+            "--env",
+            "prod",
+        ])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Would run pending migrations on 'test' (env: prod)",
+        ));
+}
+
+#[test]
 fn test_dry_run_unsupported_init() {
     floo()
         .args(["--json", "--dry-run", "init", "my-app"])
         .assert()
         .failure()
         .stdout(predicate::str::contains("not supported"));
+}
+
+/// Regression for the prior contract bug: human dry-run output was
+/// just "✓ Dry run — no changes made." with the data dropped, while JSON
+/// mode emitted a real preview. Ensure no command we just fixed reverts to
+/// printing the legacy "✓ Dry run — no changes made." sentinel without a
+/// "Would …" preview line above it.
+#[test]
+fn test_dry_run_human_never_emits_legacy_no_preview_line() {
+    let cmd = floo()
+        .args(["--dry-run", "apps", "delete", "my-app"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success();
+    let stderr = String::from_utf8(cmd.get_output().stderr.clone()).unwrap();
+    assert!(
+        stderr.contains("Would permanently delete"),
+        "expected human preview, got stderr:\n{stderr}",
+    );
+    assert!(
+        !stderr.contains("Dry run — no changes made."),
+        "human dry-run output should not emit the legacy preview-less sentinel; got:\n{stderr}",
+    );
 }
 
 // --- Env Import --all ---

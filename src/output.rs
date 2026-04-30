@@ -29,9 +29,38 @@ pub fn is_dry_run_mode() -> bool {
     DRY_RUN.load(Ordering::SeqCst)
 }
 
-/// Emit a dry-run success response with the given structured data.
-pub fn dry_run_success(data: Value) {
-    success("Dry run — no changes made.", Some(data));
+/// Emit a dry-run preview.
+///
+/// Human mode (stderr):
+///
+/// ```text
+/// → Dry run — no changes will be made.
+///   <line 1 of human_preview>
+///   <line 2 of human_preview>
+/// ```
+///
+/// JSON mode (stdout): `{"success": true, "data": data}` — same payload as
+/// `success(..., Some(data))`. Agents reading `--json` see the structured
+/// preview; humans see the same preview as a multi-line summary on stderr.
+///
+/// `human_preview` is multi-line text — newlines split into bullet lines.
+/// Empty lines are dropped. Pass `""` only if the data payload is genuinely
+/// self-explanatory; in practice every mutator should describe the action.
+pub fn dry_run_preview(human_preview: &str, data: Value) {
+    if is_json_mode() {
+        print_json(&serde_json::json!({"success": true, "data": data}));
+        return;
+    }
+    eprintln!(
+        "{} {}",
+        "\u{2192}".cyan(),
+        "Dry run — no changes will be made.".bold()
+    );
+    for line in human_preview.lines() {
+        if !line.trim().is_empty() {
+            eprintln!("  {line}");
+        }
+    }
 }
 
 /// Returns true when stdin is a TTY and JSON mode is off — i.e. a human is

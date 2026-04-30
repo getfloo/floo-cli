@@ -66,11 +66,16 @@ pub fn run(app_flag: Option<&str>, name: &str) {
     // an existing app row. Keep that contract here so logged-out users
     // and offline agents get a consistent preview shape across commands.
     if output::is_dry_run_mode() {
-        output::dry_run_success(serde_json::json!({
-            "action": "run_cron_job",
-            "app": app_flag,
-            "name": name,
-        }));
+        let target = app_flag.unwrap_or("(reads from config)");
+        let preview = format!("Would trigger cron job '{name}' on {target}.");
+        output::dry_run_preview(
+            &preview,
+            serde_json::json!({
+                "action": "run_cron_job",
+                "app": app_flag,
+                "name": name,
+            }),
+        );
         return;
     }
 
