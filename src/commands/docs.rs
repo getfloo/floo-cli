@@ -1057,7 +1057,40 @@ promote (against prod). Rails migrations stay in sync with deploys.
 
 App is live at https://my-rails-app-dev.on.getfloo.com.
 
-## 4. Add Postgres
+## 4. Local dev and one-shot commands
+
+Two commands cover the daily Rails workflow once your first deploy is up.
+
+Local dev server with prod-shaped env:
+
+  floo dev --app my-rails-app --service web
+
+Runs your dev_command locally with DATABASE_URL and other env vars
+sourced from floo. Real Cloud SQL connection, no exported credentials.
+
+Add --fixture-user to test signed-in (accounts-mode) flows locally:
+
+  floo dev --app my-rails-app --service web --fixture-user you@example.com
+
+The proxy injects the same X-Floo-User-* headers floo's gateway adds in
+production, so the controller reading those headers works locally with
+no conditional code.
+
+One-shot commands (rake tasks, db:seed, console):
+
+  floo run --service web -- bundle exec rake my_task
+  floo run --service web -- bin/rails db:seed
+  floo run --service web -- bin/rails console
+  floo run --service web -- bin/rails db:migrate
+
+floo run inherits stdin/stdout/stderr, so interactive commands like
+bin/rails console work like running them locally — your shell just sees
+the floo-injected env vars instead of your local .env. Migrations run
+automatically on every deploy via migrate_command; use `floo run --
+bin/rails db:migrate` only for ad-hoc migration work outside the deploy
+path.
+
+## 5. Add Postgres
 
   floo services add postgres --app my-rails-app --tier basic
   git add .floo/services.lock && git commit -m \"feat: add postgres\"
@@ -1073,7 +1106,7 @@ Confirm config/database.yml has:
     primary:
       url: <%= ENV[\"DATABASE_URL\"] %>
 
-## 5. Add per-user auth
+## 6. Add per-user auth
 
 floo manages user authentication. Set access_mode = \"accounts\" in floo.app.toml — that is the entire auth config:
 
@@ -1097,18 +1130,14 @@ identity headers. Your Rails controllers read them:
     end
   end
 
-## 6. Add a custom domain
+For local development, run `floo dev --fixture-user` (section 4) — same
+identity headers in front of the local server, no conditional code.
+
+## 7. Add a custom domain
 
   floo domains add app.example.com --app my-rails-app
 
 Add the CNAME shown in the output at your DNS provider.
-
-## 7. Local dev with prod data
-
-  floo dev --app my-rails-app --service web
-
-Runs your dev_command locally with DATABASE_URL and other env vars
-sourced from floo. Real Cloud SQL connection, no exported credentials.
 
 ## Common gotchas
 
@@ -1578,12 +1607,18 @@ mod tests {
 
     #[test]
     fn test_rails_topic_covers_full_journey() {
-        // Stack-journey shape: deploy → DB → auth → domain → local dev
+        // Stack-journey shape: deploy → local dev → DB → auth → domain
         assert!(RAILS.contains("floo init"));
         assert!(RAILS.contains("services add postgres"));
         assert!(RAILS.contains("access_mode = \"accounts\""));
         assert!(RAILS.contains("domains add"));
         assert!(RAILS.contains("floo dev"));
+        // Rails workflow leans on rake/console/db:seed — floo run is the
+        // way to do those with managed env. Mirror this surface to match
+        // the published rails.mdx so agents reading via `floo docs rails`
+        // see the same thing as agents reading via the docs site.
+        assert!(RAILS.contains("floo run"));
+        assert!(RAILS.contains("bin/rails console"));
     }
 
     #[test]
