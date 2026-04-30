@@ -1106,6 +1106,55 @@ fn test_dry_run_env_set_human_has_preview() {
 }
 
 #[test]
+fn test_dry_run_env_set_human_includes_services_and_prod_scope() {
+    // Codex review: dry-run preview must reflect --services and non-default
+    // --env so an operator verifying a prod or service-specific change sees
+    // the real scope, not just the app name.
+    floo()
+        .args([
+            "--dry-run",
+            "env",
+            "set",
+            "KEY=value",
+            "--app",
+            "test",
+            "--services",
+            "api",
+            "--env",
+            "prod",
+        ])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Would set KEY on test (services: api) (env: prod).",
+        ));
+}
+
+#[test]
+fn test_dry_run_env_remove_human_includes_services_and_prod_scope() {
+    floo()
+        .args([
+            "--dry-run",
+            "env",
+            "remove",
+            "KEY",
+            "--app",
+            "test",
+            "--services",
+            "api",
+            "--env",
+            "prod",
+        ])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Would remove KEY from test (services: api) (env: prod).",
+        ));
+}
+
+#[test]
 fn test_dry_run_env_set_restart_human() {
     floo()
         .args([
