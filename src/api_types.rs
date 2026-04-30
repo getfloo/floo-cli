@@ -129,6 +129,10 @@ pub struct App {
     pub status: Option<String>,
     pub url: Option<String>,
     pub runtime: Option<String>,
+    /// Direct Cloud Run runtime URL of the primary user-facing service.
+    /// Debug-only — clients should hit `url` (the gateway URL).
+    #[serde(default)]
+    pub runtime_url: Option<String>,
     pub created_at: Option<String>,
     #[serde(default)]
     pub environments: Vec<EnvironmentSummary>,

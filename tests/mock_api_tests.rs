@@ -220,6 +220,64 @@ fn test_apps_status_json() {
 }
 
 #[test]
+fn test_apps_status_json_surfaces_runtime_url() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let runtime_url = "https://floo-my-app-dev-web-l3txcgkazq-uc.a.run.app";
+
+    let _m = server
+        .mock("GET", "/v1/apps")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"apps":[{{"id":"{TEST_APP_ID}","name":"{TEST_APP_NAME}","org_id":"{TEST_ORG_ID}","status":"live","url":"https://test.floo.app","runtime":"rails","runtime_url":"{runtime_url}","created_at":"2024-01-01T00:00:00Z"}}]}}"#
+        ))
+        .create();
+
+    floo()
+        .args(["--json", "apps", "status", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""runtime_url""#))
+        .stdout(predicate::str::contains(runtime_url));
+}
+
+#[test]
+fn test_apps_status_human_includes_runtime_url() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let runtime_url = "https://floo-my-app-dev-web-l3txcgkazq-uc.a.run.app";
+
+    let _m = server
+        .mock("GET", "/v1/apps")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"apps":[{{"id":"{TEST_APP_ID}","name":"{TEST_APP_NAME}","org_id":"{TEST_ORG_ID}","status":"live","url":"https://test.floo.app","runtime":"rails","runtime_url":"{runtime_url}","created_at":"2024-01-01T00:00:00Z"}}]}}"#
+        ))
+        .create();
+    let _m_org = mock_org_me(&mut server);
+
+    floo()
+        .args(["apps", "status", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Runtime URL:"))
+        .stderr(predicate::str::contains(runtime_url))
+        .stderr(predicate::str::contains("debug only"));
+}
+
+#[test]
 fn test_apps_delete_requires_explicit_confirmation_in_json_mode() {
     let mut server = Server::new();
     let home = setup_config(&server);
