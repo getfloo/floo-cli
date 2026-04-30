@@ -517,6 +517,9 @@ pub struct RequestLogsArgs {
     pub app_flag: Option<String>,
     pub tail: u32,
     pub since: Option<String>,
+    /// Stream new requests as they arrive (poll every 2s). Mirrors `--live`
+    /// for app logs; `--follow` is accepted as an alias on the parent flag.
+    pub live: bool,
 }
 
 fn format_request_line(entry: &RequestLogEntry) -> String {
@@ -586,6 +589,17 @@ pub fn request_logs(args: RequestLogsArgs) {
         }
     };
 
+    if args.live {
+        live_request_logs(
+            &client,
+            &app_data.id,
+            &app_data.name,
+            args.tail,
+            args.since.as_deref(),
+        );
+        return;
+    }
+
     let result = match client.get_request_logs(&app_data.id, args.tail, args.since.as_deref()) {
         Ok(r) => r,
         Err(e) => {
@@ -612,6 +626,120 @@ pub fn request_logs(args: RequestLogsArgs) {
     // oldest-to-newest, like `tail -f`.
     for entry in result.requests.iter().rev() {
         output::dim_line(&format_request_line(entry));
+    }
+}
+
+fn live_request_logs(
+    client: &crate::api_client::FlooClient,
+    app_id: &str,
+    app_name: &str,
+    tail: u32,
+    initial_since: Option<&str>,
+) {
+    let is_json = output::is_json_mode();
+
+    let initial = match client.get_request_logs(app_id, tail, initial_since) {
+        Ok(r) => r,
+        Err(e) => {
+            output::error(
+                &format!("Failed to fetch request logs: {e}"),
+                &ErrorCode::from_api("REQUESTS_FETCH_FAILED"),
+                None,
+            );
+            process::exit(1);
+        }
+    };
+
+    let mut last_timestamp: Option<String> = None;
+    // The API returns newest-first; reverse so the console reads
+    // oldest-to-newest like `tail -f`.
+    for entry in initial.requests.iter().rev() {
+        emit_request_entry(entry, is_json);
+        update_last_request_timestamp(&mut last_timestamp, entry);
+    }
+
+    if !is_json && initial.requests.is_empty() {
+        output::dim_line(&format!("No requests yet for {app_name}. Waiting…"));
+    }
+
+    let mut consecutive_errors: u32 = 0;
+
+    loop {
+        thread::sleep(POLL_INTERVAL);
+
+        // Once we've seen any request, we anchor on its timestamp; before
+        // then, fall back to the user-provided --since window so the first
+        // few polls don't re-stream the entire backlog.
+        let since_filter = last_timestamp.as_deref().or(initial_since);
+
+        let poll_result = client.get_request_logs(app_id, tail, since_filter);
+        let new_logs = match poll_result {
+            Ok(r) => {
+                consecutive_errors = 0;
+                r.requests
+            }
+            Err(e) => {
+                consecutive_errors += 1;
+                if consecutive_errors >= MAX_TRANSIENT_RETRIES {
+                    output::error(
+                        &format!(
+                            "Live polling failed after {} consecutive errors: {}",
+                            MAX_TRANSIENT_RETRIES, e.message
+                        ),
+                        &ErrorCode::from_api(&e.code),
+                        Some("Check your network connection and try again."),
+                    );
+                    process::exit(1);
+                }
+                if !is_json {
+                    eprintln!(
+                        "  {} transient error (retry {}/{}): {}",
+                        "!".yellow().bold(),
+                        consecutive_errors,
+                        MAX_TRANSIENT_RETRIES,
+                        e.message
+                    );
+                }
+                continue;
+            }
+        };
+
+        // Strict-greater filter so a request that exactly matches the last
+        // anchor isn't re-emitted. The API's `since` is inclusive
+        // (>= since_dt) and timestamp resolution is microseconds, so without
+        // this filter every poll cycle could re-print the most recent line.
+        let new_entries: Vec<&RequestLogEntry> = match &last_timestamp {
+            None => new_logs.iter().rev().collect(),
+            Some(last_ts) => new_logs
+                .iter()
+                .rev()
+                .filter(|entry| entry.timestamp.as_str() > last_ts.as_str())
+                .collect(),
+        };
+
+        for entry in &new_entries {
+            emit_request_entry(entry, is_json);
+            update_last_request_timestamp(&mut last_timestamp, entry);
+        }
+    }
+}
+
+fn emit_request_entry(entry: &RequestLogEntry, is_json: bool) {
+    if is_json {
+        output::print_json(&output::to_value(entry));
+    } else {
+        output::dim_line(&format_request_line(entry));
+    }
+}
+
+fn update_last_request_timestamp(last: &mut Option<String>, entry: &RequestLogEntry) {
+    let ts = entry.timestamp.as_str();
+    let is_newer = match last.as_deref() {
+        Some(prev) => ts > prev,
+        None => true,
+    };
+    if is_newer {
+        *last = Some(ts.to_string());
     }
 }
 
@@ -660,5 +788,38 @@ mod tests {
         let line = format_log_line(&entry, true);
         assert!(line.contains("[unknown]"));
         assert!(line.contains("something broke"));
+    }
+
+    fn make_request_entry(ts: &str) -> RequestLogEntry {
+        RequestLogEntry {
+            timestamp: ts.to_string(),
+            method: "GET".to_string(),
+            path: Some("/".to_string()),
+            host: Some("my-app.on.getfloo.com".to_string()),
+            status_code: 200,
+            latency_ms: 12,
+            access_mode: "public".to_string(),
+            user_identity: None,
+        }
+    }
+
+    #[test]
+    fn test_update_last_request_timestamp_advances_on_newer_entry() {
+        let mut last: Option<String> = None;
+        update_last_request_timestamp(&mut last, &make_request_entry("2026-04-30T15:42:21Z"));
+        assert_eq!(last.as_deref(), Some("2026-04-30T15:42:21Z"));
+
+        update_last_request_timestamp(&mut last, &make_request_entry("2026-04-30T15:42:22Z"));
+        assert_eq!(last.as_deref(), Some("2026-04-30T15:42:22Z"));
+    }
+
+    #[test]
+    fn test_update_last_request_timestamp_keeps_newer_when_older_arrives() {
+        // Live polling rides on the API's timestamp >= since semantics, so
+        // an older row can show up alongside the new ones; the anchor must
+        // not move backwards or we'd re-emit the same line forever.
+        let mut last: Option<String> = Some("2026-04-30T15:42:22Z".to_string());
+        update_last_request_timestamp(&mut last, &make_request_entry("2026-04-30T15:42:21Z"));
+        assert_eq!(last.as_deref(), Some("2026-04-30T15:42:22Z"));
     }
 }

@@ -1232,6 +1232,71 @@ fn test_logs_single_service_no_prefix() {
         .stderr(predicate::str::contains("[api]").not());
 }
 
+// ───────────────────────── Request logs ─────────────────────────
+
+#[test]
+fn test_logs_requests_json_default_tail() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _m_req = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/requests").as_str(),
+        )
+        .match_query(Matcher::UrlEncoded("limit".into(), "100".into()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"requests":[{"timestamp":"2026-04-30T15:42:21Z","method":"GET","path":"/","host":"my-app.on.getfloo.com","status_code":401,"latency_ms":12,"access_mode":"public","user_identity":null}],"total":1,"app_name":"my-app"}"#,
+        )
+        .create();
+
+    floo()
+        .args(["--json", "logs", "--requests", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("requests"))
+        .stdout(predicate::str::contains("/"))
+        .stdout(predicate::str::contains("401"));
+}
+
+#[test]
+fn test_logs_requests_passes_since_to_api() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    // The API mock only matches when the `since` query param is forwarded;
+    // forgetting to thread it would 501 against this mock.
+    let _m_req = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/requests").as_str())
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("limit".into(), "100".into()),
+            Matcher::UrlEncoded("since".into(), "5m".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"requests":[],"total":0,"app_name":"my-app"}"#)
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "logs",
+            "--requests",
+            "--app",
+            TEST_APP_NAME,
+            "--since",
+            "5m",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success();
+}
+
 // ───────────────────────── Services ─────────────────────────
 
 #[test]

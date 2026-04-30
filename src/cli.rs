@@ -274,8 +274,8 @@ Examples:
         #[arg(long)]
         search: Option<String>,
 
-        /// Stream logs in real-time (poll every 2s).
-        #[arg(short = 'f', long, conflicts_with = "output")]
+        /// Stream logs in real-time (poll every 2s). Works with --requests too.
+        #[arg(short = 'f', long, alias = "follow", conflicts_with = "output")]
         live: bool,
 
         /// Write logs to a file (JSON or plain text based on --json flag).
@@ -1496,6 +1496,7 @@ pub fn run() {
                     app_flag: app,
                     tail,
                     since,
+                    live,
                 });
             } else {
                 let severity = if error {
