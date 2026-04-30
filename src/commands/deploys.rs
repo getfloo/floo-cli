@@ -11,6 +11,136 @@ use crate::commands::deploy::{poll_deploy, stream_deploy, stream_deploy_json, TE
 use crate::errors::ErrorCode;
 use crate::output;
 
+/// Compact, agent-safe deploy status summary.
+///
+/// Composed entirely from existing API endpoints (`get_app` + the
+/// latest entry in `list_deploys` / `get_deploy`). Emits derived phase
+/// booleans the user can branch on without parsing build logs:
+///
+/// - `image_built` — the deploy moved past the build phase
+/// - `service_ready` — Cloud Run is serving the new revision
+/// - `host_bound` — the gateway URL is wired and the deploy is LIVE
+///
+/// Always emits the same compact shape; never includes build logs or
+/// other audit payload that could carry secret env values. Closes
+/// feedback `5c7621fd` (floo-artifact, 2026-04-30): "add a safe
+/// status/debug command that summarizes deploy state without dumping
+/// build logs, Cloud Run audit payloads, or secret env values."
+pub fn status(app: Option<&str>, deploy_id: Option<&str>) {
+    super::require_auth();
+    let client = super::init_client(None);
+
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app);
+
+    let app_info = match client.get_app(&app_id) {
+        Ok(a) => a,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+
+    let deploy = match deploy_id {
+        Some(id) => match client.get_deploy(&app_id, id) {
+            Ok(d) => d,
+            Err(e) => {
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                process::exit(1);
+            }
+        },
+        None => match client.list_deploys(&app_id) {
+            Ok(list) => match list.deploys.into_iter().next() {
+                Some(d) => d,
+                None => {
+                    output::error(
+                        "No deploys found for this app yet.",
+                        &ErrorCode::DeployNotFound,
+                        Some("Run `floo deploy .` or push to the connected GitHub branch."),
+                    );
+                    process::exit(1);
+                }
+            },
+            Err(e) => {
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                process::exit(1);
+            }
+        },
+    };
+
+    let deploy_status = deploy.status.as_deref().unwrap_or("unknown");
+    let app_status = app_info.status.as_deref().unwrap_or("unknown");
+    let gateway_url = app_info.url.as_deref().or(deploy.url.as_deref());
+    let commit_short = deploy.commit_sha.as_deref().map(super::short_sha);
+
+    let image_built = matches!(
+        deploy_status,
+        "deploying" | "configuring_routing" | "live" | "superseded"
+    );
+    let service_ready = matches!(deploy_status, "live");
+    // host_bound is the strict signal: the gateway URL is wired AND the
+    // deploy is the one currently serving. A deploy that "looks live"
+    // because the direct Cloud Run URL serves new code but the gateway
+    // 502s is exactly the floo-artifact 2026-04-30 fed461a6 shape — so
+    // host_bound=false on that state is the right answer for an agent.
+    let host_bound = service_ready && gateway_url.is_some() && app_status == "live";
+
+    let next_command = derive_next_command(deploy_status, host_bound);
+
+    let summary = serde_json::json!({
+        "app": app_name,
+        "deploy_id": deploy.id,
+        "commit": commit_short,
+        "status": deploy_status,
+        "app_status": app_status,
+        "url": gateway_url,
+        "image_built": image_built,
+        "service_ready": service_ready,
+        "host_bound": host_bound,
+        "created_at": deploy.created_at,
+        "next_command": next_command,
+    });
+
+    if output::is_json_mode() {
+        output::success("Deploy status retrieved.", Some(summary));
+        return;
+    }
+
+    let header = format!("{} ({})", app_name, deploy.id);
+    output::bold_line(&header);
+    output::dim_line(&format!(
+        "  status:        {}",
+        colored_status(deploy_status)
+    ));
+    output::dim_line(&format!("  app_status:    {}", app_status));
+    output::dim_line(&format!(
+        "  commit:        {}",
+        commit_short.unwrap_or("\u{2014}")
+    ));
+    output::dim_line(&format!(
+        "  url:           {}",
+        gateway_url.unwrap_or("\u{2014}")
+    ));
+    output::dim_line(&format!("  image_built:   {}", image_built));
+    output::dim_line(&format!("  service_ready: {}", service_ready));
+    output::dim_line(&format!("  host_bound:    {}", host_bound));
+    output::dim_line(&format!("  next_command:  {}", next_command));
+}
+
+/// Suggest the next command an agent or operator should run, based on
+/// the current state. Agent-safe: never names a destructive command
+/// without explicit caller confirmation.
+fn derive_next_command(deploy_status: &str, host_bound: bool) -> &'static str {
+    match deploy_status {
+        "pending" | "scheduled" | "building" | "deploying" | "configuring_routing" => {
+            "floo deploys watch"
+        }
+        "failed" => "floo deploys logs",
+        "live" if host_bound => "floo logs",
+        "live" => "floo apps status",
+        _ => "floo apps status",
+    }
+}
+
 pub fn list(app: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);
