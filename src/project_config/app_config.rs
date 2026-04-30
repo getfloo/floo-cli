@@ -297,13 +297,8 @@ pub fn load_app_config(dir: &Path) -> Result<Option<AppFileConfig>, FlooError> {
         )
     })?;
 
-    let config: AppFileConfig = toml::from_str(&content).map_err(|e| {
-        FlooError::with_suggestion(
-            ErrorCode::InvalidProjectConfig,
-            format!("Invalid {}: {e}", super::APP_CONFIG_FILE),
-            format!("See {SCHEMA_URL} for the schema reference."),
-        )
-    })?;
+    let config: AppFileConfig =
+        toml::from_str(&content).map_err(|e| super::toml_parse_error(super::APP_CONFIG_FILE, e))?;
 
     validate_app_config(&config)?;
 
@@ -530,6 +525,17 @@ unknown = "bad"
 
         let err = load_app_config(dir.path()).unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+        let suggestion = err
+            .suggestion
+            .expect("unknown-field rejection must surface a CLI-version-skew suggestion");
+        assert!(
+            suggestion.contains("`unknown`"),
+            "suggestion should name the unknown key, got: {suggestion}"
+        );
+        assert!(
+            suggestion.contains("floo update"),
+            "suggestion should point users at `floo update`, got: {suggestion}"
+        );
     }
 
     #[test]
