@@ -59,18 +59,24 @@ pub fn list(app_flag: Option<&str>) {
 }
 
 pub fn run(app_flag: Option<&str>, name: &str) {
-    super::require_auth();
-    let client = super::init_client(None);
-    let (app_id, _app_name) = super::resolve_app_from_config(&client, app_flag);
-
+    // Dry-run is a pure echo: every other --dry-run handler in the CLI
+    // (apps.rs, domains.rs, env.rs, rollbacks.rs, deploy.rs) checks
+    // is_dry_run_mode() BEFORE require_auth() / resolve_app_from_config(),
+    // so previewing a mutating command never requires a live API key or
+    // an existing app row. Keep that contract here so logged-out users
+    // and offline agents get a consistent preview shape across commands.
     if output::is_dry_run_mode() {
         output::dry_run_success(serde_json::json!({
             "action": "run_cron_job",
-            "app_id": app_id,
+            "app": app_flag,
             "name": name,
         }));
         return;
     }
+
+    super::require_auth();
+    let client = super::init_client(None);
+    let (app_id, _app_name) = super::resolve_app_from_config(&client, app_flag);
 
     let spinner = output::Spinner::new(&format!("Triggering cron job '{name}'..."));
     let result = match client.run_cron_job(&app_id, name) {
