@@ -235,7 +235,23 @@ pub fn deploy(
     services_filter: Vec<String>,
     rebuild: bool,
     sync_env: bool,
+    skip_migrations: bool,
 ) {
+    // Restart path reuses the existing image and never runs migrations,
+    // so `--skip-migrations` only makes sense on a rebuild path. Reject
+    // the combination loudly rather than silently dropping the flag.
+    if skip_migrations && app.is_some() && !rebuild {
+        output::error(
+            "--skip-migrations requires --rebuild.",
+            &ErrorCode::ConfigInvalid,
+            Some(
+                "Restart paths reuse the existing image and don't run migrations,\
+                 so --skip-migrations has no effect there. Add --rebuild or drop the flag.",
+            ),
+        );
+        process::exit(1);
+    }
+
     // --- Path 1 & 2: --app flag provided — no local directory needed ---
     if let Some(ref app_name) = app {
         // Dry-run exits early — no auth or API calls needed
@@ -246,6 +262,7 @@ pub fn deploy(
                 "action": action,
                 "app": app_name,
                 "services": service_names,
+                "skip_migrations": skip_migrations,
             }));
             return;
         }
@@ -278,7 +295,7 @@ pub fn deploy(
         };
 
         if rebuild {
-            deploy_rebuild(&client, &app_data, &services_filter);
+            deploy_rebuild(&client, &app_data, &services_filter, skip_migrations);
         } else {
             deploy_restart(&client, &app_data, &services_filter);
         }
@@ -592,6 +609,7 @@ pub fn deploy(
         reparo_config,
         cron_jobs_arg,
         github_config,
+        skip_migrations,
     ) {
         Ok(d) => {
             spinner.finish();
@@ -835,6 +853,7 @@ fn deploy_rebuild(
     client: &FlooClient,
     app_data: &crate::api_types::App,
     services_filter: &[String],
+    skip_migrations: bool,
 ) {
     let app_id = &app_data.id;
     let runtime = app_data.runtime.as_deref().unwrap_or("unknown");
@@ -846,6 +865,7 @@ fn deploy_rebuild(
             "app": app_data.name,
             "runtime": runtime,
             "services": service_names,
+            "skip_migrations": skip_migrations,
         }));
         return;
     }
@@ -857,7 +877,7 @@ fn deploy_rebuild(
     };
 
     let spinner = output::Spinner::new("Rebuilding...");
-    let mut deploy_data = match client.rebuild_app(app_id, runtime, svcs) {
+    let mut deploy_data = match client.rebuild_app(app_id, runtime, svcs, skip_migrations) {
         Ok(d) => {
             spinner.finish();
             d
