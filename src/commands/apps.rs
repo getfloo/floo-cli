@@ -160,14 +160,20 @@ pub fn delete(app_name: &str, destroy_data_flag: bool) {
 
     if output::is_dry_run_mode() {
         let risk: RiskMetadata = Tier::Three.into();
-        output::dry_run_success(serde_json::json!({
-            "action": "delete",
-            "app": app_name,
-            "warning": "This cannot be undone",
-            "destructive": risk.destructive,
-            "data_loss": risk.data_loss,
-            "tier": risk.tier,
-        }));
+        let preview = format!(
+            "Would permanently delete app '{app_name}' (services, env vars, managed services, domains, deploy history). This cannot be undone."
+        );
+        output::dry_run_preview(
+            &preview,
+            serde_json::json!({
+                "action": "delete",
+                "app": app_name,
+                "warning": "This cannot be undone",
+                "destructive": risk.destructive,
+                "data_loss": risk.data_loss,
+                "tier": risk.tier,
+            }),
+        );
         return;
     }
 

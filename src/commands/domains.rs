@@ -39,11 +39,20 @@ fn check_services_flag(client: &FlooClient, app_id: &str, services: Option<&str>
 
 pub fn add(hostname: &str, app: Option<&str>, services: Option<&str>) {
     if output::is_dry_run_mode() {
-        output::dry_run_success(serde_json::json!({
-            "action": "domain_add",
-            "hostname": hostname,
-            "service": services,
-        }));
+        let target = app.unwrap_or("(reads from config)");
+        let svc_clause = services
+            .map(|s| format!(" (service: {s})"))
+            .unwrap_or_default();
+        let preview = format!("Would add domain {hostname} to {target}{svc_clause}.");
+        output::dry_run_preview(
+            &preview,
+            serde_json::json!({
+                "action": "domain_add",
+                "hostname": hostname,
+                "app": app,
+                "service": services,
+            }),
+        );
         return;
     }
 
@@ -164,13 +173,20 @@ pub fn remove(hostname: &str, app: Option<&str>, services: Option<&str>, yes: bo
 
     if output::is_dry_run_mode() {
         let risk: RiskMetadata = Tier::Two.into();
-        output::dry_run_success(serde_json::json!({
-            "action": "domain_remove",
-            "hostname": hostname,
-            "destructive": risk.destructive,
-            "data_loss": risk.data_loss,
-            "tier": risk.tier,
-        }));
+        let target = app.unwrap_or("(reads from config)");
+        let preview = format!("Would remove domain {hostname} from {target}.");
+        output::dry_run_preview(
+            &preview,
+            serde_json::json!({
+                "action": "domain_remove",
+                "hostname": hostname,
+                "app": app,
+                "service": services,
+                "destructive": risk.destructive,
+                "data_loss": risk.data_loss,
+                "tier": risk.tier,
+            }),
+        );
         return;
     }
 

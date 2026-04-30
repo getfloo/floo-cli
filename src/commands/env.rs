@@ -54,6 +54,27 @@ fn format_target(app_name: &str, service_name: Option<&str>) -> String {
     }
 }
 
+/// Render `--services` and `--env` scope as a parenthesized suffix for dry-run
+/// previews — e.g. " (services: api, web) (env: prod)".
+///
+/// Codex review flagged that env dry-run previews previously hid the actual
+/// scope: `floo env set KEY=val --services api --env prod --dry-run` rendered
+/// as "Would set KEY on app foo." even though the real command would only
+/// touch the api service in prod. The preview must reflect the target the
+/// real command would mutate, otherwise an agent or human verifying a prod
+/// change can't tell from the preview that prod is what they're about to
+/// touch.
+fn format_env_scope(service_names: &[String], env: &str) -> String {
+    let mut suffix = String::new();
+    if !service_names.is_empty() {
+        suffix.push_str(&format!(" (services: {})", service_names.join(", ")));
+    }
+    if env != "dev" {
+        suffix.push_str(&format!(" (env: {env})"));
+    }
+    suffix
+}
+
 /// Resolve `--services` names to service IDs.
 ///
 /// Returns a list of `(Option<service_id>, Option<service_name>)` pairs.
@@ -240,11 +261,21 @@ pub fn set(
     let key = key.to_uppercase();
 
     if output::is_dry_run_mode() {
-        output::dry_run_success(serde_json::json!({
-            "action": "env_set",
-            "key": key,
-            "will_restart": restart,
-        }));
+        let target = app_flag.unwrap_or("(reads from config)");
+        let scope = format_env_scope(service_names, env);
+        let restart_clause = if restart { " and restart" } else { "" };
+        let preview = format!("Would set {key} on {target}{scope}{restart_clause}.");
+        output::dry_run_preview(
+            &preview,
+            serde_json::json!({
+                "action": "env_set",
+                "key": key,
+                "app": app_flag,
+                "services": service_names,
+                "env": env,
+                "will_restart": restart,
+            }),
+        );
         return;
     }
 
@@ -369,10 +400,19 @@ pub fn remove(key: &str, app_flag: Option<&str>, service_names: &[String], env: 
     let key = key.to_uppercase();
 
     if output::is_dry_run_mode() {
-        output::dry_run_success(serde_json::json!({
-            "action": "env_remove",
-            "key": key,
-        }));
+        let target = app_flag.unwrap_or("(reads from config)");
+        let scope = format_env_scope(service_names, env);
+        let preview = format!("Would remove {key} from {target}{scope}.");
+        output::dry_run_preview(
+            &preview,
+            serde_json::json!({
+                "action": "env_remove",
+                "key": key,
+                "app": app_flag,
+                "services": service_names,
+                "env": env,
+            }),
+        );
         return;
     }
 
@@ -487,12 +527,28 @@ pub fn import_vars(
         let vars = parse_env_file(&env_file_path);
         let keys: Vec<&str> = vars.iter().map(|(k, _)| k.as_str()).collect();
         let count = vars.len();
-        output::dry_run_success(serde_json::json!({
-            "action": "env_import",
-            "file": env_file_path.display().to_string(),
-            "keys": keys,
-            "count": count,
-        }));
+        let target = app_flag
+            .map(String::from)
+            .or_else(|| resolved.as_ref().map(|r| r.app_name.clone()))
+            .unwrap_or_else(|| "(reads from config)".to_string());
+        let scope = format_env_scope(service_names, env);
+        let preview = format!(
+            "Would import {count} variable(s) from {} to {target}{scope}.\nKeys: {}",
+            env_file_path.display(),
+            keys.join(", "),
+        );
+        output::dry_run_preview(
+            &preview,
+            serde_json::json!({
+                "action": "env_import",
+                "file": env_file_path.display().to_string(),
+                "app": target,
+                "services": service_names,
+                "env": env,
+                "keys": keys,
+                "count": count,
+            }),
+        );
         return;
     }
 

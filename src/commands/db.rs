@@ -140,6 +140,26 @@ pub fn schema(app_flag: Option<&str>) {
 }
 
 pub fn migrate(app_flag: Option<&str>, env: &str) {
+    // Dry-run is a pure echo, like cron.rs:run — runs before require_auth()
+    // and resolve_app_from_config() so logged-out users and offline agents
+    // can preview the action without an API call. The preview reports the
+    // app + environment the migration would target; previewing the actual
+    // pending-migration set would require a server-side endpoint we don't
+    // yet expose.
+    if output::is_dry_run_mode() {
+        let target = app_flag.unwrap_or("(reads from config)");
+        let preview = format!("Would run pending migrations on '{target}' (env: {env}).");
+        output::dry_run_preview(
+            &preview,
+            serde_json::json!({
+                "action": "db_migrate",
+                "app": app_flag,
+                "env": env,
+            }),
+        );
+        return;
+    }
+
     super::require_auth();
     let client = super::init_client(None);
     let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
