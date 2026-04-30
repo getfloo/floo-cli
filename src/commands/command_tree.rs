@@ -17,14 +17,14 @@ fn command_tree() -> Vec<CommandInfo> {
     vec![
         CommandInfo {
             name: "dev",
-            description: "Run all services locally with managed-service credentials",
+            description: "Run all services locally inside their Dockerfile container, with managed-service credentials. Requires Docker or Podman.",
             usage: "floo dev [--app <name>]",
             requires_auth: true,
             subcommands: vec![],
         },
         CommandInfo {
             name: "run",
-            description: "Run a one-shot command with a service's managed env vars injected",
+            description: "Run a one-shot command inside the service's Dockerfile container with managed env vars injected. Requires Docker or Podman.",
             usage: "floo run [--service <name>] [--app <name>] -- <command...>",
             requires_auth: true,
             subcommands: vec![],

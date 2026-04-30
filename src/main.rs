@@ -5,6 +5,7 @@ mod commands;
 mod config;
 mod confirm;
 mod constants;
+mod container;
 mod detection;
 mod dev_proxy;
 mod dockerfile;
