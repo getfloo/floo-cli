@@ -134,10 +134,17 @@ Floo Quickstart — End-to-End Walkthrough
 
 ## 8. Local Development
 
-  floo dev --app my-app --service web
+  floo dev --app my-app
 
-  Runs your service locally with live Cloud SQL access and the same env vars
-  as the deployed version. Requires dev_command set on the service in floo.app.toml.
+  Runs each service inside a container built from its Dockerfile, with live
+  Cloud SQL access and the same env vars as the deployed version. The local
+  toolchain matches what ships to production — no \"works on my machine\" gap.
+
+  Requires:
+    - Docker (or Podman) running locally
+    - Dockerfile in each runnable service's path
+    - dev_command in floo.app.toml that binds 0.0.0.0:$PORT (not 127.0.0.1)
+    - The host port floo publishes on 127.0.0.1:$PORT routes into the container
 
 ## What Creates What
 
@@ -353,8 +360,10 @@ Floo Config Files
 
 ## Service Fields (floo.app.toml inline or floo.service.toml)
 
-  dev_command      — command to run locally for `floo dev`
-                     e.g., \"npm run dev\", \"uvicorn app.main:app --reload\"
+  dev_command      — command run inside the service's Dockerfile container
+                     by `floo dev`. Must bind 0.0.0.0:$PORT (not 127.0.0.1)
+                     so the host-published port reaches the container.
+                     e.g., \"npm run dev\", \"uvicorn app.main:app --reload --host 0.0.0.0\"
 
   migrate_command  — optional command run as a Cloud Run Job after every
                      deploy (against the dev schema) and after every promote
@@ -861,7 +870,9 @@ Floo — Golden Path
   Add a custom domain                   | floo domains add example.com --app my-app (then add CNAME at DNS provider)
   Verify a custom domain                | floo domains verify example.com --app my-app
   View logs                             | floo logs --app my-app
-  Run locally with prod credentials     | floo dev --app my-app (requires dev_command)
+  Run locally with prod credentials     | floo dev --app my-app (requires Dockerfile + dev_command; runs in container)
+  Open a shell in service's container   | floo run --service api -- bash
+  Run a one-off in container env        | floo run --service api -- pytest tests/
 ";
 
 const TEMPLATES: &str = "\
@@ -948,18 +959,18 @@ Floo Templates — Copy-Paste App Structures
   6. floo env set DATABASE_URL=<url> --services api  # managed postgres auto-sets this
   7. floo apps show my-app                     # get your URL
 
-### Local Development (two terminals)
+### Local Development
 
-  Terminal 1 (backend):
-    cd api && uvicorn app.main:app --reload --port 8080
+  Run every service inside its Dockerfile container with managed-service
+  credentials wired in:
 
-  Terminal 2 (frontend):
-    cd web && npm run dev
-    # vite.config.ts proxy forwards /api/* to localhost:8080
+    floo dev --app my-app
 
-  Or use floo dev for cloud-connected local development:
-    floo dev --app my-app --service api    # terminal 1
-    floo dev --app my-app --service web    # terminal 2
+  Both services start in parallel; each binds inside its container to
+  0.0.0.0:$PORT and floo publishes that port to 127.0.0.1 on the host.
+
+  Vite still proxies /api/* to http://localhost:8080 — same loopback URL
+  as before, only the request path now traverses Docker's port binding.
 
 ### Env Vars
 
@@ -1112,32 +1123,36 @@ Two commands cover the daily Rails workflow once your first deploy is up.
 
 Local dev server with prod-shaped env:
 
-  floo dev --app my-rails-app --service web
+  floo dev --app my-rails-app
 
-Runs your dev_command locally with DATABASE_URL and other env vars
-sourced from floo. Real Cloud SQL connection, no exported credentials.
+Runs your dev_command inside the Rails Dockerfile's container with
+DATABASE_URL and other env vars sourced from floo. Real Cloud SQL
+connection, no exported credentials, exact same Ruby/gem set as
+production. Make sure config/puma.rb (or your dev_command) binds to
+0.0.0.0:$PORT so the published host port reaches the container.
 
 Add --fixture-user to test signed-in (accounts-mode) flows locally:
 
-  floo dev --app my-rails-app --service web --fixture-user you@example.com
+  floo dev --app my-rails-app --fixture-user you@example.com
 
 The proxy injects the same X-Floo-User-* headers floo's gateway adds in
 production, so the controller reading those headers works locally with
 no conditional code.
 
-One-shot commands (rake tasks, db:seed, console):
+One-shot commands (rake tasks, db:seed, console) — also run inside the
+container, so you get the Ruby + gems baked into the image:
 
   floo run --service web -- bundle exec rake my_task
   floo run --service web -- bin/rails db:seed
   floo run --service web -- bin/rails console
   floo run --service web -- bin/rails db:migrate
 
-floo run inherits stdin/stdout/stderr, so interactive commands like
-bin/rails console work like running them locally — your shell just sees
-the floo-injected env vars instead of your local .env. Migrations run
-automatically on every deploy via migrate_command; use `floo run --
-bin/rails db:migrate` only for ad-hoc migration work outside the deploy
-path.
+floo run inherits stdin/stdout/stderr and allocates a TTY when run
+interactively, so commands like bin/rails console feel native — they
+just execute against the same gem set production runs against, with
+floo's managed env vars already injected. Migrations run automatically
+on every deploy via migrate_command; use `floo run -- bin/rails
+db:migrate` only for ad-hoc migration work outside the deploy path.
 
 ## 5. Add Postgres
 
@@ -1259,12 +1274,16 @@ Then in a Server Component or Route Handler:
 
 ## 7. Local dev
 
-  floo dev --app my-nextjs-app --service web
+  floo dev --app my-nextjs-app
+
+  Runs `next dev` inside the Next.js Dockerfile container with managed
+  env vars wired in. Set HOSTNAME=0.0.0.0 in the dev_command (or in your
+  Dockerfile) so the published host port reaches the container.
 
 ## Gotchas
 
   - /healthz is reserved by Cloud Run — use /health
-  - HOSTNAME=0.0.0.0 (standalone defaults to localhost)
+  - HOSTNAME=0.0.0.0 (standalone defaults to localhost; required for floo dev too)
   - NEXT_PUBLIC_* must be threaded via --build-arg
   - output: \"standalone\" in next.config.js
   - Never expose tokens to client components
@@ -1333,7 +1352,11 @@ Then a FastAPI dependency:
 
 ## 6. Local dev
 
-  floo dev --app my-fastapi-app --service web
+  floo dev --app my-fastapi-app
+
+  Runs uvicorn inside the Dockerfile container with managed env vars
+  wired in. The dev_command above already binds to 0.0.0.0 — keep it
+  that way so the host port reaches the container.
 
 ## Gotchas
 

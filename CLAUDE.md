@@ -70,6 +70,17 @@ Manages `~/.floo-local/config.json` for local builds or `~/.floo/config.json` fo
 
 Auto-detects runtime/framework from project files. Priority: Dockerfile > package.json > pyproject.toml/requirements.txt > go.mod > index.html.
 
+### Container (`container.rs`)
+
+`floo dev` and `floo run` execute inside a Docker (or Podman) container built from each service's Dockerfile, not on the host shell. The module owns runtime detection, content-addressed image tagging (SHA-256 of Dockerfile + lockfiles), `WORKDIR` parsing, the `RunSpec → docker run` argv translation, and graceful container shutdown via `docker stop --time 10`.
+
+Two invariants the rest of the codebase relies on:
+
+1. **Dockerfile is required.** Both commands refuse to fall back to host shell if a service has no Dockerfile — a silent fallback creates the "works on my machine" bug class we explicitly opt out of.
+2. **Container env is minimal.** Only floo session env + `PORT`. Host env is not inherited.
+
+See `docs/knowledge/flows/local-dev.md` (in the floo repo) for the full contract.
+
 ### Archive (`archive.rs`)
 
 Packs source into `.tar.gz`, respects `.flooignore`. 500MB size limit.

@@ -1,8 +1,11 @@
-use std::collections::HashMap;
-use std::process::{self, Command, Stdio};
+use std::collections::BTreeMap;
+use std::io::IsTerminal;
+use std::path::Path;
+use std::process;
 
 use crate::config::load_config;
-use crate::errors::ErrorCode;
+use crate::container::{self, BuildSpec, RunSpec, Runtime, DEFAULT_WORKDIR};
+use crate::errors::{ErrorCode, FlooError};
 use crate::output;
 use crate::project_config;
 
@@ -34,7 +37,7 @@ pub fn run(service: &str, app_flag: Option<String>, command: Vec<String>) {
     let app = super::resolve_app_or_exit(&client, &resolved.app_name);
     let app_id = app.id.clone();
 
-    // Resolve the working directory: use the service's `path` from floo.app.toml.
+    // Working dir = the service's `path` from floo.app.toml.
     let working_dir = {
         let app_config = match super::load_app_config_for_resolved_app(&resolved) {
             Ok(c) => c,
@@ -75,8 +78,34 @@ pub fn run(service: &str, app_flag: Option<String>, command: Vec<String>) {
         }
     };
 
-    // Create a portless dev session: gets env vars + postgres IP auth without
-    // starting a local server. The API skips cross-service discovery for portless entries.
+    // --- Container preflight: Dockerfile + runtime must both exist before we
+    // touch the API. Failing here costs zero on the platform side and gives
+    // the user a clear error message.
+    let dockerfile_path = working_dir.join("Dockerfile");
+    if !dockerfile_path.exists() {
+        output::error(
+            &format!(
+                "Service '{service}' has no Dockerfile at {}.",
+                dockerfile_path.display()
+            ),
+            &ErrorCode::DockerfileMissing,
+            Some(
+                "floo run executes inside the same container that ships to production. \
+                 Add a Dockerfile to the service path, or run 'floo init' to scaffold one.",
+            ),
+        );
+        process::exit(1);
+    }
+
+    let runtime = match container::detect_runtime() {
+        Ok(r) => r,
+        Err(e) => {
+            output::error(&e.message, &e.code, e.suggestion.as_deref());
+            process::exit(1);
+        }
+    };
+
+    // --- Create scoped dev session (env vars + Postgres IP auth, no listener).
     let api_services = vec![crate::api_types::DevSessionService {
         name: service.to_string(),
         port: None,
@@ -98,7 +127,6 @@ pub fn run(service: &str, app_flag: Option<String>, command: Vec<String>) {
             process::exit(1);
         }
     };
-
     let session_id = session.session_id.clone();
 
     if !output::is_json_mode() {
@@ -112,35 +140,57 @@ pub fn run(service: &str, app_flag: Option<String>, command: Vec<String>) {
         eprintln!();
     }
 
-    // Build env: inherit current env, then overlay platform vars for the service.
-    let mut env_vars: HashMap<String, String> = std::env::vars().collect();
+    // --- Ensure image exists, building if needed.
+    let image = match ensure_image(
+        runtime,
+        &resolved.app_name,
+        service,
+        &working_dir,
+        &dockerfile_path,
+    ) {
+        Ok(tag) => tag,
+        Err(e) => {
+            let _ = client.delete_dev_session(&app_id, &session_id);
+            output::error(&e.message, &e.code, e.suggestion.as_deref());
+            process::exit(1);
+        }
+    };
+
+    // --- Compose the container run.
+    let workdir = read_workdir(&dockerfile_path);
+    let mut env: BTreeMap<String, String> = BTreeMap::new();
     if let Some(svc_env) = session.services.get(service) {
         for (k, v) in svc_env {
-            env_vars.insert(k.clone(), v.clone());
+            env.insert(k.clone(), v.clone());
         }
     }
 
-    // Run the command, inheriting stdin/stdout/stderr so test output flows through naturally.
     let (bin, args) = command.split_first().expect("command is non-empty");
-    let status = match Command::new("sh")
-        .arg("-c")
-        .arg(shell_join(bin, args))
-        .current_dir(&working_dir)
-        .envs(&env_vars)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-    {
+    let shell_cmd = shell_join(bin, args);
+
+    let interactive_stdin = std::io::stdin().is_terminal();
+    let interactive_stdout = std::io::stdout().is_terminal();
+    let allocate_tty = !output::is_json_mode() && interactive_stdin && interactive_stdout;
+
+    let spec = RunSpec {
+        image,
+        workdir_in_container: workdir.clone(),
+        source_mount_host: working_dir.clone(),
+        env,
+        command: shell_cmd,
+        ports: BTreeMap::new(),
+        preserved_paths: container::default_preserved_paths(),
+        name: container::container_name(&resolved.app_name, service),
+        interactive: interactive_stdin,
+        tty: allocate_tty,
+        init: true,
+    };
+
+    let status = match container::run_foreground(runtime, &spec) {
         Ok(s) => s,
         Err(e) => {
-            // Clean up the session before exiting — process::exit() skips destructors.
             let _ = client.delete_dev_session(&app_id, &session_id);
-            output::error(
-                &format!("Failed to run command: {e}"),
-                &ErrorCode::InternalError,
-                None,
-            );
+            output::error(&e.message, &e.code, e.suggestion.as_deref());
             process::exit(1);
         }
     };
@@ -154,14 +204,62 @@ pub fn run(service: &str, app_flag: Option<String>, command: Vec<String>) {
                 "exit_code": exit_code,
                 "session_id": session_id,
                 "postgres_authorized": session.postgres_authorized,
+                "container": {
+                    "runtime": runtime.binary(),
+                    "image": spec.name,
+                    "workdir": workdir,
+                },
             }
         }));
     }
 
-    // Tear down the dev session before exit. process::exit() skips destructors,
-    // so this must be an explicit call — not a Drop impl.
     let _ = client.delete_dev_session(&app_id, &session_id);
     process::exit(exit_code);
+}
+
+fn ensure_image(
+    runtime: Runtime,
+    app: &str,
+    service: &str,
+    context_dir: &Path,
+    dockerfile: &Path,
+) -> Result<String, FlooError> {
+    let dockerfile_content = std::fs::read_to_string(dockerfile).map_err(|e| {
+        FlooError::with_suggestion(
+            ErrorCode::DockerfileMissing,
+            format!("Failed to read {}: {e}", dockerfile.display()),
+            "Check file permissions on the Dockerfile.".to_string(),
+        )
+    })?;
+    let hash = container::compute_build_hash(&dockerfile_content, context_dir);
+    let tag = container::image_tag(app, service, &hash);
+
+    if container::image_exists(runtime, &tag) {
+        return Ok(tag);
+    }
+
+    if !output::is_json_mode() {
+        output::info(
+            &format!("Building dev image '{tag}' (first run or deps changed)..."),
+            None,
+        );
+    }
+    container::build_image(
+        runtime,
+        &BuildSpec {
+            tag: tag.clone(),
+            context_dir: context_dir.to_path_buf(),
+            dockerfile: dockerfile.to_path_buf(),
+        },
+    )?;
+    Ok(tag)
+}
+
+fn read_workdir(dockerfile: &Path) -> String {
+    std::fs::read_to_string(dockerfile)
+        .ok()
+        .and_then(|c| container::parse_workdir(&c))
+        .unwrap_or_else(|| DEFAULT_WORKDIR.to_string())
 }
 
 /// Build a shell command string, quoting any argument that contains whitespace
@@ -261,7 +359,6 @@ mod tests {
 
     #[test]
     fn shell_join_bin_with_spaces_quoted() {
-        // Binary name with spaces is quoted like any other token.
         assert_eq!(
             shell_join("/path/to my/script", &["arg".into()]),
             "'/path/to my/script' arg"
@@ -270,7 +367,6 @@ mod tests {
 
     #[test]
     fn shell_quote_embedded_single_quote() {
-        // Single quote in an argument is escaped correctly.
         assert_eq!(shell_quote_if_needed("it's"), "'it'\\''s'");
     }
 }

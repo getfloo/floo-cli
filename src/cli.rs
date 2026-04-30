@@ -64,6 +64,12 @@ Examples:
 
     /// Run all services locally with managed-service credentials.
     ///
+    /// Each service runs inside a container built from its Dockerfile, so the
+    /// local toolchain matches what ships to production. Requires Docker (or
+    /// Podman) on PATH and a Dockerfile in every runnable service's path.
+    /// dev_command must bind to 0.0.0.0:$PORT inside the container — the host
+    /// port is published only on 127.0.0.1.
+    ///
     /// `--json` redacts secret-shaped values (DATABASE_URL, REDIS_URL,
     /// SECRET_KEY_BASE, etc.) by default and stamps the payload with
     /// `contains_secrets: true` so agent harnesses can refuse it. Pass
@@ -77,7 +83,16 @@ Examples:
                                                         proxy that injects X-Floo-User-* identity
                                                         headers, mirroring what floo's gateway does
                                                         in production. Prints both the raw service
-                                                        URL and the auth-proxied URL.")]
+                                                        URL and the auth-proxied URL.
+
+Container requirements:
+  - Docker or Podman daemon running locally
+  - A Dockerfile in each service's path (run 'floo init' to scaffold)
+  - dev_command must bind 0.0.0.0:$PORT (not 127.0.0.1) so the published
+    host port reaches the container
+
+The image is content-addressed by Dockerfile + lockfile hash — the first run
+builds, subsequent runs reuse the cached image until any of those files change.")]
     Dev {
         /// App name or ID. Overrides the app name in floo.app.toml, but the
         /// file itself is still required for service definitions.
@@ -111,15 +126,18 @@ Examples:
     ///
     /// Creates a scoped dev session to fetch the service's env vars (DATABASE_URL,
     /// REDIS_URL, and any custom vars set via `floo env`), authorizes Postgres for
-    /// direct connections if provisioned, runs the command in the service's directory,
-    /// then tears down the session when the command exits.
+    /// direct connections if provisioned, runs the command inside a container
+    /// built from the service's Dockerfile, then tears down the session when the
+    /// command exits.
     ///
-    /// Exit code propagates exactly — a failing test suite returns non-zero.
+    /// Requires Docker (or Podman) on PATH and a Dockerfile at the service's
+    /// path. Exit code propagates exactly — a failing test suite returns non-zero.
     #[command(after_help = "\
 Examples:
-  floo run --service api -- pytest tests/unit/        Run tests with api env vars
+  floo run --service api -- pytest tests/unit/        Run tests inside api's Dockerfile env
   floo run --service worker -- python seed.py         Run a script with worker env vars
-  floo run --service api --json -- pytest             Machine-readable exit code")]
+  floo run --service api --json -- pytest             Machine-readable exit code
+  floo run --service api -- bash                      Open a shell in the service's container")]
     Run {
         /// Service name to inject env vars for (from floo.app.toml).
         #[arg(long, required = true)]

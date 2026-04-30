@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::BufRead;
-use std::process::{self, Child, Command, Stdio};
+use std::path::{Path, PathBuf};
+use std::process::{self, Child};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -9,8 +10,9 @@ use std::time::Duration;
 use colored::Colorize;
 
 use crate::config::load_config;
+use crate::container::{self, BuildSpec, RunSpec, Runtime, DEFAULT_WORKDIR};
 use crate::dev_proxy::{self, FixtureUser};
-use crate::errors::ErrorCode;
+use crate::errors::{ErrorCode, FlooError};
 use crate::output;
 use crate::project_config;
 use crate::project_config::AppAccessMode;
@@ -38,6 +40,20 @@ struct DevServiceInfo {
     path: String,
     dev_command: String,
     migrate_command: Option<String>,
+    /// Resolved absolute path to the service directory on the host.
+    working_dir: PathBuf,
+    /// Resolved absolute path to the service's Dockerfile.
+    dockerfile: PathBuf,
+    /// In-container WORKDIR parsed from the Dockerfile (or DEFAULT_WORKDIR).
+    container_workdir: String,
+}
+
+/// A spawned child + the container name we used, so cleanup can `docker stop`
+/// it before falling back to killing the local `docker run` process.
+struct RunningService {
+    name: String,
+    container_name: String,
+    child: Child,
 }
 
 pub struct DevArgs {
@@ -112,8 +128,10 @@ pub fn dev(args: DevArgs) {
         process::exit(1);
     }
 
-    // --- Collect and validate service info ---
-    let mut services: Vec<DevServiceInfo> = Vec::new();
+    // --- Collect and validate service info (all but Dockerfile/workdir, which
+    // happens after we've enumerated services so we can report all problems
+    // at once rather than failing on the first one).
+    let mut partial: Vec<(String, AppServicePartial)> = Vec::new();
     let mut missing_dev_command: Vec<String> = Vec::new();
     let mut skipped_external: Vec<String> = Vec::new();
 
@@ -121,11 +139,6 @@ pub fn dev(args: DevArgs) {
         let dev_command = match &entry.dev_command {
             Some(cmd) => cmd.clone(),
             None => {
-                // External-repo services (`repo = "owner/repo"`) source their
-                // code from a different GitHub repo and can't realistically
-                // run a local dev command. Warn and skip instead of failing
-                // the entire dev session — the rest of the multi-service app
-                // can still come up locally.
                 if entry.repo.is_some() {
                     skipped_external.push(name.clone());
                 } else {
@@ -159,13 +172,15 @@ pub fn dev(args: DevArgs) {
             }
         };
 
-        services.push(DevServiceInfo {
-            name: name.clone(),
-            port,
-            path,
-            dev_command,
-            migrate_command: entry.migrate_command.clone(),
-        });
+        partial.push((
+            name.clone(),
+            AppServicePartial {
+                port,
+                path,
+                dev_command,
+                migrate_command: entry.migrate_command.clone(),
+            },
+        ));
     }
 
     if !missing_dev_command.is_empty() {
@@ -186,11 +201,61 @@ pub fn dev(args: DevArgs) {
         ));
     }
 
-    // Determine whether identity-header injection should run for this session.
-    // The proxy is only useful for accounts-mode apps: those are the apps that
-    // sit behind floo's gateway in production and read X-Floo-User-* headers.
-    // Other access modes don't get the headers in production either, so there
-    // is nothing to mirror locally.
+    // --- Container preflight: every runnable service needs a Dockerfile.
+    // Collect all missing dockerfiles up front so the error report is
+    // complete rather than one-at-a-time.
+    let mut services: Vec<DevServiceInfo> = Vec::new();
+    let mut missing_dockerfile: Vec<(String, PathBuf)> = Vec::new();
+
+    for (name, p) in partial {
+        let working_dir = resolved.config_dir.join(&p.path);
+        if !working_dir.exists() {
+            output::error(
+                &format!("Service '{name}' path '{}' does not exist.", p.path),
+                &ErrorCode::InvalidPath,
+                Some("Check the 'path' value in floo.app.toml."),
+            );
+            process::exit(1);
+        }
+        let dockerfile = working_dir.join("Dockerfile");
+        if !dockerfile.exists() {
+            missing_dockerfile.push((name, dockerfile));
+            continue;
+        }
+        let container_workdir = std::fs::read_to_string(&dockerfile)
+            .ok()
+            .and_then(|c| container::parse_workdir(&c))
+            .unwrap_or_else(|| DEFAULT_WORKDIR.to_string());
+        services.push(DevServiceInfo {
+            name,
+            port: p.port,
+            path: p.path,
+            dev_command: p.dev_command,
+            migrate_command: p.migrate_command,
+            working_dir,
+            dockerfile,
+            container_workdir,
+        });
+    }
+
+    if !missing_dockerfile.is_empty() {
+        let listing: String = missing_dockerfile
+            .iter()
+            .map(|(name, path)| format!("  - {name} ({})", path.display()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        output::error(
+            &format!("floo dev needs a Dockerfile per service. Missing:\n{listing}"),
+            &ErrorCode::DockerfileMissing,
+            Some(
+                "Run 'floo init' to scaffold a Dockerfile, or add one to each service's path. \
+                 floo dev runs every dev_command inside the same image that ships to production.",
+            ),
+        );
+        process::exit(1);
+    }
+
+    // Whether identity-header injection should run for this session.
     let is_accounts_mode = matches!(app_config.app.access_mode, Some(AppAccessMode::Accounts));
     let fixture_user = build_fixture_user(&args);
     let fixture_active = fixture_user.is_some() && is_accounts_mode;
@@ -203,7 +268,6 @@ pub fn dev(args: DevArgs) {
         );
     }
 
-    // Sort by name for deterministic ordering
     services.sort_by(|a, b| a.name.cmp(&b.name));
 
     // --- Check for port conflicts ---
@@ -225,16 +289,11 @@ pub fn dev(args: DevArgs) {
         }
     }
 
-    // --- Dry run short-circuit ---
+    // --- Dry-run short-circuit ---
     //
     // Dry-run must NOT call create_dev_session. That endpoint has two real
     // side effects: (1) it registers a dev session row on the platform, and
     // (2) it returns managed-service credentials (DATABASE_URL, REDIS_URL, …).
-    // Previously `floo dev --dry-run --json` did both — the returned env vars
-    // then landed in stdout / agent logs. See feedback 6af7c0c2.
-    //
-    // Dry-run emits a plan describing which services WOULD start on which
-    // ports, with no session, no env vars, and no child processes.
     if output::is_dry_run_mode() {
         let plan_services: Vec<serde_json::Value> = services
             .iter()
@@ -246,6 +305,10 @@ pub fn dev(args: DevArgs) {
                     "path": svc.path,
                     "dev_command": svc.dev_command,
                     "migrate_command": svc.migrate_command,
+                    "container": {
+                        "dockerfile": svc.dockerfile.display().to_string(),
+                        "workdir": svc.container_workdir,
+                    },
                 })
             })
             .collect();
@@ -277,6 +340,35 @@ pub fn dev(args: DevArgs) {
         return;
     }
 
+    // --- Container runtime preflight (after dry-run, before any side effect).
+    let runtime = match container::detect_runtime() {
+        Ok(r) => r,
+        Err(e) => {
+            output::error(&e.message, &e.code, e.suggestion.as_deref());
+            process::exit(1);
+        }
+    };
+
+    // --- Build images sequentially. First-run cost is unavoidable; subsequent
+    // runs reuse cached images keyed by Dockerfile + lockfile content.
+    let mut images: HashMap<String, String> = HashMap::new();
+    for svc in &services {
+        let tag = match ensure_image(
+            runtime,
+            &resolved.app_name,
+            &svc.name,
+            &svc.working_dir,
+            &svc.dockerfile,
+        ) {
+            Ok(t) => t,
+            Err(e) => {
+                output::error(&e.message, &e.code, e.suggestion.as_deref());
+                process::exit(1);
+            }
+        };
+        images.insert(svc.name.clone(), tag);
+    }
+
     // --- Create dev session via API ---
     let api_services: Vec<crate::api_types::DevSessionService> = services
         .iter()
@@ -305,7 +397,6 @@ pub fn dev(args: DevArgs) {
 
     let session_id = session.session_id.clone();
 
-    // --- Print status messages ---
     output::info(
         &format!("Dev session started for {} ({})", app_name, session_id),
         None,
@@ -318,7 +409,6 @@ pub fn dev(args: DevArgs) {
         );
     }
 
-    // Check if redis env vars were provided for any service
     let has_redis = session
         .services
         .values()
@@ -328,11 +418,6 @@ pub fn dev(args: DevArgs) {
     }
 
     // --- Start fixture-user proxies (accounts-mode + --fixture-user) ---
-    //
-    // Started BEFORE the table is printed so the auth-proxied URL is known.
-    // Started BEFORE child processes so the proxy port is bound by the time
-    // the user copies the URL — the upstream connection will fail until the
-    // dev_command actually listens, but the bind itself succeeds immediately.
     let mut proxy_ports: HashMap<String, u16> = HashMap::new();
     if fixture_active {
         let user = fixture_user.clone().expect("fixture_active implies Some");
@@ -396,6 +481,10 @@ pub fn dev(args: DevArgs) {
                     "url": format!("http://localhost:{}", svc.port),
                     "auth_proxied_url": auth_url,
                     "env_vars": env_vars,
+                    "container": {
+                        "image": images.get(&svc.name),
+                        "workdir": svc.container_workdir,
+                    },
                 })
             })
             .collect();
@@ -406,10 +495,18 @@ pub fn dev(args: DevArgs) {
                 "app": app_name,
                 "postgres_authorized": session.postgres_authorized,
                 "services": json_services,
+                "container_runtime": runtime.binary(),
             }
         }));
     } else {
         output::table(headers, &rows, None);
+        eprintln!();
+        eprintln!(
+            "  {} services run inside {}. Bind to {} so the published port is reachable.",
+            "Note:".dimmed(),
+            runtime,
+            "0.0.0.0:$PORT".bold()
+        );
         eprintln!();
     }
 
@@ -417,7 +514,6 @@ pub fn dev(args: DevArgs) {
     let shutdown = Arc::new(AtomicBool::new(false));
     {
         let shutdown_flag = Arc::clone(&shutdown);
-        // Install a SIGINT (Ctrl+C) handler
         #[cfg(unix)]
         unsafe {
             libc::signal(
@@ -431,24 +527,17 @@ pub fn dev(args: DevArgs) {
         }
         SHUTDOWN_FLAG.store(0, Ordering::SeqCst);
 
-        // On non-Unix, set the flag immediately on Ctrl+C via process exit
-        // (Windows doesn't support libc signals; processes get killed directly)
         #[cfg(not(unix))]
         {
-            // Just set the flag after a brief delay if the process is still alive
             let sf = Arc::clone(&shutdown_flag);
-            thread::spawn(move || {
-                // On Windows, rely on the process being killed externally
-                loop {
-                    thread::sleep(Duration::from_millis(500));
-                    if sf.load(Ordering::Relaxed) {
-                        break;
-                    }
+            thread::spawn(move || loop {
+                thread::sleep(Duration::from_millis(500));
+                if sf.load(Ordering::Relaxed) {
+                    break;
                 }
             });
         }
 
-        // Spawn a thread to watch for the signal and set our Arc flag
         #[cfg(unix)]
         thread::spawn(move || loop {
             if SHUTDOWN_FLAG.load(Ordering::SeqCst) != 0 {
@@ -459,84 +548,89 @@ pub fn dev(args: DevArgs) {
         });
     }
 
-    // --- Spawn child processes ---
-    let mut children: Vec<(String, Child)> = Vec::new();
+    // --- Run migrations and spawn each service inside its container.
+    let mut running: Vec<RunningService> = Vec::new();
 
     for (idx, svc) in services.iter().enumerate() {
-        let working_dir = resolved.config_dir.join(&svc.path);
+        let image = images
+            .get(&svc.name)
+            .expect("image was built for every service")
+            .clone();
 
-        if !working_dir.exists() {
-            output::error(
-                &format!("Service '{}' path '{}' does not exist.", svc.name, svc.path),
-                &ErrorCode::InvalidPath,
-                Some("Check the 'path' value in floo.app.toml."),
-            );
-            // Kill already-spawned children before exiting
-            cleanup_children(&mut children);
-            cleanup_session(&client, &app_id, &session_id);
-            process::exit(1);
-        }
+        let env = build_env_for_service(svc, &session);
 
-        // Build environment: inherit current env + inject dev session env vars
-        let mut env_vars: HashMap<String, String> = std::env::vars().collect();
-        if let Some(svc_env) = session.services.get(&svc.name) {
-            for (k, v) in svc_env {
-                env_vars.insert(k.clone(), v.clone());
-            }
-        }
-        // Also inject PORT so services that read it get the right value
-        env_vars.insert("PORT".to_string(), svc.port.to_string());
-
-        // Run migrate_command before starting the service, if configured
+        // Run migrations inside the container, blocking until done.
         if let Some(ref migrate_cmd) = svc.migrate_command {
             output::info(&format!("  Running migrations for {}...", svc.name), None);
-            let migrate_status = match Command::new("sh")
-                .arg("-c")
-                .arg(migrate_cmd)
-                .current_dir(&working_dir)
-                .envs(&env_vars)
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .status()
-            {
-                Ok(s) => s,
+            let migrate_spec = RunSpec {
+                image: image.clone(),
+                workdir_in_container: svc.container_workdir.clone(),
+                source_mount_host: svc.working_dir.clone(),
+                env: env.clone(),
+                command: migrate_cmd.clone(),
+                ports: BTreeMap::new(),
+                preserved_paths: container::default_preserved_paths(),
+                name: container::container_name(
+                    &resolved.app_name,
+                    &format!("{}-migrate", svc.name),
+                ),
+                interactive: false,
+                tty: false,
+                init: true,
+            };
+            match container::run_foreground(runtime, &migrate_spec) {
+                Ok(status) if !status.success() => {
+                    output::warn(&format!(
+                        "Migration for '{}' exited with code {} — continuing anyway.",
+                        svc.name,
+                        status.code().unwrap_or(-1)
+                    ));
+                }
+                Ok(_) => {}
                 Err(e) => {
                     output::error(
-                        &format!("Failed to run migrate_command for '{}': {e}", svc.name),
-                        &ErrorCode::InternalError,
-                        Some(&format!("Command: {migrate_cmd}")),
+                        &format!(
+                            "Failed to run migrate_command for '{}': {}",
+                            svc.name, e.message
+                        ),
+                        &e.code,
+                        e.suggestion.as_deref(),
                     );
-                    cleanup_children(&mut children);
+                    cleanup_running(runtime, &mut running);
                     cleanup_session(&client, &app_id, &session_id);
                     process::exit(1);
                 }
-            };
-            if !migrate_status.success() {
-                output::warn(&format!(
-                    "Migration for '{}' exited with code {} — continuing anyway.",
-                    svc.name,
-                    migrate_status.code().unwrap_or(-1)
-                ));
             }
         }
 
-        let child = match Command::new("sh")
-            .arg("-c")
-            .arg(&svc.dev_command)
-            .current_dir(&working_dir)
-            .envs(&env_vars)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-        {
+        // Spawn the dev_command. Port published to host loopback only —
+        // services must bind 0.0.0.0:$PORT inside the container.
+        let mut ports = BTreeMap::new();
+        ports.insert(svc.port, svc.port);
+        let container_name = container::container_name(&resolved.app_name, &svc.name);
+        let dev_spec = RunSpec {
+            image: image.clone(),
+            workdir_in_container: svc.container_workdir.clone(),
+            source_mount_host: svc.working_dir.clone(),
+            env,
+            command: svc.dev_command.clone(),
+            ports,
+            preserved_paths: container::default_preserved_paths(),
+            name: container_name.clone(),
+            interactive: false,
+            tty: false,
+            init: true,
+        };
+
+        let child = match container::spawn_piped(runtime, &dev_spec) {
             Ok(c) => c,
             Err(e) => {
                 output::error(
-                    &format!("Failed to start service '{}': {e}", svc.name),
-                    &ErrorCode::InternalError,
+                    &format!("Failed to start service '{}': {}", svc.name, e.message),
+                    &e.code,
                     Some(&format!("Command: {}", svc.dev_command)),
                 );
-                cleanup_children(&mut children);
+                cleanup_running(runtime, &mut running);
                 cleanup_session(&client, &app_id, &session_id);
                 process::exit(1);
             }
@@ -545,30 +639,27 @@ pub fn dev(args: DevArgs) {
         if !output::is_json_mode() {
             let prefix = format!("[{}]", svc.name);
             let colored = color_service_prefix(&prefix, idx);
-            eprintln!("{colored} started (pid {})", child.id());
+            eprintln!("{colored} started in {} (pid {})", runtime, child.id());
         }
 
-        children.push((svc.name.clone(), child));
+        running.push(RunningService {
+            name: svc.name.clone(),
+            container_name,
+            child,
+        });
     }
 
     // --- Multiplex stdout/stderr from children ---
     let mut reader_handles: Vec<thread::JoinHandle<()>> = Vec::new();
 
-    // We need to take ownership of the piped streams before the main loop
-    // Use indices matching children vec for color assignment
-    let mut child_entries: Vec<(String, Child)> = Vec::new();
-    std::mem::swap(&mut children, &mut child_entries);
+    let mut child_entries = std::mem::take(&mut running);
+    for (idx, mut entry) in child_entries.drain(..).enumerate() {
+        let prefix = format!("[{}]", entry.name);
 
-    for (idx, (name, mut child)) in child_entries.into_iter().enumerate() {
-        let prefix = format!("[{}]", name);
-
-        // Spawn stdout reader
-        if let Some(stdout) = child.stdout.take() {
+        if let Some(stdout) = entry.child.stdout.take() {
             let shutdown_ref = Arc::clone(&shutdown);
             let pfx = prefix.clone();
-            let color_idx = idx;
-            let json_mode = output::is_json_mode();
-            let svc_name = name.clone();
+            let svc_name = entry.name.clone();
             reader_handles.push(thread::spawn(move || {
                 let reader = std::io::BufReader::new(stdout);
                 for line in reader.lines() {
@@ -576,32 +667,17 @@ pub fn dev(args: DevArgs) {
                         break;
                     }
                     match line {
-                        Ok(text) => {
-                            if json_mode {
-                                output::print_json(&serde_json::json!({
-                                    "event": "log",
-                                    "service": svc_name,
-                                    "stream": "stdout",
-                                    "line": text,
-                                }));
-                            } else {
-                                let colored_pfx = color_service_prefix(&pfx, color_idx);
-                                eprintln!("{colored_pfx} {text}");
-                            }
-                        }
+                        Ok(text) => emit_line(&svc_name, &pfx, idx, "stdout", &text),
                         Err(_) => break,
                     }
                 }
             }));
         }
 
-        // Spawn stderr reader
-        if let Some(stderr) = child.stderr.take() {
+        if let Some(stderr) = entry.child.stderr.take() {
             let shutdown_ref = Arc::clone(&shutdown);
             let pfx = prefix.clone();
-            let color_idx = idx;
-            let json_mode = output::is_json_mode();
-            let svc_name = name.clone();
+            let svc_name = entry.name.clone();
             reader_handles.push(thread::spawn(move || {
                 let reader = std::io::BufReader::new(stderr);
                 for line in reader.lines() {
@@ -609,26 +685,14 @@ pub fn dev(args: DevArgs) {
                         break;
                     }
                     match line {
-                        Ok(text) => {
-                            if json_mode {
-                                output::print_json(&serde_json::json!({
-                                    "event": "log",
-                                    "service": svc_name,
-                                    "stream": "stderr",
-                                    "line": text,
-                                }));
-                            } else {
-                                let colored_pfx = color_service_prefix(&pfx, color_idx);
-                                eprintln!("{colored_pfx} {text}");
-                            }
-                        }
+                        Ok(text) => emit_line(&svc_name, &pfx, idx, "stderr", &text),
                         Err(_) => break,
                     }
                 }
             }));
         }
 
-        children.push((name, child));
+        running.push(entry);
     }
 
     // --- Wait for shutdown signal or all children to exit ---
@@ -641,10 +705,9 @@ pub fn dev(args: DevArgs) {
             break;
         }
 
-        // Check if any child has exited
         let mut all_exited = true;
-        for (name, child) in &mut children {
-            match child.try_wait() {
+        for entry in running.iter_mut() {
+            match entry.child.try_wait() {
                 Ok(Some(status)) => {
                     if !status.success()
                         && !shutdown.load(Ordering::Relaxed)
@@ -653,7 +716,7 @@ pub fn dev(args: DevArgs) {
                         eprintln!(
                             "{} Service '{}' exited with {}",
                             "Error:".red(),
-                            name,
+                            entry.name,
                             status
                         );
                     }
@@ -673,9 +736,8 @@ pub fn dev(args: DevArgs) {
     }
 
     // --- Cleanup ---
-    cleanup_children(&mut children);
+    cleanup_running(runtime, &mut running);
 
-    // Wait for reader threads to finish
     for handle in reader_handles {
         let _ = handle.join();
     }
@@ -692,6 +754,83 @@ pub fn dev(args: DevArgs) {
     }
 }
 
+fn emit_line(svc: &str, prefix: &str, color_idx: usize, stream: &str, text: &str) {
+    if output::is_json_mode() {
+        output::print_json(&serde_json::json!({
+            "event": "log",
+            "service": svc,
+            "stream": stream,
+            "line": text,
+        }));
+    } else {
+        let colored_pfx = color_service_prefix(prefix, color_idx);
+        eprintln!("{colored_pfx} {text}");
+    }
+}
+
+fn build_env_for_service(
+    svc: &DevServiceInfo,
+    session: &crate::api_types::DevSessionResponse,
+) -> BTreeMap<String, String> {
+    // Container env is intentionally minimal — only floo-managed vars plus
+    // PORT. Inheriting the host environment leaks PATH/HOME/SHELL with
+    // values that don't apply inside the image.
+    let mut env: BTreeMap<String, String> = BTreeMap::new();
+    if let Some(svc_env) = session.services.get(&svc.name) {
+        for (k, v) in svc_env {
+            env.insert(k.clone(), v.clone());
+        }
+    }
+    env.insert("PORT".to_string(), svc.port.to_string());
+    env
+}
+
+fn ensure_image(
+    runtime: Runtime,
+    app: &str,
+    service: &str,
+    context_dir: &Path,
+    dockerfile: &Path,
+) -> Result<String, FlooError> {
+    let dockerfile_content = std::fs::read_to_string(dockerfile).map_err(|e| {
+        FlooError::with_suggestion(
+            ErrorCode::DockerfileMissing,
+            format!("Failed to read {}: {e}", dockerfile.display()),
+            "Check file permissions on the Dockerfile.".to_string(),
+        )
+    })?;
+    let hash = container::compute_build_hash(&dockerfile_content, context_dir);
+    let tag = container::image_tag(app, service, &hash);
+
+    if container::image_exists(runtime, &tag) {
+        return Ok(tag);
+    }
+
+    output::info(
+        &format!("Building dev image for '{service}' (first run or deps changed)..."),
+        None,
+    );
+    container::build_image(
+        runtime,
+        &BuildSpec {
+            tag: tag.clone(),
+            context_dir: context_dir.to_path_buf(),
+            dockerfile: dockerfile.to_path_buf(),
+        },
+    )?;
+    Ok(tag)
+}
+
+/// Holding struct for partially-validated service config. Keeps the
+/// per-service block of `dev()` flat by separating "fields read from the TOML"
+/// from "fields resolved against the filesystem (working_dir, dockerfile)".
+struct AppServicePartial {
+    port: u16,
+    path: String,
+    dev_command: String,
+    migrate_command: Option<String>,
+}
+
 /// Global flag set by the signal handler (must be static for the C signal handler).
 static SHUTDOWN_FLAG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
@@ -700,29 +839,25 @@ extern "C" fn signal_handler(_sig: libc::c_int) {
     SHUTDOWN_FLAG.store(1, Ordering::SeqCst);
 }
 
-fn cleanup_children(children: &mut [(String, Child)]) {
-    // Send SIGTERM (Unix) or kill (Windows) to all children
-    for (name, child) in children.iter_mut() {
-        #[cfg(unix)]
-        unsafe {
-            libc::kill(child.id() as libc::pid_t, libc::SIGTERM);
-        }
-        #[cfg(not(unix))]
-        {
-            let _ = child.kill();
-        }
+fn cleanup_running(runtime: Runtime, running: &mut [RunningService]) {
+    // Step 1: ask the container runtime to stop each container by name.
+    // `docker stop` sends SIGTERM, waits 10s, then SIGKILL — and `--rm`
+    // means the container is removed once the process exits.
+    for entry in running.iter() {
         if !output::is_json_mode() {
-            let prefix = format!("[{}]", name);
-            eprintln!("{} shutting down", prefix.dimmed());
+            let prefix = format!("[{}]", entry.name);
+            eprintln!("{} stopping container", prefix.dimmed());
         }
+        container::stop_container(runtime, &entry.container_name);
     }
 
-    // Wait up to 5 seconds for graceful exit
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    // Step 2: wait up to 12 seconds for the local docker run process to exit
+    // (a hair longer than docker stop's own 10s timeout).
+    let deadline = std::time::Instant::now() + Duration::from_secs(12);
     loop {
         let mut all_done = true;
-        for (_, child) in children.iter_mut() {
-            match child.try_wait() {
+        for entry in running.iter_mut() {
+            match entry.child.try_wait() {
                 Ok(Some(_)) => {}
                 _ => {
                     all_done = false;
@@ -735,17 +870,18 @@ fn cleanup_children(children: &mut [(String, Child)]) {
         thread::sleep(Duration::from_millis(100));
     }
 
-    // Force-kill any remaining
-    for (name, child) in children.iter_mut() {
-        match child.try_wait() {
+    // Step 3: any docker run process that hasn't exited gets SIGKILL'd
+    // locally. The container is already gone (or being torn down) by now.
+    for entry in running.iter_mut() {
+        match entry.child.try_wait() {
             Ok(Some(_)) => {}
             _ => {
                 if !output::is_json_mode() {
-                    let prefix = format!("[{}]", name);
+                    let prefix = format!("[{}]", entry.name);
                     eprintln!("{} force killing", prefix.dimmed());
                 }
-                let _ = child.kill();
-                let _ = child.wait();
+                let _ = entry.child.kill();
+                let _ = entry.child.wait();
             }
         }
     }
@@ -801,8 +937,6 @@ mod tests {
 
     #[test]
     fn external_repo_without_dev_command_is_skipped_not_an_error() {
-        // Regression test for: floo-crm fixture service had `repo = ...` and
-        // no dev_command, which hard-failed `floo dev` for the entire app.
         let entry = entry_with(Some("getfloo/floo-crm-fixture"), None);
         assert_eq!(classify(&entry), "skipped_external");
     }
@@ -821,8 +955,6 @@ mod tests {
 
     #[test]
     fn external_service_with_dev_command_still_runs() {
-        // If the user explicitly opts into running an external-repo service
-        // locally by providing a dev_command, respect it.
         let entry = entry_with(Some("getfloo/other"), Some("./run.sh"));
         assert_eq!(classify(&entry), "runnable");
     }
