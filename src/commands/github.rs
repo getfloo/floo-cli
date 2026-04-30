@@ -689,13 +689,14 @@ fn run_initial_deploy(
         app_id,
         &detection.runtime,
         detection.framework.as_deref(),
-        None, // API discovers services from GitHub tarball
-        None, // access_mode
-        None, // agent_mode
-        None, // auth_redirect_uris
-        None, // reparo_config
-        None, // cron_jobs
-        None, // github_config
+        None,  // API discovers services from GitHub tarball
+        None,  // access_mode
+        None,  // agent_mode
+        None,  // auth_redirect_uris
+        None,  // reparo_config
+        None,  // cron_jobs
+        None,  // github_config
+        false, // skip_migrations — initial deploy from `floo apps github connect` always runs migrations
     ) {
         Ok(d) => {
             spinner.finish();

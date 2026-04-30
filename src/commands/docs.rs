@@ -565,6 +565,7 @@ Floo Deploy Flow
   floo redeploy [path]             — full redeploy from local project directory
   floo redeploy --services <name>  — redeploy specific services only
   floo redeploy --sync-env         — re-sync env vars from env_file before redeploying
+  floo redeploy --rebuild --skip-migrations  — hotfix path: bypass MIGRATE step
 
 ## Deploy History
 
@@ -572,6 +573,7 @@ Floo Deploy Flow
   floo deploys logs <id> --app <n>  — build logs for a specific deploy
   floo deploys watch --app <name>   — stream deploy progress in real-time
   floo deploys rollback <app> <id>  — rollback to a previous deploy
+  floo releases rollback --app <name> --to <id>  — same, alias under releases
 ";
 
 const AUTH: &str = "\

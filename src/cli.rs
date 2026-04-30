@@ -171,6 +171,17 @@ need to apply env var changes or force a rebuild without a code change.")]
         /// Re-sync env vars from configured env_file before deploying.
         #[arg(long)]
         sync_env: bool,
+
+        /// Hotfix: declare no migrations are pending and skip the MIGRATE step.
+        ///
+        /// The platform takes you at your word — if you're wrong, the new
+        /// image boots against an unmigrated schema. The deploy records
+        /// MIGRATE as SKIPPED (not SUCCESS) so the audit trail is
+        /// unambiguous about whether migrations ran. Meaningful only on
+        /// rebuild deploys; rollback and restart already skip MIGRATE
+        /// because the image was previously migrated.
+        #[arg(long)]
+        skip_migrations: bool,
     },
 
     /// View and manage deploy history.
@@ -874,6 +885,26 @@ pub enum ReleasesCommands {
         #[arg(short, long)]
         tag: Option<String>,
     },
+
+    /// Roll back to a previous live deploy by re-pointing gateway routes
+    /// at its image (no rebuild).
+    ///
+    /// Tier-2 destructive: interactive prompts `y/N`; non-interactive
+    /// requires `--yes` to confirm. Equivalent to
+    /// `floo deploys rollback <app> <id>`.
+    Rollback {
+        /// App name or ID.
+        #[arg(short, long)]
+        app: String,
+
+        /// Deploy ID to roll back to (the previous live deploy).
+        #[arg(long)]
+        to: String,
+
+        /// Skip the y/N prompt. Required in non-interactive contexts.
+        #[arg(long, alias = "force")]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1260,7 +1291,8 @@ pub fn run() {
             services,
             rebuild,
             sync_env,
-        } => commands::deploy::deploy(path, app, services, rebuild, sync_env),
+            skip_migrations,
+        } => commands::deploy::deploy(path, app, services, rebuild, sync_env, skip_migrations),
 
         Commands::Deploys(sub) => match sub {
             DeploysSubcommands::List { app } => commands::deploys::list(app.as_deref()),
@@ -1437,6 +1469,14 @@ pub fn run() {
             }
             ReleasesCommands::Promote { app, tag } => {
                 commands::releases::promote(app.as_deref(), tag.as_deref())
+            }
+            // `floo releases rollback --app X --to <id>` is the discoverable
+            // alias for `floo deploys rollback <app> <id>`. Routes to the
+            // same backend (`POST /v1/apps/{id}/rollback`) which re-points
+            // gateway routes at the previous deploy's image without
+            // rebuilding source.
+            ReleasesCommands::Rollback { app, to, yes } => {
+                commands::rollbacks::rollback(&app, &to, yes)
             }
         },
 

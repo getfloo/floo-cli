@@ -334,10 +334,14 @@ impl FlooClient {
         reparo_config: Option<&crate::project_config::ReparoConfig>,
         cron_jobs: Option<&[crate::project_config::CronJobEntry]>,
         github_config: Option<&crate::project_config::GitHubConfig>,
+        skip_migrations: bool,
     ) -> Result<Deploy, FlooApiError> {
         let mut body = serde_json::json!({
             "runtime": runtime,
         });
+        if skip_migrations {
+            body["skip_migrations"] = Value::Bool(true);
+        }
         if let Some(fw) = framework {
             body["framework"] = Value::String(fw.to_string());
         }
@@ -865,12 +869,19 @@ impl FlooClient {
         app_id: &str,
         runtime: &str,
         services: Option<&[String]>,
+        skip_migrations: bool,
     ) -> Result<Deploy, FlooApiError> {
         let mut body = serde_json::json!({
             "runtime": runtime,
         });
         if let Some(svcs) = services {
             body["services_filter"] = serde_json::to_value(svcs).unwrap_or_default();
+        }
+        // The platform defaults skip_migrations=false on the deploy row;
+        // only send the field when the caller opted in so the wire stays
+        // tight on the common path.
+        if skip_migrations {
+            body["skip_migrations"] = Value::Bool(true);
         }
         let resp = self.post_json(&format!("/v1/apps/{app_id}/deploys"), &body)?;
         self.handle_response(resp)
