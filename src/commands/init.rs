@@ -50,6 +50,91 @@ pub fn init(name: Option<String>, path: PathBuf) {
     }
 }
 
+/// Agent-safe operating notes scaffold. Written next to floo.app.toml on
+/// every `floo init` so any AI coding assistant working in the project
+/// has the floo-specific gotchas at hand without needing to crawl docs.
+///
+/// The content mirrors the public app-auth checklist on getfloo.com so
+/// the same advice is available to a coding agent reading local files
+/// AND to a human reading the docs site. Closes feedback 9494ea44
+/// (floo-artifact, 2026-04-30): "Floo should publish an agent-safe
+/// checklist/template for apps using accounts mode... could live in
+/// docs and/or be generated into AGENTS.md by floo init."
+const AGENTS_MD_TEMPLATE: &str = r#"# Agent operating notes
+
+This file is for AI coding assistants working in this floo app. It
+captures the floo-specific gotchas that aren't obvious from the code.
+
+## Working with floo
+
+- **Run `floo preflight` before every deploy.** Catches config drift,
+  missing managed-service env vars, runtime detection issues, and
+  destructive plan changes — most deploy failures are preventable here.
+- **Read the latest docs at `https://getfloo.com/docs/*.md`.** The
+  Markdown URLs are agent-friendly. `floo docs <topic>` also prints
+  cheatsheets locally.
+- **Deploy by pushing to GitHub.** `git push` to your default branch
+  triggers a dev deploy; cutting a GitHub release promotes to prod.
+  Don't shell out to `gcloud run deploy` — it bypasses the floo
+  pipeline.
+
+## Agent-safe deploy debugging
+
+- **Use `floo deploys status --json` instead of `floo deploys watch`.**
+  `status` returns a compact summary (deploy id, derived phase
+  booleans, gateway URL, next recommended command) without dumping
+  build logs that may contain audit payloads. `watch` is fine for
+  humans; for scripts and agents, prefer `status`.
+- **`/health` on the direct Cloud Run URL is for infrastructure
+  probes, not authenticated requests.** Cloud Run liveness/startup
+  probes hit it without any session, so don't infer auth state from
+  whatever can reach `/health`.
+- **Test the floo gateway URL after every deploy.** A 502 on
+  `*.on.getfloo.com` (or your custom domain) means the deploy didn't
+  finalize even if the direct Cloud Run URL serves new code. `floo
+  deploys status --json` reports `host_bound: false` in that state.
+
+## If you set `access_mode = "accounts"` (or `"password"`)
+
+- **Trust `X-Floo-User-Email`, `X-Floo-User-Id`, `X-Floo-User-Name`,
+  and `X-Floo-User-Role` on every request your app receives.** The
+  floo gateway is the only path into your container — Cloud Run
+  ingress is locked to `INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER` and
+  there's no `allUsers` invoker grant. The deploy pipeline raises if
+  that combination would somehow ship as `INGRESS_TRAFFIC_ALL`.
+- **Don't curl your `*.run.app` URL in scripts or tests.** It
+  returns 403 from Cloud Run before reaching your container — by
+  design.
+- **Don't accept identity headers from any other path.** The trust
+  boundary is the gateway, not the network in general. Authenticate
+  inter-service or internal-cron calls separately.
+- **Use `floo dev --fixture-user` for local dev.** It injects the
+  same headers the gateway would, so your code path stays the same
+  with no auth-mode toggling.
+
+The full background — how the deploy-time invariant works, what
+exactly is enforced, and how to verify the boundary — lives at
+`https://getfloo.com/docs/guides/app-auth.md`.
+"#;
+
+fn write_agents_md(project_path: &std::path::Path) -> bool {
+    let agents_path = project_path.join("AGENTS.md");
+    if agents_path.exists() {
+        // Don't clobber an existing AGENTS.md — it may have project-
+        // specific notes the agent or operator wrote by hand.
+        return false;
+    }
+    if let Err(e) = std::fs::write(&agents_path, AGENTS_MD_TEMPLATE) {
+        output::error(
+            &format!("Failed to write AGENTS.md: {e}"),
+            &ErrorCode::FileError,
+            None,
+        );
+        process::exit(1);
+    }
+    true
+}
+
 /// Attempt to generate a Dockerfile based on detection results.
 /// Returns true if a Dockerfile was written.
 fn generate_dockerfile_if_needed(
@@ -177,6 +262,11 @@ fn init_non_interactive(
         files_written.push("Dockerfile");
     }
 
+    let agents_md_written = write_agents_md(project_path);
+    if agents_md_written {
+        files_written.push("AGENTS.md");
+    }
+
     let mut json_data = serde_json::json!({
         "app_name": app_name,
         "files_written": files_written,
@@ -187,6 +277,7 @@ fn init_non_interactive(
             "port": port,
         },
         "dockerfile_generated": dockerfile_generated,
+        "agents_md_written": agents_md_written,
         "hint": "Edit floo.app.toml to configure your services — run 'floo docs config' for the schema",
     });
 
@@ -336,6 +427,10 @@ fn init_interactive(
         process::exit(1);
     }
     output::info(&format!("Wrote {}", project_config::APP_CONFIG_FILE), None);
+
+    if write_agents_md(project_path) {
+        output::info("Wrote AGENTS.md (agent operating notes)", None);
+    }
 
     eprintln!("  Edit floo.app.toml to configure your services, then run 'floo preflight'.");
     eprintln!("  See 'floo docs config' for the full schema.");
