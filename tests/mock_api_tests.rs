@@ -220,6 +220,24 @@ fn test_apps_status_json() {
 }
 
 #[test]
+fn test_apps_status_with_app_flag() {
+    // Parity with the rest of the CLI's flag-based API: `--app` is
+    // accepted in addition to the legacy positional form. Closes
+    // feedback 4419e7d3 (2026-05-01) for the `apps status` surface.
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    floo()
+        .args(["--json", "apps", "status", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(TEST_APP_ID));
+}
+
+#[test]
 fn test_apps_status_json_surfaces_runtime_url() {
     let mut server = Server::new();
     let home = setup_config(&server);
@@ -513,6 +531,11 @@ fn test_env_remove_json() {
 
 #[test]
 fn test_env_get_json() {
+    // PR #138 made `--json` redact secret-shaped values by default and
+    // stamp the payload with `contains_secrets: true`. `floo env get` is
+    // the canonical secret-fetch surface, so the redacted shape is what
+    // agents will see; revealing the plaintext now requires the explicit
+    // global flag (covered by `test_env_get_json_reveal_secrets` below).
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
@@ -535,6 +558,47 @@ fn test_env_get_json() {
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(r#""contains_secrets":true"#))
+        .stdout(predicate::str::contains(r#""value":"***REDACTED***""#))
+        .stdout(predicate::str::contains("secret123").not());
+}
+
+#[test]
+fn test_env_get_json_reveal_secrets() {
+    // `--reveal-secrets` opts back in to plaintext for callers that
+    // control where the JSON goes. The `contains_secrets` marker still
+    // fires so harnesses can detect-and-refuse even under reveal.
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
+
+    let _m_get = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/env/MY_KEY").as_str())
+        .match_query(Matcher::UrlEncoded(
+            "service_id".into(),
+            TEST_SERVICE_ID.into(),
+        ))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"key":"MY_KEY","value":"secret123"}"#)
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "--reveal-secrets",
+            "env",
+            "get",
+            "MY_KEY",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(r#""contains_secrets":true"#))
         .stdout(predicate::str::contains("secret123"));
 }
 
@@ -1311,14 +1375,23 @@ fn test_logs_requests_json_default_tail() {
         )
         .create();
 
-    floo()
+    let assert = floo()
         .args(["--json", "logs", "--requests", "--app", TEST_APP_NAME])
         .env("HOME", home.path())
         .assert()
-        .success()
-        .stdout(predicate::str::contains("requests"))
-        .stdout(predicate::str::contains("/"))
-        .stdout(predicate::str::contains("401"));
+        .success();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("stdout must be a single JSON envelope");
+    assert_eq!(envelope["success"], serde_json::Value::Bool(true));
+    let data = &envelope["data"];
+    assert!(data.is_object(), "data must be the request-logs payload");
+    assert_eq!(data["total"], serde_json::json!(1));
+    assert_eq!(data["app_name"], serde_json::json!("my-app"));
+    let requests = data["requests"].as_array().expect("requests array");
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["status_code"], serde_json::json!(401));
 }
 
 #[test]

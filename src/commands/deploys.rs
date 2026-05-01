@@ -41,13 +41,16 @@ pub fn status(app: Option<&str>, deploy_id: Option<&str>) {
     };
 
     let deploy = match deploy_id {
-        Some(id) => match client.get_deploy(&app_id, id) {
-            Ok(d) => d,
-            Err(e) => {
-                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-                process::exit(1);
+        Some(id) => {
+            let full_id = resolve_deploy_id(&client, &app_id, id);
+            match client.get_deploy(&app_id, &full_id) {
+                Ok(d) => d,
+                Err(e) => {
+                    output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                    process::exit(1);
+                }
             }
-        },
+        }
         None => match client.list_deploys(&app_id) {
             Ok(list) => match list.deploys.into_iter().next() {
                 Some(d) => d,
@@ -240,7 +243,7 @@ pub fn logs(deploy_id: Option<&str>, app: Option<&str>, follow: bool) {
     let (app_id, _app_name) = super::resolve_app_from_config(&client, app);
 
     let resolved_deploy_id: String = match deploy_id {
-        Some(id) => id.to_string(),
+        Some(id) => resolve_deploy_id(&client, &app_id, id),
         None => {
             let result = match client.list_deploys(&app_id) {
                 Ok(r) => r,
@@ -392,6 +395,101 @@ fn truncate_id(id: &str) -> String {
         format!("{}...", &id[..8])
     } else {
         id.to_string()
+    }
+}
+
+/// Returns true when `id` is a full UUID (32 hex chars or 36 with dashes).
+/// We want to skip the prefix-resolution round trip in that case (the API
+/// validates the shape). Anything shorter is treated as a prefix and
+/// matched against the deploy list.
+fn is_full_uuid(id: &str) -> bool {
+    let len = id.len();
+    if len != 32 && len != 36 {
+        return false;
+    }
+    id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+}
+
+fn strip_truncation_marker(id: &str) -> &str {
+    id.strip_suffix("...").unwrap_or(id)
+}
+
+/// True for hex-shaped strings (0-9a-f, optional dashes), i.e. shapes that
+/// could be a UUID prefix. We only attempt prefix-resolution against the
+/// deploy list for these. Anything outside this character set bypasses the
+/// resolver and is passed straight to the API, which keeps the door open for
+/// future non-UUID identifiers and means fixture IDs like `deploy-456` in
+/// tests do not trigger an extra mock requirement.
+fn looks_like_uuid_prefix(id: &str) -> bool {
+    !id.is_empty() && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+}
+
+/// Resolve a partial deploy id (git-style prefix) to a full deploy id by
+/// listing the app's deploys and matching by prefix. A full UUID is
+/// returned unchanged (cheap, avoids the list call). Errors and exits the
+/// process with a friendly message when the prefix matches zero or
+/// multiple deploys, replacing the raw FastAPI validation array that
+/// users were seeing when they copy-pasted the truncated id from the
+/// table view.
+pub(crate) fn resolve_deploy_id(client: &FlooClient, app_id: &str, partial: &str) -> String {
+    let partial = strip_truncation_marker(partial);
+
+    if partial.is_empty() {
+        output::error(
+            "Empty deploy ID.",
+            &ErrorCode::DeployNotFound,
+            Some("Pass a deploy ID. Run `floo deploys list --app <name>` to see them."),
+        );
+        process::exit(1);
+    }
+
+    if is_full_uuid(partial) {
+        return partial.to_string();
+    }
+
+    // Non-UUID-shaped strings (e.g. test fixture IDs) bypass prefix
+    // resolution; we pass them through and let the API decide.
+    if !looks_like_uuid_prefix(partial) {
+        return partial.to_string();
+    }
+
+    let deploys = match client.list_deploys(app_id) {
+        Ok(r) => r.deploys,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+
+    let matches: Vec<&Deploy> = deploys
+        .iter()
+        .filter(|d| d.id.starts_with(partial))
+        .collect();
+
+    match matches.as_slice() {
+        [single] => single.id.clone(),
+        [] => {
+            output::error(
+                &format!("No deploy found matching '{partial}'."),
+                &ErrorCode::DeployNotFound,
+                Some("Run `floo deploys list --app <name>` to see full deploy IDs."),
+            );
+            process::exit(1);
+        }
+        many => {
+            let preview: Vec<&str> = many.iter().take(3).map(|d| d.id.as_str()).collect();
+            output::error(
+                &format!(
+                    "Deploy ID '{partial}' is ambiguous ({} matches: {}{}).",
+                    many.len(),
+                    preview.join(", "),
+                    if many.len() > 3 { ", ..." } else { "" },
+                ),
+                &ErrorCode::DeployNotFound,
+                Some("Use more characters of the deploy ID, or run `floo deploys list --app <name>`."),
+            );
+            process::exit(1);
+        }
     }
 }
 
@@ -796,5 +894,61 @@ mod tests {
     fn test_relative_time_boundary_60_minutes() {
         let ts = (Utc::now() - chrono::Duration::minutes(60)).to_rfc3339();
         assert_eq!(relative_time(&ts), "1h ago");
+    }
+
+    #[test]
+    fn test_is_full_uuid_dashed() {
+        assert!(is_full_uuid("fed461a6-7c12-4abc-89de-0123456789ab"));
+    }
+
+    #[test]
+    fn test_is_full_uuid_undashed() {
+        assert!(is_full_uuid("fed461a67c124abc89de0123456789ab"));
+    }
+
+    #[test]
+    fn test_is_full_uuid_rejects_prefix() {
+        assert!(!is_full_uuid("fed461a6"));
+    }
+
+    #[test]
+    fn test_is_full_uuid_rejects_with_truncation_marker() {
+        assert!(!is_full_uuid("fed461a6..."));
+    }
+
+    #[test]
+    fn test_is_full_uuid_rejects_non_hex() {
+        assert!(!is_full_uuid("zed461a6-7c12-4abc-89de-0123456789ab"));
+    }
+
+    #[test]
+    fn test_strip_truncation_marker_present() {
+        assert_eq!(strip_truncation_marker("fed461a6..."), "fed461a6");
+    }
+
+    #[test]
+    fn test_strip_truncation_marker_absent() {
+        assert_eq!(strip_truncation_marker("fed461a6"), "fed461a6");
+    }
+
+    #[test]
+    fn test_looks_like_uuid_prefix_hex() {
+        assert!(looks_like_uuid_prefix("fed461a6"));
+    }
+
+    #[test]
+    fn test_looks_like_uuid_prefix_with_dash() {
+        assert!(looks_like_uuid_prefix("fed461a6-7c12"));
+    }
+
+    #[test]
+    fn test_looks_like_uuid_prefix_rejects_letters_outside_hex() {
+        // 'p', 'l', 'o', 'y' are not hex digits, so this is not a UUID prefix
+        assert!(!looks_like_uuid_prefix("deploy-456"));
+    }
+
+    #[test]
+    fn test_looks_like_uuid_prefix_rejects_empty() {
+        assert!(!looks_like_uuid_prefix(""));
     }
 }

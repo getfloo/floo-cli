@@ -613,7 +613,12 @@ pub fn request_logs(args: RequestLogsArgs) {
     };
 
     if output::is_json_mode() {
-        output::print_json(&output::to_value(&result));
+        let message = if result.requests.is_empty() {
+            "No requests found."
+        } else {
+            "Request logs retrieved."
+        };
+        output::success(message, Some(output::to_value(&result)));
         return;
     }
 

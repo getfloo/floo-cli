@@ -112,15 +112,34 @@ pub(crate) fn load_app_config_for_resolved_app(
 ) -> Result<crate::project_config::AppFileConfig, FlooError> {
     match crate::project_config::load_app_config(&resolved.config_dir)? {
         Some(config) => Ok(config),
-        None => Err(FlooError::with_suggestion(
-            ErrorCode::NoConfigFound,
-            format!(
-                "No {} found in '{}'.",
-                crate::project_config::APP_CONFIG_FILE,
-                resolved.config_dir.display()
-            ),
-            "Run 'floo init' to create a project config, or cd to your project root.".to_string(),
-        )),
+        None => {
+            // When the caller passed `--app`, the flag's help text reads
+            // "reads from config if omitted", which suggests it can fully
+            // substitute for the local config. It can't: `floo.app.toml`
+            // is also where service definitions live, and `dev` / `run`
+            // need those. Disambiguate here so the error doesn't read
+            // like the flag was ignored.
+            let suggestion = match resolved.source {
+                crate::project_config::AppSource::Flag => {
+                    "--app sets the app name but service definitions still come \
+                     from floo.app.toml. cd to your project root, or run \
+                     'floo init' if this directory is a new project."
+                        .to_string()
+                }
+                _ => "Run 'floo init' to create a project config, or cd to your \
+                      project root."
+                    .to_string(),
+            };
+            Err(FlooError::with_suggestion(
+                ErrorCode::NoConfigFound,
+                format!(
+                    "No {} found in '{}'.",
+                    crate::project_config::APP_CONFIG_FILE,
+                    resolved.config_dir.display()
+                ),
+                suggestion,
+            ))
+        }
     }
 }
 
@@ -200,5 +219,35 @@ dev_command = "npm run dev"
         let err = load_app_config_for_resolved_app(&resolved).unwrap_err();
         assert_eq!(err.code, ErrorCode::NoConfigFound);
         assert!(err.message.contains(&dir.path().display().to_string()));
+    }
+
+    #[test]
+    fn load_app_config_for_resolved_app_explains_app_flag_when_used() {
+        // Regression for feedback 65b28405 (2026-05-01): `floo dev --app X`
+        // run from a directory without floo.app.toml errored with the same
+        // generic suggestion as no-flag mode. The flag's --help reads "reads
+        // from config if omitted" which implies it can substitute for the
+        // file; the error must be honest that service definitions still
+        // live in the file.
+        let dir = TempDir::new().unwrap();
+        let resolved = crate::project_config::ResolvedApp {
+            app_name: "via-flag".to_string(),
+            source: crate::project_config::AppSource::Flag,
+            service_config: None,
+            app_config: None,
+            config_dir: dir.path().to_path_buf(),
+        };
+
+        let err = load_app_config_for_resolved_app(&resolved).unwrap_err();
+        assert_eq!(err.code, ErrorCode::NoConfigFound);
+        let suggestion = err.suggestion.expect("suggestion should be present");
+        assert!(
+            suggestion.contains("--app"),
+            "suggestion should explain --app: {suggestion}"
+        );
+        assert!(
+            suggestion.contains("service definitions"),
+            "suggestion should mention service definitions: {suggestion}"
+        );
     }
 }
