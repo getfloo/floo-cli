@@ -79,7 +79,8 @@ Examples:
                                                         in production. Prints both the raw service
                                                         URL and the auth-proxied URL.")]
     Dev {
-        /// App name or ID (reads from config if omitted).
+        /// App name or ID. Overrides the app name in floo.app.toml, but the
+        /// file itself is still required for service definitions.
         #[arg(short, long)]
         app: Option<String>,
 
@@ -124,7 +125,8 @@ Examples:
         #[arg(long, required = true)]
         service: String,
 
-        /// App name or ID (reads from config if omitted).
+        /// App name or ID. Overrides the app name in floo.app.toml, but the
+        /// file itself is still required for service definitions.
         #[arg(short, long)]
         app: Option<String>,
 
@@ -528,9 +530,16 @@ pub enum AppsCommands {
     },
 
     /// Show details for an app.
+    ///
+    /// Accepts either a positional name (legacy form) or `--app` for parity
+    /// with the rest of the CLI's flag-based API. Pass exactly one.
     Status {
-        /// App name or ID.
-        app_name: String,
+        /// App name or ID (positional form). Mutually exclusive with `--app`.
+        app_name: Option<String>,
+
+        /// App name or ID. Mutually exclusive with the positional form.
+        #[arg(short, long, conflicts_with = "app_name")]
+        app: Option<String>,
     },
 
     /// Permanently delete an app and all its data.
@@ -731,13 +740,22 @@ pub enum ServicesCommands {
     },
 
     /// Show details for a service (managed or user-managed).
+    ///
+    /// Accepts the service name as a positional (legacy form) or via
+    /// `--service` for parity with the rest of the CLI's flag-based API.
+    /// Pass exactly one. `--services` is accepted as a plural alias to
+    /// match the multi-service flag used by `floo logs` / `floo redeploy`.
     Info {
-        /// Service name.
-        service_name: String,
+        /// Service name (positional form). Mutually exclusive with `--service`.
+        service_name: Option<String>,
 
         /// App name or ID (uses config file if omitted).
         #[arg(short, long)]
         app: Option<String>,
+
+        /// Service name. Mutually exclusive with the positional form.
+        #[arg(long = "service", alias = "services", conflicts_with = "service_name")]
+        service: Option<String>,
     },
 
     /// Provision a managed service (postgres, redis, or storage).
@@ -927,8 +945,10 @@ pub enum ReleasesCommands {
         #[arg(short, long)]
         app: String,
 
-        /// Deploy ID to roll back to (the previous live deploy).
-        #[arg(long)]
+        /// Deploy ID to roll back to (the previous live deploy). Aliased
+        /// as `--deploy` for parity with the rest of the CLI's flag
+        /// vocabulary, which already speaks "deploy" everywhere else.
+        #[arg(long, alias = "deploy")]
         to: String,
 
         /// Skip the y/N prompt. Required in non-interactive contexts.
@@ -1023,11 +1043,20 @@ pub enum SkillsCommands {
 #[derive(Subcommand)]
 pub enum DbCommands {
     /// Run a SQL query against the app's managed database.
+    ///
+    /// Tables live in a per-app namespaced Postgres schema (e.g.
+    /// `app_<unique_id>_<env>`), not `public`. The API auto-sets
+    /// `search_path` to that schema, so unqualified references like
+    /// `SELECT * FROM users` work. Introspection queries that hard-code
+    /// `WHERE table_schema = 'public'` will return empty. Use
+    /// `current_schema()` or run `floo db schema` to see the actual schema
+    /// name.
     #[command(after_help = "\
 Examples:
   floo db query --app my-app \"SELECT id, email FROM users LIMIT 5\"
   floo db query --app my-app \"SELECT COUNT(*) FROM orders\" --env prod
-  floo db query --app my-app \"SELECT * FROM logs\" --limit 50")]
+  floo db query --app my-app \"SELECT * FROM logs\" --limit 50
+  floo db query --app my-app \"SELECT current_schema()\"   Show the namespaced schema")]
     Query {
         /// SQL query to execute.
         sql: String,
@@ -1131,13 +1160,21 @@ pub enum CronCommands {
     },
 
     /// Manually trigger a cron job by name.
+    ///
+    /// Accepts the job name positionally (legacy form) or as `--name` for
+    /// parity with the rest of the CLI's flag-based API. Pass exactly one.
     Run {
-        /// Cron job name (as defined in floo.app.toml [cron] section).
-        name: String,
+        /// Cron job name as defined in floo.app.toml [cron] section
+        /// (positional form). Mutually exclusive with `--name`.
+        name: Option<String>,
 
         /// App name or ID (reads from config if omitted).
         #[arg(short, long)]
         app: Option<String>,
+
+        /// Cron job name. Mutually exclusive with the positional form.
+        #[arg(long = "name", conflicts_with = "name")]
+        name_flag: Option<String>,
     },
 }
 
@@ -1215,11 +1252,9 @@ fn rewrite_bare_version_flag(args: Vec<OsString>) -> Vec<OsString> {
 fn dry_run_is_unsupported(command: &Commands) -> bool {
     matches!(
         command,
-        Commands::Init { .. }
-            | Commands::Apps(AppsCommands::Github(
-                GitHubCommands::Connect { .. } | GitHubCommands::Disconnect { .. },
-            ))
-            | Commands::Releases(ReleasesCommands::Promote { .. })
+        Commands::Apps(AppsCommands::Github(
+            GitHubCommands::Connect { .. } | GitHubCommands::Disconnect { .. },
+        )) | Commands::Releases(ReleasesCommands::Promote { .. })
             | Commands::Orgs(
                 OrgsCommands::Members(MembersCommands::SetRole { .. })
                     | OrgsCommands::Switch { .. },
@@ -1249,6 +1284,7 @@ fn dry_run_is_unsupported(command: &Commands) -> bool {
 /// the suggestion text in the error will silently lie about what's supported
 /// — that drift class is exactly what this PR was opened to fix.
 const DRY_RUN_SUPPORTED_COMMANDS: &[&str] = &[
+    "init",
     "redeploy",
     "preflight",
     "dev",
@@ -1397,7 +1433,9 @@ pub fn run() {
 
         Commands::Apps(sub) => match sub {
             AppsCommands::List { page, per_page } => commands::apps::list(page, per_page),
-            AppsCommands::Status { app_name } => commands::apps::status(&app_name),
+            AppsCommands::Status { app_name, app } => {
+                commands::apps::status(app_name.as_deref().or(app.as_deref()))
+            }
             AppsCommands::Delete {
                 app_name,
                 confirmed,
@@ -1465,8 +1503,20 @@ pub fn run() {
 
         Commands::Services(sub) => match sub {
             ServicesCommands::List { app, env } => commands::services::list(app.as_deref(), &env),
-            ServicesCommands::Info { service_name, app } => {
-                commands::services::info(&service_name, app.as_deref())
+            ServicesCommands::Info {
+                service_name,
+                app,
+                service,
+            } => {
+                let resolved = service_name.or(service).unwrap_or_else(|| {
+                    output::error(
+                        "Service name required.",
+                        &crate::errors::ErrorCode::InvalidFormat,
+                        Some("Pass --service <name> or supply the name positionally."),
+                    );
+                    std::process::exit(1);
+                });
+                commands::services::info(&resolved, app.as_deref())
             }
             ServicesCommands::Add {
                 service_type,
@@ -1549,7 +1599,21 @@ pub fn run() {
 
         Commands::Cron(sub) => match sub {
             CronCommands::List { app } => commands::cron::list(app.as_deref()),
-            CronCommands::Run { name, app } => commands::cron::run(app.as_deref(), &name),
+            CronCommands::Run {
+                name,
+                app,
+                name_flag,
+            } => {
+                let resolved = name.or(name_flag).unwrap_or_else(|| {
+                    output::error(
+                        "Cron job name required.",
+                        &crate::errors::ErrorCode::InvalidFormat,
+                        Some("Pass --name <job> or supply the name positionally."),
+                    );
+                    std::process::exit(1);
+                });
+                commands::cron::run(app.as_deref(), &resolved)
+            }
         },
 
         Commands::Reparo(sub) => match sub {
@@ -1695,6 +1759,7 @@ mod tests {
     fn dry_run_supported_names_are_real_subcommands() {
         // Minimal required positionals so each invocation parses.
         let invocations: &[(&str, &[&str])] = &[
+            ("init", &["floo", "init", "--dry-run"]),
             ("redeploy", &["floo", "redeploy", "--dry-run"]),
             ("preflight", &["floo", "preflight", "--dry-run"]),
             ("dev", &["floo", "dev", "--dry-run"]),
@@ -1750,8 +1815,18 @@ mod tests {
 
     #[test]
     fn dry_run_unsupported_for_known_mutator() {
-        // `floo init` does not implement --dry-run; the gate must catch it.
-        let cli = Cli::try_parse_from(["floo", "init", "x", "--dry-run"]).unwrap();
+        // `floo apps github connect` does not implement --dry-run; the
+        // gate must catch it. (Replaces the prior `floo init` spot-check
+        // since `init` now implements --dry-run.)
+        let cli = Cli::try_parse_from([
+            "floo",
+            "apps",
+            "github",
+            "connect",
+            "owner/repo",
+            "--dry-run",
+        ])
+        .unwrap();
         assert!(dry_run_is_unsupported(&cli.command));
     }
 }

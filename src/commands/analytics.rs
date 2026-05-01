@@ -128,6 +128,25 @@ fn render_org_analytics(period: &str, data: &AppAnalyticsResponse) {
         format_number(apps_with_traffic)
     );
 
+    // Org-level latency mirrors the per-app surface (request-weighted avg,
+    // max of per-app p95s). Free-tier orgs see no latency line because the
+    // API gates these fields by tier; the absence is the same signal as on
+    // the per-app endpoint.
+    if let Some(avg) = summary.avg_latency_ms {
+        eprintln!("  {:18}{:>10}", "Avg Latency", format!("{}ms", avg));
+    }
+    if let Some(p95) = summary.p95_latency_ms {
+        eprintln!("  {:18}{:>10}", "P95 Latency", format!("{}ms", p95));
+    }
+
+    if let Some(breakdown) = &summary.status_code_breakdown {
+        if !breakdown.is_empty() {
+            eprintln!();
+            eprintln!("Status Codes");
+            render_status_code_chart(breakdown, total_requests);
+        }
+    }
+
     if !data.apps.is_empty() {
         eprintln!();
 

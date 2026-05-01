@@ -43,11 +43,101 @@ pub fn init(name: Option<String>, path: PathBuf) {
 
     let detection = detect(&project_path);
 
+    if output::is_dry_run_mode() {
+        // `floo init --dry-run` is non-interactive by contract: a preview
+        // should never block on prompts. We pick the same scaffold the
+        // non-interactive path would write (auto-generated app name when
+        // none is given) and emit it as a JSON/human plan. Closes
+        // feedback 87b756f9 (2026-05-01).
+        init_dry_run(&project_path, name, &detection);
+        return;
+    }
+
     if output::is_interactive() {
         init_interactive(&project_path, name, &detection);
     } else {
         init_non_interactive(&project_path, name, &detection);
     }
+}
+
+fn init_dry_run(project_path: &std::path::Path, name: Option<String>, detection: &DetectionResult) {
+    let app_name = name.unwrap_or_else(|| {
+        // Mirror init_interactive's default-name behaviour. Non-interactive
+        // dry-run can't ask, so we surface the would-be name in the preview;
+        // users who care about a specific name pass it as an arg.
+        crate::names::generate_name()
+    });
+
+    let default_type = detection.default_service_type();
+    let service_type = match default_type {
+        "api" => ServiceType::Api,
+        _ => ServiceType::Web,
+    };
+    let port = detection.default_port();
+    let env_file = super::detect_env_file(project_path);
+
+    let agents_md_exists = project_path.join("AGENTS.md").exists();
+    let dockerfile_exists = project_path.join("Dockerfile").exists();
+
+    // Mirror generate_dockerfile_if_needed's auto-generate gate exactly:
+    // high/medium confidence only. Low confidence prompts in interactive
+    // mode and skips otherwise. Dry-run is non-interactive, so it skips.
+    let dockerfile_will_generate = !dockerfile_exists
+        && detection.runtime != "docker"
+        && (detection.confidence == "high" || detection.confidence == "medium")
+        && dockerfile::generate_dockerfile(detection, project_path).is_some();
+
+    let mut planned_files: Vec<&str> = vec![project_config::APP_CONFIG_FILE];
+    if dockerfile_will_generate {
+        planned_files.push("Dockerfile");
+    }
+    if !agents_md_exists {
+        planned_files.push("AGENTS.md");
+    }
+
+    let preview = {
+        let mut lines = vec![
+            format!(
+                "Would initialize app '{app_name}' in '{}':",
+                project_path.display()
+            ),
+            format!("  service '{default_type}' (type={service_type}, port={port})"),
+        ];
+        for f in &planned_files {
+            lines.push(format!("  create {f}"));
+        }
+        if agents_md_exists {
+            lines.push("  skip AGENTS.md (already exists)".to_string());
+        }
+        if dockerfile_exists {
+            lines.push("  skip Dockerfile (already exists)".to_string());
+        } else if !dockerfile_will_generate && detection.runtime != "docker" {
+            lines.push(
+                "  skip Dockerfile (no runtime detected with sufficient confidence)".to_string(),
+            );
+        }
+        lines.join("\n")
+    };
+
+    output::dry_run_preview(
+        &preview,
+        serde_json::json!({
+            "action": "init",
+            "app_name": app_name,
+            "project_path": project_path.display().to_string(),
+            "files_to_create": planned_files,
+            "agents_md_exists": agents_md_exists,
+            "dockerfile_exists": dockerfile_exists,
+            "dockerfile_will_generate": dockerfile_will_generate,
+            "detection": detection.to_value(),
+            "service": {
+                "name": default_type,
+                "type": service_type.to_string(),
+                "port": port,
+                "env_file": env_file,
+            },
+        }),
+    );
 }
 
 /// Agent-safe operating notes scaffold. Written next to floo.app.toml on

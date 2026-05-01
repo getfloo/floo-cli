@@ -32,6 +32,19 @@ pub fn query(app_flag: Option<&str>, sql: &str, environment: &str, limit: u32) {
 
     if rows_arr.is_empty() {
         output::info("0 rows", None);
+        if queries_public_schema(sql) {
+            // The API auto-sets `search_path` to the app's namespaced schema
+            // (e.g. `app_<id>_dev`), so unqualified table refs work. Explicit
+            // `WHERE table_schema = 'public'` queries return empty because
+            // the app's tables are not in `public`. Surface the hint before
+            // the user copy-pastes the next variant of the same query.
+            output::info(
+                "This app's tables live in a namespaced schema, not 'public'. \
+                 Run `floo db schema` to see the schema name, or use \
+                 `current_schema()` / `WHERE table_schema = current_schema()`.",
+                None,
+            );
+        }
         return;
     }
 
@@ -88,6 +101,14 @@ pub fn schema(app_flag: Option<&str>) {
     }
 
     // Human mode: print tables with columns and types.
+    if let Some(schema_name) = result.get("schema_name").and_then(|v| v.as_str()) {
+        // Surface the namespaced schema name up-front so anyone writing raw
+        // SQL has the schema to qualify against. The API auto-applies it
+        // via `search_path` for /db/query, but introspection queries that
+        // hard-code `table_schema = 'public'` return empty without it.
+        output::info(&format!("Schema: {schema_name}"), None);
+    }
+
     let tables_val = result.get("tables");
     let Some(tables_arr) = tables_val.and_then(|v| v.as_array()) else {
         output::info("No schema information available.", None);
@@ -303,6 +324,23 @@ pub fn connections(app_flag: Option<&str>, env: &str) {
     }
 }
 
+/// Detect SQL that explicitly filters on `table_schema = 'public'` (or
+/// `schemaname = 'public'`, the pg_catalog spelling): the canonical
+/// "list my tables" pattern that returns empty against a floo app
+/// because tables live in a namespaced schema. Used to gate a one-line
+/// hint after a 0-row result.
+fn queries_public_schema(sql: &str) -> bool {
+    let lower: String = sql
+        .to_lowercase()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    lower.contains("table_schema='public'")
+        || lower.contains("table_schema=\"public\"")
+        || lower.contains("schemaname='public'")
+        || lower.contains("schemaname=\"public\"")
+}
+
 fn value_to_display(v: &Value) -> String {
     match v {
         Value::Null => "NULL".to_string(),
@@ -338,5 +376,46 @@ mod tests {
     #[test]
     fn test_value_to_display_string() {
         assert_eq!(value_to_display(&json!("hello")), "hello");
+    }
+
+    #[test]
+    fn test_queries_public_schema_information_schema() {
+        assert!(queries_public_schema(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+        ));
+    }
+
+    #[test]
+    fn test_queries_public_schema_double_quotes() {
+        assert!(queries_public_schema(
+            "SELECT * FROM information_schema.tables WHERE table_schema = \"public\""
+        ));
+    }
+
+    #[test]
+    fn test_queries_public_schema_pg_stat() {
+        assert!(queries_public_schema(
+            "SELECT * FROM pg_stat_user_tables WHERE schemaname = 'public'"
+        ));
+    }
+
+    #[test]
+    fn test_queries_public_schema_qualified_table() {
+        // `public.users` is just an unqualified-from-schema-pov reference,
+        // not the introspection pattern we're flagging. A user explicitly
+        // querying public schema tables likely knows what they're doing.
+        assert!(!queries_public_schema("SELECT * FROM public.users"));
+    }
+
+    #[test]
+    fn test_queries_public_schema_unrelated() {
+        assert!(!queries_public_schema("SELECT * FROM users"));
+    }
+
+    #[test]
+    fn test_queries_public_schema_case_insensitive() {
+        assert!(queries_public_schema(
+            "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'public'"
+        ));
     }
 }

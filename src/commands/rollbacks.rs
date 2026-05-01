@@ -29,6 +29,12 @@ pub fn rollback(app_name: &str, deploy_id: &str, yes: bool) {
     let name = &app_data.name;
     let app_id = &app_data.id;
 
+    // Accept truncated UUIDs from `floo deploys list` output (`fed461a6...`)
+    // via git-style prefix resolution. Without this, the API returns a raw
+    // FastAPI validation array that surfaces as an unformatted error.
+    let deploy_id = super::deploys::resolve_deploy_id(&client, app_id, deploy_id);
+    let deploy_id = deploy_id.as_str();
+
     match confirm_tier2("Rollback", &format!("{name} to deploy {deploy_id}"), yes) {
         ConfirmOutcome::Proceed => {}
         ConfirmOutcome::Aborted => {

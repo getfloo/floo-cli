@@ -88,10 +88,18 @@ pub fn list(page: u32, per_page: u32) {
     }
 }
 
-pub fn status(app_name: &str) {
+/// Show details for an app.
+///
+/// `app_flag` is `Some` when the user passed `--app` or supplied the
+/// positional name; `None` falls back to the local config so the command
+/// "just works" inside a project directory. clap enforces that the
+/// positional form and the `--app` flag are mutually exclusive, so we
+/// don't have to reconcile them here.
+pub fn status(app_flag: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);
-    let app = super::resolve_app_or_exit(&client, app_name);
+    let (_, app_name) = super::resolve_app_from_config(&client, app_flag);
+    let app = super::resolve_app_or_exit(&client, &app_name);
 
     if output::is_json_mode() {
         output::success(&format!("App {}", app.name), Some(output::to_value(&app)));
