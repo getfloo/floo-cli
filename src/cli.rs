@@ -22,6 +22,16 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub dry_run: bool,
 
+    /// Emit secret-shaped values verbatim in `--json` output instead of
+    /// `***REDACTED***`. The default redaction protects agents that pipe
+    /// stdout into transcripts and logs. Use this only when you control
+    /// where the JSON goes (e.g. a local script that pipes into a file
+    /// outside any agent context). The top-level `contains_secrets`
+    /// marker still fires either way so harnesses can refuse the
+    /// payload.
+    #[arg(long, global = true)]
+    pub reveal_secrets: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -54,10 +64,11 @@ Examples:
 
     /// Run all services locally with managed-service credentials.
     ///
-    /// `--json` emits managed-service credentials (DATABASE_URL, REDIS_URL, custom env
-    /// vars) in plaintext. Treat the JSON stream as sensitive: do not commit, paste it
-    /// into chat, or pipe it to a service that retains logs. Redact the `env_vars`
-    /// block before sharing.
+    /// `--json` redacts secret-shaped values (DATABASE_URL, REDIS_URL,
+    /// SECRET_KEY_BASE, etc.) by default and stamps the payload with
+    /// `contains_secrets: true` so agent harnesses can refuse it. Pass
+    /// `--reveal-secrets` only when you control where the JSON goes
+    /// (a local script piping into a file outside any agent context).
     #[command(after_help = "\
 Examples:
   floo dev                                              Start all services defined in floo.app.toml
@@ -544,6 +555,10 @@ pub enum AppsCommands {
     Github(GitHubCommands),
 
     /// Show the shared password for a password-protected app.
+    ///
+    /// `--json` redacts the password by default. Pass
+    /// `--reveal-secrets` to print the plaintext value (the response
+    /// is still stamped with `contains_secrets: true` either way).
     Password {
         /// App name or ID.
         app_name: String,
@@ -1272,6 +1287,9 @@ pub fn run() {
     if cli.dry_run {
         output::set_dry_run_mode(true);
         reject_unsupported_dry_run(&cli.command);
+    }
+    if cli.reveal_secrets {
+        crate::redact::set_reveal_secrets(true);
     }
 
     // Phase 2: Always apply staged updates (safe for any command, including --json)

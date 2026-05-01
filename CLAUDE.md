@@ -39,6 +39,25 @@ This makes `floo deploy --json 2>/dev/null | jq` work for agents.
 
 **Pitfall:** `info(msg)` emits `{"success": true, "data": null}` to stdout in JSON mode. If a command later calls `success()` with real data, stdout has two JSON objects — breaking agents. **Fix:** Guard with `if !is_json_mode() { info("..."); }`.
 
+### Secret redaction (`redact.rs`) — load-bearing for agent safety
+
+Agents pipe `--json` stdout into transcripts and logs by default. Every payload that hits `print_json` runs through `redact::process_in_place` first; secret-shaped values are replaced with `***REDACTED***` and the top-level object is stamped with `"contains_secrets": true` so harnesses can refuse the payload before it lands anywhere persistent. The contract is enforced **at the boundary**, not at each call site — callers do not need to remember to redact.
+
+Detection has three layers, applied in order:
+
+1. **Field name** — lowercase JSON keys matching `SECRET_FIELD_NAMES` (`password`, `api_key`, `token`, `database_url`, `generated_password`, …).
+2. **Env-var-shaped key** — UPPER_SNAKE_CASE keys containing a token from `ENV_VAR_SECRET_TOKENS` (`PASSWORD`, `SECRET`, `KEY`, `TOKEN`, …) and not on `ENV_VAR_ALLOWLIST` (`PORT`, `PUBLIC_KEY`, `AWS_REGION`, …). Catches `services.web.DATABASE_URL` shapes inside arbitrary maps.
+3. **Value content** — strings whose body matches a credential pattern (URI userinfo, `floo_…` keys, AWS access keys, bearer tokens, JWTs).
+
+The global `--reveal-secrets` flag opts back in to plaintext. The `contains_secrets` marker still fires under reveal so harnesses retain detect-and-refuse capability even when the user explicitly opted in.
+
+When designing new commands:
+
+- **Don't** hand-roll scrubbing in command modules — the redactor is the single source of truth.
+- **Don't** invent a new envelope shape for env-var data; reuse the `EnvVar { key, value }` pair so the env-var-pair detector catches it.
+- **Do** add a snapshot test in `redact::snapshots::*` for any new command that surfaces credential-shaped data. Tests embed forbidden substrings and assert they don't survive — `kitchen_sink_no_forbidden_substring_survives` is the pattern to follow.
+- **Mirror the API redactor.** When adding patterns, also update `api/app/services/logs.py` (`_SECRET_KEY_PATTERN` + the URI/floo/AWS regex set) so server-side log scrubbing stays aligned.
+
 ### API Client (`api_client.rs`)
 
 All HTTP calls go through `FlooClient`. Never use `reqwest` directly in commands. Auth header injected from config. Base URL from config, overridable via `FLOO_API_URL` env var.
