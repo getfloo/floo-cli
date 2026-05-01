@@ -106,4 +106,12 @@ The skill file (`skills/floo/SKILL.md`) is a tiny intro (~30 lines). Platform kn
 1. Tag `v*` on main branch
 2. CI builds binaries for 5 targets (macOS x86/arm, Linux x86/arm, Windows x86)
 3. GitHub Release created with binaries + SHA256 checksums + RSA signatures
-4. Install script downloads from these releases and verifies checksum + signature before install
+4. Slack `#releases` ping fires (mirrors the platform's deploy.yml notification — gated on `secrets.SLACK_RELEASES_WEBHOOK`; skips with a warning if unset, fails the release if Slack rejects the post)
+5. Install script downloads from these releases and verifies checksum + signature before install
+
+### Required secrets
+
+- `FLOO_RELEASE_SIGNING_KEY` — RSA private key whose public key is pinned into the CLI updater. Required to publish a signed release; the workflow fails fast if missing or mismatched.
+- `SLACK_RELEASES_WEBHOOK` — Slack incoming-webhook URL for the `#releases` channel. Optional; the notify step warns and skips when empty so a fork that cuts its own tag still gets a successful release.
+
+Both must be set at the org or repo level. **This is a public repo — never reference secret values in workflow files except via `secrets.NAME`, never echo them in `run:` blocks, and never expose them to fork PRs (the workflow's `push: tags` trigger already gates that — fork PRs cannot push tags to upstream).**

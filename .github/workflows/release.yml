@@ -166,3 +166,44 @@ jobs:
           # artifact download ever breaks or the directory layout shifts.
           # The CLI auto-updater depends on these assets existing.
           fail_on_unmatched_files: true
+
+      # Post a release-success ping to Slack #releases. Mirrors the
+      # platform's `Notify release success` step in
+      # getfloo/floo's deploy.yml so the CLI shows up alongside platform
+      # releases in the same paper trail.
+      #
+      # Public-repo safety: this repo is open-source. The webhook URL
+      # MUST come from `secrets.SLACK_RELEASES_WEBHOOK` and never be
+      # hardcoded. GitHub Actions does not inject `secrets.*` into
+      # workflow runs from fork PRs, so the only way this step ever
+      # runs is via `push: tags` (org-member push) or `workflow_dispatch`
+      # (org-member trigger). The message body carries only public
+      # information (tag, short SHA, public release URL, public run URL).
+      #
+      # If `SLACK_RELEASES_WEBHOOK` isn't configured (e.g. a fork that
+      # cuts its own tag) the step skips with a warning instead of
+      # failing the release — the binaries are already published.
+      - name: Notify release success
+        if: success()
+        env:
+          SLACK_RELEASES_WEBHOOK: ${{ secrets.SLACK_RELEASES_WEBHOOK }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SLACK_RELEASES_WEBHOOK" ]; then
+            echo "::warning::SLACK_RELEASES_WEBHOOK is empty; skipping"
+            exit 0
+          fi
+          TAG="${{ github.ref_name }}"
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          RELEASE_URL="${{ github.server_url }}/${{ github.repository }}/releases/tag/${TAG}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          MSG=":package: *floo-cli ${TAG} released*\nCommit: \`${SHORT_SHA}\` · <${RELEASE_URL}|GitHub release> · <${RUN_URL}|build run>"
+          PAYLOAD=$(jq -nc --arg text "$MSG" '{text:$text}')
+          RESPONSE=$(curl -sSL --fail-with-body -X POST \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "$SLACK_RELEASES_WEBHOOK")
+          if [ "$RESPONSE" != "ok" ]; then
+            echo "::error::Slack webhook returned unexpected body: $RESPONSE"
+            exit 1
+          fi
