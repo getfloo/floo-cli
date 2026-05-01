@@ -344,14 +344,39 @@ fn validate_app_config(config: &AppFileConfig) -> Result<(), FlooError> {
     Ok(())
 }
 
-pub fn write_app_config(dir: &Path, config: &AppFileConfig) -> Result<(), FlooError> {
+#[cfg(test)]
+fn write_app_config(dir: &Path, config: &AppFileConfig) -> Result<(), FlooError> {
+    write_app_config_with_header(dir, config, "")
+}
+
+/// Write `floo.app.toml`, optionally prepending a header comment block.
+///
+/// `floo init` uses the header to make two non-obvious things impossible
+/// to miss when the user opens the file: (1) deploys happen on `git push`,
+/// and (2) `access_mode` is a real toml knob that lives in `[app]` (with
+/// per-environment overrides under `[environments.<name>]`). Both points
+/// were reported as friction on `floo-artifact` 2026-05-01 (`88e32b22`,
+/// `c9b70eb5`), where the user only discovered them by digging into the
+/// hosted docs. Subsequent writes (e.g. `floo env import`) call
+/// `write_app_config` with no header to avoid re-stamping comments on
+/// every save.
+pub fn write_app_config_with_header(
+    dir: &Path,
+    config: &AppFileConfig,
+    header: &str,
+) -> Result<(), FlooError> {
     let config_path = dir.join(super::APP_CONFIG_FILE);
-    let content = toml::to_string_pretty(config).map_err(|e| {
+    let serialized = toml::to_string_pretty(config).map_err(|e| {
         FlooError::new(
             ErrorCode::ConfigWriteError,
             format!("Failed to serialize {}: {e}", super::APP_CONFIG_FILE),
         )
     })?;
+    let content = if header.is_empty() {
+        serialized
+    } else {
+        format!("{header}\n{serialized}")
+    };
     std::fs::write(&config_path, content).map_err(|e| {
         FlooError::new(
             ErrorCode::ConfigWriteError,

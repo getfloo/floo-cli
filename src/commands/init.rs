@@ -9,6 +9,34 @@ use crate::names::generate_name;
 use crate::output;
 use crate::project_config::{self, AppFileAppSection, AppFileConfig, AppServiceEntry, ServiceType};
 
+/// Header comment block written above `[app]` on `floo init`.
+///
+/// This is the lever that closes two recurring friction points:
+/// `88e32b22` (access_mode placement is non-obvious) and `c9b70eb5`
+/// (no in-CLI signal that pushing to GitHub auto-deploys to dev). Both
+/// were reported on `floo-artifact` 2026-05-01 — the user only learned
+/// either fact by reading the hosted docs. Putting the answer in the
+/// file the user is about to edit (and in the file every coding agent
+/// reads when it lands in this repo) makes the discovery cost zero.
+///
+/// Keep this short — a wall of comments at the top of every config
+/// becomes noise. Anchor to canonical doc URLs for depth.
+const APP_TOML_HEADER: &str = r#"# floo.app.toml — see https://getfloo.com/docs/reference/config-spec.md
+#
+# Deploys happen on `git push`. After `floo apps github connect`, every
+# push to your default branch builds and deploys to the dev environment
+# automatically (no `floo deploy` needed). Cutting a GitHub release
+# promotes that build to production. See
+# https://getfloo.com/docs/guides/golden-path.md.
+#
+# Common knobs to add when you need them:
+#   [app] access_mode = "accounts"        # require sign-in (Pro+)
+#   [environments.dev]        access_mode = "public"     # per-env override
+#   [environments.production] access_mode = "accounts"
+#
+# Per-env access_mode overrides app-level. Run `floo docs config` for
+# the full schema."#;
+
 pub fn init(name: Option<String>, path: PathBuf) {
     let project_path = match path.canonicalize() {
         Ok(p) => p,
@@ -252,7 +280,9 @@ fn init_non_interactive(
 
     let mut files_written = Vec::new();
 
-    if let Err(e) = project_config::write_app_config(project_path, &app_file) {
+    if let Err(e) =
+        project_config::write_app_config_with_header(project_path, &app_file, APP_TOML_HEADER)
+    {
         output::error(&e.message, &e.code, None);
         process::exit(1);
     }
@@ -279,6 +309,7 @@ fn init_non_interactive(
         "dockerfile_generated": dockerfile_generated,
         "agents_md_written": agents_md_written,
         "hint": "Edit floo.app.toml to configure your services — run 'floo docs config' for the schema",
+        "next_step": "Connect GitHub with 'floo apps github connect <owner/repo>'. Every git push to your default branch then deploys to dev automatically.",
     });
 
     // Add suggestion when Dockerfile was not generated due to low confidence
@@ -289,8 +320,9 @@ fn init_non_interactive(
     }
 
     if !output::is_json_mode() {
-        eprintln!("  Edit floo.app.toml to configure your services, then run 'floo preflight'.");
-        eprintln!("  See 'floo docs config' for the full schema.");
+        eprintln!("  Next: 'floo apps github connect <owner/repo>' wires the repo so");
+        eprintln!("        every 'git push' to your default branch deploys to dev.");
+        eprintln!("  Edit floo.app.toml to configure services; run 'floo preflight' to validate.");
     }
     output::success(&format!("Initialized app '{app_name}'."), Some(json_data));
 }
@@ -422,7 +454,9 @@ fn init_interactive(
         environments: HashMap::new(),
     };
 
-    if let Err(e) = project_config::write_app_config(project_path, &app_file) {
+    if let Err(e) =
+        project_config::write_app_config_with_header(project_path, &app_file, APP_TOML_HEADER)
+    {
         output::error(&e.message, &e.code, None);
         process::exit(1);
     }
@@ -432,7 +466,8 @@ fn init_interactive(
         output::info("Wrote AGENTS.md (agent operating notes)", None);
     }
 
-    eprintln!("  Edit floo.app.toml to configure your services, then run 'floo preflight'.");
-    eprintln!("  See 'floo docs config' for the full schema.");
+    eprintln!("  Next: 'floo apps github connect <owner/repo>' wires the repo so");
+    eprintln!("        every 'git push' to your default branch deploys to dev.");
+    eprintln!("  Edit floo.app.toml to configure services; run 'floo preflight' to validate.");
     output::success(&format!("Initialized app '{app_name}'."), None);
 }

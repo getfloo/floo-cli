@@ -804,6 +804,45 @@ fn test_init_creates_config_json() {
 }
 
 #[test]
+fn test_init_writes_header_with_access_mode_and_autodeploy_signal() {
+    // Pins the in-file friction fixes for floo-artifact 2026-05-01
+    // (`88e32b22` access_mode placement, `c9b70eb5` no auto-deploy signal).
+    // Both points need to live IN the file the user opens — a hint in
+    // post-init terminal output is too easy to skip past, and the user
+    // who reported these had already done so.
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("package.json"),
+        r#"{"dependencies": {"next": "^14.0.0"}}"#,
+    )
+    .unwrap();
+
+    floo()
+        .args([
+            "--json",
+            "init",
+            "myapp",
+            "--path",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let toml = std::fs::read_to_string(project.path().join("floo.app.toml")).unwrap();
+    assert!(toml.starts_with("# floo.app.toml"), "header should lead the file");
+    // git push auto-deploy contract is mentioned by name.
+    assert!(toml.contains("git push"), "git push contract must be in header");
+    // access_mode placement is shown in BOTH valid locations so the user
+    // doesn't have to dig into hosted docs to find out which is right.
+    assert!(toml.contains("[app] access_mode"));
+    assert!(toml.contains("[environments.dev]"));
+    // Output toml after the header is still parseable — sanity-check that
+    // we didn't break TOML by prepending comments without a trailing newline.
+    let cfg: toml::Value = toml::from_str(&toml).unwrap();
+    assert_eq!(cfg["app"]["name"].as_str(), Some("myapp"));
+}
+
+#[test]
 fn test_init_requires_name_in_json_mode() {
     let project = tempfile::TempDir::new().unwrap();
     std::fs::write(project.path().join("package.json"), r#"{"name":"test"}"#).unwrap();
