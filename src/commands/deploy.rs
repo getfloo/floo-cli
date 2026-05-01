@@ -1280,11 +1280,11 @@ fn generate_security_notes(
     let mut notes: Vec<String> = Vec::new();
 
     // Check access_mode — warn if no auth is configured
-    // Mirror deploy.rs's resolution order so the warning reflects what will
-    // actually deploy: per-environment override (dev > app-level), then
-    // app-level. Pre-#763 this only checked `[app]`, which made the
-    // warning fire even when the user had set
-    // `[environments.dev] access_mode = "accounts"` correctly.
+    // Mirror what the CLI actually sends to the API: deploy.rs:570 still
+    // resolves env-override-wins for the body.access_mode it POSTs, so the
+    // warning matches the value the deploy will use. Pre-this-PR this only
+    // checked `[app]`, which made the warning fire even when the user had
+    // set `[environments.dev] access_mode = "accounts"` correctly.
     let access_mode = resolved.app_config.as_ref().and_then(|c| {
         c.environments
             .get("dev")
@@ -1295,14 +1295,15 @@ fn generate_security_notes(
         None | Some(AppAccessMode::Public) => {
             // Closes feedback 88e32b22 (floo-artifact 2026-05-01): the user
             // had to dig into the docs to discover that access_mode is a
-            // toml knob and where it goes. Spell out both valid placements
-            // so the message itself answers "where do I put this?".
+            // toml knob and where it goes. Be specific: `[app]` is the
+            // placement that actually applies on push deploys today.
             notes.push(
                 "Access mode is 'public' (no auth). Anyone can access your app. \
-                 To require auth, add access_mode in floo.app.toml: \
-                 `[app] access_mode = \"accounts\"` (applies to every env), \
-                 or `[environments.dev] access_mode = \"accounts\"` to scope \
-                 it to one env. Per-env wins over app-level."
+                 To require auth, set `[app] access_mode = \"accounts\"` in \
+                 floo.app.toml — that's the placement applied on every push. \
+                 Per-env overrides via `[environments.<name>]` are accepted \
+                 by the schema but not yet applied server-side; use \
+                 `floo deploy --access-mode` to scope one env in the meantime."
                     .to_string(),
             );
         }

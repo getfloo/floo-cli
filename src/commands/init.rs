@@ -29,13 +29,15 @@ const APP_TOML_HEADER: &str = r#"# floo.app.toml — see https://getfloo.com/doc
 # promotes that build to production. See
 # https://getfloo.com/docs/guides/golden-path.md.
 #
-# Common knobs to add when you need them:
-#   [app] access_mode = "accounts"        # require sign-in (Pro+)
-#   [environments.dev]        access_mode = "public"     # per-env override
-#   [environments.production] access_mode = "accounts"
+# Common knobs to add when you need them (under [app], applies to every env):
+#   access_mode = "accounts"   # require sign-in (Pro+) — public, password,
+#                              #   accounts, or sso. The [app] level is the
+#                              #   one that actually applies on push deploys
+#                              #   today; per-env overrides via
+#                              #   [environments.<name>] are documented but
+#                              #   not yet applied server-side.
 #
-# Per-env access_mode overrides app-level. Run `floo docs config` for
-# the full schema."#;
+# Run `floo docs config` for the full schema."#;
 
 pub fn init(name: Option<String>, path: PathBuf) {
     let project_path = match path.canonicalize() {

@@ -832,10 +832,15 @@ fn test_init_writes_header_with_access_mode_and_autodeploy_signal() {
     assert!(toml.starts_with("# floo.app.toml"), "header should lead the file");
     // git push auto-deploy contract is mentioned by name.
     assert!(toml.contains("git push"), "git push contract must be in header");
-    // access_mode placement is shown in BOTH valid locations so the user
-    // doesn't have to dig into hosted docs to find out which is right.
-    assert!(toml.contains("[app] access_mode"));
-    assert!(toml.contains("[environments.dev]"));
+    // access_mode is shown under [app] — the placement that actually applies
+    // on push today. Per-env overrides via [environments.<name>] are parsed
+    // but not applied server-side; the header discloses that gap explicitly
+    // so a user doesn't write config that silently does nothing.
+    assert!(toml.contains("access_mode"));
+    assert!(
+        toml.contains("not yet applied"),
+        "header must disclose the per-env override gap honestly"
+    );
     // Output toml after the header is still parseable — sanity-check that
     // we didn't break TOML by prepending comments without a trailing newline.
     let cfg: toml::Value = toml::from_str(&toml).unwrap();
