@@ -731,6 +731,18 @@ pub fn deploy(
         if let Some(ref mode) = access_mode {
             output::info(&format!("  Access: {}", mode.as_str()), None);
         }
+        // Closes feedback c9b70eb5 — surface the auto-deploy contract the
+        // moment a manual `floo deploy` finishes, so the user knows the
+        // next change ships via `git push` (no need to remember `floo deploy`).
+        // The hint only renders for human terminals; JSON consumers infer
+        // from the connected service in the response.
+        let app_url = format!("https://app.getfloo.com/{}", app_data.name);
+        output::info(
+            &format!(
+                "  Next deploys: push to your default branch. Manage at {app_url}"
+            ),
+            None,
+        );
     }
 
     let service_names: Vec<&str> = services.iter().map(|s| s.name.as_str()).collect();
@@ -1268,12 +1280,30 @@ fn generate_security_notes(
     let mut notes: Vec<String> = Vec::new();
 
     // Check access_mode — warn if no auth is configured
-    let access_mode = resolved.app_config.as_ref().and_then(|c| c.app.access_mode);
+    // Mirror what the CLI actually sends to the API: deploy.rs:570 still
+    // resolves env-override-wins for the body.access_mode it POSTs, so the
+    // warning matches the value the deploy will use. Pre-this-PR this only
+    // checked `[app]`, which made the warning fire even when the user had
+    // set `[environments.dev] access_mode = "accounts"` correctly.
+    let access_mode = resolved.app_config.as_ref().and_then(|c| {
+        c.environments
+            .get("dev")
+            .and_then(|env| env.access_mode)
+            .or(c.app.access_mode)
+    });
     match access_mode {
         None | Some(AppAccessMode::Public) => {
+            // Closes feedback 88e32b22 (floo-artifact 2026-05-01): the user
+            // had to dig into the docs to discover that access_mode is a
+            // toml knob and where it goes. Be specific: `[app]` is the
+            // placement that actually applies on push deploys today.
             notes.push(
                 "Access mode is 'public' (no auth). Anyone can access your app. \
-                 Set access_mode = \"accounts\" in floo.app.toml to require authentication."
+                 To require auth, set `[app] access_mode = \"accounts\"` in \
+                 floo.app.toml — that's the placement applied on every push. \
+                 Per-env overrides via `[environments.<name>]` are accepted \
+                 by the schema but not yet applied server-side; use \
+                 `floo deploy --access-mode` to scope one env in the meantime."
                     .to_string(),
             );
         }
@@ -1634,6 +1664,19 @@ fn display_preflight_human(
     }
 
     if errors.is_empty() {
+        // Closes feedback c9b70eb5: "no obvious signal anywhere in the Floo
+        // workflow that dev auto-deploys on GitHub push." The CLI is the
+        // surface the user is in front of right before pushing — surfacing
+        // the auto-deploy contract here means they don't have to leave for
+        // the docs to learn what `git push` will do next.
+        eprintln!();
+        eprintln!(
+            "  Deploys: dev auto-deploys on every `git push` to your default branch."
+        );
+        eprintln!("           Cut a GitHub release to promote the same build to production.");
+        eprintln!(
+            "           See https://getfloo.com/docs/guides/golden-path.md for the full flow."
+        );
         output::success("Config valid \u{2014} ready to deploy.", None);
     }
 }
