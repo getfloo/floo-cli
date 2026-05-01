@@ -75,6 +75,9 @@ const SECRET_FIELD_NAMES: &[&str] = &[
     "database_url",
     "redis_url",
     "connection_string",
+    "connection_url",
+    "webhook_url",
+    "invite_url",
     "generated_password",
     "encrypted_value",
 ];
