@@ -426,6 +426,11 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn get_cron_job(&self, app_id: &str, name: &str) -> Result<CronJobResponse, FlooApiError> {
+        let resp = self.get(&format!("/v1/apps/{app_id}/cron/{name}"))?;
+        self.handle_response(resp)
+    }
+
     pub fn run_cron_job(
         &self,
         app_id: &str,

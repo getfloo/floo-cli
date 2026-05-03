@@ -322,9 +322,9 @@ fn test_env_list_not_authenticated() {
 }
 
 #[test]
-fn test_env_remove_not_authenticated() {
+fn test_env_unset_not_authenticated() {
     floo()
-        .args(["env", "remove", "MY_KEY", "--app", "test"])
+        .args(["env", "unset", "MY_KEY", "--app", "test"])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
@@ -376,9 +376,9 @@ fn test_domains_list_not_authenticated() {
 // --- Services (unauthenticated) ---
 
 #[test]
-fn test_services_info_not_authenticated() {
+fn test_services_show_not_authenticated() {
     floo()
-        .args(["services", "info", "db", "--app", "my-app"])
+        .args(["services", "show", "db", "--app", "my-app"])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
@@ -386,9 +386,9 @@ fn test_services_info_not_authenticated() {
 }
 
 #[test]
-fn test_services_info_json_not_authenticated() {
+fn test_services_show_json_not_authenticated() {
     floo()
-        .args(["--json", "services", "info", "db", "--app", "my-app"])
+        .args(["--json", "services", "show", "db", "--app", "my-app"])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
@@ -829,9 +829,15 @@ fn test_init_writes_header_with_access_mode_and_autodeploy_signal() {
         .success();
 
     let toml = std::fs::read_to_string(project.path().join("floo.app.toml")).unwrap();
-    assert!(toml.starts_with("# floo.app.toml"), "header should lead the file");
+    assert!(
+        toml.starts_with("# floo.app.toml"),
+        "header should lead the file"
+    );
     // git push auto-deploy contract is mentioned by name.
-    assert!(toml.contains("git push"), "git push contract must be in header");
+    assert!(
+        toml.contains("git push"),
+        "git push contract must be in header"
+    );
     // access_mode is shown under [app] — the placement that actually applies
     // on push today. Per-env overrides via [environments.<name>] are parsed
     // but not applied server-side; the header discloses that gap explicitly
@@ -1176,12 +1182,12 @@ fn test_dry_run_env_set_human_includes_services_and_prod_scope() {
 }
 
 #[test]
-fn test_dry_run_env_remove_human_includes_services_and_prod_scope() {
+fn test_dry_run_env_unset_human_includes_services_and_prod_scope() {
     floo()
         .args([
             "--dry-run",
             "env",
-            "remove",
+            "unset",
             "KEY",
             "--app",
             "test",
@@ -1219,13 +1225,13 @@ fn test_dry_run_env_set_restart_human() {
 }
 
 #[test]
-fn test_dry_run_env_remove() {
+fn test_dry_run_env_unset() {
     floo()
         .args([
             "--json",
             "--dry-run",
             "env",
-            "remove",
+            "unset",
             "KEY",
             "--app",
             "test",
@@ -1237,9 +1243,9 @@ fn test_dry_run_env_remove() {
 }
 
 #[test]
-fn test_dry_run_env_remove_human_has_preview() {
+fn test_dry_run_env_unset_human_has_preview() {
     floo()
-        .args(["--dry-run", "env", "remove", "KEY", "--app", "test"])
+        .args(["--dry-run", "env", "unset", "KEY", "--app", "test"])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -1416,6 +1422,46 @@ fn test_dry_run_cron_run_human_has_preview() {
         .stderr(predicate::str::contains(
             "Would trigger cron job 'myjob' on test",
         ));
+}
+
+#[test]
+fn test_cron_show_not_authenticated() {
+    floo()
+        .args(["cron", "show", "myjob", "--app", "my-app"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Not logged in."));
+}
+
+#[test]
+fn test_cron_show_json_not_authenticated() {
+    floo()
+        .args(["--json", "cron", "show", "myjob", "--app", "my-app"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"NOT_AUTHENTICATED"#));
+}
+
+#[test]
+fn test_cron_run_not_authenticated() {
+    floo()
+        .args(["cron", "run", "myjob", "--app", "my-app"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Not logged in."));
+}
+
+#[test]
+fn test_cron_run_json_not_authenticated() {
+    floo()
+        .args(["--json", "cron", "run", "myjob", "--app", "my-app"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"NOT_AUTHENTICATED"#));
 }
 
 #[test]
