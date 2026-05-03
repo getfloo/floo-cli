@@ -738,9 +738,7 @@ pub fn deploy(
         // from the connected service in the response.
         let app_url = format!("https://app.getfloo.com/{}", app_data.name);
         output::info(
-            &format!(
-                "  Next deploys: push to your default branch. Manage at {app_url}"
-            ),
+            &format!("  Next deploys: push to your default branch. Manage at {app_url}"),
             None,
         );
     }
@@ -1670,9 +1668,7 @@ fn display_preflight_human(
         // the auto-deploy contract here means they don't have to leave for
         // the docs to learn what `git push` will do next.
         eprintln!();
-        eprintln!(
-            "  Deploys: dev auto-deploys on every `git push` to your default branch."
-        );
+        eprintln!("  Deploys: dev auto-deploys on every `git push` to your default branch.");
         eprintln!("           Cut a GitHub release to promote the same build to production.");
         eprintln!(
             "           See https://getfloo.com/docs/guides/golden-path.md for the full flow."
