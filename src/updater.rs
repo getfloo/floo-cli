@@ -676,6 +676,25 @@ mod tests {
     }
 
     #[test]
+    fn test_release_asset_missing_when_no_assets_uploaded() {
+        // Simulates a race: GitHub release object exists but the CI workflow
+        // hasn't finished uploading binaries yet (~3-minute window).
+        let asset_name = target_asset_name().unwrap();
+        let release = serde_json::json!({
+            "tag_name": "v0.2.0",
+            "assets": []
+        });
+
+        let result = release_asset_from_json(&release, &asset_name);
+
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().code,
+            crate::errors::ErrorCode::ReleaseAssetMissing
+        );
+    }
+
+    #[test]
     fn test_run_update_with_checksum_mismatch() {
         let asset_name = target_asset_name().unwrap();
         let binary_bytes = b"fake-binary-content";
