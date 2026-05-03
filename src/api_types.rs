@@ -492,7 +492,8 @@ pub struct CronJobListResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CronJobRunResponse {
-    pub status: String,
+    pub name: String,
+    pub triggered: bool,
     pub message: Option<String>,
 }
 

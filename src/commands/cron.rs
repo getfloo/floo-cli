@@ -201,7 +201,7 @@ pub fn run(app_flag: Option<&str>, name: &str) {
     let client = super::init_client(None);
     let (app_id, _app_name) = super::resolve_app_from_config(&client, app_flag);
 
-    let spinner = output::Spinner::new(&format!("Triggering cron job '{name}'..."));
+    let spinner = output::Spinner::new(&format!("Running cron job '{name}'..."));
     let result = match client.run_cron_job(&app_id, name) {
         Ok(r) => {
             spinner.finish();
@@ -219,14 +219,11 @@ pub fn run(app_flag: Option<&str>, name: &str) {
     };
 
     if output::is_json_mode() {
-        output::success("Cron job triggered.", Some(output::to_value(&result)));
+        output::success("Cron job run complete.", Some(output::to_value(&result)));
         return;
     }
 
-    let msg = result
-        .message
-        .as_deref()
-        .unwrap_or("Cron job triggered successfully.");
+    let msg = result.message.as_deref().unwrap_or("Cron job completed.");
     output::success(msg, None);
 }
 
