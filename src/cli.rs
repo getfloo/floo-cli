@@ -232,7 +232,7 @@ Note: To trigger a deploy, use `floo redeploy` or push to GitHub.
         after_help = "\
 Examples:
   floo apps list --json                    List all apps
-  floo apps status my-app --json           App details and service info
+  floo apps show my-app --json             App details and service info
   floo apps delete my-app                  Delete (typed-name confirmation)
   floo apps delete my-app --yes-i-know-this-destroys-data  Skip prompt (CI-only)"
     )]
@@ -370,14 +370,15 @@ Examples:
 List and trigger scheduled cron jobs for an app.
 
 Cron jobs are declared in floo.app.toml under [cron.<name>] sections — they
-are not created with the CLI. This command surface is read-only (`list`) plus
-manual trigger (`run`); jobs are reconciled from config on every deploy.
+are not created with the CLI. This command surface is read-only (`list`, `show`)
+plus manual trigger (`run`); jobs are reconciled from config on every deploy.
 
 See `floo docs app-toml` (look for 'Cron Jobs') for the full [cron.<name>]
 schema, or https://getfloo.com/docs/guides/cron-jobs for the long-form guide.",
         after_help = "\
 Examples:
   floo cron list --app my-app              List all cron jobs and their last run status
+  floo cron show daily-report --app my-app Show details for a single cron job
   floo cron run daily-report --app my-app  Manually trigger a cron job
 
 Schedules are declared in floo.app.toml under [cron.<name>]. This CLI is
@@ -531,9 +532,10 @@ pub enum AppsCommands {
 
     /// Show details for an app.
     ///
-    /// Accepts either a positional name (legacy form) or `--app` for parity
-    /// with the rest of the CLI's flag-based API. Pass exactly one.
-    Status {
+    /// Accepts either a positional name or `--app` for parity with the rest
+    /// of the CLI's flag-based API. Pass exactly one.
+    #[command(alias = "status")]
+    Show {
         /// App name or ID (positional form). Mutually exclusive with `--app`.
         app_name: Option<String>,
 
@@ -667,6 +669,7 @@ pub enum EnvCommands {
     },
 
     /// Remove an environment variable from an app.
+    #[command(alias = "unset")]
     Remove {
         /// Environment variable key to remove.
         key: String,
@@ -741,11 +744,12 @@ pub enum ServicesCommands {
 
     /// Show details for a service (managed or user-managed).
     ///
-    /// Accepts the service name as a positional (legacy form) or via
-    /// `--service` for parity with the rest of the CLI's flag-based API.
-    /// Pass exactly one. `--services` is accepted as a plural alias to
-    /// match the multi-service flag used by `floo logs` / `floo redeploy`.
-    Info {
+    /// Accepts the service name as a positional or via `--service` for parity
+    /// with the rest of the CLI's flag-based API. Pass exactly one.
+    /// `--services` is accepted as a plural alias to match the multi-service
+    /// flag used by `floo logs` / `floo redeploy`.
+    #[command(alias = "info")]
+    Show {
         /// Service name (positional form). Mutually exclusive with `--service`.
         service_name: Option<String>,
 
@@ -880,7 +884,8 @@ pub enum DomainsCommands {
     },
 
     /// Show detailed status for a single custom domain.
-    Status {
+    #[command(alias = "status")]
+    Show {
         /// Domain hostname.
         hostname: String,
 
@@ -1159,6 +1164,23 @@ pub enum CronCommands {
         app: Option<String>,
     },
 
+    /// Show details for a single cron job (schedule, status, last run).
+    ///
+    /// Accepts the job name positionally or as `--name` for parity with
+    /// the rest of the CLI's flag-based API. Pass exactly one.
+    Show {
+        /// Cron job name (positional form). Mutually exclusive with `--name`.
+        name: Option<String>,
+
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Cron job name. Mutually exclusive with the positional form.
+        #[arg(long = "name", conflicts_with = "name")]
+        name_flag: Option<String>,
+    },
+
     /// Manually trigger a cron job by name.
     ///
     /// Accepts the job name positionally (legacy form) or as `--name` for
@@ -1433,7 +1455,7 @@ pub fn run() {
 
         Commands::Apps(sub) => match sub {
             AppsCommands::List { page, per_page } => commands::apps::list(page, per_page),
-            AppsCommands::Status { app_name, app } => {
+            AppsCommands::Show { app_name, app } => {
                 commands::apps::status(app_name.as_deref().or(app.as_deref()))
             }
             AppsCommands::Delete {
@@ -1503,7 +1525,7 @@ pub fn run() {
 
         Commands::Services(sub) => match sub {
             ServicesCommands::List { app, env } => commands::services::list(app.as_deref(), &env),
-            ServicesCommands::Info {
+            ServicesCommands::Show {
                 service_name,
                 app,
                 service,
@@ -1553,7 +1575,7 @@ pub fn run() {
                 services,
                 yes,
             } => commands::domains::remove(&hostname, app.as_deref(), services.as_deref(), yes),
-            DomainsCommands::Status { hostname, app } => {
+            DomainsCommands::Show { hostname, app } => {
                 commands::domains::status(&hostname, app.as_deref())
             }
             DomainsCommands::Watch {
@@ -1599,6 +1621,21 @@ pub fn run() {
 
         Commands::Cron(sub) => match sub {
             CronCommands::List { app } => commands::cron::list(app.as_deref()),
+            CronCommands::Show {
+                name,
+                app,
+                name_flag,
+            } => {
+                let resolved = name.or(name_flag).unwrap_or_else(|| {
+                    output::error(
+                        "Cron job name required.",
+                        &crate::errors::ErrorCode::InvalidFormat,
+                        Some("Pass --name <job> or supply the name positionally."),
+                    );
+                    std::process::exit(1);
+                });
+                commands::cron::show(app.as_deref(), &resolved)
+            }
             CronCommands::Run {
                 name,
                 app,

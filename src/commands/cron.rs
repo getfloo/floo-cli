@@ -58,6 +58,48 @@ pub fn list(app_flag: Option<&str>) {
     );
 }
 
+pub fn show(app_flag: Option<&str>, name: &str) {
+    super::require_auth();
+    let client = super::init_client(None);
+    let (app_id, _app_name) = super::resolve_app_from_config(&client, app_flag);
+
+    let result = match client.get_cron_job(&app_id, name) {
+        Ok(r) => r,
+        Err(e) => {
+            let suggestion = if e.code == "NOT_FOUND" {
+                Some("Run `floo cron list` to see available cron jobs.")
+            } else {
+                None
+            };
+            output::error(&e.message, &ErrorCode::from_api(&e.code), suggestion);
+            process::exit(1);
+        }
+    };
+
+    if output::is_json_mode() {
+        output::success("Cron job details.", Some(output::to_value(&result)));
+        return;
+    }
+
+    let status = result.last_status.as_deref().unwrap_or("-");
+    let last_run = result.last_run_at.as_deref().unwrap_or("never");
+    let enabled = if result.enabled { "yes" } else { "no" };
+
+    output::table(
+        &["Field", "Value"],
+        &[
+            vec!["Name".to_string(), result.name.clone()],
+            vec!["Schedule".to_string(), result.schedule.clone()],
+            vec!["Command".to_string(), result.command.clone()],
+            vec!["Service".to_string(), result.service_name.clone()],
+            vec!["Enabled".to_string(), enabled.to_string()],
+            vec!["Last Status".to_string(), status.to_string()],
+            vec!["Last Run".to_string(), last_run.to_string()],
+        ],
+        None,
+    );
+}
+
 pub fn run(app_flag: Option<&str>, name: &str) {
     // Dry-run is a pure echo: every other --dry-run handler in the CLI
     // (apps.rs, domains.rs, env.rs, rollbacks.rs, deploy.rs) checks
