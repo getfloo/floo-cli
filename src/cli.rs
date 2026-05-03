@@ -534,7 +534,6 @@ pub enum AppsCommands {
     ///
     /// Accepts either a positional name or `--app` for parity with the rest
     /// of the CLI's flag-based API. Pass exactly one.
-    #[command(alias = "status")]
     Show {
         /// App name or ID (positional form). Mutually exclusive with `--app`.
         app_name: Option<String>,
@@ -668,9 +667,8 @@ pub enum EnvCommands {
         env: String,
     },
 
-    /// Remove an environment variable from an app.
-    #[command(alias = "unset")]
-    Remove {
+    /// Remove (unset) an environment variable from an app.
+    Unset {
         /// Environment variable key to remove.
         key: String,
 
@@ -748,7 +746,6 @@ pub enum ServicesCommands {
     /// with the rest of the CLI's flag-based API. Pass exactly one.
     /// `--services` is accepted as a plural alias to match the multi-service
     /// flag used by `floo logs` / `floo redeploy`.
-    #[command(alias = "info")]
     Show {
         /// Service name (positional form). Mutually exclusive with `--service`.
         service_name: Option<String>,
@@ -884,7 +881,6 @@ pub enum DomainsCommands {
     },
 
     /// Show detailed status for a single custom domain.
-    #[command(alias = "status")]
     Show {
         /// Domain hostname.
         hostname: String,
@@ -1312,7 +1308,7 @@ const DRY_RUN_SUPPORTED_COMMANDS: &[&str] = &[
     "dev",
     "update",
     "env set",
-    "env remove",
+    "env unset",
     "env import",
     "apps delete",
     "domains add",
@@ -1496,7 +1492,7 @@ pub fn run() {
             EnvCommands::List { app, services, env } => {
                 commands::env::list(app.as_deref(), &services, &env)
             }
-            EnvCommands::Remove {
+            EnvCommands::Unset {
                 key,
                 app,
                 services,
@@ -1802,7 +1798,7 @@ mod tests {
             ("dev", &["floo", "dev", "--dry-run"]),
             ("update", &["floo", "update", "--dry-run"]),
             ("env set", &["floo", "env", "set", "K=V", "--dry-run"]),
-            ("env remove", &["floo", "env", "remove", "K", "--dry-run"]),
+            ("env unset", &["floo", "env", "unset", "K", "--dry-run"]),
             (
                 "env import",
                 &["floo", "env", "import", ".env", "--dry-run"],
