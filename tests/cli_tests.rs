@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use mockito::Server;
 use predicates::prelude::*;
 
 #[allow(deprecated)]
@@ -1657,6 +1658,30 @@ fn test_no_update_check_env_var() {
         .success()
         .stderr(predicate::str::contains("Update").not())
         .stderr(predicate::str::contains("downloaded").not());
+}
+
+#[test]
+fn test_version_no_warning_when_release_assets_not_yet_uploaded() {
+    // Regression: during the ~3-minute window between a GitHub release being
+    // created and the CI workflow finishing the binary uploads, `floo version`
+    // was showing "Update check failed: No binary asset found for ..." to the
+    // user. ReleaseAssetMissing is a transient race — silently skip it.
+    let mut server = Server::new();
+    let _mock = server
+        .mock("GET", "/latest")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"tag_name":"v9999.99.99","assets":[]}"#)
+        .create();
+
+    floo()
+        .args(["version"])
+        .env("HOME", "/tmp/floo-test-version-no-asset-warning")
+        .env("FLOO_UPDATE_API_BASE", format!("{}/", server.url()))
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Update check failed").not())
+        .stderr(predicate::str::contains("No binary asset").not());
 }
 
 // --- Deploy --sync-env ---

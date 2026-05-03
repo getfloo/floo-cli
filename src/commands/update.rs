@@ -71,6 +71,15 @@ pub fn version() {
             refresh_and_announce_skills();
             emit_version(None);
         }
+        // Release assets not yet uploaded (race between release creation and
+        // the CI workflow finishing). Transient — silently skip so `floo version`
+        // stays clean during the ~3-minute publish window.
+        Err(err)
+            if err.code == ErrorCode::ReleaseAssetMissing
+                || err.code == ErrorCode::ChecksumMissing =>
+        {
+            emit_version(None);
+        }
         Err(err) => {
             // Network/checksum/permission failure. Surface the reason so
             // debugging is possible, then print the current version. Never
