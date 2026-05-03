@@ -1419,6 +1419,26 @@ fn test_dry_run_cron_run_human_has_preview() {
 }
 
 #[test]
+fn test_cron_run_not_authenticated() {
+    floo()
+        .args(["cron", "run", "myjob", "--app", "test"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Not logged in."));
+}
+
+#[test]
+fn test_cron_run_json_not_authenticated() {
+    floo()
+        .args(["--json", "cron", "run", "myjob", "--app", "test"])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"NOT_AUTHENTICATED"#));
+}
+
+#[test]
 fn test_dry_run_rollback() {
     floo()
         .args([
