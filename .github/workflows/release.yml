@@ -197,7 +197,8 @@ jobs:
           SHORT_SHA="${GITHUB_SHA:0:7}"
           RELEASE_URL="${{ github.server_url }}/${{ github.repository }}/releases/tag/${TAG}"
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          MSG=":package: *floo-cli ${TAG} released*\nCommit: \`${SHORT_SHA}\` · <${RELEASE_URL}|GitHub release> · <${RUN_URL}|build run>"
+          NL=$'\n'
+          MSG=":package: *floo-cli ${TAG} released*${NL}Commit: \`${SHORT_SHA}\` · <${RELEASE_URL}|GitHub release> · <${RUN_URL}|build run>"
           PAYLOAD=$(jq -nc --arg text "$MSG" '{text:$text}')
           RESPONSE=$(curl -sSL --fail-with-body -X POST \
             -H "Content-Type: application/json" \
