@@ -18,7 +18,7 @@ never uploads code.
   1. `floo auth login` — authenticate
   2. `floo init <name>` — scaffold config files (local only)
   3. `floo apps github connect owner/repo` — connect to GitHub (triggers first deploy)
-  4. `floo apps status <name>` — see your app's URL and status
+  4. `floo apps show <name>` — see your app's URL and status
 
   After the first deploy, push to GitHub to deploy: `git push origin main`.
   Watch progress with `floo deploys watch --app <name>`.
@@ -119,7 +119,7 @@ Floo Quickstart — End-to-End Walkthrough
 
 ## 6. Check Status
 
-  floo apps status my-app
+  floo apps show my-app
   floo logs --app my-app
 
 ## 7. Subsequent Deploys
@@ -182,7 +182,7 @@ confirmation. See also: floo docs state-model.
   single deploy, so they live on the CLI surface — not in floo.app.toml.
 
   floo services add postgres --app <name>         # provision
-  floo services info postgres --app <name>        # inspect
+  floo services show postgres --app <name>        # inspect
   floo services list --app <name>                 # see everything
   floo services remove postgres --app <name>      # tier-3 destructive
   floo services migrate --app <name>              # convert legacy TOML to CLI-managed
@@ -288,7 +288,7 @@ All services share the same origin, so cookies and auth work without CORS.
 ## Commands
 
   floo services list --app <name>            — list all services (app + managed)
-  floo services info <service> --app <name>  — details (no credentials in output)
+  floo services show <service> --app <name>  — details (no credentials in output)
   floo services add <type> --app <name>      — provision a managed service
   floo services remove <type> --app <name>   — permanently destroy (tier-3)
   floo services migrate --app <name>         — move legacy TOML → CLI state
@@ -422,6 +422,7 @@ Floo Config Files
   CLI surface (read-only + manual trigger):
 
     floo cron list --app my-app              # list jobs and last run status
+    floo cron show <name> --app my-app       # details for one job
     floo cron run daily-report --app my-app  # trigger one off-schedule
 
   Long-form guide: https://getfloo.com/docs/guides/cron-jobs
@@ -767,7 +768,7 @@ Floo — Golden Path
   git push triggers a build and deploy automatically.
 
   Check your deploy succeeded:
-  floo apps status my-app
+  floo apps show my-app
 
 ## How to Ship Changes
 
@@ -932,7 +933,7 @@ Floo Templates — Copy-Paste App Structures
   4. git push origin main                      # push to GitHub first
   5. floo apps github connect owner/my-app     # triggers first deploy
   6. floo env set DATABASE_URL=<url> --services api  # managed postgres auto-sets this
-  7. floo apps status my-app                   # get your URL
+  7. floo apps show my-app                     # get your URL
 
 ### Local Development (two terminals)
 
@@ -1556,6 +1557,7 @@ deploy (added, updated, or removed to match config).
   are config-driven; the CLI never adds, removes, or edits them.
 
     floo cron list --app <name>            list jobs and last run status
+    floo cron show <name> --app <app>      details for one job
     floo cron run <name> --app <app>       trigger a job off-schedule
 
 ## Environment
@@ -1701,7 +1703,7 @@ mod tests {
         assert!(QUICKSTART.contains("auth login"));
         assert!(QUICKSTART.contains("init"));
         assert!(QUICKSTART.contains("github connect"));
-        assert!(QUICKSTART.contains("apps status"));
+        assert!(QUICKSTART.contains("apps show"));
     }
 
     #[test]
