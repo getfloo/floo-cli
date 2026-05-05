@@ -621,8 +621,14 @@ exchange to implement.
     rolled forward as users stay active, revoked on sign-out
   - Identity headers (X-Floo-User-Email/Id/Name/Role) injected on
     every authenticated request
-  - GET /__floo/me            — signed-in user as JSON
-  - POST /__floo/logout       — clear session and redirect
+  - GET /__floo/me        — signed-in user JSON {user_id,email,name,role};
+                            401 if no session, 403 HTML if access-denied
+  - POST|DELETE /__floo/logout — clears floo session and 302s to login.
+                            Lands at app root / after re-auth. Other methods
+                            (including GET) return 405; SameSite=Lax + GET
+                            would have allowed cross-origin drive-by sign-out.
+                            Does NOT log the user out of WorkOS — federated
+                            SLO is not yet supported.
   - Per-app user list in the dashboard (first-seen, last-active,
     sign-in count)
 
