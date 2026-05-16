@@ -17,6 +17,13 @@ path = "src/main.rs"
 name = "floo-local"
 path = "src/main.rs"
 
+# Dev-stack variant. Same source; behavior diverges by binary basename
+# in src/config.rs (BinaryVariant::Dev → dev API + .floo-dev config).
+# A sanctioned, credential-isolated surface for dev-stack ops.
+[[bin]]
+name = "floo-dev"
+path = "src/main.rs"
+
 [dependencies]
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }

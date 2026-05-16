@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::constants::{CONFIG_FILE_NAME, DEFAULT_API_URL};
+use crate::constants::{CONFIG_FILE_NAME, DEFAULT_API_URL, DEV_API_URL};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FlooConfig {
@@ -21,14 +21,20 @@ pub struct FlooConfig {
 }
 
 fn default_api_url() -> String {
-    DEFAULT_API_URL.to_string()
+    // Variant-aware: a fresh `floo-dev` (no config file, or a config
+    // file missing `api_url`) must default to the dev stack, not prod.
+    // FLOO_API_URL still overrides this in `load_config`.
+    match current_variant() {
+        BinaryVariant::Dev => DEV_API_URL.to_string(),
+        BinaryVariant::Local | BinaryVariant::Installed => DEFAULT_API_URL.to_string(),
+    }
 }
 
 impl Default for FlooConfig {
     fn default() -> Self {
         Self {
             api_key: None,
-            api_url: DEFAULT_API_URL.to_string(),
+            api_url: default_api_url(),
             user_email: None,
             skill_paths: Vec::new(),
             default_org: None,
@@ -47,21 +53,57 @@ impl FlooConfig {
     }
 }
 
-/// Returns true when the running binary is the locally-compiled `floo-local`.
-pub fn is_local_binary() -> bool {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.file_name().map(|n| n.to_os_string()))
-        .map(|n| n == "floo-local")
-        .unwrap_or(false)
+/// Which compiled variant is running, decided by the binary's own
+/// basename. All three `[[bin]]` targets in Cargo.toml share `main.rs`;
+/// behavior diverges only here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BinaryVariant {
+    /// `floo` — installed, prod API, `.floo` config.
+    Installed,
+    /// `floo-local` — locally-compiled, prod API, `.floo-local` config.
+    Local,
+    /// `floo-dev` — dev-stack API, `.floo-dev` config. A sanctioned,
+    /// credential-isolated surface for dev-stack operations so they
+    /// never clobber prod creds or tempt raw DB access (see floo
+    /// monorepo issue #797).
+    Dev,
 }
 
-/// Config directory name: `.floo-local` for local builds, `.floo` for installed.
+/// Pure mapping from binary basename to variant — unit-testable
+/// without faking `current_exe`.
+pub(crate) fn variant_from_basename(name: &str) -> BinaryVariant {
+    match name {
+        "floo-local" => BinaryVariant::Local,
+        "floo-dev" => BinaryVariant::Dev,
+        _ => BinaryVariant::Installed,
+    }
+}
+
+pub(crate) fn current_variant() -> BinaryVariant {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .map(|n| variant_from_basename(&n))
+        .unwrap_or(BinaryVariant::Installed)
+}
+
+/// Returns true when the running binary is the locally-compiled `floo-local`.
+pub fn is_local_binary() -> bool {
+    current_variant() == BinaryVariant::Local
+}
+
+/// Returns true when the running binary is `floo-dev` (dev stack).
+pub fn is_dev_binary() -> bool {
+    current_variant() == BinaryVariant::Dev
+}
+
+/// Config directory name: `.floo-dev` for the dev binary,
+/// `.floo-local` for local builds, `.floo` for installed.
 pub fn config_dir_name() -> &'static str {
-    if is_local_binary() {
-        ".floo-local"
-    } else {
-        ".floo"
+    match current_variant() {
+        BinaryVariant::Dev => ".floo-dev",
+        BinaryVariant::Local => ".floo-local",
+        BinaryVariant::Installed => ".floo",
     }
 }
 
@@ -154,8 +196,44 @@ mod tests {
     fn test_default_config() {
         let config = FlooConfig::default();
         assert!(config.api_key.is_none());
+        // Under the test binary (basename != floo-dev) the variant is
+        // Installed, so the default stays prod. This pins that the
+        // floo-dev change did NOT regress prod/local defaulting.
         assert_eq!(config.api_url, DEFAULT_API_URL);
         assert!(config.user_email.is_none());
+    }
+
+    #[test]
+    fn test_variant_from_basename() {
+        assert_eq!(variant_from_basename("floo"), BinaryVariant::Installed);
+        assert_eq!(variant_from_basename("floo-local"), BinaryVariant::Local);
+        assert_eq!(variant_from_basename("floo-dev"), BinaryVariant::Dev);
+        // Anything unrecognized (renamed binary, symlink) falls back to
+        // the safe prod-installed behavior — never silently dev.
+        assert_eq!(variant_from_basename("floo.exe"), BinaryVariant::Installed);
+        assert_eq!(variant_from_basename("something"), BinaryVariant::Installed);
+    }
+
+    #[test]
+    fn test_dev_variant_defaults_to_dev_api_only_for_dev() {
+        // The dev binary must default to the dev stack; prod/local must
+        // not. This is the load-bearing isolation: a `floo-dev` with no
+        // config file still talks to dev, never accidentally prod.
+        assert_eq!(
+            match variant_from_basename("floo-dev") {
+                BinaryVariant::Dev => DEV_API_URL,
+                _ => DEFAULT_API_URL,
+            },
+            DEV_API_URL
+        );
+        assert_eq!(
+            match variant_from_basename("floo-local") {
+                BinaryVariant::Dev => DEV_API_URL,
+                _ => DEFAULT_API_URL,
+            },
+            DEFAULT_API_URL
+        );
+        assert_ne!(DEV_API_URL, DEFAULT_API_URL);
     }
 
     #[test]
