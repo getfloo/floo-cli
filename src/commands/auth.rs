@@ -70,6 +70,27 @@ pub fn login(api_key: Option<&str>, force: bool) {
         }
     }
 
+    // Path 3 is structurally impossible on the dev stack.
+    // api.dev.getfloo.com has no WorkOS configured, so
+    // POST /v1/auth/device returns WORKOS_NOT_CONFIGURED. Dev auth is
+    // API-key-only by design — the dev-stack seed injects a dev admin
+    // key, surfaced as the FLOO_SMOKE_KEY_DEV GitHub Actions secret.
+    // Without this guard `floo-dev auth login` runs the doomed device
+    // flow and dies mid-spinner with a misleading "check your network"
+    // suggestion (the symptom the operator reported as "nothing
+    // happening"). Fail fast with the one command that actually works.
+    if crate::config::is_dev_binary() {
+        output::error(
+            "The dev stack is API-key-only — api.dev.getfloo.com has no browser/WorkOS login.",
+            &ErrorCode::NotAuthenticated,
+            Some(
+                "Run: floo-dev auth login --api-key <FLOO_SMOKE_KEY_DEV> \
+                 (the dev admin key in the floo repo's GitHub Actions secrets).",
+            ),
+        );
+        process::exit(1);
+    }
+
     // Path 3: Device code flow
     let client = super::init_client(None);
 

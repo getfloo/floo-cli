@@ -118,6 +118,27 @@ fn test_auth_login_help() {
         .stdout(predicate::str::contains("Authenticate with the Floo API"));
 }
 
+/// Regression: the dev stack has no WorkOS, so `floo-dev auth login`
+/// (no --api-key) must fail FAST with the API-key instruction instead
+/// of running the doomed device flow and dying mid-spinner with a
+/// misleading "check your network" message — the symptom reported as
+/// "nothing happening". Uses an isolated empty FLOO_CONFIG_DIR so no
+/// real credential short-circuits it via Path 2.
+#[test]
+fn test_floo_dev_auth_login_without_key_fails_with_api_key_instruction() {
+    let cfg = tempfile::tempdir().unwrap();
+    #[allow(deprecated)]
+    Command::cargo_bin("floo-dev")
+        .unwrap()
+        .args(["auth", "login"])
+        .env("FLOO_NO_UPDATE_CHECK", "1")
+        .env("FLOO_CONFIG_DIR", cfg.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("dev stack is API-key-only"))
+        .stderr(predicate::str::contains("--api-key <FLOO_SMOKE_KEY_DEV>"));
+}
+
 #[test]
 fn test_auth_register_help() {
     floo()
