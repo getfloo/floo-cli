@@ -24,10 +24,13 @@ fn display_tag(tag: &str) -> &str {
 /// and potentially cause infinite install→update→install loops if the
 /// update path itself is broken.
 ///
-/// Also honored for `floo-local` dev builds so local development never
-/// attempts to auto-update over the developer's working binary.
+/// Also honored for `floo-local` and `floo-dev` dev builds so local /
+/// dev-stack work never attempts to auto-update over the developer's
+/// working binary.
 fn should_skip_network_check() -> bool {
-    std::env::var("FLOO_NO_UPDATE_CHECK").is_ok() || crate::config::is_local_binary()
+    std::env::var("FLOO_NO_UPDATE_CHECK").is_ok()
+        || crate::config::is_local_binary()
+        || crate::config::is_dev_binary()
 }
 
 /// Refresh bundled skill files and echo each refreshed path in human mode.
