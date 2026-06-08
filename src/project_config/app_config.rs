@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::Path;
 
@@ -51,6 +51,12 @@ pub struct AppFileConfig {
     pub redis: Option<ManagedServiceSection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub storage: Option<ManagedServiceSection>,
+    /// Managed services declared as `[managed.<name>]` blocks — a named instance of a
+    /// type (postgres/redis/storage); a type may have multiple named instances. The
+    /// legacy bare `[postgres]`/`[redis]`/`[storage]` sections above remain supported as
+    /// the unnamed ("default") instance of their type.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub managed: HashMap<String, ManagedServiceBlock>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resources: Option<ResourceConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -85,6 +91,20 @@ pub struct ManagedServiceSection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tier: Option<String>,
 }
+
+/// A `[managed.<name>]` block: a named instance of a managed service type.
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ManagedServiceBlock {
+    #[serde(rename = "type")]
+    pub service_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+}
+
+const VALID_MANAGED_SERVICE_TYPES: &[&str] = &["postgres", "redis", "storage"];
 
 #[derive(Debug, Deserialize, Serialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -341,6 +361,52 @@ fn validate_app_config(config: &AppFileConfig) -> Result<(), FlooError> {
     if let Some(ref auth) = config.auth {
         auth.validate()?;
     }
+    validate_managed_blocks(config)?;
+    Ok(())
+}
+
+/// Validate `[managed.<name>]` blocks, mirroring the API's parse rules so a local
+/// `floo check` predicts what the deploy accepts: a known type, and no duplicate
+/// `(type, name)` — including collisions with the legacy `[postgres]`/`[redis]`/
+/// `[storage]` sections, which the server treats as the "default" instance of a type.
+///
+/// Tier values are intentionally not validated here: the valid set is plan-dependent
+/// and owned by the API, so the deploy stays the single source of truth for tiers.
+fn validate_managed_blocks(config: &AppFileConfig) -> Result<(), FlooError> {
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+    for (legacy_type, present) in [
+        ("postgres", config.postgres.is_some()),
+        ("redis", config.redis.is_some()),
+        ("storage", config.storage.is_some()),
+    ] {
+        if present {
+            seen.insert((legacy_type.to_string(), "default".to_string()));
+        }
+    }
+
+    for (name, block) in &config.managed {
+        if !VALID_MANAGED_SERVICE_TYPES.contains(&block.service_type.as_str()) {
+            return Err(FlooError::with_suggestion(
+                ErrorCode::InvalidProjectConfig,
+                format!(
+                    "[managed.{name}] has invalid type {:?}. Must be one of {:?}.",
+                    block.service_type, VALID_MANAGED_SERVICE_TYPES
+                ),
+                format!("Set type to \"postgres\", \"redis\", or \"storage\" in [managed.{name}]."),
+            ));
+        }
+        if !seen.insert((block.service_type.clone(), name.clone())) {
+            return Err(FlooError::with_suggestion(
+                ErrorCode::InvalidProjectConfig,
+                format!(
+                    "Duplicate managed service: {} named '{name}' is declared twice \
+                     (check for a clashing legacy [{}] section).",
+                    block.service_type, block.service_type
+                ),
+                "Remove the duplicate [managed.<name>] block or the legacy section.".to_string(),
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -428,6 +494,83 @@ tier = "hobby"
         assert!(config.services.is_empty());
         let pg = config.postgres.unwrap();
         assert_eq!(pg.tier.as_deref(), Some("hobby"));
+    }
+
+    fn write_app_toml(dir: &TempDir, body: &str) {
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            format!("[app]\nname = \"my-app\"\n\n{body}"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_managed_block_named_parses() {
+        let dir = TempDir::new().unwrap();
+        write_app_toml(
+            &dir,
+            "[managed.primary]\ntype = \"postgres\"\ntier = \"standard\"\n",
+        );
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        assert_eq!(config.managed.len(), 1);
+        let block = &config.managed["primary"];
+        assert_eq!(block.service_type, "postgres");
+        assert_eq!(block.tier.as_deref(), Some("standard"));
+    }
+
+    #[test]
+    fn test_managed_block_multiple_named_same_type() {
+        let dir = TempDir::new().unwrap();
+        write_app_toml(
+            &dir,
+            "[managed.primary]\ntype = \"postgres\"\n\n[managed.replica]\ntype = \"postgres\"\n",
+        );
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        assert_eq!(config.managed.len(), 2);
+    }
+
+    #[test]
+    fn test_managed_block_invalid_type_rejected() {
+        let dir = TempDir::new().unwrap();
+        write_app_toml(&dir, "[managed.db]\ntype = \"mysql\"\n");
+        let err = load_app_config(dir.path()).unwrap_err();
+        assert!(err.message.contains("invalid type"), "got: {}", err.message);
+    }
+
+    #[test]
+    fn test_managed_block_missing_type_rejected() {
+        let dir = TempDir::new().unwrap();
+        // `type` is required by the schema → parse fails before validation runs.
+        write_app_toml(&dir, "[managed.db]\ntier = \"basic\"\n");
+        assert!(load_app_config(dir.path()).is_err());
+    }
+
+    #[test]
+    fn test_managed_and_legacy_coexist() {
+        let dir = TempDir::new().unwrap();
+        write_app_toml(
+            &dir,
+            "[postgres]\ntier = \"hobby\"\n\n[managed.cache]\ntype = \"redis\"\n",
+        );
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        assert!(config.postgres.is_some());
+        assert_eq!(config.managed.len(), 1);
+    }
+
+    #[test]
+    fn test_managed_duplicate_of_legacy_default_rejected() {
+        let dir = TempDir::new().unwrap();
+        // legacy [postgres] is (postgres, "default"); [managed.default] of type postgres clashes.
+        write_app_toml(
+            &dir,
+            "[postgres]\n\n[managed.default]\ntype = \"postgres\"\n",
+        );
+        let err = load_app_config(dir.path()).unwrap_err();
+        assert!(
+            err.message.to_lowercase().contains("duplicate"),
+            "got: {}",
+            err.message
+        );
     }
 
     #[test]
@@ -596,6 +739,7 @@ type = "mysql"
             postgres: None,
             redis: None,
             storage: None,
+            managed: HashMap::new(),
             resources: None,
             reparo: None,
             cron: HashMap::new(),
