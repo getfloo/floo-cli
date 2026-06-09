@@ -255,7 +255,7 @@ fn recommended_permissions() -> (Vec<&'static str>, Vec<&'static str>) {
         "Bash(floo deploys watch:*)",
         "Bash(floo env list:*)",
         "Bash(floo services list:*)",
-        "Bash(floo services info:*)",
+        "Bash(floo services show:*)",
         "Bash(floo domains list:*)",
         "Bash(floo logs:*)",
         "Bash(floo analytics:*)",

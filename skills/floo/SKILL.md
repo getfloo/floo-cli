@@ -200,11 +200,11 @@ floo redeploy --preflight --app my-app             # preview redeploy without ex
 
 ### Managed services (postgres, redis, storage)
 
-Managed services are **stateful** — they carry data and outlive deploys. They are CLI-managed, not TOML-declared, because destroying a database on a config edit would be catastrophic.
+Managed services are **stateful** — they carry data and outlive deploys. Provision them with `floo services add` or declare them in `floo.app.toml` via `[managed.<name>]`; either way a deploy creates what's declared-but-missing and **never destroys**. Destroying a database is always an explicit `floo services remove` — never a config side effect.
 
 ```bash
 floo services list --app my-app                    # see everything (app services + managed)
-floo services info postgres --app my-app           # inspect a managed service
+floo services show postgres --app my-app           # inspect a managed service
 ```
 
 Legacy `[postgres]`/`[redis]`/`[storage]` sections in `floo.app.toml` still auto-provision during the transition window, but emit a deprecation notice on every deploy. Prefer the CLI surface for new apps.
