@@ -615,7 +615,7 @@ exchange to implement.
 
 ## What you get
 
-  - Hosted sign-in page (email magic link, Google, GitHub, SAML/OIDC)
+  - Hosted sign-in page (email magic link, Google, GitHub)
     — branded; gateway redirects unauthenticated visitors to it
   - Session cookie (__floo_session) validated on every request,
     rolled forward as users stay active, revoked on sign-out
@@ -652,7 +652,9 @@ in the dashboard or in floo.app.toml:
   public    — no auth, anyone can access (default)
   password  — shared password for simple protection (Pro+)
   accounts  — per-user auth, gateway-managed (Pro+)
-  sso       — enterprise SSO via SAML/OIDC (Enterprise, coming soon)
+
+Enterprise SSO (SAML/OIDC) is a sales-assisted setup, not a self-serve
+access_mode value — email sales@getfloo.com if your team needs it.
 
 Per-environment overrides work too:
 

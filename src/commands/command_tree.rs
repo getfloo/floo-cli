@@ -216,9 +216,9 @@ fn command_tree() -> Vec<CommandInfo> {
                     subcommands: vec![],
                 },
                 CommandInfo {
-                    name: "info",
+                    name: "show",
                     description: "Show details for a service",
-                    usage: "floo services info <service> --app <name>",
+                    usage: "floo services show <service> --app <name>",
                     requires_auth: true,
                     subcommands: vec![],
                 },
