@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::Path;
 
@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::errors::{ErrorCode, FlooError};
 
-use super::app_config::AppAccessMode;
+use super::app_config::{validate_domain_blocks, AppAccessMode, DomainBlock};
 use super::SCHEMA_URL;
 
 // --- Resource limits ---
@@ -263,6 +263,10 @@ pub struct ServiceFileConfig {
     pub resources: Option<ResourceConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<ServiceEnvContract>,
+    /// Custom domains declared as `[domains."<hostname>"]` blocks (config-as-code).
+    /// Single-service apps carry the block here; mirrors the API single-service parse path.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub domains: HashMap<String, DomainBlock>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -341,6 +345,7 @@ pub fn load_service_config(dir: &Path) -> Result<Option<ServiceFileConfig>, Floo
     if let Some(ref env) = config.env {
         env.validate(&format!("[env] in {}", super::SERVICE_CONFIG_FILE))?;
     }
+    validate_domain_blocks(&config.domains)?;
 
     Ok(Some(config))
 }
@@ -475,6 +480,7 @@ ingress = "internal"
     fn test_write_and_reload_service_config() {
         let dir = TempDir::new().unwrap();
         let config = ServiceFileConfig {
+            domains: Default::default(),
             app: ServiceFileAppSection {
                 name: "roundtrip-app".to_string(),
                 access_mode: None,
@@ -766,6 +772,7 @@ port = 8000
     fn test_write_and_reload_service_config_with_domain() {
         let dir = TempDir::new().unwrap();
         let config = ServiceFileConfig {
+            domains: Default::default(),
             app: ServiceFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,

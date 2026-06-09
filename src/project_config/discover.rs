@@ -424,6 +424,7 @@ ingress = "public"
     fn test_discover_single_service_from_service_file() {
         let dir = TempDir::new().unwrap();
         let svc_file = ServiceFileConfig {
+            domains: Default::default(),
             app: ServiceFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
@@ -522,6 +523,7 @@ ingress = "public"
         );
 
         let app_config = AppFileConfig {
+            domains: Default::default(),
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
@@ -570,6 +572,7 @@ ingress = "public"
 
         // Root floo.service.toml
         let root_svc = ServiceFileConfig {
+            domains: Default::default(),
             app: ServiceFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
@@ -622,6 +625,7 @@ ingress = "public"
         );
 
         let app_config = AppFileConfig {
+            domains: Default::default(),
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
@@ -665,6 +669,7 @@ ingress = "public"
 
         // floo.service.toml at root for the deployable service
         let root_svc = ServiceFileConfig {
+            domains: Default::default(),
             app: ServiceFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
@@ -686,6 +691,7 @@ ingress = "public"
 
         use crate::project_config::app_config::ManagedServiceSection;
         let app_config = AppFileConfig {
+            domains: Default::default(),
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
@@ -750,6 +756,7 @@ ingress = "public"
         );
 
         let app_config = AppFileConfig {
+            domains: Default::default(),
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
@@ -817,6 +824,7 @@ ingress = "public"
         );
 
         let app_config = AppFileConfig {
+            domains: Default::default(),
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
@@ -855,6 +863,7 @@ ingress = "public"
 
         // Root service named "api"
         let root_svc = ServiceFileConfig {
+            domains: Default::default(),
             app: ServiceFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
@@ -907,6 +916,7 @@ ingress = "public"
         );
 
         let app_config = AppFileConfig {
+            domains: Default::default(),
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
@@ -944,6 +954,7 @@ ingress = "public"
 
         use crate::project_config::app_config::ManagedServiceSection;
         let app_config = AppFileConfig {
+            domains: Default::default(),
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
@@ -1010,6 +1021,7 @@ ingress = "public"
         );
 
         let app_config = AppFileConfig {
+            domains: Default::default(),
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
@@ -1165,6 +1177,7 @@ ingress = "public"
 
         // Root service to satisfy at-least-one-public
         let root_svc = ServiceFileConfig {
+            domains: Default::default(),
             app: ServiceFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
@@ -1208,6 +1221,7 @@ ingress = "public"
         );
 
         let app_config = AppFileConfig {
+            domains: Default::default(),
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
@@ -1321,6 +1335,7 @@ ingress = "internal"
         );
 
         let app_config = AppFileConfig {
+            domains: Default::default(),
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
@@ -1397,6 +1412,7 @@ domain = "svc.example.com"
         );
 
         let app_config = AppFileConfig {
+            domains: Default::default(),
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
@@ -1474,6 +1490,7 @@ domain = "svc.example.com"
         );
 
         let app_config = AppFileConfig {
+            domains: Default::default(),
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
@@ -1562,6 +1579,7 @@ domain = "svc.example.com"
         );
 
         let app_config = AppFileConfig {
+            domains: Default::default(),
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
@@ -1635,6 +1653,7 @@ domain = "svc.example.com"
         );
 
         let app_config = AppFileConfig {
+            domains: Default::default(),
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
@@ -1710,6 +1729,7 @@ domain = "svc.example.com"
         );
 
         let app_config = AppFileConfig {
+            domains: Default::default(),
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
@@ -1795,6 +1815,7 @@ domain = "svc.example.com"
         );
 
         let app_config = AppFileConfig {
+            domains: Default::default(),
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
@@ -1834,6 +1855,7 @@ domain = "svc.example.com"
         let dir = TempDir::new().unwrap();
 
         let svc_file = ServiceFileConfig {
+            domains: Default::default(),
             app: ServiceFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
@@ -1880,6 +1902,7 @@ domain = "svc.example.com"
         let dir = TempDir::new().unwrap();
         use crate::project_config::app_config::ManagedServiceSection;
         let app_cfg = AppFileConfig {
+            domains: Default::default(),
             app: AppFileAppSection {
                 name: "test-app".to_string(),
                 access_mode: None,
@@ -1944,6 +1967,7 @@ domain = "svc.example.com"
     fn test_discover_managed_services_empty_when_no_managed() {
         let dir = TempDir::new().unwrap();
         let app_cfg = AppFileConfig {
+            domains: Default::default(),
             app: AppFileAppSection {
                 name: "test-app".to_string(),
                 access_mode: None,
