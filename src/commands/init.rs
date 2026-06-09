@@ -353,6 +353,7 @@ fn init_non_interactive(
     );
 
     let app_file = AppFileConfig {
+        domains: Default::default(),
         app: AppFileAppSection {
             name: app_name.clone(),
             access_mode: None,
@@ -530,6 +531,7 @@ fn init_interactive(
 
     // Write app config
     let app_file = AppFileConfig {
+        domains: Default::default(),
         app: AppFileAppSection {
             name: app_name.clone(),
             access_mode: None,

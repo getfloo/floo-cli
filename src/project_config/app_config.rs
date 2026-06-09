@@ -57,6 +57,9 @@ pub struct AppFileConfig {
     /// the unnamed ("default") instance of their type.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub managed: HashMap<String, ManagedServiceBlock>,
+    /// Custom domains declared as `[domains."<hostname>"]` blocks (config-as-code).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub domains: HashMap<String, DomainBlock>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resources: Option<ResourceConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -105,6 +108,51 @@ pub struct ManagedServiceBlock {
 }
 
 const VALID_MANAGED_SERVICE_TYPES: &[&str] = &["postgres", "redis", "storage"];
+
+/// A custom domain declared as `[domains."<hostname>"]`. The hostname is the table key;
+/// `service` names which service backs it (None defers to the interactive/verify path),
+/// `enabled` defaults to true. Mirrors the API `DomainConfig` so a local `floo check`
+/// predicts what the deploy accepts.
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct DomainBlock {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+}
+
+/// Validate `[domains."<hostname>"]` blocks against the same hostname rules the API parser
+/// enforces (`_DOMAIN_HOSTNAME_RE` + the 255-char cap), so `floo check` predicts the deploy.
+/// Shared by the app and single-service config paths.
+pub(crate) fn validate_domain_blocks(
+    domains: &HashMap<String, DomainBlock>,
+) -> Result<(), FlooError> {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$").unwrap()
+    });
+    for hostname in domains.keys() {
+        if hostname.len() > 255 {
+            return Err(FlooError::with_suggestion(
+                ErrorCode::InvalidProjectConfig,
+                format!("[domains.\"{hostname}\"] hostname exceeds 255 characters."),
+                "Use a shorter custom-domain hostname.".to_string(),
+            ));
+        }
+        if !re.is_match(hostname) {
+            return Err(FlooError::with_suggestion(
+                ErrorCode::InvalidProjectConfig,
+                format!(
+                    "[domains.\"{hostname}\"] is not a valid hostname. Use lowercase letters, \
+                     digits, hyphens and dots, e.g. app.example.com."
+                ),
+                "Fix the hostname in the [domains.\"<host>\"] block.".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
 
 #[derive(Debug, Deserialize, Serialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -362,6 +410,7 @@ fn validate_app_config(config: &AppFileConfig) -> Result<(), FlooError> {
         auth.validate()?;
     }
     validate_managed_blocks(config)?;
+    validate_domain_blocks(&config.domains)?;
     Ok(())
 }
 
@@ -729,6 +778,7 @@ type = "mysql"
     fn test_write_and_reload_app_config() {
         let dir = TempDir::new().unwrap();
         let config = AppFileConfig {
+            domains: Default::default(),
             app: AppFileAppSection {
                 name: "roundtrip-app".to_string(),
                 access_mode: None,
@@ -1120,6 +1170,51 @@ access_policy = "domain"
         let err = load_app_config(dir.path()).unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
         assert!(err.message.contains("allowed_domains"));
+    }
+
+    #[test]
+    fn test_load_app_config_with_domains_block() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[domains."app.example.com"]
+service = "web"
+
+[domains."api.example.com"]
+"#,
+        )
+        .unwrap();
+
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        assert_eq!(config.domains.len(), 2);
+        assert_eq!(
+            config.domains["app.example.com"].service.as_deref(),
+            Some("web")
+        );
+        assert!(config.domains.contains_key("api.example.com"));
+    }
+
+    #[test]
+    fn test_load_app_config_rejects_invalid_domain_hostname() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[domains."NOT a hostname"]
+"#,
+        )
+        .unwrap();
+
+        let err = load_app_config(dir.path()).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+        assert!(err.message.contains("hostname"));
     }
 
     #[test]
