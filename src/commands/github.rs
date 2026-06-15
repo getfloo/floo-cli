@@ -29,21 +29,15 @@ pub fn connect(
     let rerun_command =
         connect_rerun_command(repo, app, branch, skip_env_check, no_deploy, no_browser);
 
-    let cwd = std::env::current_dir().unwrap_or_else(|e| {
-        output::error(
-            &format!("Failed to read current directory: {e}"),
-            &ErrorCode::FileError,
-            None,
-        );
-        process::exit(1);
-    });
+    let cwd = super::read_cwd_or_exit();
 
     // Resolve app — skip config file reads when --app is provided
     let (app_data, resolved) = if let Some(app_flag) = app {
         // --app provided: look up directly, no local config needed
         let app_data = match crate::resolve::resolve_app(&client, app_flag) {
             Ok(a) => a,
-            Err(e) if e.code == "APP_NOT_FOUND" => {
+            // 404 == app doesn't exist yet → create it (status, not code string).
+            Err(e) if e.is_not_found() => {
                 // Create new app — try local detection for runtime, fall back to "unknown"
                 let runtime = detect(&cwd).runtime;
                 let spinner = output::Spinner::new(&format!("Creating app {app_flag}..."));
@@ -80,7 +74,8 @@ pub fn connect(
 
         let app_data = match crate::resolve::resolve_app(&client, &app_name) {
             Ok(a) => a,
-            Err(e) if e.code == "APP_NOT_FOUND" => {
+            // 404 == app doesn't exist yet → create it (status, not code string).
+            Err(e) if e.is_not_found() => {
                 let detection = detect(&cwd);
                 let spinner = output::Spinner::new(&format!("Creating app {app_name}..."));
                 match client.create_app(&app_name, Some(&detection.runtime)) {

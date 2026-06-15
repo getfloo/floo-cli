@@ -48,6 +48,24 @@ pub(crate) fn init_client(config: Option<FlooConfig>) -> FlooClient {
     }
 }
 
+/// Read the current working directory, or print a `CwdError` and `exit(1)`.
+///
+/// Every command that resolves the app from local config (`dev`, `run`, env
+/// import, logs, github connect, cron `--dry-run`, and `resolve_app_from_config`
+/// itself) needs cwd before walking up for `floo.app.toml`. This is the single
+/// place that turns a failed read into the user-facing error, so the
+/// code/message/suggestion can't drift across call sites.
+pub(crate) fn read_cwd_or_exit() -> std::path::PathBuf {
+    std::env::current_dir().unwrap_or_else(|e| {
+        output::error(
+            &format!("Failed to read current directory: {e}"),
+            &ErrorCode::CwdError,
+            Some("Ensure the current directory exists and you have read permission."),
+        );
+        process::exit(1);
+    })
+}
+
 pub(crate) fn require_auth() {
     let config = load_config();
     if config.api_key.is_none() {
@@ -64,7 +82,9 @@ pub(crate) fn resolve_app_or_exit(client: &FlooClient, app_name: &str) -> App {
     match crate::resolve::resolve_app(client, app_name) {
         Ok(a) => a,
         Err(e) => {
-            if e.code == "APP_NOT_FOUND" {
+            // A 404 from resolving a single app means the app doesn't exist;
+            // match on status, not a drift-prone code string (see is_not_found).
+            if e.is_not_found() {
                 output::error(
                     &format!("App '{app_name}' not found."),
                     &ErrorCode::AppNotFound,
@@ -88,14 +108,7 @@ pub(crate) fn resolve_app_from_config(
         return (app.id.clone(), app.name.clone());
     }
 
-    let cwd = std::env::current_dir().unwrap_or_else(|e| {
-        output::error(
-            &format!("Failed to read current directory: {e}"),
-            &ErrorCode::CwdError,
-            Some("Ensure the current directory exists and you have read permission."),
-        );
-        process::exit(1);
-    });
+    let cwd = read_cwd_or_exit();
     let resolved = match crate::project_config::resolve_app_context(&cwd, None) {
         Ok(r) => r,
         Err(e) => {

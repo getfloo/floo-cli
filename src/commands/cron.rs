@@ -177,14 +177,7 @@ pub fn run(app_flag: Option<&str>, name: &str) {
     // nothing we can validate offline.
     if output::is_dry_run_mode() {
         if app_flag.is_none() {
-            let cwd = std::env::current_dir().unwrap_or_else(|e| {
-                output::error(
-                    &format!("Failed to read current directory: {e}"),
-                    &ErrorCode::CwdError,
-                    Some("Ensure the current directory exists and you have read permission."),
-                );
-                process::exit(1);
-            });
+            let cwd = super::read_cwd_or_exit();
             if let Err(e) = validate_dry_run_target(&cwd, name) {
                 output::error(&e.message, &e.code, e.suggestion.as_deref());
                 process::exit(1);

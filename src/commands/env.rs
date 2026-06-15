@@ -478,14 +478,7 @@ pub fn import_vars(
     service_names: &[String],
     env: &str,
 ) {
-    let cwd = std::env::current_dir().unwrap_or_else(|e| {
-        output::error(
-            &format!("Failed to read current directory: {e}"),
-            &ErrorCode::FileError,
-            None,
-        );
-        process::exit(1);
-    });
+    let cwd = super::read_cwd_or_exit();
 
     // Resolve config — used for env_file default path. Missing config is OK.
     // When --app is provided, config errors in the current dir are irrelevant
@@ -593,14 +586,7 @@ pub fn import_vars(
 pub fn import_all_services(app_flag: Option<&str>, env: &str) {
     super::require_auth();
 
-    let cwd = std::env::current_dir().unwrap_or_else(|e| {
-        output::error(
-            &format!("Failed to read current directory: {e}"),
-            &ErrorCode::FileError,
-            None,
-        );
-        process::exit(1);
-    });
+    let cwd = super::read_cwd_or_exit();
 
     let resolved = match project_config::resolve_app_context(&cwd, app_flag) {
         Ok(r) => r,
