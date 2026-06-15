@@ -198,6 +198,11 @@ confirmation. See also: floo docs state-model.
     redis    → REDIS_URL
     storage  → STORAGE_BUCKET + STORAGE_URL (use STORAGE_URL for signed URLs)
 
+  Postgres ships with pgvector enabled. The `vector` type resolves
+  unqualified: use it in migrations and queries with no CREATE EXTENSION
+  and no schema prefix. Rails (`t.vector`), Django, SQLAlchemy, and Prisma
+  all emit the bare type. Full guide: https://docs.getfloo.com/guides/databases
+
   In multi-service apps, attach those credentials per service:
     [services.api.env]
     managed = [\"postgres\", \"redis\"]
