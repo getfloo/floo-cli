@@ -282,6 +282,18 @@ impl FlooApiError {
             extra: None,
         }
     }
+
+    /// True when the server returned HTTP 404.
+    ///
+    /// Prefer this over matching a hard-coded `code` string. The API's
+    /// not-found code has drifted across endpoints (`NOT_FOUND`,
+    /// `CRON_JOB_NOT_FOUND`, `APP_NOT_FOUND`, …), so a `code == "NOT_FOUND"`
+    /// gate silently stops matching the moment the server renames the code —
+    /// disabling any user-help path hung off it. The 404 *status* is the
+    /// stable wire contract; key not-found detection on it instead.
+    pub fn is_not_found(&self) -> bool {
+        self.status_code == 404
+    }
 }
 
 #[cfg(test)]
@@ -308,6 +320,30 @@ mod tests {
         assert_eq!(err.status_code, 404);
         assert_eq!(err.code, "NOT_FOUND");
         assert_eq!(err.to_string(), "App not found.");
+    }
+
+    #[test]
+    fn test_is_not_found_true_for_404() {
+        let err = FlooApiError::new(404, "NOT_FOUND", "missing");
+        assert!(err.is_not_found());
+    }
+
+    #[test]
+    fn test_is_not_found_keyed_on_status_not_code() {
+        // The whole point of the helper: a 404 is not-found regardless of the
+        // server's code string. The cron endpoint emits CRON_JOB_NOT_FOUND, not
+        // NOT_FOUND — a code-string match would miss it; the status must not.
+        let err = FlooApiError::new(404, "CRON_JOB_NOT_FOUND", "Cron job not found");
+        assert!(err.is_not_found());
+    }
+
+    #[test]
+    fn test_is_not_found_false_for_non_404() {
+        assert!(!FlooApiError::new(500, "INTERNAL_ERROR", "boom").is_not_found());
+        assert!(!FlooApiError::new(403, "FORBIDDEN", "nope").is_not_found());
+        // A non-404 status must stay not-found=false even if some unrelated
+        // payload happened to carry a NOT_FOUND-ish code.
+        assert!(!FlooApiError::new(400, "NOT_FOUND", "weird").is_not_found());
     }
 
     #[test]
