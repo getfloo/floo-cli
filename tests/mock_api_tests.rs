@@ -2837,3 +2837,127 @@ fn test_services_migrate_no_op_when_no_legacy_sections() {
         .stdout(predicate::str::contains(r#""success":true"#))
         .stdout(predicate::str::contains("migrated"));
 }
+
+// ───────────────────────── Database ─────────────────────────
+
+/// Mock POST /v1/apps/{id}/db/query with a given response body.
+fn mock_db_query(server: &mut Server, body: &str) -> Mock {
+    server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/db/query").as_str())
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(body)
+        .create()
+}
+
+#[test]
+fn test_db_query_human_renders_array_rows() {
+    // Regression guard for #153: the API returns rows as an array of arrays
+    // with column names carried separately in `columns`. The human renderer
+    // must align each row to `columns` and display the real rows — not print
+    // "0 rows" for a non-empty result.
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _query = mock_db_query(
+        &mut server,
+        r#"{"columns":["id","email"],"rows":[[1,"alice@example.com"],[2,"bob@example.com"]]}"#,
+    );
+
+    floo()
+        .args([
+            "db",
+            "query",
+            "SELECT id, email FROM users",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        // Header row aligned to `columns`.
+        .stderr(predicate::str::contains("id"))
+        .stderr(predicate::str::contains("email"))
+        // Actual row values render.
+        .stderr(predicate::str::contains("alice@example.com"))
+        .stderr(predicate::str::contains("bob@example.com"))
+        // Non-empty count — never the bogus "0 rows".
+        .stderr(predicate::str::contains("2 rows"))
+        .stderr(predicate::str::contains("0 rows").not());
+}
+
+#[test]
+fn test_db_query_human_single_row_singular_count() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _query = mock_db_query(&mut server, r#"{"columns":["count"],"rows":[[42]]}"#);
+
+    floo()
+        .args([
+            "db",
+            "query",
+            "SELECT COUNT(*) AS count FROM orders",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("count"))
+        .stderr(predicate::str::contains("42"))
+        .stderr(predicate::str::contains("1 row"))
+        .stderr(predicate::str::contains("1 rows").not());
+}
+
+#[test]
+fn test_db_query_human_genuine_zero_rows() {
+    // A genuinely empty result set must still report "0 rows".
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _query = mock_db_query(&mut server, r#"{"columns":["id","email"],"rows":[]}"#);
+
+    floo()
+        .args([
+            "db",
+            "query",
+            "SELECT id, email FROM users WHERE 1=0",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("0 rows"));
+}
+
+#[test]
+fn test_db_query_json_passthrough_exposes_contract() {
+    // The invariant: --json exposes exactly the API's {columns, rows} contract,
+    // which the human renderer above consumes identically. Lock the shape so a
+    // future renderer change can't silently diverge the two output modes.
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _query = mock_db_query(
+        &mut server,
+        r#"{"columns":["id","email"],"rows":[[1,"alice@example.com"]]}"#,
+    );
+
+    floo()
+        .args([
+            "--json",
+            "db",
+            "query",
+            "SELECT id, email FROM users",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(r#""columns":["id","email"]"#))
+        .stdout(predicate::str::contains("alice@example.com"));
+}

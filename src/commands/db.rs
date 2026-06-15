@@ -24,6 +24,12 @@ pub fn query(app_flag: Option<&str>, sql: &str, environment: &str, limit: u32) {
     }
 
     // Human mode: render a table from the result rows.
+    //
+    // The API returns rows as an array of arrays, with the column names
+    // carried separately in `columns` (the `DbQueryResponse { columns, rows }`
+    // contract). Each inner array is one row, positionally aligned to
+    // `columns`. This must mirror what `--json` exposes — one row contract,
+    // consumed identically by both output modes.
     let rows_val = result.get("rows").or_else(|| result.get("results"));
     let Some(rows_arr) = rows_val.and_then(|v| v.as_array()) else {
         output::info("No rows returned.", None);
@@ -48,24 +54,41 @@ pub fn query(app_flag: Option<&str>, sql: &str, environment: &str, limit: u32) {
         return;
     }
 
-    // Collect column names from the first row's keys (preserving insertion order).
-    let headers: Vec<String> = rows_arr[0]
-        .as_object()
-        .map(|obj| obj.keys().cloned().collect())
+    // Column names from `columns` drive the header row and per-cell alignment.
+    let mut headers: Vec<String> = result
+        .get("columns")
+        .and_then(|v| v.as_array())
+        .map(|cols| {
+            cols.iter()
+                .map(|c| {
+                    c.as_str()
+                        .map(str::to_string)
+                        .unwrap_or_else(|| c.to_string())
+                })
+                .collect()
+        })
         .unwrap_or_default();
 
     if headers.is_empty() {
-        output::info("0 rows", None);
-        return;
+        // `columns` was absent or empty but we have rows: synthesize positional
+        // headers from the widest row so genuine data never collapses to a
+        // bogus "0 rows" report (the failure mode of #153).
+        let width = rows_arr
+            .iter()
+            .filter_map(|r| r.as_array().map(|a| a.len()))
+            .max()
+            .unwrap_or(0);
+        headers = (1..=width).map(|i| format!("column_{i}")).collect();
     }
 
     let table_rows: Vec<Vec<String>> = rows_arr
         .iter()
         .map(|row| {
-            headers
-                .iter()
-                .map(|h| {
-                    row.get(h)
+            let cells = row.as_array();
+            (0..headers.len())
+                .map(|i| {
+                    cells
+                        .and_then(|c| c.get(i))
                         .map(value_to_display)
                         .unwrap_or_else(|| "-".to_string())
                 })
