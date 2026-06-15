@@ -1643,12 +1643,16 @@ fn test_dry_run_db_migrate_human_has_preview() {
 }
 
 #[test]
-fn test_dry_run_unsupported_init() {
+fn test_dry_run_init_emits_preview() {
+    // `floo init --dry-run` is a supported, non-interactive preview that lists
+    // the files it would create (see init::init_dry_run; "init" is in
+    // DRY_RUN_SUPPORTED_COMMANDS). It must succeed and emit a structured plan,
+    // not be rejected as unsupported.
     floo()
         .args(["--json", "--dry-run", "init", "my-app"])
         .assert()
-        .failure()
-        .stdout(predicate::str::contains("not supported"));
+        .success()
+        .stdout(predicate::str::contains(r#""action":"init"#));
 }
 
 /// Regression for the prior contract bug: human dry-run output was
