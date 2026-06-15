@@ -14,6 +14,14 @@ use crate::redact;
 static JSON_MODE: AtomicBool = AtomicBool::new(false);
 static DRY_RUN: AtomicBool = AtomicBool::new(false);
 
+/// Serializes the handful of unit tests that mutate the process-global
+/// JSON/dry-run mode (here and in `update.rs`). They share one `AtomicBool`
+/// each, so running in parallel they intermittently clobber one another's
+/// assertions — a test asserting `!is_json_mode()` can observe a `true` set by
+/// a concurrent test. Each such test takes this lock for its duration.
+#[cfg(test)]
+pub(crate) static GLOBAL_MODE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub fn set_json_mode(enabled: bool) {
     JSON_MODE.store(enabled, Ordering::SeqCst);
 }
@@ -286,6 +294,7 @@ mod tests {
 
     #[test]
     fn test_json_mode_toggle() {
+        let _guard = GLOBAL_MODE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         set_json_mode(false);
         assert!(!is_json_mode());
         set_json_mode(true);
@@ -295,6 +304,7 @@ mod tests {
 
     #[test]
     fn test_is_interactive_false_in_json_mode() {
+        let _guard = GLOBAL_MODE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         set_json_mode(true);
         assert!(!is_interactive());
         set_json_mode(false);
@@ -302,6 +312,7 @@ mod tests {
 
     #[test]
     fn test_dry_run_mode_toggle() {
+        let _guard = GLOBAL_MODE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         set_dry_run_mode(false);
         assert!(!is_dry_run_mode());
         set_dry_run_mode(true);

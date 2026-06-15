@@ -233,6 +233,9 @@ mod tests {
     /// network response to key off of.
     #[test]
     fn test_version_skip_network_is_stable() {
+        let _guard = crate::output::GLOBAL_MODE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::set_var("FLOO_NO_UPDATE_CHECK", "1");
         output::set_json_mode(true);
         super::version();

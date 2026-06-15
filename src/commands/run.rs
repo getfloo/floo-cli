@@ -21,14 +21,7 @@ pub fn run(service: &str, app_flag: Option<String>, command: Vec<String>) {
     let config = load_config();
     let client = super::init_client(Some(config));
 
-    let cwd = std::env::current_dir().unwrap_or_else(|e| {
-        output::error(
-            &format!("Failed to read current directory: {e}"),
-            &ErrorCode::CwdError,
-            Some("Ensure the current directory exists and you have read permission."),
-        );
-        process::exit(1);
-    });
+    let cwd = super::read_cwd_or_exit();
 
     let resolved = match project_config::resolve_app_context(&cwd, app_flag.as_deref()) {
         Ok(r) => r,

@@ -225,7 +225,8 @@ pub fn logs(args: LogsArgs) {
         let app = match resolve_app(&client, app_flag) {
             Ok(a) => a,
             Err(e) => {
-                if e.code == "APP_NOT_FOUND" {
+                // 404 == app not found; gate on status, not a code string.
+                if e.is_not_found() {
                     output::error(
                         &format!("App '{app_flag}' not found."),
                         &ErrorCode::AppNotFound,
@@ -241,14 +242,7 @@ pub fn logs(args: LogsArgs) {
         (app, label)
     } else {
         // No --app: resolve from local config files
-        let cwd = std::env::current_dir().unwrap_or_else(|e| {
-            output::error(
-                &format!("Failed to read current directory: {e}"),
-                &ErrorCode::FileError,
-                None,
-            );
-            process::exit(1);
-        });
+        let cwd = super::read_cwd_or_exit();
 
         let resolved = match project_config::resolve_app_context(&cwd, None) {
             Ok(r) => r,
@@ -262,7 +256,8 @@ pub fn logs(args: LogsArgs) {
         let app = match resolve_app(&client, &resolved.app_name) {
             Ok(a) => a,
             Err(e) => {
-                if e.code == "APP_NOT_FOUND" {
+                // 404 == app not found; gate on status, not a code string.
+                if e.is_not_found() {
                     output::error(
                         &format!("App '{}' not found.", resolved.app_name),
                         &ErrorCode::AppNotFound,
@@ -565,14 +560,7 @@ pub fn request_logs(args: RequestLogsArgs) {
             }
         }
     } else {
-        let cwd = std::env::current_dir().unwrap_or_else(|e| {
-            output::error(
-                &format!("Failed to read current directory: {e}"),
-                &ErrorCode::FileError,
-                None,
-            );
-            process::exit(1);
-        });
+        let cwd = super::read_cwd_or_exit();
         let resolved = match project_config::resolve_app_context(&cwd, None) {
             Ok(r) => r,
             Err(e) => {

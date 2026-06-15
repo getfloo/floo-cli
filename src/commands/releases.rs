@@ -117,7 +117,9 @@ pub fn show(release_id: &str, app: Option<&str>) {
     let release = match client.get_release(app_id, release_id) {
         Ok(r) => r,
         Err(e) => {
-            if e.code == "RELEASE_NOT_FOUND" {
+            // app_id is already resolved, so a 404 here is the release, not the
+            // app — gate on status rather than a drift-prone code string.
+            if e.is_not_found() {
                 output::error(
                     &format!("Release '{release_id}' not found."),
                     &ErrorCode::ReleaseNotFound,

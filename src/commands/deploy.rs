@@ -295,7 +295,9 @@ pub fn deploy(
         let app_data = match resolve_app(&client, app_name) {
             Ok(a) => a,
             Err(e) => {
-                if e.code == "APP_NOT_FOUND" {
+                // 404 from resolving the app == app not found; gate on status,
+                // not a code string that can drift (see is_not_found).
+                if e.is_not_found() {
                     output::error(
                         &format!("App '{app_name}' not found."),
                         &ErrorCode::AppNotFound,
@@ -1171,11 +1173,17 @@ fn validate_preflight(
                         warnings.push(serde_json::json!({
                             "path": svc.path,
                             "code": "RAILS_DATABASE_URL_SOCKET_DSN",
+                            // The illustrative DSNs deliberately omit `user:pass@`
+                            // userinfo: this string flows through print_json's
+                            // redactor, and an embedded `scheme://u:p@` literal
+                            // would be scrubbed to ***REDACTED***, hiding the very
+                            // warning we're trying to surface. Show the host shape,
+                            // not credential-shaped text.
                             "message": format!(
-                                "Service '{}' looks like Rails and {env_label} contains a Cloud SQL socket-style DATABASE_URL. Rails parses DATABASE_URL with Ruby's URI parser before app code runs, so postgresql://user:pass@/db?host=/cloudsql/... can fail at boot. Remove the stale local override or use floo's framework-compatible managed Postgres URL.",
+                                "Service '{}' looks like Rails and {env_label} contains a Cloud SQL socket-style DATABASE_URL. Rails parses DATABASE_URL with Ruby's URI parser before app code runs, so a host-less DSN like postgresql:///db?host=/cloudsql/... can fail at boot. Remove the stale local override or use floo's framework-compatible managed Postgres URL.",
                                 svc.name
                             ),
-                            "hint": "Managed Postgres now injects DATABASE_URL plus PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD. The DATABASE_URL value should have a normal host, for example postgresql://user:pass@127.0.0.1:5432/db.",
+                            "hint": "Managed Postgres now injects DATABASE_URL plus PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD. The DATABASE_URL value should have a normal host, for example postgresql://127.0.0.1:5432/db.",
                         }));
                         break;
                     }

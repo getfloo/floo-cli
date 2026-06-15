@@ -205,13 +205,13 @@ fn test_apps_list_human() {
 }
 
 #[test]
-fn test_apps_status_json() {
+fn test_apps_show_json() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
 
     floo()
-        .args(["--json", "apps", "status", TEST_APP_NAME])
+        .args(["--json", "apps", "show", TEST_APP_NAME])
         .env("HOME", home.path())
         .assert()
         .success()
@@ -220,16 +220,16 @@ fn test_apps_status_json() {
 }
 
 #[test]
-fn test_apps_status_with_app_flag() {
+fn test_apps_show_with_app_flag() {
     // Parity with the rest of the CLI's flag-based API: `--app` is
     // accepted in addition to the legacy positional form. Closes
-    // feedback 4419e7d3 (2026-05-01) for the `apps status` surface.
+    // feedback 4419e7d3 (2026-05-01) for the `apps show` surface.
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
 
     floo()
-        .args(["--json", "apps", "status", "--app", TEST_APP_NAME])
+        .args(["--json", "apps", "show", "--app", TEST_APP_NAME])
         .env("HOME", home.path())
         .assert()
         .success()
@@ -238,7 +238,7 @@ fn test_apps_status_with_app_flag() {
 }
 
 #[test]
-fn test_apps_status_json_surfaces_runtime_url() {
+fn test_apps_show_json_surfaces_runtime_url() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let runtime_url = "https://floo-my-app-dev-web-l3txcgkazq-uc.a.run.app";
@@ -257,7 +257,7 @@ fn test_apps_status_json_surfaces_runtime_url() {
         .create();
 
     floo()
-        .args(["--json", "apps", "status", TEST_APP_NAME])
+        .args(["--json", "apps", "show", TEST_APP_NAME])
         .env("HOME", home.path())
         .assert()
         .success()
@@ -266,7 +266,7 @@ fn test_apps_status_json_surfaces_runtime_url() {
 }
 
 #[test]
-fn test_apps_status_human_includes_runtime_url() {
+fn test_apps_show_human_includes_runtime_url() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let runtime_url = "https://floo-my-app-dev-web-l3txcgkazq-uc.a.run.app";
@@ -286,7 +286,7 @@ fn test_apps_status_human_includes_runtime_url() {
     let _m_org = mock_org_me(&mut server);
 
     floo()
-        .args(["apps", "status", TEST_APP_NAME])
+        .args(["apps", "show", TEST_APP_NAME])
         .env("HOME", home.path())
         .assert()
         .success()
@@ -502,7 +502,7 @@ fn test_env_list_json() {
 }
 
 #[test]
-fn test_env_remove_json() {
+fn test_env_unset_json() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
@@ -521,7 +521,7 @@ fn test_env_remove_json() {
         .create();
 
     floo()
-        .args(["--json", "env", "remove", "my_key", "--app", TEST_APP_NAME])
+        .args(["--json", "env", "unset", "my_key", "--app", TEST_APP_NAME])
         .env("HOME", home.path())
         .assert()
         .success()
@@ -860,7 +860,7 @@ fn test_domains_list_multi_service_with_services_flag() {
 }
 
 #[test]
-fn test_domains_status_json() {
+fn test_domains_show_json() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
@@ -881,7 +881,7 @@ fn test_domains_status_json() {
         .args([
             "--json",
             "domains",
-            "status",
+            "show",
             "app.example.com",
             "--app",
             TEST_APP_NAME,
@@ -894,7 +894,7 @@ fn test_domains_status_json() {
 }
 
 #[test]
-fn test_domains_status_not_found() {
+fn test_domains_show_not_found() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
@@ -910,7 +910,7 @@ fn test_domains_status_not_found() {
         .args([
             "--json",
             "domains",
-            "status",
+            "show",
             "missing.example.com",
             "--app",
             TEST_APP_NAME,
@@ -1529,14 +1529,14 @@ fn test_services_list_empty_when_no_services_of_either_kind() {
 }
 
 #[test]
-fn test_services_info_user_managed() {
+fn test_services_show_user_managed() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
     let _services = mock_services_single(&mut server);
 
     floo()
-        .args(["--json", "services", "info", "web", "--app", TEST_APP_NAME])
+        .args(["--json", "services", "show", "web", "--app", TEST_APP_NAME])
         .env("HOME", home.path())
         .assert()
         .success()
@@ -1546,7 +1546,7 @@ fn test_services_info_user_managed() {
 }
 
 #[test]
-fn test_services_info_routes_to_managed_service_by_type() {
+fn test_services_show_routes_to_managed_service_by_type() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
@@ -1590,7 +1590,7 @@ fn test_services_info_routes_to_managed_service_by_type() {
         .args([
             "--json",
             "services",
-            "info",
+            "show",
             "postgres",
             "--app",
             TEST_APP_NAME,
@@ -1606,7 +1606,7 @@ fn test_services_info_routes_to_managed_service_by_type() {
 }
 
 #[test]
-fn test_services_info_nothing_matches_lists_available() {
+fn test_services_show_nothing_matches_lists_available() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
@@ -1633,7 +1633,7 @@ fn test_services_info_nothing_matches_lists_available() {
         .create();
 
     floo()
-        .args(["--json", "services", "info", "nope", "--app", TEST_APP_NAME])
+        .args(["--json", "services", "show", "nope", "--app", TEST_APP_NAME])
         .env("HOME", home.path())
         .assert()
         .failure()
@@ -1643,7 +1643,7 @@ fn test_services_info_nothing_matches_lists_available() {
 }
 
 #[test]
-fn test_services_info_app_not_found() {
+fn test_services_show_app_not_found() {
     let mut server = Server::new();
     let home = setup_config(&server);
 
@@ -1659,7 +1659,7 @@ fn test_services_info_app_not_found() {
         .create();
 
     floo()
-        .args(["--json", "services", "info", "db", "--app", "missing-app"])
+        .args(["--json", "services", "show", "db", "--app", "missing-app"])
         .env("HOME", home.path())
         .assert()
         .failure()
@@ -1667,7 +1667,7 @@ fn test_services_info_app_not_found() {
 }
 
 #[test]
-fn test_services_info_surfaces_api_errors() {
+fn test_services_show_surfaces_api_errors() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
@@ -1687,7 +1687,7 @@ fn test_services_info_surfaces_api_errors() {
         .args([
             "--json",
             "services",
-            "info",
+            "show",
             "postgres",
             "--app",
             TEST_APP_NAME,
@@ -2009,7 +2009,7 @@ fn test_app_not_found_json() {
         .create();
 
     floo()
-        .args(["--json", "apps", "status", "nonexistent"])
+        .args(["--json", "apps", "show", "nonexistent"])
         .env("HOME", home.path())
         .assert()
         .failure()
@@ -2017,7 +2017,7 @@ fn test_app_not_found_json() {
 }
 
 #[test]
-fn test_apps_status_uuid_surfaces_get_app_api_error() {
+fn test_apps_show_uuid_surfaces_get_app_api_error() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let app_id = "11111111-1111-1111-1111-111111111111";
@@ -2030,7 +2030,7 @@ fn test_apps_status_uuid_surfaces_get_app_api_error() {
         .create();
 
     floo()
-        .args(["--json", "apps", "status", app_id])
+        .args(["--json", "apps", "show", app_id])
         .env("HOME", home.path())
         .assert()
         .failure()
@@ -2039,7 +2039,7 @@ fn test_apps_status_uuid_surfaces_get_app_api_error() {
 }
 
 #[test]
-fn test_apps_status_name_surfaces_list_apps_api_error() {
+fn test_apps_show_name_surfaces_list_apps_api_error() {
     let mut server = Server::new();
     let home = setup_config(&server);
 
@@ -2055,7 +2055,7 @@ fn test_apps_status_name_surfaces_list_apps_api_error() {
         .create();
 
     floo()
-        .args(["--json", "apps", "status", TEST_APP_NAME])
+        .args(["--json", "apps", "show", TEST_APP_NAME])
         .env("HOME", home.path())
         .assert()
         .failure()

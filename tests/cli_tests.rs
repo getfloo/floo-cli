@@ -1446,6 +1446,46 @@ fn test_dry_run_cron_run_human_has_preview() {
         ));
 }
 
+// Without --app, the dry-run resolves the app from local config and validates
+// the cron name against the declared [cron.<name>] set (#152). An undeclared
+// name must fail the preview instead of echoing "Would trigger".
+#[test]
+fn test_dry_run_cron_run_unknown_name_errors_from_config() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        "[app]\nname = \"my-app\"\n\n[cron.daily]\nschedule = \"0 9 * * *\"\ncommand = \"./r.sh\"\nservice = \"web\"\n",
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "--dry-run", "cron", "run", "does-not-exist"])
+        .current_dir(project.path())
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"CRON_JOB_NOT_FOUND"#));
+}
+
+// A declared name still previews (and exits 0) on the config-resolved path.
+#[test]
+fn test_dry_run_cron_run_declared_name_previews_from_config() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        "[app]\nname = \"my-app\"\n\n[cron.daily]\nschedule = \"0 9 * * *\"\ncommand = \"./r.sh\"\nservice = \"web\"\n",
+    )
+    .unwrap();
+
+    floo()
+        .args(["--dry-run", "cron", "run", "daily"])
+        .current_dir(project.path())
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Would trigger cron job 'daily'"));
+}
+
 #[test]
 fn test_cron_show_not_authenticated() {
     floo()
@@ -1603,12 +1643,16 @@ fn test_dry_run_db_migrate_human_has_preview() {
 }
 
 #[test]
-fn test_dry_run_unsupported_init() {
+fn test_dry_run_init_emits_preview() {
+    // `floo init --dry-run` is a supported, non-interactive preview that lists
+    // the files it would create (see init::init_dry_run; "init" is in
+    // DRY_RUN_SUPPORTED_COMMANDS). It must succeed and emit a structured plan,
+    // not be rejected as unsupported.
     floo()
         .args(["--json", "--dry-run", "init", "my-app"])
         .assert()
-        .failure()
-        .stdout(predicate::str::contains("not supported"));
+        .success()
+        .stdout(predicate::str::contains(r#""action":"init"#));
 }
 
 /// Regression for the prior contract bug: human dry-run output was
