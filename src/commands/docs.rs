@@ -335,6 +335,25 @@ Floo Config Files
   port = 3000
   ingress = \"public\"
 
+  Background worker (Sidekiq / Celery / Active Job) sharing the web codebase:
+
+  [services.web]
+  type = \"web\"
+  path = \".\"
+  port = 3000
+  dev_command = \"bin/dev\"
+
+  [services.worker]
+  type = \"worker\"
+  path = \".\"                          # same build as web -> same Dockerfile + CMD
+  port = 3000                          # required even for workers (Cloud Run needs a port)
+  ingress = \"internal\"                # no public HTTP
+  command = \"bundle exec sidekiq\"     # REQUIRED: without it the worker boots the web command
+
+  Without `command` on a shared-build worker, preflight fails: in production every
+  service at the same path runs the same Dockerfile CMD, so the worker would boot
+  the web process and silently never drain its queue.
+
 ## floo.service.toml — Legacy Single-Service Format
 
   Still supported for backward compatibility. Single-service apps may use:
@@ -361,6 +380,14 @@ Floo Config Files
                      (against the prod schema). Non-fatal: a failure is logged
                      but does not block the deploy from going live.
                      e.g., \"alembic upgrade head\", \"npx prisma migrate deploy\"
+
+  command          — optional PRODUCTION start command; overrides the image's
+                     Dockerfile CMD. Omit it to run the Dockerfile CMD (default).
+                     REQUIRED on a worker that shares a build (same path) with a
+                     web/api service, so the worker runs its own process instead
+                     of the web command. Runs via `sh -c <command>` as written;
+                     prefix `exec` for SIGTERM/graceful shutdown (Docker pattern).
+                     e.g., \"bundle exec sidekiq\", \"celery -A app worker\"
 
   domain           — optional custom domain for this service
                      e.g., \"api.example.com\"
