@@ -539,6 +539,25 @@ fn test_logs_help() {
 }
 
 #[test]
+fn test_logs_query_help() {
+    floo()
+        .args(["logs", "query", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Query stored runtime logs"))
+        .stdout(predicate::str::contains("--deployment"));
+}
+
+#[test]
+fn test_logs_tail_help() {
+    floo()
+        .args(["logs", "tail", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Tail runtime logs continuously"));
+}
+
+#[test]
 fn test_logs_not_authenticated() {
     floo()
         .args(["logs", "--app", "my-app"])

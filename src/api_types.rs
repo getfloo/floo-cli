@@ -356,12 +356,21 @@ pub struct LogEntry {
     pub timestamp: Option<String>,
     pub severity: Option<String>,
     pub message: Option<String>,
+    pub deployment_id: Option<String>,
+    pub request_id: Option<String>,
+    pub labels: Option<serde_json::Value>,
     pub service_name: Option<String>,
+    pub cron_job_name: Option<String>,
+    pub deploy_context: Option<serde_json::Value>,
+    pub severity_class: Option<String>,
+    pub lifecycle_noise: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogsResponse {
     pub logs: Vec<LogEntry>,
+    pub total: Option<i32>,
+    pub app_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

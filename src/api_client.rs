@@ -752,6 +752,7 @@ impl FlooClient {
         severity: Option<&str>,
         service: Option<&str>,
         search: Option<&str>,
+        deployment: Option<&str>,
         environment: Option<&str>,
     ) -> Result<LogsResponse, FlooApiError> {
         let limit_str = limit.to_string();
@@ -767,6 +768,9 @@ impl FlooClient {
         }
         if let Some(q) = search {
             params.push(("search", q));
+        }
+        if let Some(dep) = deployment {
+            params.push(("deployment", dep));
         }
         if let Some(env) = environment {
             params.push(("environment", env));
