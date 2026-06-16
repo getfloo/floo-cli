@@ -435,18 +435,23 @@ fn validate_worker_command_collision(config: &AppFileConfig) -> Result<(), FlooE
     use std::collections::HashMap;
     // Group services by their resolved build identity. `path` defaults to "." when
     // omitted (server behavior), so two services with no explicit path collide.
-    let mut builds: HashMap<(Option<&str>, &str), ServiceBuildGroup> = HashMap::new();
+    let mut builds: HashMap<(Option<&str>, String), ServiceBuildGroup> = HashMap::new();
     for (name, entry) in &config.services {
-        // Normalize the build path exactly as the API does (tarball.py: strip one
-        // leading "./", strip trailing slashes, treat empty/"." as "."). Keying on
-        // the raw string would let a worker at "./" miss grouping with a web at "."
-        // — under-reporting a collision the API still blocks, breaking the mirror.
+        // Canonicalize the build path the way the API gate does (tarball.py's
+        // posixpath.normpath): collapse a leading "./", trailing/duplicate slashes,
+        // and interior "." segments, so "api", "api/", "./api", "api/." and "././api"
+        // all bucket as "api". A partial strip (just leading "./" + trailing "/")
+        // would leave "api/." distinct and under-report a collision the API still
+        // blocks, breaking the mirror.
         let raw = entry.path.as_deref().unwrap_or(".");
-        let trimmed = raw.strip_prefix("./").unwrap_or(raw).trim_end_matches('/');
-        let path = if trimmed.is_empty() || trimmed == "." {
-            "."
+        let parts: Vec<&str> = raw
+            .split('/')
+            .filter(|c| !c.is_empty() && *c != ".")
+            .collect();
+        let path = if parts.is_empty() {
+            ".".to_string()
         } else {
-            trimmed
+            parts.join("/")
         };
         builds
             .entry((entry.repo.as_deref(), path))
@@ -1212,6 +1217,37 @@ port = 3000
 [services.worker]
 type = "worker"
 path = "./"
+port = 3000
+"#,
+        )
+        .unwrap();
+
+        let err = load_app_config(dir.path()).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+        assert!(err.message.contains("worker"));
+        assert!(err.message.contains("command"));
+    }
+
+    #[test]
+    fn test_worker_collision_normalizes_interior_dot_segments() {
+        // web at "api" and a command-less worker at "api/." are the SAME build dir.
+        // A partial strip would leave "api/." distinct and slip the gate; canonicalizing
+        // interior "." segments (mirroring the API's posixpath.normpath) catches it.
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[services.web]
+type = "web"
+path = "api"
+port = 3000
+
+[services.worker]
+type = "worker"
+path = "api/."
 port = 3000
 "#,
         )
