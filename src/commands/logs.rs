@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use colored::Colorize;
 
-use crate::api_types::{LogEntry, RequestLogEntry};
+use crate::api_types::{LogEntry, LogsResponse, RequestLogEntry};
 use crate::errors::ErrorCode;
 use crate::output;
 use crate::project_config::{self, AppSource};
@@ -22,6 +22,7 @@ pub struct LogsArgs {
     pub services: Vec<String>,
     pub search: Option<String>,
     pub deployment: Option<String>,
+    pub cursor: Option<String>,
     pub live: bool,
     pub output_path: Option<PathBuf>,
     pub env: Option<String>,
@@ -34,6 +35,7 @@ struct LogsFilter<'a> {
     search: Option<&'a str>,
     deployment: Option<&'a str>,
     environment: Option<&'a str>,
+    cursor: Option<&'a str>,
 }
 
 fn format_log_line(entry: &LogEntry, show_service_prefix: bool) -> String {
@@ -75,10 +77,10 @@ fn fetch_logs(
     app_id: &str,
     tail: u32,
     filter: &LogsFilter,
-) -> Vec<LogEntry> {
+) -> LogsResponse {
     if filter.services.len() <= 1 {
         let service = filter.services.first().map(|s| s.as_str());
-        let result = match client.get_logs(
+        match client.get_logs(
             app_id,
             tail,
             filter.since,
@@ -87,14 +89,14 @@ fn fetch_logs(
             filter.search,
             filter.deployment,
             filter.environment,
+            filter.cursor,
         ) {
             Ok(r) => r,
             Err(e) => {
                 output::error(&e.message, &ErrorCode::from_api(&e.code), None);
                 process::exit(1);
             }
-        };
-        result.logs
+        }
     } else {
         let mut all_logs = Vec::new();
         for svc in filter.services {
@@ -107,6 +109,7 @@ fn fetch_logs(
                 filter.search,
                 filter.deployment,
                 filter.environment,
+                filter.cursor,
             ) {
                 Ok(r) => r,
                 Err(e) => {
@@ -125,7 +128,14 @@ fn fetch_logs(
             let ts_b = b.timestamp.as_deref().unwrap_or("");
             ts_a.cmp(ts_b)
         });
-        all_logs
+        LogsResponse {
+            total: Some(all_logs.len() as i32),
+            app_name: None,
+            limit: Some(tail),
+            next_cursor: None,
+            has_more: false,
+            logs: all_logs,
+        }
     }
 }
 
@@ -146,6 +156,7 @@ fn try_fetch_logs(
             filter.search,
             filter.deployment,
             filter.environment,
+            filter.cursor,
         )?;
         Ok(result.logs)
     } else {
@@ -160,6 +171,7 @@ fn try_fetch_logs(
                 filter.search,
                 filter.deployment,
                 filter.environment,
+                filter.cursor,
             )?;
             all_logs.extend(result.logs);
         }
@@ -188,6 +200,9 @@ fn print_context_header(app_name: &str, source_label: &str, filter: &LogsFilter)
     }
     if let Some(deployment) = filter.deployment {
         eprintln!("  {} {}", "Deployment:".bold(), deployment);
+    }
+    if filter.cursor.is_some() {
+        eprintln!("  {} set", "Cursor:".bold());
     }
     if let Some(environment) = filter.environment {
         eprintln!("  {} {}", "Environment:".bold(), environment);
@@ -295,6 +310,7 @@ pub fn logs(args: LogsArgs) {
         search: args.search.as_deref(),
         deployment: args.deployment.as_deref(),
         environment: args.env.as_deref(),
+        cursor: args.cursor.as_deref(),
     };
 
     if !output::is_json_mode() {
@@ -326,17 +342,17 @@ fn batch_logs(
     output_path: Option<&Path>,
 ) {
     let logs = fetch_logs(client, app_id, tail, filter);
+    let mut response = logs;
+    if response.app_name.is_none() {
+        response.app_name = Some(app_name.to_string());
+    }
+    if response.limit.is_none() {
+        response.limit = Some(tail);
+    }
 
-    if logs.is_empty() {
+    if response.logs.is_empty() {
         if output::is_json_mode() {
-            output::success(
-                "No logs found.",
-                Some(serde_json::json!({
-                    "logs": [],
-                    "total": 0,
-                    "app_name": app_name,
-                })),
-            );
+            output::success("No logs found.", Some(output::to_value(&response)));
         } else {
             output::info(
                 "No logs found. The app may not have produced any output yet.",
@@ -347,36 +363,23 @@ fn batch_logs(
     }
 
     if let Some(path) = output_path {
-        write_logs_to_file(path, &logs, app_name, show_service_prefix);
+        write_logs_to_file(path, &response, show_service_prefix);
         return;
     }
 
     if output::is_json_mode() {
-        let total = logs.len();
-        output::success(
-            "Logs retrieved.",
-            Some(serde_json::json!({
-                "logs": logs,
-                "total": total,
-                "app_name": app_name,
-            })),
-        );
+        output::success("Logs retrieved.", Some(output::to_value(&response)));
         return;
     }
 
-    for entry in &logs {
+    for entry in &response.logs {
         output::dim_line(&format_log_line(entry, show_service_prefix));
     }
 }
 
-fn write_logs_to_file(path: &Path, logs: &[LogEntry], app_name: &str, show_service_prefix: bool) {
+fn write_logs_to_file(path: &Path, response: &LogsResponse, show_service_prefix: bool) {
     let content = if output::is_json_mode() {
-        let payload = serde_json::json!({
-            "logs": logs,
-            "total": logs.len(),
-            "app_name": app_name,
-        });
-        match serde_json::to_string_pretty(&payload) {
+        match serde_json::to_string_pretty(response) {
             Ok(s) => s,
             Err(e) => {
                 output::error(
@@ -388,7 +391,9 @@ fn write_logs_to_file(path: &Path, logs: &[LogEntry], app_name: &str, show_servi
             }
         }
     } else {
-        logs.iter()
+        response
+            .logs
+            .iter()
             .map(|entry| format_log_line_plain(entry, show_service_prefix))
             .collect::<Vec<_>>()
             .join("\n")
@@ -403,15 +408,11 @@ fn write_logs_to_file(path: &Path, logs: &[LogEntry], app_name: &str, show_servi
         process::exit(1);
     }
 
-    let count = logs.len();
+    let count = response.logs.len();
     if output::is_json_mode() {
         output::success(
             &format!("Wrote {count} log entries to {}", path.display()),
-            Some(serde_json::json!({
-                "logs": logs,
-                "total": count,
-                "app_name": app_name,
-            })),
+            Some(output::to_value(response)),
         );
     } else {
         output::success(
@@ -430,11 +431,11 @@ fn live_logs(
 ) {
     let is_json = output::is_json_mode();
 
-    let logs = fetch_logs(client, app_id, tail, filter);
+    let logs_response = fetch_logs(client, app_id, tail, filter);
 
     let mut last_timestamp: Option<String> = None;
 
-    for entry in &logs {
+    for entry in &logs_response.logs {
         if is_json {
             output::print_json(&output::to_value(entry));
         } else {
@@ -443,7 +444,7 @@ fn live_logs(
         update_last_timestamp(&mut last_timestamp, entry);
     }
 
-    if !is_json && logs.is_empty() {
+    if !is_json && logs_response.logs.is_empty() {
         output::info("Waiting for new logs...", None);
     }
 
@@ -461,6 +462,7 @@ fn live_logs(
             search: filter.search,
             deployment: filter.deployment,
             environment: filter.environment,
+            cursor: None,
         };
 
         let poll_result = try_fetch_logs(client, app_id, tail, &poll_filter);

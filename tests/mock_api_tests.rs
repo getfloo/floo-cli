@@ -1155,7 +1155,7 @@ fn test_logs_query_json_with_deployment_filter() {
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
-            r#"{"logs":[{"timestamp":"2024-01-01T00:00:00Z","severity":"INFO","message":"Prod deploy booted","deployment_id":"deploy-123","service_name":"web","deploy_context":{"deploy_id":"deploy-123"}}],"total":1,"app_name":"my-app"}"#,
+            r#"{"logs":[{"timestamp":"2024-01-01T00:00:00Z","severity":"INFO","message":"Prod deploy booted","deployment_id":"deploy-123","service_name":"web","deploy_context":{"deploy_id":"deploy-123"}}],"total":1,"app_name":"my-app","limit":100,"next_cursor":"cursor-next","has_more":true}"#,
         )
         .create();
 
@@ -1176,7 +1176,51 @@ fn test_logs_query_json_with_deployment_filter() {
         .success()
         .stdout(predicate::str::contains(r#""success":true"#))
         .stdout(predicate::str::contains("Prod deploy booted"))
-        .stdout(predicate::str::contains(r#""deployment_id":"deploy-123""#));
+        .stdout(predicate::str::contains(r#""deployment_id":"deploy-123""#))
+        .stdout(predicate::str::contains(r#""next_cursor":"cursor-next""#))
+        .stdout(predicate::str::contains(r#""has_more":true"#));
+}
+
+#[test]
+fn test_logs_query_json_sends_cursor_and_limit_alias() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _m_logs = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/logs").as_str(),
+        )
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("limit".into(), "25".into()),
+            Matcher::UrlEncoded("cursor".into(), "cursor-123".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"logs":[{"timestamp":"2024-01-01T00:00:00Z","severity":"INFO","message":"Next page","service_name":"web"}],"total":1,"app_name":"my-app","limit":25,"next_cursor":null,"has_more":false}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "logs",
+            "query",
+            "--app",
+            TEST_APP_NAME,
+            "--limit",
+            "25",
+            "--cursor",
+            "cursor-123",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Next page"))
+        .stdout(predicate::str::contains(r#""limit":25"#))
+        .stdout(predicate::str::contains(r#""has_more":false"#));
 }
 
 #[test]

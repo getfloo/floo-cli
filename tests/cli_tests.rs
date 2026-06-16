@@ -545,7 +545,9 @@ fn test_logs_query_help() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Query stored runtime logs"))
-        .stdout(predicate::str::contains("--deployment"));
+        .stdout(predicate::str::contains("--deployment"))
+        .stdout(predicate::str::contains("--cursor"))
+        .stdout(predicate::str::contains("--limit"));
 }
 
 #[test]
