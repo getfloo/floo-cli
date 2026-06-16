@@ -510,58 +510,41 @@ pub fn deploy(
 
     let client = super::init_client(Some(config));
 
-    // Resolve or create app via API
-    let app_data = if matches!(resolved.source, AppSource::Flag) {
-        // --app flag: look up existing app
-        let app_ident = &resolved.app_name;
-        let spinner = output::Spinner::new("Looking up app...");
-        let result = match resolve_app(&client, app_ident) {
-            Ok(app_data) => app_data,
-            Err(error) => {
-                spinner.finish();
-                if error.code == "APP_NOT_FOUND" {
-                    output::error(
-                        &format!("App '{app_ident}' not found."),
-                        &ErrorCode::AppNotFound,
-                        Some("Check the app name or ID and try again."),
-                    );
-                } else {
-                    output::error(&error.message, &ErrorCode::from_api(&error.code), None);
+    // Resolve or create app via API.
+    //
+    // Path 3 only runs without --app — the early Some(app) block (Path 1 & 2)
+    // always returns first — so the app is resolved from local config here:
+    // look it up by name and create it if the API reports it doesn't exist yet.
+    let spinner = output::Spinner::new(&format!("Looking up app {}...", resolved.app_name));
+    let app_data = match resolve_app(&client, &resolved.app_name) {
+        Ok(app_data) => {
+            spinner.finish();
+            app_data
+        }
+        // 404 == app doesn't exist yet → create it (gate on status, not a
+        // drift-prone code string; see is_not_found). resolve_app hits
+        // GET /v1/apps/{id} for UUID-shaped names, so the server's own code
+        // flows through verbatim and a code-string match would miss a 404
+        // carrying anything other than APP_NOT_FOUND.
+        Err(error) if error.is_not_found() => {
+            spinner.finish();
+            let spinner = output::Spinner::new(&format!("Creating app {}...", resolved.app_name));
+            match client.create_app(&resolved.app_name, Some(&detection.runtime)) {
+                Ok(a) => {
+                    spinner.finish();
+                    a
                 }
-                process::exit(1);
-            }
-        };
-        spinner.finish();
-        result
-    } else {
-        // Config file: look up by name, create if not found
-        let spinner = output::Spinner::new(&format!("Looking up app {}...", resolved.app_name));
-        match resolve_app(&client, &resolved.app_name) {
-            Ok(app_data) => {
-                spinner.finish();
-                app_data
-            }
-            Err(error) if error.code == "APP_NOT_FOUND" => {
-                spinner.finish();
-                let spinner =
-                    output::Spinner::new(&format!("Creating app {}...", resolved.app_name));
-                match client.create_app(&resolved.app_name, Some(&detection.runtime)) {
-                    Ok(a) => {
-                        spinner.finish();
-                        a
-                    }
-                    Err(e) => {
-                        spinner.finish();
-                        output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-                        process::exit(1);
-                    }
+                Err(e) => {
+                    spinner.finish();
+                    output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                    process::exit(1);
                 }
             }
-            Err(error) => {
-                spinner.finish();
-                output::error(&error.message, &ErrorCode::from_api(&error.code), None);
-                process::exit(1);
-            }
+        }
+        Err(error) => {
+            spinner.finish();
+            output::error(&error.message, &ErrorCode::from_api(&error.code), None);
+            process::exit(1);
         }
     };
     let app_id = app_data.id.clone();

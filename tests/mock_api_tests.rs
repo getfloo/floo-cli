@@ -1878,6 +1878,116 @@ fn test_deploy_existing_app_by_name_json() {
         .stdout(predicate::str::contains(r#""deploy""#));
 }
 
+// ───────── Deploy not-found keyed on HTTP 404 status (#152 follow-up) ─────────
+//
+// #157 hardened resolve_app_or_exit / logs / releases / github / the deploy()
+// --app restart path onto FlooApiError::is_not_found(), but the config-resolved
+// create path (deploy.rs ~544) still read the drift-prone `code ==
+// "APP_NOT_FOUND"` string. These tests pin not-found detection to the 404
+// status: when resolve_app hits GET /v1/apps/{id} (UUID identifiers) the
+// server's own 404 + code flow through unchanged, so a code-string gate misses
+// a 404 carrying any other code. Keyed on status, the path fires regardless.
+
+// Guards the live `--app` resolution path (deploy.rs ~300, migrated by #157):
+// `floo deploy --app <missing>` must surface the friendly app-not-found error +
+// suggestion even when the server's 404 carries a non-APP_NOT_FOUND code. The
+// `--app` early-return block handles every Some(app) case, so this is the only
+// reachable `--app` not-found path (the unreachable AppSource::Flag branch in
+// Path 3 was removed in this change).
+#[test]
+fn test_deploy_app_flag_not_found_keyed_on_status() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    // A UUID --app routes resolve_app to GET /v1/apps/{id}, so the server code
+    // (here NOT_FOUND, not APP_NOT_FOUND) reaches the gate verbatim.
+    let missing = "11111111-1111-1111-1111-111111111111";
+
+    let project = TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("package.json"),
+        r#"{"name":"test-project","version":"1.0.0"}"#,
+    )
+    .unwrap();
+    write_service_config(&project, TEST_APP_NAME);
+
+    let _m_get = server
+        .mock("GET", format!("/v1/apps/{missing}").as_str())
+        .with_status(404)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":{"code":"NOT_FOUND","message":"Not found"}}"#)
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "redeploy",
+            project.path().to_str().unwrap(),
+            "--app",
+            missing,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        // The friendly app-not-found error + suggestion only fire on the
+        // is_not_found() branch; the old string gate fell through to the raw
+        // NOT_FOUND error with no suggestion.
+        .stdout(predicate::str::contains("APP_NOT_FOUND"))
+        .stdout(predicate::str::contains(
+            "Check the app name or ID and try again.",
+        ));
+}
+
+#[test]
+fn test_deploy_config_not_found_keyed_on_status_creates() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    // Config-resolved (no --app): a UUID app name in floo.service.toml routes
+    // resolve_app to GET /v1/apps/{id}, so a 404 carrying a drifted code must
+    // still be treated as "app doesn't exist yet" → create it, not surfaced as
+    // a hard error.
+    let missing = "22222222-2222-2222-2222-222222222222";
+
+    let project = TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("package.json"),
+        r#"{"name":"test-project","version":"1.0.0"}"#,
+    )
+    .unwrap();
+    write_service_config(&project, missing);
+
+    let _m_get = server
+        .mock("GET", format!("/v1/apps/{missing}").as_str())
+        .with_status(404)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":{"code":"NOT_FOUND","message":"Not found"}}"#)
+        .create();
+
+    let _m_create = server
+        .mock("POST", "/v1/apps")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"id":"{TEST_APP_ID}","name":"web","status":"created","runtime":"nodejs"}}"#
+        ))
+        .create();
+
+    let _m_deploy = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"id":"deploy-001","status":"live","url":"https://web.floo.app","build_logs":""}"#,
+        )
+        .create();
+
+    floo()
+        .args(["--json", "redeploy", project.path().to_str().unwrap()])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#));
+}
+
 #[test]
 fn test_deploy_fails_with_invalid_response_when_app_id_missing() {
     let mut server = Server::new();
