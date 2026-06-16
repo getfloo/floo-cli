@@ -393,7 +393,7 @@ mod tests {
     #[test]
     fn test_value_to_display_number() {
         assert_eq!(value_to_display(&json!(42)), "42");
-        assert_eq!(value_to_display(&json!(3.14)), "3.14");
+        assert_eq!(value_to_display(&json!(2.5)), "2.5");
     }
 
     #[test]

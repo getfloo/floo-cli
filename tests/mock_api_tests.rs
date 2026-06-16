@@ -10,6 +10,7 @@ const TEST_APP_NAME: &str = "my-app";
 const TEST_ORG_ID: &str = "org-uuid-5678";
 const UPDATE_SUCCESS_SIGNATURE_B64: &str = "J6XvKzQVWSMxsnLl4sAkqMhCXAtDI7AZ/ckGf7BeD+KSiM2YtCjQlsV7cwpNypzRyCd9HU87U5sGeuG4NiJ4TqMHpLdoljLuhR9zXuyDyGgqasRSvqawmbpkrs+YsDaD7scj80uA/eUOKH0XmWu6yJA15gUXq97H+XJSXI1aciDN5jeOdqaMAgZfYhIvINzxi2O59iTnv4+EdFeBT4MHWdO5WknsAhk13kQYMLoUbbXBQmWjGTrLlJhLiNcfsub8yJvJG347It2To4/Bz6oUrfNyS8jAmxUhYoJjn+8dOOd8x8rmzHyCa7sCuUgk3UThTEzkKhHjhAieMVatm/+L8W3bE3LKIKYwQlclNmAdXcHlUmwXLxJnVBbJdf1juqqsPh8Nz0/0BqSu5WmxA4/w/WoRCXfegsiM8fUeacbpx44DjLDhye8zkc/LnXrqkL5u+x5TOwlb+GRu5x+BvyocXp4xBF8Yw/kExWk54fSPSNUkGZSFACqSSHY9CkBtqQy1";
 
+#[allow(deprecated)]
 fn floo() -> Command {
     Command::cargo_bin("floo-local").unwrap()
 }
@@ -1804,9 +1805,9 @@ fn test_deploy_new_app_json() {
         )
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(format!(
-            r#"{{"id":"deploy-001","status":"live","url":"https://test-deploy.floo.app","build_logs":""}}"#
-        ))
+        .with_body(
+            r#"{"id":"deploy-001","status":"live","url":"https://test-deploy.floo.app","build_logs":""}"#,
+        )
         .create();
 
     floo()

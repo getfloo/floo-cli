@@ -616,62 +616,6 @@ enum DeployOutcome {
     },
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{
-        connect_rerun_command, repo_access_timeout_suggestion, setup_session_lost_suggestion,
-        setup_spinner_message, setup_timeout_suggestion,
-    };
-    use crate::api_types::GitHubSetupStatus;
-
-    #[test]
-    fn test_setup_spinner_message_for_org_approval() {
-        assert_eq!(
-            setup_spinner_message(&GitHubSetupStatus::AwaitingOrgApproval),
-            "Waiting for org admin approval..."
-        );
-    }
-
-    #[test]
-    fn test_setup_timeout_suggestion_mentions_repo_and_approval() {
-        let suggestion = setup_timeout_suggestion("floo apps github connect getfloo/example");
-        assert!(suggestion.contains("getfloo/example"));
-        assert!(suggestion.contains("approval"));
-    }
-
-    #[test]
-    fn test_setup_session_lost_suggestion_points_back_to_connect() {
-        let suggestion = setup_session_lost_suggestion("floo apps github connect getfloo/example");
-        assert!(suggestion.contains("floo apps github connect getfloo/example"));
-    }
-
-    #[test]
-    fn test_repo_access_timeout_suggestion_mentions_settings_url() {
-        let suggestion = repo_access_timeout_suggestion(
-            "https://github.com/organizations/getfloo/settings/installations",
-            "floo apps github connect getfloo/example",
-        );
-        assert!(suggestion.contains("settings/installations"));
-        assert!(suggestion.contains("approval"));
-    }
-
-    #[test]
-    fn test_connect_rerun_command_preserves_flags() {
-        let command = connect_rerun_command(
-            "getfloo/example",
-            Some("demo-app"),
-            Some("release"),
-            true,
-            true,
-            true,
-        );
-        assert_eq!(
-            command,
-            "floo apps github connect getfloo/example --app demo-app --branch release --skip-env-check --no-deploy --no-browser"
-        );
-    }
-}
-
 fn run_initial_deploy(
     client: &crate::api_client::FlooClient,
     app_id: &str,
@@ -753,5 +697,61 @@ fn run_initial_deploy(
         DeployOutcome::Failed {
             deploy: output::to_value(&deploy_data),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        connect_rerun_command, repo_access_timeout_suggestion, setup_session_lost_suggestion,
+        setup_spinner_message, setup_timeout_suggestion,
+    };
+    use crate::api_types::GitHubSetupStatus;
+
+    #[test]
+    fn test_setup_spinner_message_for_org_approval() {
+        assert_eq!(
+            setup_spinner_message(&GitHubSetupStatus::AwaitingOrgApproval),
+            "Waiting for org admin approval..."
+        );
+    }
+
+    #[test]
+    fn test_setup_timeout_suggestion_mentions_repo_and_approval() {
+        let suggestion = setup_timeout_suggestion("floo apps github connect getfloo/example");
+        assert!(suggestion.contains("getfloo/example"));
+        assert!(suggestion.contains("approval"));
+    }
+
+    #[test]
+    fn test_setup_session_lost_suggestion_points_back_to_connect() {
+        let suggestion = setup_session_lost_suggestion("floo apps github connect getfloo/example");
+        assert!(suggestion.contains("floo apps github connect getfloo/example"));
+    }
+
+    #[test]
+    fn test_repo_access_timeout_suggestion_mentions_settings_url() {
+        let suggestion = repo_access_timeout_suggestion(
+            "https://github.com/organizations/getfloo/settings/installations",
+            "floo apps github connect getfloo/example",
+        );
+        assert!(suggestion.contains("settings/installations"));
+        assert!(suggestion.contains("approval"));
+    }
+
+    #[test]
+    fn test_connect_rerun_command_preserves_flags() {
+        let command = connect_rerun_command(
+            "getfloo/example",
+            Some("demo-app"),
+            Some("release"),
+            true,
+            true,
+            true,
+        );
+        assert_eq!(
+            command,
+            "floo apps github connect getfloo/example --app demo-app --branch release --skip-env-check --no-deploy --no-browser"
+        );
     }
 }
