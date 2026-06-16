@@ -1137,6 +1137,49 @@ fn test_logs_json() {
 }
 
 #[test]
+fn test_logs_query_json_with_deployment_filter() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _m_logs = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/logs").as_str(),
+        )
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("limit".into(), "100".into()),
+            Matcher::UrlEncoded("deployment".into(), "latest".into()),
+            Matcher::UrlEncoded("environment".into(), "prod".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"logs":[{"timestamp":"2024-01-01T00:00:00Z","severity":"INFO","message":"Prod deploy booted","deployment_id":"deploy-123","service_name":"web","deploy_context":{"deploy_id":"deploy-123"}}],"total":1,"app_name":"my-app"}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "logs",
+            "query",
+            "--app",
+            TEST_APP_NAME,
+            "--deployment",
+            "latest",
+            "--env",
+            "prod",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains("Prod deploy booted"))
+        .stdout(predicate::str::contains(r#""deployment_id":"deploy-123""#));
+}
+
+#[test]
 fn test_logs_human() {
     let mut server = Server::new();
     let home = setup_config(&server);

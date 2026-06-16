@@ -120,7 +120,7 @@ Floo Quickstart — End-to-End Walkthrough
 ## 6. Check Status
 
   floo apps show my-app
-  floo logs --app my-app
+  floo logs query --app my-app
 
 ## 7. Subsequent Deploys
 
@@ -841,7 +841,9 @@ Floo — Golden Path
 
 ## How to Debug
 
-  floo logs --app my-app --since 1h --error
+  floo logs query --app my-app --since 1h --error
+  floo logs tail --app my-app --env prod
+  floo logs query --app my-app --deployment latest --json
   floo deploys logs <deploy-id> --app my-app
 
 ## Decision Table: What Command Do I Run?
@@ -860,7 +862,7 @@ Floo — Golden Path
   Set an env var                        | floo env set KEY=val --app my-app
   Add a custom domain                   | floo domains add example.com --app my-app (then add CNAME at DNS provider)
   Verify a custom domain                | floo domains verify example.com --app my-app
-  View logs                             | floo logs --app my-app
+  View logs                             | floo logs query --app my-app
   Run locally with prod credentials     | floo dev --app my-app (requires dev_command)
 ";
 

@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 
 use crate::commands;
 use crate::constants::VERSION;
@@ -265,56 +265,16 @@ Examples:
     /// View runtime logs for an app.
     #[command(after_help = "\
 Examples:
-  floo logs --app my-app                   Last 100 log lines
-  floo logs --app my-app --since 1h --error  Errors in the last hour
-  floo logs --app my-app --live            Stream logs in real-time
-  floo logs --app my-app --json            Structured JSON output")]
+  floo logs query --app my-app --since 1h         Query stored runtime logs
+  floo logs query --app my-app --deployment latest --json
+  floo logs tail --app my-app --env prod          Stream runtime logs
+  floo logs --app my-app --live                   Backwards-compatible tail")]
     Logs {
-        /// App name or ID (overrides config file).
-        #[arg(short, long)]
-        app: Option<String>,
+        #[command(subcommand)]
+        command: Option<Box<LogsSubcommands>>,
 
-        /// Number of log lines to show.
-        #[arg(short, long, default_value = "100")]
-        tail: u32,
-
-        /// Show logs since a time (e.g., 1h, 30m, 2d, or ISO timestamp).
-        #[arg(short, long)]
-        since: Option<String>,
-
-        /// Filter to errors only (shorthand for --severity ERROR).
-        #[arg(short, long)]
-        error: bool,
-
-        /// Minimum severity level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
-        #[arg(long)]
-        severity: Option<String>,
-
-        /// Filter logs to specific services (repeatable).
-        #[arg(long)]
-        services: Vec<String>,
-
-        /// Filter log messages by text (case-insensitive).
-        #[arg(long)]
-        search: Option<String>,
-
-        /// Stream logs in real-time (poll every 2s). Works with --requests too.
-        #[arg(short = 'f', long, alias = "follow", conflicts_with = "output")]
-        live: bool,
-
-        /// Write logs to a file (JSON or plain text based on --json flag).
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-
-        /// Environment to query: dev or prod.
-        #[arg(long, value_parser = ["dev", "prod"])]
-        env: Option<String>,
-
-        /// Show HTTP requests captured by floo's gateway instead of app-level
-        /// log output. Each line is one proxied request with the public URL,
-        /// status, and latency.
-        #[arg(long)]
-        requests: bool,
+        #[command(flatten)]
+        options: LogsOptions,
     },
 
     /// Install agent skills for AI coding assistants.
@@ -422,6 +382,74 @@ material, no Cloud Run audit payloads. Those live on dedicated surfaces."
         /// Specific release tag to install (e.g. v0.2.0).
         #[arg(long)]
         version: Option<String>,
+    },
+}
+
+#[derive(Args, Clone)]
+pub struct LogsOptions {
+    /// App name or ID (overrides config file).
+    #[arg(short, long)]
+    app: Option<String>,
+
+    /// Number of log lines to show.
+    #[arg(short, long, default_value = "100")]
+    tail: u32,
+
+    /// Show logs since a time (e.g., 1h, 30m, 2d, or ISO timestamp).
+    #[arg(short, long)]
+    since: Option<String>,
+
+    /// Filter to errors only (shorthand for --severity ERROR).
+    #[arg(short, long)]
+    error: bool,
+
+    /// Minimum severity level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
+    #[arg(long)]
+    severity: Option<String>,
+
+    /// Filter logs to specific services (repeatable).
+    #[arg(long)]
+    services: Vec<String>,
+
+    /// Filter log messages by text (case-insensitive).
+    #[arg(long)]
+    search: Option<String>,
+
+    /// Filter by deployment ID, or 'latest' for the app's latest deploy.
+    #[arg(long)]
+    deployment: Option<String>,
+
+    /// Stream logs in real-time (poll every 2s). Works with --requests too.
+    #[arg(short = 'f', long, alias = "follow", conflicts_with = "output")]
+    live: bool,
+
+    /// Write logs to a file (JSON or plain text based on --json flag).
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+
+    /// Environment to query: dev or prod.
+    #[arg(long, value_parser = ["dev", "prod"])]
+    env: Option<String>,
+
+    /// Show HTTP requests captured by floo's gateway instead of app-level
+    /// log output. Each line is one proxied request with the public URL,
+    /// status, and latency.
+    #[arg(long)]
+    requests: bool,
+}
+
+#[derive(Subcommand, Clone)]
+pub enum LogsSubcommands {
+    /// Query stored runtime logs once.
+    Query {
+        #[command(flatten)]
+        options: LogsOptions,
+    },
+
+    /// Tail runtime logs continuously.
+    Tail {
+        #[command(flatten)]
+        options: LogsOptions,
     },
 }
 
@@ -1670,42 +1698,51 @@ pub fn run() {
 
         Commands::Discover => commands::command_tree::commands(),
 
-        Commands::Logs {
-            app,
-            tail,
-            since,
-            error,
-            severity,
-            services,
-            search,
-            live,
-            output,
-            env,
-            requests,
-        } => {
-            if requests {
+        Commands::Logs { command, options } => {
+            let options = match command.map(|boxed| *boxed) {
+                Some(LogsSubcommands::Query { options }) => options,
+                Some(LogsSubcommands::Tail { options }) => {
+                    if options.output.is_some() {
+                        output::error(
+                            "`floo logs tail` cannot write to --output.",
+                            &crate::errors::ErrorCode::InvalidFormat,
+                            Some(
+                                "Use `floo logs query --output <path>` for a finite log snapshot.",
+                            ),
+                        );
+                        std::process::exit(1);
+                    }
+                    let mut options = options;
+                    options.live = true;
+                    options
+                }
+                None => options,
+            };
+
+            if options.requests {
                 commands::logs::request_logs(commands::logs::RequestLogsArgs {
-                    app_flag: app,
-                    tail,
-                    since,
-                    live,
+                    app_flag: options.app,
+                    tail: options.tail,
+                    since: options.since,
+                    live: options.live,
                 });
             } else {
-                let severity = if error {
+                let severity = if options.error {
                     Some("ERROR".to_string())
                 } else {
-                    severity
+                    options.severity
                 };
                 commands::logs::logs(commands::logs::LogsArgs {
-                    app_flag: app,
-                    tail,
-                    since,
+                    app_flag: options.app,
+                    tail: options.tail,
+                    since: options.since,
                     severity,
-                    services,
-                    search,
-                    live,
-                    output_path: output,
-                    env,
+                    services: options.services,
+                    search: options.search,
+                    deployment: options.deployment,
+                    live: options.live,
+                    output_path: options.output,
+                    env: options.env,
                 });
             }
         }

@@ -277,9 +277,24 @@ fn command_tree() -> Vec<CommandInfo> {
         CommandInfo {
             name: "logs",
             description: "View runtime logs for an app",
-            usage: "floo logs --app <name> [OPTIONS]",
+            usage: "floo logs <query|tail> --app <name> [OPTIONS]",
             requires_auth: true,
-            subcommands: vec![],
+            subcommands: vec![
+                CommandInfo {
+                    name: "query",
+                    description: "Query stored runtime logs once",
+                    usage: "floo logs query --app <name> [--since 1h] [--service web] [--deployment latest] [--json]",
+                    requires_auth: true,
+                    subcommands: vec![],
+                },
+                CommandInfo {
+                    name: "tail",
+                    description: "Tail runtime logs continuously",
+                    usage: "floo logs tail --app <name> [--env prod] [--service web]",
+                    requires_auth: true,
+                    subcommands: vec![],
+                },
+            ],
         },
         CommandInfo {
             name: "analytics",

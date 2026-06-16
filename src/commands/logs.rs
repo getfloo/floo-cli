@@ -21,6 +21,7 @@ pub struct LogsArgs {
     pub severity: Option<String>,
     pub services: Vec<String>,
     pub search: Option<String>,
+    pub deployment: Option<String>,
     pub live: bool,
     pub output_path: Option<PathBuf>,
     pub env: Option<String>,
@@ -31,6 +32,7 @@ struct LogsFilter<'a> {
     severity: Option<&'a str>,
     services: &'a [String],
     search: Option<&'a str>,
+    deployment: Option<&'a str>,
     environment: Option<&'a str>,
 }
 
@@ -83,6 +85,7 @@ fn fetch_logs(
             filter.severity,
             service,
             filter.search,
+            filter.deployment,
             filter.environment,
         ) {
             Ok(r) => r,
@@ -102,6 +105,7 @@ fn fetch_logs(
                 filter.severity,
                 Some(svc),
                 filter.search,
+                filter.deployment,
                 filter.environment,
             ) {
                 Ok(r) => r,
@@ -140,6 +144,7 @@ fn try_fetch_logs(
             filter.severity,
             service,
             filter.search,
+            filter.deployment,
             filter.environment,
         )?;
         Ok(result.logs)
@@ -153,6 +158,7 @@ fn try_fetch_logs(
                 filter.severity,
                 Some(svc),
                 filter.search,
+                filter.deployment,
                 filter.environment,
             )?;
             all_logs.extend(result.logs);
@@ -179,6 +185,12 @@ fn print_context_header(app_name: &str, source_label: &str, filter: &LogsFilter)
     }
     if let Some(q) = filter.search {
         eprintln!("  {} \"{}\"", "Search:".bold(), q);
+    }
+    if let Some(deployment) = filter.deployment {
+        eprintln!("  {} {}", "Deployment:".bold(), deployment);
+    }
+    if let Some(environment) = filter.environment {
+        eprintln!("  {} {}", "Environment:".bold(), environment);
     }
     eprintln!("  {}", "\u{2500}".repeat(40).dimmed());
     eprintln!();
@@ -281,6 +293,7 @@ pub fn logs(args: LogsArgs) {
         severity: args.severity.as_deref(),
         services: &args.services,
         search: args.search.as_deref(),
+        deployment: args.deployment.as_deref(),
         environment: args.env.as_deref(),
     };
 
@@ -446,6 +459,7 @@ fn live_logs(
             severity: filter.severity,
             services: filter.services,
             search: filter.search,
+            deployment: filter.deployment,
             environment: filter.environment,
         };
 
@@ -745,7 +759,14 @@ mod tests {
             timestamp: Some(ts.to_string()),
             severity: Some(sev.to_string()),
             message: Some(msg.to_string()),
+            deployment_id: None,
+            request_id: None,
+            labels: None,
             service_name: Some(svc.to_string()),
+            cron_job_name: None,
+            deploy_context: None,
+            severity_class: None,
+            lifecycle_noise: None,
         }
     }
 
@@ -775,7 +796,14 @@ mod tests {
             timestamp: Some("2024-01-01T00:00:00Z".to_string()),
             severity: Some("ERROR".to_string()),
             message: Some("something broke".to_string()),
+            deployment_id: None,
+            request_id: None,
+            labels: None,
             service_name: None,
+            cron_job_name: None,
+            deploy_context: None,
+            severity_class: None,
+            lifecycle_noise: None,
         };
 
         let line = format_log_line(&entry, true);
