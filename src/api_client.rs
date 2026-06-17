@@ -754,6 +754,7 @@ impl FlooClient {
         search: Option<&str>,
         deployment: Option<&str>,
         environment: Option<&str>,
+        cursor: Option<&str>,
     ) -> Result<LogsResponse, FlooApiError> {
         let limit_str = limit.to_string();
         let mut params: Vec<(&str, &str)> = vec![("limit", &limit_str)];
@@ -774,6 +775,9 @@ impl FlooClient {
         }
         if let Some(env) = environment {
             params.push(("environment", env));
+        }
+        if let Some(cursor) = cursor {
+            params.push(("cursor", cursor));
         }
         let resp = self.get_with_query(&format!("/v1/apps/{app_id}/logs"), &params)?;
         self.handle_response(resp)

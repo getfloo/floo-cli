@@ -371,6 +371,12 @@ pub struct LogsResponse {
     pub logs: Vec<LogEntry>,
     pub total: Option<i32>,
     pub app_name: Option<String>,
+    #[serde(default)]
+    pub limit: Option<u32>,
+    #[serde(default)]
+    pub next_cursor: Option<String>,
+    #[serde(default)]
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

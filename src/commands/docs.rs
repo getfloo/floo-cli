@@ -844,6 +844,7 @@ Floo — Golden Path
   floo logs query --app my-app --since 1h --error
   floo logs tail --app my-app --env prod
   floo logs query --app my-app --deployment latest --json
+  floo logs query --app my-app --json --limit 100 --cursor \"$NEXT_CURSOR\"
   floo deploys logs <deploy-id> --app my-app
 
 ## Decision Table: What Command Do I Run?

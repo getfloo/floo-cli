@@ -392,7 +392,7 @@ pub struct LogsOptions {
     app: Option<String>,
 
     /// Number of log lines to show.
-    #[arg(short, long, default_value = "100")]
+    #[arg(short, long, visible_alias = "limit", default_value = "100")]
     tail: u32,
 
     /// Show logs since a time (e.g., 1h, 30m, 2d, or ISO timestamp).
@@ -418,6 +418,10 @@ pub struct LogsOptions {
     /// Filter by deployment ID, or 'latest' for the app's latest deploy.
     #[arg(long)]
     deployment: Option<String>,
+
+    /// Continue a paginated log query from a previous next_cursor value.
+    #[arg(long)]
+    cursor: Option<String>,
 
     /// Stream logs in real-time (poll every 2s). Works with --requests too.
     #[arg(short = 'f', long, alias = "follow", conflicts_with = "output")]
@@ -1740,6 +1744,7 @@ pub fn run() {
                     services: options.services,
                     search: options.search,
                     deployment: options.deployment,
+                    cursor: options.cursor,
                     live: options.live,
                     output_path: options.output,
                     env: options.env,
