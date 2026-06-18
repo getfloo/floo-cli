@@ -289,6 +289,11 @@ pub struct AppServiceEntry {
     pub dev_command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub migrate_command: Option<String>,
+    /// Production start command (overrides the image's Dockerfile CMD). Lets a worker
+    /// that shares a build with web declare its own production process in
+    /// version-controlled config (#185). Absent → run the Dockerfile CMD.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<ServiceEnvContract>,
 }
@@ -346,6 +351,7 @@ impl AppServiceEntry {
             min_instances: None,
             dev_command: None,
             migrate_command: None,
+            command: None,
             env: None,
         }
     }
@@ -411,6 +417,77 @@ fn validate_app_config(config: &AppFileConfig) -> Result<(), FlooError> {
     }
     validate_managed_blocks(config)?;
     validate_domain_blocks(&config.domains)?;
+    validate_worker_command_collision(config)?;
+    Ok(())
+}
+
+/// Reject the silent worker-misboot class (#185 / #1009): a `worker` that shares a
+/// build with a non-worker service — the same `(repo, path)` resolves to one
+/// Dockerfile and therefore one CMD — but declares no production `command`. In
+/// production it would boot that service's CMD instead of its own queue processor,
+/// a silent failure (the queue is never drained). `command` is the version-controlled
+/// differentiator. Mirrors the API gate in api/app/utils/tarball.py. No prod app uses
+/// the legacy FLOO_PROCESS entrypoint switch, so there is no transitional case to
+/// grandfather — clean hard error.
+type ServiceBuildGroup<'a> = Vec<(&'a str, &'a AppServiceEntry)>;
+
+fn validate_worker_command_collision(config: &AppFileConfig) -> Result<(), FlooError> {
+    use std::collections::HashMap;
+    // Group services by their resolved build identity. `path` defaults to "." when
+    // omitted (server behavior), so two services with no explicit path collide.
+    let mut builds: HashMap<(Option<&str>, String), ServiceBuildGroup> = HashMap::new();
+    for (name, entry) in &config.services {
+        // Canonicalize the build path the way the API gate does (tarball.py's
+        // posixpath.normpath): collapse a leading "./", trailing/duplicate slashes,
+        // and interior "." segments, so "api", "api/", "./api", "api/." and "././api"
+        // all bucket as "api". A partial strip (just leading "./" + trailing "/")
+        // would leave "api/." distinct and under-report a collision the API still
+        // blocks, breaking the mirror.
+        let raw = entry.path.as_deref().unwrap_or(".");
+        let parts: Vec<&str> = raw
+            .split('/')
+            .filter(|c| !c.is_empty() && *c != ".")
+            .collect();
+        let path = if parts.is_empty() {
+            ".".to_string()
+        } else {
+            parts.join("/")
+        };
+        builds
+            .entry((entry.repo.as_deref(), path))
+            .or_default()
+            .push((name.as_str(), entry));
+    }
+    for ((_, path), members) in &builds {
+        let worker = members
+            .iter()
+            .find(|(_, e)| e.service_type == AppServiceType::Worker && e.command.is_none());
+        let Some((worker_name, _)) = worker else {
+            continue;
+        };
+        let mut others: Vec<&str> = members
+            .iter()
+            .filter(|(_, e)| e.service_type != AppServiceType::Worker)
+            .map(|(n, _)| *n)
+            .collect();
+        if others.is_empty() {
+            continue;
+        }
+        others.sort_unstable();
+        return Err(FlooError::with_suggestion(
+            ErrorCode::InvalidProjectConfig,
+            format!(
+                "Worker service '{worker_name}' shares build path '{path}' with [{}] \
+                 — one Dockerfile, one CMD — but declares no production 'command'. In \
+                 production it would run the same command as those services instead of \
+                 its own worker process, so its queue is never drained (a silent failure).",
+                others.join(", ")
+            ),
+            format!(
+                "Add a production command to the worker, e.g. command = \"bundle exec sidekiq\" under [services.{worker_name}]."
+            ),
+        ));
+    }
     Ok(())
 }
 
@@ -1058,6 +1135,155 @@ path = "./frontend"
         assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
         assert!(err.message.contains("web"));
         assert!(err.message.contains("port"));
+    }
+
+    #[test]
+    fn test_worker_sharing_build_without_command_rejected() {
+        // The floo-artifact shape: web + worker share path "." (one Dockerfile/CMD)
+        // and the worker declares no command — it would boot the web process (#185/#1009).
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[services.web]
+type = "web"
+path = "."
+port = 3000
+
+[services.worker]
+type = "worker"
+path = "."
+port = 3000
+"#,
+        )
+        .unwrap();
+
+        let err = load_app_config(dir.path()).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+        assert!(err.message.contains("worker"));
+        assert!(err.message.contains("command"));
+    }
+
+    #[test]
+    fn test_worker_with_command_accepted() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[services.web]
+type = "web"
+path = "."
+port = 3000
+
+[services.worker]
+type = "worker"
+path = "."
+port = 3000
+command = "bundle exec sidekiq"
+"#,
+        )
+        .unwrap();
+
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        assert_eq!(
+            config.services["worker"].command.as_deref(),
+            Some("bundle exec sidekiq")
+        );
+    }
+
+    #[test]
+    fn test_worker_collision_normalizes_equivalent_paths() {
+        // web at "." and a command-less worker at "./" are the SAME build — the gate
+        // must catch it (mirroring the API's path normalization), not be fooled by the
+        // spelling. Without normalization the API blocks this but `floo preflight` passes.
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[services.web]
+type = "web"
+path = "."
+port = 3000
+
+[services.worker]
+type = "worker"
+path = "./"
+port = 3000
+"#,
+        )
+        .unwrap();
+
+        let err = load_app_config(dir.path()).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+        assert!(err.message.contains("worker"));
+        assert!(err.message.contains("command"));
+    }
+
+    #[test]
+    fn test_worker_collision_normalizes_interior_dot_segments() {
+        // web at "api" and a command-less worker at "api/." are the SAME build dir.
+        // A partial strip would leave "api/." distinct and slip the gate; canonicalizing
+        // interior "." segments (mirroring the API's posixpath.normpath) catches it.
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[services.web]
+type = "web"
+path = "api"
+port = 3000
+
+[services.worker]
+type = "worker"
+path = "api/."
+port = 3000
+"#,
+        )
+        .unwrap();
+
+        let err = load_app_config(dir.path()).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+        assert!(err.message.contains("worker"));
+        assert!(err.message.contains("command"));
+    }
+
+    #[test]
+    fn test_worker_distinct_build_path_accepted() {
+        // The floo-crm shape: each service its own path → its own Dockerfile/CMD.
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[services.web]
+type = "web"
+path = "./web"
+port = 3000
+
+[services.worker]
+type = "worker"
+path = "./worker"
+port = 3000
+"#,
+        )
+        .unwrap();
+
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        assert_eq!(config.services.len(), 2);
     }
 
     #[test]

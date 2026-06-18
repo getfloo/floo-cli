@@ -497,6 +497,7 @@ ingress = "public"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                command: None,
                 env: None,
             },
         );
@@ -518,6 +519,7 @@ ingress = "public"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                command: None,
                 env: None,
             },
         );
@@ -620,6 +622,7 @@ ingress = "public"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                command: None,
                 env: None,
             },
         );
@@ -751,6 +754,7 @@ ingress = "public"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                command: None,
                 env: None,
             },
         );
@@ -819,6 +823,7 @@ ingress = "public"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                command: None,
                 env: None,
             },
         );
@@ -911,6 +916,7 @@ ingress = "public"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                command: None,
                 env: None,
             },
         );
@@ -1016,6 +1022,7 @@ ingress = "public"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                command: None,
                 env: None,
             },
         );
@@ -1216,6 +1223,7 @@ ingress = "public"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                command: None,
                 env: None,
             },
         );
@@ -1309,6 +1317,7 @@ ingress = "internal"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                command: None,
                 env: None,
             },
         );
@@ -1330,6 +1339,7 @@ ingress = "internal"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                command: None,
                 env: None,
             },
         );
@@ -1407,6 +1417,7 @@ domain = "svc.example.com"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                command: None,
                 env: None,
             },
         );
@@ -1485,6 +1496,7 @@ domain = "svc.example.com"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                command: None,
                 env: None,
             },
         );
@@ -1553,6 +1565,7 @@ domain = "svc.example.com"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                command: None,
                 env: None,
             },
         );
@@ -1574,6 +1587,7 @@ domain = "svc.example.com"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                command: None,
                 env: None,
             },
         );
@@ -1648,6 +1662,7 @@ domain = "svc.example.com"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                command: None,
                 env: None,
             },
         );
@@ -1724,6 +1739,7 @@ domain = "svc.example.com"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                command: None,
                 env: None,
             },
         );
@@ -1789,6 +1805,7 @@ domain = "svc.example.com"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                command: None,
                 env: None,
             },
         );
@@ -1810,6 +1827,7 @@ domain = "svc.example.com"
                 min_instances: None,
                 dev_command: None,
                 migrate_command: None,
+                command: None,
                 env: None,
             },
         );
@@ -1938,6 +1956,7 @@ domain = "svc.example.com"
                         min_instances: None,
                         dev_command: None,
                         migrate_command: None,
+                        command: None,
                         env: None,
                     },
                 );
@@ -2001,6 +2020,7 @@ domain = "svc.example.com"
                         min_instances: None,
                         dev_command: None,
                         migrate_command: None,
+                        command: None,
                         env: None,
                     },
                 );
