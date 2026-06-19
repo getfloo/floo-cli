@@ -297,6 +297,33 @@ pub struct StorageObjectRestoreResponse {
     pub content_type: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManagedPostgresBackup {
+    pub id: String,
+    pub app_id: String,
+    pub managed_service_id: String,
+    pub env: String,
+    pub status: String,
+    pub size_bytes: u64,
+    pub size_human: String,
+    pub checksum_sha256: String,
+    pub created_at: String,
+    pub expires_at: String,
+    pub last_restored_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManagedPostgresBackupsResponse {
+    pub backups: Vec<ManagedPostgresBackup>,
+    pub total: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManagedPostgresRestoreResponse {
+    pub backup: ManagedPostgresBackup,
+    pub restored_at: String,
+}
+
 // --- Preflight ---
 // Mirrors api/app/schemas/preflight.py. Keep these two in lock-step.
 

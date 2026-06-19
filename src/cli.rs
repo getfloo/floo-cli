@@ -1196,6 +1196,62 @@ Examples:
         #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
         env: String,
     },
+
+    /// Create a restorable backup of the app's managed Postgres schema.
+    #[command(after_help = "\
+Examples:
+  floo db backup --app my-app               Back up dev (default)
+  floo db backup --app my-app --env prod    Back up prod")]
+    Backup {
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Managed Postgres service name.
+        #[arg(long, default_value = "default")]
+        name: String,
+
+        /// Environment to back up: dev or prod.
+        #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
+        env: String,
+    },
+
+    /// List restorable managed Postgres backups.
+    Backups {
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Managed Postgres service name.
+        #[arg(long, default_value = "default")]
+        name: String,
+
+        /// Environment to filter by: dev or prod.
+        #[arg(long, value_parser = ["dev", "prod"])]
+        env: Option<String>,
+    },
+
+    /// Restore a managed Postgres backup into its original env schema.
+    #[command(after_help = "\
+Examples:
+  floo db restore 018f... --app my-app --env dev
+  floo db restore 018f... --app my-app --env prod")]
+    Restore {
+        /// Backup ID returned by `floo db backups`.
+        backup_id: String,
+
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Managed Postgres service name.
+        #[arg(long, default_value = "default")]
+        name: String,
+
+        /// Environment to restore: dev or prod.
+        #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
+        env: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1708,6 +1764,18 @@ pub fn run() {
             DbCommands::Schema { app } => commands::db::schema(app.as_deref()),
             DbCommands::Migrate { app, env } => commands::db::migrate(app.as_deref(), &env),
             DbCommands::Connections { app, env } => commands::db::connections(app.as_deref(), &env),
+            DbCommands::Backup { app, name, env } => {
+                commands::db::backup(app.as_deref(), &name, &env)
+            }
+            DbCommands::Backups { app, name, env } => {
+                commands::db::backups(app.as_deref(), &name, env.as_deref())
+            }
+            DbCommands::Restore {
+                backup_id,
+                app,
+                name,
+                env,
+            } => commands::db::restore(app.as_deref(), &name, &env, &backup_id),
         },
 
         Commands::Cron(sub) => match sub {

@@ -1870,6 +1870,157 @@ fn test_storage_restore_json_restores_generation() {
 }
 
 #[test]
+fn test_db_backup_json_creates_managed_postgres_backup() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _m_list_managed = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"managed_services":[{"id":"ms-pg-1","app_id":"app-uuid-1234","type":"postgres","name":"default","status":"ready","env_var_keys":["DATABASE_URL"],"created_at":null,"updated_at":null}],"total":1}"#,
+        )
+        .create();
+
+    let _m_backup = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services/ms-pg-1/postgres/backups").as_str(),
+        )
+        .match_query(Matcher::UrlEncoded("env".into(), "prod".into()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"id":"backup-1","app_id":"app-uuid-1234","managed_service_id":"ms-pg-1","env":"prod","status":"available","size_bytes":2048,"size_human":"2.0 KB","checksum_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","created_at":"2026-06-19T12:00:00Z","expires_at":"2026-07-19T12:00:00Z","last_restored_at":null}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "db",
+            "backup",
+            "--env",
+            "prod",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(r#""id":"backup-1""#))
+        .stdout(predicate::str::contains(r#""env":"prod""#));
+}
+
+#[test]
+fn test_db_backups_json_lists_managed_postgres_backups() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _m_list_managed = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"managed_services":[{"id":"ms-pg-1","app_id":"app-uuid-1234","type":"postgres","name":"default","status":"ready","env_var_keys":["DATABASE_URL"],"created_at":null,"updated_at":null}],"total":1}"#,
+        )
+        .create();
+
+    let _m_backups = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services/ms-pg-1/postgres/backups").as_str(),
+        )
+        .match_query(Matcher::UrlEncoded("env".into(), "dev".into()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"backups":[{"id":"backup-1","app_id":"app-uuid-1234","managed_service_id":"ms-pg-1","env":"dev","status":"available","size_bytes":2048,"size_human":"2.0 KB","checksum_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","created_at":"2026-06-19T12:00:00Z","expires_at":"2026-07-19T12:00:00Z","last_restored_at":null}],"total":1}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "db",
+            "backups",
+            "--env",
+            "dev",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(r#""total":1"#))
+        .stdout(predicate::str::contains(r#""id":"backup-1""#));
+}
+
+#[test]
+fn test_db_restore_json_restores_managed_postgres_backup() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _m_list_managed = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"managed_services":[{"id":"ms-pg-1","app_id":"app-uuid-1234","type":"postgres","name":"default","status":"ready","env_var_keys":["DATABASE_URL"],"created_at":null,"updated_at":null}],"total":1}"#,
+        )
+        .create();
+
+    let _m_restore = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services/ms-pg-1/postgres/restore").as_str(),
+        )
+        .match_body(Matcher::JsonString(
+            r#"{"backup_id":"backup-1","env":"dev"}"#.into(),
+        ))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"backup":{"id":"backup-1","app_id":"app-uuid-1234","managed_service_id":"ms-pg-1","env":"dev","status":"available","size_bytes":2048,"size_human":"2.0 KB","checksum_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","created_at":"2026-06-19T12:00:00Z","expires_at":"2026-07-19T12:00:00Z","last_restored_at":"2026-06-19T12:05:00Z"},"restored_at":"2026-06-19T12:05:00Z"}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "db",
+            "restore",
+            "backup-1",
+            "--env",
+            "dev",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(
+            r#""restored_at":"2026-06-19T12:05:00Z""#,
+        ));
+}
+
+#[test]
 fn test_services_show_surfaces_api_errors() {
     let mut server = Server::new();
     let home = setup_config(&server);
