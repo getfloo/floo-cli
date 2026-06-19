@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use crate::api_types::GitHubSetupStatus;
 use crate::detection::detect;
-use crate::errors::ErrorCode;
+use crate::errors::{ErrorCode, FlooApiError};
 use crate::output;
 use crate::project_config;
 
@@ -122,11 +122,12 @@ pub fn connect(
             let owner = repo.split('/').next().unwrap_or(repo);
 
             if no_browser {
+                let setup_url = manual_setup_url(&client, install_url);
                 output::error(
                     &format!("Floo GitHub App not installed on \"{owner}\"."),
                     &ErrorCode::from_api("GITHUB_APP_NOT_INSTALLED"),
                     Some(&format!(
-                        "Install the Floo GitHub App first: {install_url}\n\
+                        "Open the GitHub App setup URL and grant access to \"{repo}\": {setup_url}\n\
                          Then re-run: {rerun_command}"
                     )),
                 );
@@ -148,6 +149,12 @@ pub fn connect(
             }
         }
         Err(e) if e.code == "GITHUB_REPO_NOT_IN_INSTALLATION" => {
+            let install_url = e
+                .extra
+                .as_ref()
+                .and_then(|v| v.get("install_url"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("https://github.com/apps/getfloo/installations/new");
             let settings_url = e
                 .extra
                 .as_ref()
@@ -160,12 +167,15 @@ pub fn connect(
             let url = settings_url.unwrap_or(&fallback_url);
 
             if no_browser {
+                let setup_url = manual_setup_url(&client, install_url);
                 output::error(
                     &format!("Floo GitHub App does not have access to \"{repo}\"."),
                     &ErrorCode::from_api("GITHUB_REPO_NOT_IN_INSTALLATION"),
-                    Some(&format!(
-                        "Grant repo access at: {url}\n\
-                         Then re-run: {rerun_command}"
+                    Some(&repo_access_manual_suggestion(
+                        repo,
+                        &setup_url,
+                        url,
+                        &rerun_command,
                     )),
                 );
                 process::exit(1);
@@ -175,16 +185,10 @@ pub fn connect(
                 output::warn(&format!(
                     "Floo GitHub App does not have access to \"{repo}\"."
                 ));
-                output::info("Opening GitHub settings to grant access...", None);
+                output::info("Opening GitHub App setup to grant repo access...", None);
             }
 
-            if let Err(e) = open::that(url) {
-                if !output::is_json_mode() {
-                    output::warn(&format!("Could not open browser: {e}"));
-                    output::warn(&format!("Open this URL manually: {url}"));
-                }
-            }
-
+            run_installation_flow(&client, install_url, &rerun_command);
             poll_repo_access(&client, repo, url, &rerun_command);
 
             // Repo is now accessible — connect
@@ -413,44 +417,15 @@ fn run_installation_flow(
     rerun_command: &str,
 ) {
     // Begin the setup session (stores pending state in Redis)
-    if let Err(e) = client.github_setup_begin() {
-        let is_transient = e.status_code == 0 || e.status_code >= 500;
-        // Permanent errors (4xx) mean the flow is doomed — abort early
-        if !is_transient {
-            output::error(
-                &format!("Failed to start setup session: {}", e.message),
-                &ErrorCode::from_api(&e.code),
-                Some("Check your authentication with: floo auth whoami"),
-            );
-            process::exit(1);
-        }
-
-        let setup_session_exists = matches!(
-            client.github_setup_poll(),
-            Ok(resp) if resp.status != GitHubSetupStatus::None
-        );
-        if !setup_session_exists {
-            output::error(
-                &format!("Failed to start setup session: {}", e.message),
-                &ErrorCode::from_api(&e.code),
-                Some("Retry the command. If this keeps happening, check API health with `floo auth whoami`."),
-            );
-            process::exit(1);
-        }
-
-        output::warn(&format!(
-            "Setup session start was inconclusive: {}. Continuing because an active setup session still exists...",
-            e.message
-        ));
-    }
+    let setup_url = begin_setup_or_exit(client, install_url);
 
     // Open browser for installation
     if !output::is_json_mode() {
         output::info("Opening browser to install...", None);
     }
-    if let Err(e) = open::that(install_url) {
+    if let Err(e) = open::that(&setup_url) {
         output::warn(&format!("Could not open browser: {e}"));
-        output::warn(&format!("Open this URL manually: {install_url}"));
+        output::warn(&format!("Open this URL manually: {setup_url}"));
     }
 
     let mut spinner = output::Spinner::new("Waiting for GitHub installation...");
@@ -596,11 +571,84 @@ fn setup_session_lost_suggestion(rerun_command: &str) -> String {
     format!("Start the GitHub setup flow again: {rerun_command}")
 }
 
+fn repo_access_manual_suggestion(
+    repo: &str,
+    setup_url: &str,
+    admin_url: &str,
+    rerun_command: &str,
+) -> String {
+    format!(
+        "Open the GitHub App setup URL and grant access to \"{repo}\": {setup_url}\n\
+         If GitHub says approval is required, ask a GitHub org/repo admin to grant it at: {admin_url}\n\
+         Then re-run: {rerun_command}"
+    )
+}
+
 fn repo_access_timeout_suggestion(settings_url: &str, rerun_command: &str) -> String {
     format!(
         "Grant access at {settings_url}. If your org needs approval, re-run after it lands: \
          {rerun_command}"
     )
+}
+
+fn begin_setup_or_exit(client: &crate::api_client::FlooClient, fallback_url: &str) -> String {
+    match client.github_setup_begin() {
+        Ok(resp) => resp
+            .get("install_url")
+            .and_then(|v| v.as_str())
+            .unwrap_or(fallback_url)
+            .to_string(),
+        Err(e) => handle_setup_begin_error(client, e, fallback_url),
+    }
+}
+
+fn handle_setup_begin_error(
+    client: &crate::api_client::FlooClient,
+    e: FlooApiError,
+    fallback_url: &str,
+) -> String {
+    let is_transient = e.status_code == 0 || e.status_code >= 500;
+    // Permanent errors (4xx) mean the flow is doomed — abort early.
+    if !is_transient {
+        output::error(
+            &format!("Failed to start setup session: {}", e.message),
+            &ErrorCode::from_api(&e.code),
+            Some("Check your authentication with: floo auth whoami"),
+        );
+        process::exit(1);
+    }
+
+    let setup_session_exists = matches!(
+        client.github_setup_poll(),
+        Ok(resp) if resp.status != GitHubSetupStatus::None
+    );
+    if !setup_session_exists {
+        output::error(
+            &format!("Failed to start setup session: {}", e.message),
+            &ErrorCode::from_api(&e.code),
+            Some(
+                "Retry the command. If this keeps happening, check API health with `floo auth whoami`.",
+            ),
+        );
+        process::exit(1);
+    }
+
+    output::warn(&format!(
+        "Setup session start was inconclusive: {}. Continuing because an active setup session still exists...",
+        e.message
+    ));
+    fallback_url.to_string()
+}
+
+fn manual_setup_url(client: &crate::api_client::FlooClient, fallback_url: &str) -> String {
+    match client.github_setup_begin() {
+        Ok(resp) => resp
+            .get("install_url")
+            .and_then(|v| v.as_str())
+            .unwrap_or(fallback_url)
+            .to_string(),
+        Err(_) => fallback_url.to_string(),
+    }
 }
 
 enum DeployOutcome {
@@ -703,8 +751,8 @@ fn run_initial_deploy(
 #[cfg(test)]
 mod tests {
     use super::{
-        connect_rerun_command, repo_access_timeout_suggestion, setup_session_lost_suggestion,
-        setup_spinner_message, setup_timeout_suggestion,
+        connect_rerun_command, repo_access_manual_suggestion, repo_access_timeout_suggestion,
+        setup_session_lost_suggestion, setup_spinner_message, setup_timeout_suggestion,
     };
     use crate::api_types::GitHubSetupStatus;
 
@@ -737,6 +785,20 @@ mod tests {
         );
         assert!(suggestion.contains("settings/installations"));
         assert!(suggestion.contains("approval"));
+    }
+
+    #[test]
+    fn test_repo_access_manual_suggestion_separates_user_and_admin_steps() {
+        let suggestion = repo_access_manual_suggestion(
+            "getfloo/example",
+            "https://api.getfloo.com/v1/github/setup/install?setup_token=abc",
+            "https://github.com/organizations/getfloo/settings/installations/77777",
+            "floo apps github connect getfloo/example --no-browser",
+        );
+        assert!(suggestion.contains("setup/install?setup_token=abc"));
+        assert!(suggestion.contains("GitHub org/repo admin"));
+        assert!(suggestion.contains("settings/installations/77777"));
+        assert!(suggestion.contains("floo apps github connect getfloo/example --no-browser"));
     }
 
     #[test]
