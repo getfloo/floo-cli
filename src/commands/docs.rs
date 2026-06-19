@@ -37,6 +37,7 @@ never uploads code.
   floo docs express    — build and deploy an Express app on floo (end-to-end)
   floo docs templates  — copy-paste app structures (React+FastAPI, Next.js, etc.)
   floo docs services   — service types and managed services
+  floo docs storage    — managed Storage restore commands
   floo docs config     — config file formats with examples
   floo docs cron       — [cron.<name>] schema, schedules, and CLI surface
   floo docs deploy     — detailed deploy flow and runtime detection
@@ -197,6 +198,15 @@ confirmation. See also: floo docs state-model.
     postgres → DATABASE_URL + PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD
     redis    → REDIS_URL
     storage  → STORAGE_BUCKET + STORAGE_URL (use STORAGE_URL for signed URLs)
+
+  Managed Storage buckets keep noncurrent object versions for 30 days.
+  To recover an overwritten or deleted object:
+
+    floo storage versions uploads/report.json --app <name>
+    floo storage restore uploads/report.json --generation <generation> --app <name>
+
+  Add --env prod for the production bucket. Restores copy the selected
+  generation back to the live object path and are audited.
 
   Postgres ships with pgvector enabled. The `vector` type resolves
   unqualified: use it in migrations and queries with no CREATE EXTENSION
@@ -1624,6 +1634,7 @@ const TOPICS: &[(&str, &str)] = &[
     ("django", DJANGO),
     ("express", EXPRESS),
     ("services", SERVICES),
+    ("storage", SERVICES),
     ("config", CONFIG),
     ("app-toml", CONFIG), // alias — agents can run `floo docs app-toml` after `floo init`
     ("cron", CRON),

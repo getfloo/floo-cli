@@ -254,6 +254,10 @@ Examples:
     #[command(subcommand)]
     Services(ServicesCommands),
 
+    /// Recover objects from floo-managed storage.
+    #[command(subcommand)]
+    Storage(StorageCommands),
+
     /// Manage custom domains.
     #[command(subcommand)]
     Domains(DomainsCommands),
@@ -851,6 +855,49 @@ pub enum ServicesCommands {
         /// Project directory containing floo.app.toml.
         #[arg(default_value = ".")]
         path: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum StorageCommands {
+    /// List restorable versions for a managed storage object.
+    Versions {
+        /// Object path inside the bucket.
+        object_path: String,
+
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Managed storage service name.
+        #[arg(long, default_value = "default")]
+        name: String,
+
+        /// Environment to inspect: dev or prod.
+        #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
+        env: String,
+    },
+
+    /// Restore a managed storage object generation over the live object.
+    Restore {
+        /// Object path inside the bucket.
+        object_path: String,
+
+        /// GCS generation id to restore.
+        #[arg(long)]
+        generation: String,
+
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Managed storage service name.
+        #[arg(long, default_value = "default")]
+        name: String,
+
+        /// Environment to restore into: dev or prod.
+        #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
+        env: String,
     },
 }
 
@@ -1583,6 +1630,22 @@ pub fn run() {
             ServicesCommands::Migrate { app, path } => {
                 commands::services::migrate(app.as_deref(), &path)
             }
+        },
+
+        Commands::Storage(sub) => match sub {
+            StorageCommands::Versions {
+                object_path,
+                app,
+                name,
+                env,
+            } => commands::storage::versions(app.as_deref(), &name, &env, &object_path),
+            StorageCommands::Restore {
+                object_path,
+                generation,
+                app,
+                name,
+                env,
+            } => commands::storage::restore(app.as_deref(), &name, &env, &object_path, &generation),
         },
 
         Commands::Domains(sub) => match sub {

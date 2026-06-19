@@ -648,6 +648,41 @@ impl FlooClient {
         Ok(())
     }
 
+    pub fn list_storage_object_versions(
+        &self,
+        app_id: &str,
+        service_id: &str,
+        object_path: &str,
+        env: &str,
+    ) -> Result<StorageObjectVersionsResponse, FlooApiError> {
+        let limit = "75";
+        let query = [("object_path", object_path), ("env", env), ("limit", limit)];
+        let resp = self.get_with_query(
+            &format!("/v1/apps/{app_id}/managed-services/{service_id}/storage/versions"),
+            &query,
+        )?;
+        self.handle_response(resp)
+    }
+
+    pub fn restore_storage_object_generation(
+        &self,
+        app_id: &str,
+        service_id: &str,
+        object_path: &str,
+        generation: &str,
+        env: &str,
+    ) -> Result<StorageObjectRestoreResponse, FlooApiError> {
+        let body = serde_json::json!({
+            "object_path": object_path,
+            "generation": generation,
+        });
+        let resp = self.post_json(
+            &format!("/v1/apps/{app_id}/managed-services/{service_id}/storage/restore?env={env}"),
+            &body,
+        )?;
+        self.handle_response(resp)
+    }
+
     pub fn managed_postgres_connection_usage(
         &self,
         app_id: &str,

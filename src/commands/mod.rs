@@ -32,6 +32,7 @@ pub mod run;
 
 pub mod services;
 pub mod skills;
+pub mod storage;
 pub mod update;
 
 pub(crate) fn init_client(config: Option<FlooConfig>) -> FlooClient {
