@@ -264,6 +264,39 @@ pub struct ManagedServiceDetail {
     pub updated_at: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageObjectVersion {
+    pub object_path: String,
+    pub generation: String,
+    pub is_live: bool,
+    pub size_bytes: u64,
+    pub size_human: String,
+    pub updated_at: Option<String>,
+    pub created_at: Option<String>,
+    pub content_type: Option<String>,
+    pub etag: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageObjectVersionsResponse {
+    pub bucket_name: String,
+    pub object_path: String,
+    pub versions: Vec<StorageObjectVersion>,
+    pub total_returned: u32,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageObjectRestoreResponse {
+    pub bucket_name: String,
+    pub object_path: String,
+    pub restored_generation: String,
+    pub live_generation: String,
+    pub size_bytes: u64,
+    pub size_human: String,
+    pub content_type: Option<String>,
+}
+
 // --- Preflight ---
 // Mirrors api/app/schemas/preflight.py. Keep these two in lock-step.
 

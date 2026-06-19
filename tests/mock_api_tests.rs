@@ -1755,6 +1755,121 @@ fn test_services_show_app_not_found() {
 }
 
 #[test]
+fn test_storage_versions_json_lists_object_generations() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _m_list_managed = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"managed_services":[{"id":"ms-storage-1","app_id":"app-uuid-1234","type":"storage","name":"default","status":"ready","env_var_keys":["STORAGE_BUCKET","STORAGE_URL"],"created_at":null,"updated_at":null}],"total":1}"#,
+        )
+        .create();
+
+    let _m_versions = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services/ms-storage-1/storage/versions")
+                .as_str(),
+        )
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("object_path".into(), "uploads/report.json".into()),
+            Matcher::UrlEncoded("env".into(), "dev".into()),
+            Matcher::UrlEncoded("limit".into(), "75".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"bucket_name":"floo-app-bucket","object_path":"uploads/report.json","versions":[{"object_path":"uploads/report.json","generation":"1700000000000001","is_live":true,"size_bytes":256,"size_human":"256 B","updated_at":null,"created_at":null,"content_type":"application/json","etag":"abc"},{"object_path":"uploads/report.json","generation":"1700000000000000","is_live":false,"size_bytes":128,"size_human":"128 B","updated_at":null,"created_at":null,"content_type":"application/json","etag":"def"}],"total_returned":2,"truncated":false}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "storage",
+            "versions",
+            "uploads/report.json",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(
+            r#""generation":"1700000000000001""#,
+        ))
+        .stdout(predicate::str::contains(r#""is_live":false"#));
+}
+
+#[test]
+fn test_storage_restore_json_restores_generation() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _m_list_managed = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"managed_services":[{"id":"ms-storage-1","app_id":"app-uuid-1234","type":"storage","name":"default","status":"ready","env_var_keys":["STORAGE_BUCKET","STORAGE_URL"],"created_at":null,"updated_at":null}],"total":1}"#,
+        )
+        .create();
+
+    let _m_restore = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services/ms-storage-1/storage/restore")
+                .as_str(),
+        )
+        .match_query(Matcher::UrlEncoded("env".into(), "prod".into()))
+        .match_body(Matcher::JsonString(
+            r#"{"object_path":"uploads/report.json","generation":"1700000000000000"}"#.into(),
+        ))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"bucket_name":"floo-app-bucket-prod","object_path":"uploads/report.json","restored_generation":"1700000000000000","live_generation":"1700000000000002","size_bytes":128,"size_human":"128 B","content_type":"application/json"}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "storage",
+            "restore",
+            "uploads/report.json",
+            "--generation",
+            "1700000000000000",
+            "--env",
+            "prod",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(
+            r#""restored_generation":"1700000000000000""#,
+        ))
+        .stdout(predicate::str::contains(
+            r#""live_generation":"1700000000000002""#,
+        ));
+}
+
+#[test]
 fn test_services_show_surfaces_api_errors() {
     let mut server = Server::new();
     let home = setup_config(&server);
