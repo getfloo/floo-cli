@@ -596,10 +596,27 @@ Floo Deploy Flow
   floo preflight                   — validate config, detect runtimes, check readiness
   floo preflight --json            — structured output for agents
 
-  JSON includes env_injection_plan: per-service managed attachments, generated
-  env keys (DATABASE_URL + PG*, REDIS_URL, STORAGE_BUCKET/STORAGE_URL),
-  required keys, optional keys, and whether the app is in explicit or legacy
-  implicit mode.
+  Preflight FAILS (exit 1, valid=false) on configs that can't build or run:
+  a service path that doesn't exist, a [cron.*] with an invalid schedule, a
+  cron job whose service doesn't exist (multi-service apps). It WARNS (exit 0,
+  but not a clean green) on things it can't fully verify locally: a
+  migrate_command with no reachable database, a required env var not injected
+  or present in a local env file. Server-side `floo env set` vars and external
+  databases are invisible to local preflight, which is why those warn.
+
+  JSON shape:
+    data.valid           — false iff any finding has severity \"error\"
+    data.findings[]      — every advisory, typed: {severity (error|warning|
+                           info), code, message, path?, hint?}. Filter by
+                           severity/code instead of screen-scraping prose.
+    data.env_injection_plan — per-service managed attachments, generated env
+                           keys (DATABASE_URL + PG*, REDIS_URL, STORAGE_*),
+                           required/optional keys, explicit vs implicit mode.
+    data.cron[]          — declared [cron.*] entries (name, schedule, command,
+                           service, timeout).
+    contains_secrets     — top-level marker, true when a secret-shaped var is
+                           found in a web service's env file (it may ship to
+                           the browser). Harnesses can refuse the payload.
 
 ## Redeploy Options
 

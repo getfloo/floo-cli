@@ -43,6 +43,297 @@ struct ManagedEnvInjection {
     keys: Vec<String>,
 }
 
+/// Severity of a preflight finding.
+///
+/// - `Error` blocks the deploy (preflight exits 1). Reserved for configs that
+///   are *guaranteed* to fail to build or run from what local config alone can
+///   prove (a missing build context, an invalid cron expression, a cron job
+///   pointing at a service that doesn't exist in a multi-service app).
+/// - `Warning` is surfaced loudly but does not block. Used where local
+///   preflight can't see the full picture — server-side `floo env set` vars and
+///   external databases are invisible locally, so "looks unsatisfied" is a
+///   strong signal, not a certainty.
+/// - `Info` is advisory context (which services are internet-facing, etc.).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum Severity {
+    Error,
+    Warning,
+    Info,
+}
+
+impl Severity {
+    /// Glyph used in human output: ✗ for errors, ⚠ for warnings, • for info.
+    fn glyph(self) -> &'static str {
+        match self {
+            Severity::Error => "\u{2717}",
+            Severity::Warning => "\u{26a0}",
+            Severity::Info => "\u{2022}",
+        }
+    }
+}
+
+/// A single typed preflight finding.
+///
+/// Replaces the prior three uncorrelated output channels — an untyped
+/// `errors` array, an untyped `warnings` array, and a `security_notes` list of
+/// bare strings — with one severity-tagged shape. Agents read `severity` +
+/// `code` to tell a deploy-blocking error from informational context without
+/// screen-scraping prose; `data.valid` is `false` iff any finding is an error.
+#[derive(Debug, Clone, Serialize)]
+struct PreflightFinding {
+    severity: Severity,
+    code: String,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hint: Option<String>,
+}
+
+impl PreflightFinding {
+    fn new(severity: Severity, code: &str, message: String) -> Self {
+        Self {
+            severity,
+            code: code.to_string(),
+            message,
+            path: None,
+            hint: None,
+        }
+    }
+
+    fn error(code: &str, message: String) -> Self {
+        Self::new(Severity::Error, code, message)
+    }
+
+    fn warning(code: &str, message: String) -> Self {
+        Self::new(Severity::Warning, code, message)
+    }
+
+    fn info(code: &str, message: String) -> Self {
+        Self::new(Severity::Info, code, message)
+    }
+
+    fn with_path(mut self, path: impl Into<String>) -> Self {
+        self.path = Some(path.into());
+        self
+    }
+
+    fn with_hint(mut self, hint: impl Into<String>) -> Self {
+        self.hint = Some(hint.into());
+        self
+    }
+
+    fn is_error(&self) -> bool {
+        self.severity == Severity::Error
+    }
+}
+
+/// Whether a list of findings contains at least one deploy-blocking error.
+fn has_errors(findings: &[PreflightFinding]) -> bool {
+    findings.iter().any(PreflightFinding::is_error)
+}
+
+/// Validate a `[cron.<name>]` schedule string the way floo's own scheduler
+/// will read it: floo polls due jobs with `croniter` (see
+/// `api/app/services/cron_executor.py`), so the authoritative format is
+/// standard cron, not Cloud Scheduler's. This check is deliberately
+/// *conservative* — it rejects only what croniter would definitely reject
+/// (wrong field count, garbage tokens, plainly out-of-range numbers in the
+/// canonical 5-field form) so a valid schedule never produces a false error
+/// that blocks a real deploy. The point is to catch the "non-cron schedule
+/// string" class (e.g. `"daily"`, `"every 9am"`, a 4-field expression), not to
+/// reimplement croniter.
+fn is_valid_cron_schedule(expr: &str) -> bool {
+    let trimmed = expr.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    // Named macros croniter accepts.
+    if let Some(rest) = trimmed.strip_prefix('@') {
+        return matches!(
+            rest.to_ascii_lowercase().as_str(),
+            "yearly" | "annually" | "monthly" | "weekly" | "daily" | "midnight" | "hourly"
+        );
+    }
+
+    let fields: Vec<&str> = trimmed.split_whitespace().collect();
+    // 5 = standard (min hour dom month dow); 6/7 = croniter's optional seconds
+    // and/or year extensions. Anything else is not a cron expression.
+    if !(5..=7).contains(&fields.len()) {
+        return false;
+    }
+
+    for (idx, field) in fields.iter().enumerate() {
+        let spec = if fields.len() == 5 {
+            CronFieldSpec::five_field(idx)
+        } else {
+            // 6/7-field exprs get the permissive spec — their extra-field
+            // meanings vary by croniter config, so we only range/name-check the
+            // canonical 5-field form. Over-acceptance here is the safe direction.
+            CronFieldSpec::permissive()
+        };
+        if !is_valid_cron_field(field, spec) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Names croniter accepts in the month / day-of-week fields. Whitelisted (not
+/// "any 3-letter token") so `0 0 * foo *` is rejected — croniter rejects it and
+/// the cron would silently never run.
+const CRON_MONTH_NAMES: [&str; 12] = [
+    "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+];
+const CRON_DAY_NAMES: [&str; 7] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+
+/// What a single cron field position accepts. `range` bounds plain numbers;
+/// `names` is the whitelist of legal alphabetic tokens (empty = none allowed,
+/// `None` = permissive: any 3-letter token, used for 6/7-field forms);
+/// `allow_ext` gates the `L`/`W`/`#` day-field extensions.
+#[derive(Clone, Copy)]
+struct CronFieldSpec {
+    range: Option<(u32, u32)>,
+    names: Option<&'static [&'static str]>,
+    allow_ext: bool,
+}
+
+impl CronFieldSpec {
+    /// Spec for position `idx` in the canonical 5-field form
+    /// (minute, hour, day-of-month, month, day-of-week). Names and the
+    /// `L`/`W`/`#` extensions only appear in the day-of-month, month, and
+    /// day-of-week fields — never minute or hour.
+    fn five_field(idx: usize) -> Self {
+        match idx {
+            0 => Self {
+                range: Some((0, 59)),
+                names: Some(&[]),
+                allow_ext: false,
+            }, // minute
+            1 => Self {
+                range: Some((0, 23)),
+                names: Some(&[]),
+                allow_ext: false,
+            }, // hour
+            2 => Self {
+                range: Some((1, 31)),
+                names: Some(&[]),
+                allow_ext: true,
+            }, // day of month (L/W)
+            3 => Self {
+                range: Some((1, 12)),
+                names: Some(&CRON_MONTH_NAMES),
+                allow_ext: false,
+            }, // month
+            // day of week (0 and 7 are both Sunday); names + L/# extensions.
+            _ => Self {
+                range: Some((0, 7)),
+                names: Some(&CRON_DAY_NAMES),
+                allow_ext: true,
+            },
+        }
+    }
+
+    fn permissive() -> Self {
+        Self {
+            range: None,
+            names: None,
+            allow_ext: true,
+        }
+    }
+}
+
+/// Validate one whitespace-delimited cron field. A field is a comma-separated
+/// list of items; each item is `*`/`?`, a number or named token, an `a-b`
+/// range, or any of those with a `/step`. `spec` carries the numeric range,
+/// the name whitelist, and whether `L`/`W`/`#` extensions are legal here.
+fn is_valid_cron_field(field: &str, spec: CronFieldSpec) -> bool {
+    if field.is_empty() {
+        return false;
+    }
+    field.split(',').all(|item| is_valid_cron_item(item, spec))
+}
+
+fn is_valid_cron_item(item: &str, spec: CronFieldSpec) -> bool {
+    if item.is_empty() {
+        return false;
+    }
+    // Split an optional `/step` suffix.
+    let (base, step) = match item.split_once('/') {
+        Some((b, s)) => (b, Some(s)),
+        None => (item, None),
+    };
+    if let Some(step) = step {
+        // Step must be a positive integer.
+        if step.is_empty() || !step.chars().all(|c| c.is_ascii_digit()) {
+            return false;
+        }
+        if step.parse::<u32>().map(|n| n == 0).unwrap_or(true) {
+            return false;
+        }
+    }
+
+    // `*` is valid in every field. `?` only in the day-of-month / day-of-week
+    // fields (croniter rejects it elsewhere); `allow_ext` marks exactly those
+    // day fields, where the `?` and `L`/`W`/`#` day-semantics are legal.
+    if base == "*" {
+        return true;
+    }
+    if base == "?" {
+        return spec.allow_ext;
+    }
+
+    // Range `a-b` or a single value.
+    match base.split_once('-') {
+        Some((lo, hi)) => is_valid_cron_value(lo, spec) && is_valid_cron_value(hi, spec),
+        None => is_valid_cron_value(base, spec),
+    }
+}
+
+fn is_valid_cron_value(value: &str, spec: CronFieldSpec) -> bool {
+    if value.is_empty() {
+        return false;
+    }
+    if value.chars().all(|c| c.is_ascii_digit()) {
+        let Ok(n) = value.parse::<u32>() else {
+            return false;
+        };
+        return match spec.range {
+            Some((lo, hi)) => n >= lo && n <= hi,
+            None => true,
+        };
+    }
+    // Alphabetic names. A whitelist (`Some`) accepts only the real month/day
+    // tokens for that field, so junk like `foo` in the month field is rejected
+    // (it would silently never run); `None` is the permissive 6/7-field path.
+    if value.len() == 3 && value.chars().all(|c| c.is_ascii_alphabetic()) {
+        let lower = value.to_ascii_lowercase();
+        match spec.names {
+            None => return true,
+            Some(set) => {
+                if set.contains(&lower.as_str()) {
+                    return true;
+                }
+            }
+        }
+    }
+    // croniter day-field extensions: `L` (last day of month/week), `W` (nearest
+    // weekday), and `name#n` / `n#n` (nth weekday of month). croniter — floo's
+    // scheduler — accepts and runs these, so false-rejecting one would
+    // hard-block a valid deploy, the worst outcome. We accept any token built
+    // from legal cron chars that carries an extension marker rather than parse
+    // the (version-dependent) L/W/# grammar exactly: over-accepting a malformed
+    // extension is the safe direction (it can't block a deploy that runs today —
+    // a schedule croniter ultimately can't parse simply never fires).
+    spec.allow_ext
+        && value.chars().all(|c| c.is_ascii_alphanumeric() || c == '#')
+        && value
+            .chars()
+            .any(|c| matches!(c, 'L' | 'W' | 'l' | 'w' | '#'))
+}
+
 fn status_label(status: &str) -> &str {
     match status {
         "pending" => "Queued...",
@@ -102,6 +393,9 @@ pub fn preflight(path: PathBuf, app: Option<String>, services_filter: Vec<String
             process::exit(1);
         }
     };
+    // Full declared service set — cron `service` references validate against
+    // this, not the (possibly `--services`-filtered) subset below.
+    let all_service_names: Vec<String> = all_services.iter().map(|s| s.name.clone()).collect();
     let services = match project_config::filter_services(all_services, &services_filter) {
         Ok(svcs) => svcs,
         Err(e) => {
@@ -120,13 +414,25 @@ pub fn preflight(path: PathBuf, app: Option<String>, services_filter: Vec<String
     let (_primary_detection, per_service_detection) =
         detect_for_services(&project_path, &svc_pairs);
 
-    // 5. Validate
-    let (preflight_errors, preflight_warnings) =
-        validate_preflight(&project_path, &services, &resolved, &managed_services);
-
-    // 6. Generate security notes
-    let security_notes = generate_security_notes(&services, &managed_services, &resolved);
+    // 5. Validate (env plan first — the build/run checks read it).
     let env_injection_plan = build_env_injection_plan(&services, &managed_services, &resolved);
+    let validation_findings = validate_preflight(
+        &services,
+        &all_service_names,
+        &resolved,
+        &managed_services,
+        &env_injection_plan,
+    );
+    let security_findings = generate_security_findings(&services, &resolved, &env_injection_plan);
+
+    let valid = !has_errors(&validation_findings);
+    let contains_secrets = security_findings
+        .iter()
+        .any(|f| f.code == "SECRET_IN_WEB_SERVICE");
+
+    // All findings, build/run first then security, as one typed list.
+    let mut all_findings = validation_findings.clone();
+    all_findings.extend(security_findings.iter().cloned());
 
     // 7. Remote preflight audit (declared vs deployed). Best-effort — auth/resolution
     // failures degrade to a note; local validation still ships.
@@ -151,11 +457,6 @@ pub fn preflight(path: PathBuf, app: Option<String>, services_filter: Vec<String
             })
             .collect();
 
-        let warning_strings: Vec<&str> = preflight_warnings
-            .iter()
-            .map(|w| w.get("message").and_then(|v| v.as_str()).unwrap_or(""))
-            .collect();
-
         let managed_json: Vec<serde_json::Value> = managed_services
             .iter()
             .map(|ms| {
@@ -166,60 +467,83 @@ pub fn preflight(path: PathBuf, app: Option<String>, services_filter: Vec<String
             })
             .collect();
 
-        output::success(
-            "",
-            Some(serde_json::json!({
-                "app": app_name,
-                "services": svc_json,
-                "managed_services": managed_json,
-                "env_injection_plan": env_injection_plan,
-                "warnings": warning_strings,
-                "security_notes": security_notes,
-                "plan": remote_plan.as_ref().map(crate::output::to_value),
-                "valid": preflight_errors.is_empty(),
-            })),
-        );
-    } else {
-        display_preflight_human(
-            &app_name,
-            &resolved,
-            &services,
-            &per_service_detection,
-            &env_injection_plan,
-            &preflight_warnings,
-            &preflight_errors,
-        );
+        let cron_json = cron_json(&resolved);
 
-        if !managed_services.is_empty() {
-            eprintln!("  Managed services (declared):");
-            for ms in &managed_services {
-                let tier_label = ms.tier.as_deref().unwrap_or("basic");
-                eprintln!("    {} (tier {tier_label})", ms.name);
+        let data = serde_json::json!({
+            "app": app_name,
+            "services": svc_json,
+            "managed_services": managed_json,
+            "env_injection_plan": env_injection_plan,
+            "cron": cron_json,
+            "findings": all_findings,
+            "plan": remote_plan.as_ref().map(crate::output::to_value),
+            "valid": valid,
+        });
+
+        // One JSON object, always. On an invalid config the payload is
+        // error-shaped (`success:false` + `error`) but still carries the full
+        // `data` so agents read findings either way — the prior code emitted
+        // BOTH a success and an error object, breaking JSON parsing.
+        let mut payload = if valid {
+            serde_json::json!({ "success": true, "data": data })
+        } else {
+            let count = all_findings.iter().filter(|f| f.is_error()).count();
+            serde_json::json!({
+                "success": false,
+                "error": {
+                    "code": ErrorCode::ConfigInvalid.as_str(),
+                    "message": format!("{count} preflight error(s) found."),
+                    "suggestion": "Fix the errors above and run `floo preflight` to re-validate.",
+                },
+                "data": data,
+            })
+        };
+        if contains_secrets {
+            if let Some(map) = payload.as_object_mut() {
+                map.insert(
+                    crate::redact::CONTAINS_SECRETS_KEY.to_string(),
+                    serde_json::Value::Bool(true),
+                );
             }
-            eprintln!();
         }
+        output::print_json(&payload);
 
-        if let Some(ref plan) = remote_plan {
-            render_plan_human(plan);
+        if !valid {
+            process::exit(1);
         }
-
-        if !security_notes.is_empty() {
-            eprintln!("  Security:");
-            for note in &security_notes {
-                eprintln!("    \u{26a0} {note}");
-            }
-            eprintln!();
-        }
+        return;
     }
 
-    if !preflight_errors.is_empty() {
-        let count = preflight_errors.len();
-        for e in &preflight_errors {
-            let msg = e.get("message").and_then(|v| v.as_str()).unwrap_or("");
-            if !output::is_json_mode() {
-                eprintln!("  \u{2717} {msg}");
-            }
+    // --- Human output ---
+    display_preflight_human(
+        &app_name,
+        &resolved,
+        &services,
+        &per_service_detection,
+        &env_injection_plan,
+        &validation_findings,
+    );
+
+    if !managed_services.is_empty() {
+        eprintln!("  Managed services (declared):");
+        for ms in &managed_services {
+            let tier_label = ms.tier.as_deref().unwrap_or("basic");
+            eprintln!("    {} (tier {tier_label})", ms.name);
         }
+        eprintln!();
+    }
+
+    if let Some(ref plan) = remote_plan {
+        render_plan_human(plan);
+    }
+
+    render_security_findings_human(&security_findings);
+
+    if !valid {
+        for f in all_findings.iter().filter(|f| f.is_error()) {
+            eprintln!("  {} {}", Severity::Error.glyph(), f.message);
+        }
+        let count = all_findings.iter().filter(|f| f.is_error()).count();
         output::error(
             &format!("{count} preflight error(s) found."),
             &ErrorCode::ConfigInvalid,
@@ -227,6 +551,31 @@ pub fn preflight(path: PathBuf, app: Option<String>, services_filter: Vec<String
         );
         process::exit(1);
     }
+
+    print_preflight_ready(&all_findings);
+}
+
+/// Serialize declared `[cron.<name>]` entries for the JSON payload. Preflight
+/// previously omitted cron entirely; agents had no way to see them.
+fn cron_json(resolved: &project_config::ResolvedApp) -> Vec<serde_json::Value> {
+    let Some(app_cfg) = resolved.app_config.as_ref() else {
+        return Vec::new();
+    };
+    let mut names: Vec<&String> = app_cfg.cron.keys().collect();
+    names.sort();
+    names
+        .into_iter()
+        .map(|name| {
+            let cfg = &app_cfg.cron[name];
+            serde_json::json!({
+                "name": name,
+                "schedule": cfg.schedule,
+                "command": cfg.command,
+                "service": cfg.service,
+                "timeout": cfg.timeout.unwrap_or(300),
+            })
+        })
+        .collect()
 }
 
 pub fn deploy(
@@ -371,6 +720,7 @@ pub fn deploy(
             process::exit(1);
         }
     };
+    let all_service_names: Vec<String> = all_services.iter().map(|s| s.name.clone()).collect();
     let services = match project_config::filter_services(all_services, &services_filter) {
         Ok(svcs) => svcs,
         Err(e) => {
@@ -389,10 +739,16 @@ pub fn deploy(
         .collect();
     let (primary_detection, per_service_detection) = detect_for_services(&project_path, &svc_pairs);
 
-    // 5. Validate per-service (port, name, Dockerfile EXPOSE, env_file)
-    let (preflight_errors, preflight_warnings) =
-        validate_preflight(&project_path, &services, &resolved, &managed_services);
+    // 5. Validate per-service (env plan first — the build/run checks read it).
     let env_injection_plan = build_env_injection_plan(&services, &managed_services, &resolved);
+    let validation_findings = validate_preflight(
+        &services,
+        &all_service_names,
+        &resolved,
+        &managed_services,
+        &env_injection_plan,
+    );
+    let valid = !has_errors(&validation_findings);
 
     // 6. Display preflight info
     if !output::is_json_mode() {
@@ -402,8 +758,7 @@ pub fn deploy(
             &services,
             &per_service_detection,
             &env_injection_plan,
-            &preflight_warnings,
-            &preflight_errors,
+            &validation_findings,
         );
 
         if !managed_services.is_empty() {
@@ -435,11 +790,6 @@ pub fn deploy(
             })
             .collect();
 
-        let warning_strings: Vec<&str> = preflight_warnings
-            .iter()
-            .map(|w| w.get("message").and_then(|v| v.as_str()).unwrap_or(""))
-            .collect();
-
         let managed_json: Vec<serde_json::Value> = managed_services
             .iter()
             .map(|ms| {
@@ -456,7 +806,7 @@ pub fn deploy(
         let svc_count = services.len();
         let preview = format!(
             "Would deploy app '{app_name}' with {svc_count} service(s){}.",
-            if preflight_errors.is_empty() {
+            if valid {
                 ""
             } else {
                 "; preflight errors must be fixed first"
@@ -470,8 +820,9 @@ pub fn deploy(
                 "services": svc_json,
                 "managed_services": managed_json,
                 "env_injection_plan": env_injection_plan,
-                "warnings": warning_strings,
-                "valid": preflight_errors.is_empty(),
+                "cron": cron_json(&resolved),
+                "findings": validation_findings,
+                "valid": valid,
             }),
         );
         return;
@@ -489,14 +840,13 @@ pub fn deploy(
     }
 
     // 9. Fail if preflight has errors
-    if !preflight_errors.is_empty() {
-        let count = preflight_errors.len();
-        for e in &preflight_errors {
-            let msg = e.get("message").and_then(|v| v.as_str()).unwrap_or("");
+    if !valid {
+        for f in validation_findings.iter().filter(|f| f.is_error()) {
             if !output::is_json_mode() {
-                eprintln!("  \u{2717} {msg}");
+                eprintln!("  {} {}", Severity::Error.glyph(), f.message);
             }
         }
+        let count = validation_findings.iter().filter(|f| f.is_error()).count();
         output::error(
             &format!("{count} preflight error(s) found."),
             &ErrorCode::ConfigInvalid,
@@ -1056,16 +1406,40 @@ fn env_files_for_service(
     files
 }
 
-fn parse_env_assignment(line: &str) -> Option<(&str, &str)> {
+/// Parse one env-file line into its raw `(key, value)`, or `None` for a blank
+/// or comment line. THE single definition of how floo reads an env-file line:
+/// both the preflight inspection paths and the deploy-sync import path
+/// (`parse_env_file_soft`) call this, so they agree byte-for-byte on what a line
+/// declares. Trims, skips `#` comments, strips a leading `export ` (plus any
+/// extra whitespace), splits on the first `=`, and strips ONE matching pair of
+/// surrounding quotes from the value. Keys are returned verbatim — callers that
+/// need the deployed form uppercase them, since deploy-sync uppercases on import.
+fn parse_env_line(line: &str) -> Option<(&str, &str)> {
     let trimmed = line.trim();
     if trimmed.is_empty() || trimmed.starts_with('#') {
         return None;
     }
+    let trimmed = trimmed
+        .strip_prefix("export ")
+        .unwrap_or(trimmed)
+        .trim_start();
     let (key, value) = trimmed.split_once('=')?;
-    Some((
-        key.trim(),
-        value.trim().trim_matches('"').trim_matches('\''),
-    ))
+    Some((key.trim(), strip_matching_quotes(value.trim())))
+}
+
+/// Strip ONE matching pair of surrounding single or double quotes, if present.
+/// Mirrors deploy-sync's value handling; the `len() >= 2` guard also avoids the
+/// `value[1..0]` panic a lone `"` would otherwise trigger.
+fn strip_matching_quotes(value: &str) -> &str {
+    let bytes = value.as_bytes();
+    if bytes.len() >= 2 {
+        let first = bytes[0];
+        let last = bytes[bytes.len() - 1];
+        if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
+            return &value[1..value.len() - 1];
+        }
+    }
+    value
 }
 
 fn is_cloudsql_socket_database_url(value: &str) -> bool {
@@ -1077,97 +1451,255 @@ fn is_cloudsql_socket_database_url(value: &str) -> bool {
             || lower.contains("host=%2fcloudsql"))
 }
 
-/// Validate services for common config errors. Returns (errors, warnings).
+/// Validate services for common config errors, returning typed findings.
+///
+/// `services` is the (possibly `--services`-filtered) set being validated;
+/// `all_service_names` is the full declared set, used for cron `service`
+/// references so a `--services` filter doesn't make a valid cron look broken.
+/// `env_plan` carries the per-service managed-injection keys + declared
+/// required/optional contract, which the required-env and migrate checks read.
+///
 /// Absorbs the validation logic that was previously in `floo check`.
+///
+/// Service-local paths resolve against `resolved.config_dir` (where the config
+/// lives), NOT a user-supplied path: `resolve_app_context` walks up from the
+/// invocation directory, so for `floo preflight ./sub` the service `path`s are
+/// relative to the config dir, which may be an ancestor. Using the invocation
+/// path would false-error `SERVICE_PATH_NOT_FOUND` on a valid monorepo service.
 fn validate_preflight(
-    project_path: &Path,
     services: &[ServiceConfig],
+    all_service_names: &[String],
     resolved: &project_config::ResolvedApp,
     managed_services: &[project_config::ManagedServiceDeclaration],
-) -> (Vec<serde_json::Value>, Vec<serde_json::Value>) {
-    let mut errors: Vec<serde_json::Value> = Vec::new();
-    let mut warnings: Vec<serde_json::Value> = Vec::new();
+    env_plan: &EnvInjectionPlan,
+) -> Vec<PreflightFinding> {
+    let mut findings: Vec<PreflightFinding> = Vec::new();
     let mut seen_names: Vec<String> = Vec::new();
     let has_managed_postgres = managed_services.iter().any(|ms| ms.name == "postgres");
+
+    // The single canonical set of env files the deploy imports — shared with
+    // `sync_env_vars_if_needed` (an inline floo.app.toml env_file and
+    // external-repo services are NOT in it, matching what deploy imports).
+    let imported_env_file_list = deploy_imported_env_files(resolved);
+
+    // Validate every imported env_file with the deploy's OWN validator over the
+    // FULL (unfiltered) set: `sync_env_vars_if_needed` runs `validate_env_file_path`
+    // across this exact set and `process::exit(1)`s on the first failure,
+    // unconditionally and regardless of `--services`. So a single invalid
+    // imported env_file is a guaranteed deploy rejection — a hard error here,
+    // even when validating a `--services` subset that excludes that service.
+    for (svc_name, env_file, base) in &imported_env_file_list {
+        if let Err(msg) = super::env::validate_env_file_path(env_file, base) {
+            findings.push(
+                PreflightFinding::error(
+                    "ENV_FILE_INVALID",
+                    format!("Service '{svc_name}' env_file is invalid: {msg}"),
+                )
+                .with_hint(
+                    "env_file must be a relative path inside the service that exists on disk.",
+                ),
+            );
+        }
+    }
+
+    // Keyed by service name for the per-service required-env/migrate satisfaction
+    // lookups below.
+    let imported_env_files: std::collections::HashMap<String, (String, PathBuf)> =
+        imported_env_file_list
+            .into_iter()
+            .map(|(name, env_file, base)| (name, (env_file, base)))
+            .collect();
 
     for svc in services {
         // Validate service name
         if let Err(msg) = validate_service_name(&svc.name) {
-            errors.push(serde_json::json!({
-                "path": svc.path,
-                "code": "INVALID_SERVICE_NAME",
-                "message": msg,
-            }));
+            findings
+                .push(PreflightFinding::error("INVALID_SERVICE_NAME", msg).with_path(&svc.path));
         }
 
         // Check for duplicate names
         if seen_names.contains(&svc.name) {
-            errors.push(serde_json::json!({
-                "path": svc.path,
-                "code": "DUPLICATE_SERVICE_NAME",
-                "message": format!("Duplicate service name '{}'.", svc.name),
-            }));
+            findings.push(
+                PreflightFinding::error(
+                    "DUPLICATE_SERVICE_NAME",
+                    format!("Duplicate service name '{}'.", svc.name),
+                )
+                .with_path(&svc.path),
+            );
         } else {
             seen_names.push(svc.name.clone());
         }
 
         // Validate port
         if svc.port == 0 {
-            errors.push(serde_json::json!({
-                "path": svc.path,
-                "code": "INVALID_PORT",
-                "message": format!("Service '{}' has invalid port 0. Ports must be 1-65535.", svc.name),
-            }));
+            findings.push(
+                PreflightFinding::error(
+                    "INVALID_PORT",
+                    format!(
+                        "Service '{}' has invalid port 0. Ports must be 1-65535.",
+                        svc.name
+                    ),
+                )
+                .with_path(&svc.path),
+            );
         }
 
-        let svc_dir = project_path.join(&svc.path);
-        let configured_env_file = resolved
-            .app_config
-            .as_ref()
-            .and_then(|app_cfg| app_cfg.services.get(&svc.name))
-            .and_then(|entry| entry.env_file.as_deref());
+        // A service sourced from an external `repo` builds from THAT repo, not
+        // the local checkout — its `path` is relative to the external repo and
+        // won't exist locally. None of the local-disk checks below apply, and
+        // erroring on the missing local path would false-block a valid config.
+        if service_is_external_repo(resolved, &svc.name) {
+            continue;
+        }
 
-        // Check env_file exists
-        if let Some(ref app_cfg) = resolved.app_config {
-            if let Some(entry) = app_cfg.services.get(&svc.name) {
-                if let Some(ref env_file) = entry.env_file {
-                    let env_path = svc_dir.join(env_file);
-                    if !env_path.exists() {
-                        warnings.push(serde_json::json!({
-                            "path": svc.path,
-                            "code": "ENV_FILE_NOT_FOUND",
-                            "message": format!("Service '{}' env_file '{env_file}' not found on disk.", svc.name),
-                        }));
-                    }
-                }
+        let svc_dir = resolved.config_dir.join(&svc.path);
+
+        // The service path is the Cloud Build context. If it doesn't exist on
+        // disk the build can't even start, so this is a hard error — and there
+        // is no point running the disk-dependent checks below against a
+        // missing directory.
+        if !svc_dir.is_dir() {
+            findings.push(
+                PreflightFinding::error(
+                    "SERVICE_PATH_NOT_FOUND",
+                    format!(
+                        "Service '{}' path './{}' does not exist. The build context is missing — the deploy will fail.",
+                        svc.name, svc.path
+                    ),
+                )
+                .with_path(&svc.path)
+                .with_hint("Create the directory or fix the `path` in floo.app.toml / floo.service.toml."),
+            );
+            continue;
+        }
+
+        // The DECLARED env_file (floo.app.toml inline OR floo.service.toml) — used
+        // for the "you pointed at a missing file" check below and the Rails/secret
+        // scans, which are about declared intent / local exposure.
+        let configured_env_file = configured_env_file_for_service(resolved, svc);
+
+        // Env vars that will actually be present at runtime, from local config:
+        // managed-injected keys (DATABASE_URL, REDIS_URL, …) plus the keys in the
+        // env_file the deploy will IMPORT. Satisfaction reads the imported set
+        // (deploy_imported_env_files), NOT every declared/conventional file — an
+        // inline floo.app.toml env_file is declared but never imported, so it
+        // must not count. Server-side `floo env set` vars are invisible here,
+        // which is why the consumers below warn rather than error.
+        let managed_keys = managed_keys_for_service(env_plan, &svc.name);
+        let imported_env_file = imported_env_files.get(&svc.name);
+        let env_file_keys = match imported_env_file {
+            Some((env_file, base)) => env_file_keys_for_service(base, Some(env_file.as_str())),
+            None => std::collections::HashSet::new(),
+        };
+
+        // (Imported env_file path validity — ENV_FILE_INVALID — is checked once
+        // over the full unfiltered import set above, matching the deploy's
+        // unfiltered import; it is not repeated per filtered service here.)
+
+        // A DECLARED-but-not-imported env_file (an inline floo.app.toml env_file,
+        // which the deploy never imports) gets an advisory warning if missing —
+        // not an error, since it has no effect on the deploy either way.
+        if let Some(ref env_file) = configured_env_file {
+            let is_imported = imported_env_file
+                .map(|(imported, _)| imported == env_file)
+                .unwrap_or(false);
+            if !is_imported && !svc_dir.join(env_file).exists() {
+                findings.push(
+                    PreflightFinding::warning(
+                        "ENV_FILE_NOT_FOUND",
+                        format!(
+                            "Service '{}' env_file '{env_file}' not found on disk.",
+                            svc.name
+                        ),
+                    )
+                    .with_path(&svc.path),
+                );
+            }
+        }
+
+        // A migrate_command needs a database to run against. floo's database is
+        // managed Postgres; if none is reachable from anything local preflight
+        // can see (no managed Postgres attached, no DATABASE_URL in an env
+        // file), the migration step will fail. Warn rather than error because
+        // DATABASE_URL may legitimately be set server-side via `floo env set`.
+        if svc.migrate_command.is_some()
+            && !managed_keys.contains("DATABASE_URL")
+            && !env_file_keys.contains("DATABASE_URL")
+        {
+            findings.push(
+                PreflightFinding::warning(
+                    "MIGRATE_COMMAND_NO_DATABASE",
+                    format!(
+                        "Service '{}' declares migrate_command but no database is reachable from local config — no managed Postgres is attached and no DATABASE_URL is set in a local env file. The migration step will fail unless DATABASE_URL is set another way.",
+                        svc.name
+                    ),
+                )
+                .with_path(&svc.path)
+                .with_hint("Add `[postgres]` to floo.app.toml (or `floo services add postgres`), or set DATABASE_URL with `floo env set`."),
+            );
+        }
+
+        // Required env vars the deploy can't satisfy from local config.
+        let svc_plan = env_plan.services.iter().find(|p| p.service == svc.name);
+        if let Some(plan) = svc_plan {
+            let unsatisfied: Vec<&str> = plan
+                .required
+                .iter()
+                .filter(|key| !managed_keys.contains(key.as_str()) && !env_file_keys.contains(*key))
+                .map(String::as_str)
+                .collect();
+            if !unsatisfied.is_empty() {
+                findings.push(
+                    PreflightFinding::warning(
+                        "REQUIRED_ENV_UNSATISFIED",
+                        format!(
+                            "Service '{}' requires env var(s) {} but they aren't injected by a managed service or present in a local env file.",
+                            svc.name,
+                            unsatisfied.join(", ")
+                        ),
+                    )
+                    .with_path(&svc.path)
+                    .with_hint(format!(
+                        "Set them with `floo env set <KEY>=<value> --services {}` (or confirm they're already set server-side).",
+                        svc.name
+                    )),
+                );
             }
         }
 
         if has_managed_postgres && service_looks_like_rails(&svc_dir) {
-            for (env_label, env_path) in env_files_for_service(&svc_dir, configured_env_file) {
+            for (env_label, env_path) in
+                env_files_for_service(&svc_dir, configured_env_file.as_deref())
+            {
                 let Ok(contents) = std::fs::read_to_string(&env_path) else {
                     continue;
                 };
                 for line in contents.lines() {
-                    let Some((key, value)) = parse_env_assignment(line) else {
+                    let Some((key, value)) = parse_env_line(line) else {
                         continue;
                     };
-                    if key == "DATABASE_URL" && is_cloudsql_socket_database_url(value) {
-                        warnings.push(serde_json::json!({
-                            "path": svc.path,
-                            "code": "RAILS_DATABASE_URL_SOCKET_DSN",
-                            // The illustrative DSNs deliberately omit `user:pass@`
-                            // userinfo: this string flows through print_json's
-                            // redactor, and an embedded `scheme://u:p@` literal
-                            // would be scrubbed to ***REDACTED***, hiding the very
-                            // warning we're trying to surface. Show the host shape,
-                            // not credential-shaped text.
-                            "message": format!(
-                                "Service '{}' looks like Rails and {env_label} contains a Cloud SQL socket-style DATABASE_URL. Rails parses DATABASE_URL with Ruby's URI parser before app code runs, so a host-less DSN like postgresql:///db?host=/cloudsql/... can fail at boot. Remove the stale local override or use floo's framework-compatible managed Postgres URL.",
-                                svc.name
-                            ),
-                            "hint": "Managed Postgres now injects DATABASE_URL plus PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD. The DATABASE_URL value should have a normal host, for example postgresql://127.0.0.1:5432/db.",
-                        }));
+                    // Case-insensitive: deploy-sync uppercases keys, so a
+                    // lowercase `database_url` becomes DATABASE_URL at runtime.
+                    if key.eq_ignore_ascii_case("DATABASE_URL")
+                        && is_cloudsql_socket_database_url(value)
+                    {
+                        // The illustrative DSNs deliberately omit `user:pass@`
+                        // userinfo: this string flows through print_json's
+                        // redactor, and an embedded `scheme://u:p@` literal
+                        // would be scrubbed to ***REDACTED***, hiding the very
+                        // warning we're trying to surface. Show the host shape,
+                        // not credential-shaped text.
+                        findings.push(
+                            PreflightFinding::warning(
+                                "RAILS_DATABASE_URL_SOCKET_DSN",
+                                format!(
+                                    "Service '{}' looks like Rails and {env_label} contains a Cloud SQL socket-style DATABASE_URL. Rails parses DATABASE_URL with Ruby's URI parser before app code runs, so a host-less DSN like postgresql:///db?host=/cloudsql/... can fail at boot. Remove the stale local override or use floo's framework-compatible managed Postgres URL.",
+                                    svc.name
+                                ),
+                            )
+                            .with_path(&svc.path)
+                            .with_hint("Managed Postgres now injects DATABASE_URL plus PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD. The DATABASE_URL value should have a normal host, for example postgresql://127.0.0.1:5432/db."),
+                        );
                         break;
                     }
                 }
@@ -1196,14 +1728,16 @@ fn validate_preflight(
                             let port_str = expose_val.split('/').next().unwrap_or(expose_val);
                             if let Ok(exposed_port) = port_str.parse::<u16>() {
                                 if exposed_port != svc.port {
-                                    warnings.push(serde_json::json!({
-                                        "path": svc.path,
-                                        "code": "EXPOSE_PORT_MISMATCH",
-                                        "message": format!(
-                                            "Service '{}' Dockerfile EXPOSE {exposed_port} does not match configured port {}.",
-                                            svc.name, svc.port
-                                        ),
-                                    }));
+                                    findings.push(
+                                        PreflightFinding::warning(
+                                            "EXPOSE_PORT_MISMATCH",
+                                            format!(
+                                                "Service '{}' Dockerfile EXPOSE {exposed_port} does not match configured port {}.",
+                                                svc.name, svc.port
+                                            ),
+                                        )
+                                        .with_path(&svc.path),
+                                    );
                                 }
                             }
                         }
@@ -1214,92 +1748,276 @@ fn validate_preflight(
                         if trimmed.starts_with("CMD [")
                             && (trimmed.contains("$PORT") || trimmed.contains("${PORT}"))
                         {
-                            warnings.push(serde_json::json!({
-                                "path": svc.path,
-                                "code": "CMD_EXEC_FORM_PORT",
-                                "message": format!(
-                                    "Service '{}' Dockerfile CMD uses exec form with $PORT — $PORT won't expand at runtime.",
-                                    svc.name
-                                ),
-                                "hint": "Use shell form: CMD [\"sh\", \"-c\", \"your-command $PORT\"]",
-                            }));
+                            findings.push(
+                                PreflightFinding::warning(
+                                    "CMD_EXEC_FORM_PORT",
+                                    format!(
+                                        "Service '{}' Dockerfile CMD uses exec form with $PORT — $PORT won't expand at runtime.",
+                                        svc.name
+                                    ),
+                                )
+                                .with_path(&svc.path)
+                                .with_hint("Use shell form: CMD [\"sh\", \"-c\", \"your-command $PORT\"]"),
+                            );
                         }
 
                         // npm ci without package-lock.json — report once per service
                         if !npm_ci_flagged && no_lockfile && trimmed.contains("npm ci") {
-                            errors.push(serde_json::json!({
-                                "path": svc.path,
-                                "code": "NPM_CI_NO_LOCKFILE",
-                                "message": format!(
-                                    "Service '{}' Dockerfile uses 'npm ci' but package-lock.json was not found.",
-                                    svc.name
-                                ),
-                                "hint": "Commit package-lock.json or change 'npm ci' to 'npm install' in your Dockerfile",
-                            }));
+                            findings.push(
+                                PreflightFinding::error(
+                                    "NPM_CI_NO_LOCKFILE",
+                                    format!(
+                                        "Service '{}' Dockerfile uses 'npm ci' but package-lock.json was not found.",
+                                        svc.name
+                                    ),
+                                )
+                                .with_path(&svc.path)
+                                .with_hint("Commit package-lock.json or change 'npm ci' to 'npm install' in your Dockerfile"),
+                            );
                             npm_ci_flagged = true;
                         }
                     }
                 }
                 Err(e) => {
-                    warnings.push(serde_json::json!({
-                        "path": svc.path,
-                        "code": "DOCKERFILE_READ_ERROR",
-                        "message": format!(
-                            "Service '{}' Dockerfile exists but could not be read: {e}. Checks skipped.",
-                            svc.name
-                        ),
-                    }));
+                    findings.push(
+                        PreflightFinding::warning(
+                            "DOCKERFILE_READ_ERROR",
+                            format!(
+                                "Service '{}' Dockerfile exists but could not be read: {e}. Checks skipped.",
+                                svc.name
+                            ),
+                        )
+                        .with_path(&svc.path),
+                    );
                 }
             }
         }
     }
 
-    (errors, warnings)
+    findings.extend(validate_cron_jobs(resolved, all_service_names));
+    findings
 }
 
-/// Generate security notes based on service configuration and managed services.
+/// Validate `[cron.<name>]` entries against floo's deploy contract.
 ///
-/// These are informational (not errors/warnings) — they help users and agents
-/// understand what's exposed and where secrets will be available.
-fn generate_security_notes(
-    services: &[ServiceConfig],
-    managed_services: &[project_config::ManagedServiceDeclaration],
+/// Two failure modes the platform otherwise swallows silently:
+/// - An invalid `schedule` deploys fine but the job never becomes due
+///   (`croniter` can't parse it) — surfaced as `CRON_INVALID_SCHEDULE`.
+/// - A `service` that names no declared service is silently skipped by
+///   `_sync_cron_jobs` (`api/app/services/pipeline.py`) on a multi-service
+///   deploy, so the job is never registered. That's a hard `CRON_SERVICE_NOT_FOUND`
+///   error for multi-service apps. Single-service deploys run the job in the
+///   sole image regardless of the name, so a mismatch there is only a warning.
+fn validate_cron_jobs(
     resolved: &project_config::ResolvedApp,
-) -> Vec<String> {
-    let mut notes: Vec<String> = Vec::new();
+    all_service_names: &[String],
+) -> Vec<PreflightFinding> {
+    let mut findings = Vec::new();
+    let Some(app_cfg) = resolved.app_config.as_ref() else {
+        return findings;
+    };
+    if app_cfg.cron.is_empty() {
+        return findings;
+    }
 
-    // Check access_mode — warn if no auth is configured
-    // Mirror what the CLI actually sends to the API: deploy.rs:570 still
-    // resolves env-override-wins for the body.access_mode it POSTs, so the
-    // warning matches the value the deploy will use. Pre-this-PR this only
-    // checked `[app]`, which made the warning fire even when the user had
-    // set `[environments.dev] access_mode = "accounts"` correctly.
+    let multi_service = all_service_names.len() > 1;
+    // Stable order so JSON output and human output don't reshuffle run-to-run.
+    let mut names: Vec<&String> = app_cfg.cron.keys().collect();
+    names.sort();
+
+    for name in names {
+        let cfg = &app_cfg.cron[name];
+
+        if !is_valid_cron_schedule(&cfg.schedule) {
+            findings.push(
+                PreflightFinding::error(
+                    "CRON_INVALID_SCHEDULE",
+                    format!(
+                        "Cron job '{name}' has an invalid schedule '{}'. floo reads it as a standard cron expression and the job will never run.",
+                        cfg.schedule
+                    ),
+                )
+                .with_hint("Use a 5-field cron expression like \"0 9 * * *\" (every day at 09:00 UTC) or a macro like @daily."),
+            );
+        }
+
+        if !all_service_names.iter().any(|s| s == &cfg.service) {
+            let known = if all_service_names.is_empty() {
+                "none".to_string()
+            } else {
+                all_service_names.join(", ")
+            };
+            if multi_service {
+                findings.push(
+                    PreflightFinding::error(
+                        "CRON_SERVICE_NOT_FOUND",
+                        format!(
+                            "Cron job '{name}' references service '{}', which isn't a declared service ({known}). The deploy silently skips it and the job is never registered.",
+                            cfg.service
+                        ),
+                    )
+                    .with_hint("Set `service` to one of the declared services."),
+                );
+            } else {
+                findings.push(
+                    PreflightFinding::warning(
+                        "CRON_SERVICE_NOT_FOUND",
+                        format!(
+                            "Cron job '{name}' references service '{}', which isn't the declared service ({known}). It still runs in the only service's image, but the name is misleading.",
+                            cfg.service
+                        ),
+                    )
+                    .with_hint("Set `service` to the declared service name."),
+                );
+            }
+        }
+    }
+
+    findings
+}
+
+/// Whether a service is sourced from an external `repo` rather than the local
+/// checkout. Such a service's build context (and its env files) live in the
+/// referenced repo, so NONE of the local-disk checks — path existence, env_file
+/// resolution, Dockerfile, the web-secret scan — apply to it. Single source of
+/// that decision so every local-disk check skips external-repo services
+/// consistently.
+fn service_is_external_repo(resolved: &project_config::ResolvedApp, service_name: &str) -> bool {
+    resolved
+        .app_config
+        .as_ref()
+        .and_then(|c| c.services.get(service_name))
+        .map(|entry| entry.repo.is_some())
+        .unwrap_or(false)
+}
+
+/// The env_file a service's deploy-sync will import, from EITHER source the
+/// deploy reads: the inline `floo.app.toml` service entry, or the service's own
+/// `floo.service.toml` `[service] env_file`. Preflight's env-file checks must
+/// see whichever is set, or they false-warn / miss secrets on service-file apps.
+fn configured_env_file_for_service(
+    resolved: &project_config::ResolvedApp,
+    svc: &ServiceConfig,
+) -> Option<String> {
+    if let Some(app_cfg) = resolved.app_config.as_ref() {
+        if let Some(env_file) = app_cfg
+            .services
+            .get(&svc.name)
+            .and_then(|entry| entry.env_file.clone())
+        {
+            return Some(env_file);
+        }
+    }
+    let svc_dir = resolved.config_dir.join(&svc.path);
+    project_config::load_service_config(&svc_dir)
+        .ok()
+        .flatten()
+        .and_then(|cfg| cfg.service.env_file)
+}
+
+/// The managed-injection keys a service receives, per the env injection plan
+/// (DATABASE_URL, PGHOST, REDIS_URL, …). Used to decide whether a declared
+/// required var or a migrate_command's DATABASE_URL is satisfied locally.
+fn managed_keys_for_service(
+    env_plan: &EnvInjectionPlan,
+    service_name: &str,
+) -> std::collections::HashSet<String> {
+    env_plan
+        .services
+        .iter()
+        .find(|p| p.service == service_name)
+        .map(|p| {
+            p.managed
+                .iter()
+                .flat_map(|m| m.keys.iter().cloned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Every env var with a NON-EMPTY value the deploy will actually import for a
+/// service, normalized to the UPPERCASE form deploy-sync imports them under.
+///
+/// Scans ONLY the service's configured `env_file` — the single source
+/// `sync_env_vars_if_needed` imports. The conventional `.env*` files are
+/// deliberately NOT scanned here: the deploy does not import them unless they
+/// are the configured `env_file`, so counting a var found only in an
+/// unconfigured `.env` would let preflight greenlight a `required` var the
+/// deploy leaves unset server-side. Empty assignments (`FOO=`) are skipped for
+/// the same reason (deploy treats present-but-empty as unsatisfied).
+///
+/// This is the satisfaction surface; the security/exposure scan in
+/// `generate_security_findings` is intentionally broader (any local env file in
+/// a web build context can leak, imported or not).
+fn env_file_keys_for_service(
+    svc_dir: &Path,
+    configured_env_file: Option<&str>,
+) -> std::collections::HashSet<String> {
+    let mut keys = std::collections::HashSet::new();
+    let Some(env_file) = configured_env_file else {
+        return keys;
+    };
+    let Ok(contents) = std::fs::read_to_string(svc_dir.join(env_file)) else {
+        return keys;
+    };
+    for line in contents.lines() {
+        if let Some((key, value)) = parse_env_line(line) {
+            if !value.is_empty() {
+                // Uppercase: deploy-sync imports keys uppercased, so this is the
+                // name the runtime actually sees.
+                keys.insert(key.to_uppercase());
+            }
+        }
+    }
+    keys
+}
+
+/// Generate typed security findings from service config + managed services.
+///
+/// Severity is meaningful: `Info` is context (which services are
+/// internet-facing); `Warning` is a real exposure risk (credentials reachable
+/// from a browser-facing service, a secret-shaped var sitting in a web
+/// service's env file). Unlike the prior implementation, none of these are
+/// gated on `services.len() > 1` — a single public service that holds managed
+/// credentials is exactly the case worth surfacing, and hiding it until a
+/// second service appears was the bug in #1154.
+///
+/// `env_plan` is the already-built injection plan (single source of truth for
+/// what each service receives); the caller passes it so we don't rebuild it.
+fn generate_security_findings(
+    services: &[ServiceConfig],
+    resolved: &project_config::ResolvedApp,
+    env_plan: &EnvInjectionPlan,
+) -> Vec<PreflightFinding> {
+    let mut findings: Vec<PreflightFinding> = Vec::new();
+
+    // Check access_mode — note when no auth is configured.
+    // Mirror what the CLI actually sends to the API: the deploy resolves
+    // env-override-wins for the body.access_mode it POSTs, so the note matches
+    // the value the deploy will use.
     let access_mode = resolved.app_config.as_ref().and_then(|c| {
         c.environments
             .get("dev")
             .and_then(|env| env.access_mode)
             .or(c.app.access_mode)
     });
-    match access_mode {
-        None | Some(AppAccessMode::Public) => {
-            // Closes feedback 88e32b22 (floo-artifact 2026-05-01): the user
-            // had to dig into the docs to discover that access_mode is a
-            // toml knob and where it goes. Be specific: `[app]` is the
-            // placement that actually applies on push deploys today.
-            notes.push(
-                "Access mode is 'public' (no auth). Anyone can access your app. \
-                 To require auth, set `[app] access_mode = \"accounts\"` in \
-                 floo.app.toml — that's the placement applied on every push. \
-                 Per-env overrides via `[environments.<name>]` are accepted \
-                 by the schema but not yet applied server-side; use \
-                 `floo deploy --access-mode` to scope one env in the meantime."
-                    .to_string(),
-            );
-        }
-        _ => {} // accounts, password, sso — all have auth
+    if matches!(access_mode, None | Some(AppAccessMode::Public)) {
+        // Closes feedback 88e32b22 (floo-artifact 2026-05-01): the user had to
+        // dig into the docs to discover that access_mode is a toml knob and
+        // where it goes. Be specific: `[app]` is the placement applied today.
+        findings.push(PreflightFinding::info(
+            "ACCESS_MODE_PUBLIC",
+            "Access mode is 'public' (no auth). Anyone can access your app. \
+             To require auth, set `[app] access_mode = \"accounts\"` in \
+             floo.app.toml — that's the placement applied on every push. \
+             Per-env overrides via `[environments.<name>]` are accepted by \
+             the schema but not yet applied server-side; use \
+             `floo deploy --access-mode` to scope one env in the meantime."
+                .to_string(),
+        ));
     }
 
-    // Note which services are internet-facing
+    // Note which services are internet-facing — for single-service apps too.
     let public_services: Vec<&str> = services
         .iter()
         .filter(|s| s.ingress == ServiceIngress::Public)
@@ -1311,109 +2029,130 @@ fn generate_security_notes(
         .map(|s| s.name.as_str())
         .collect();
 
-    if !public_services.is_empty() && services.len() > 1 {
-        notes.push(format!(
-            "Internet-facing: {}. Set ingress = \"internal\" in floo.app.toml to restrict.",
-            public_services.join(", ")
+    if !public_services.is_empty() {
+        findings.push(PreflightFinding::info(
+            "SERVICE_INTERNET_FACING",
+            format!(
+                "Internet-facing: {}. Set ingress = \"internal\" in floo.app.toml to restrict.",
+                public_services.join(", ")
+            ),
         ));
     }
     if !internal_services.is_empty() {
-        notes.push(format!(
-            "Internal only (not internet-facing): {}.",
-            internal_services.join(", ")
+        findings.push(PreflightFinding::info(
+            "SERVICE_INTERNAL_ONLY",
+            format!(
+                "Internal only (not internet-facing): {}.",
+                internal_services.join(", ")
+            ),
         ));
     }
 
-    // Warn about managed service env vars reaching frontend services.
-    let env_plan = build_env_injection_plan(services, managed_services, resolved);
-    if services.len() > 1 {
-        let web_service_names: Vec<&str> = services
-            .iter()
-            .filter(|s| s.service_type == ServiceType::Web)
-            .map(|s| s.name.as_str())
-            .collect();
-        if env_plan.mode == "implicit_all"
-            && !web_service_names.is_empty()
-            && env_plan.services.iter().any(|svc| !svc.managed.is_empty())
-        {
-            notes.push(format!(
+    // Managed-service credentials reaching a browser-facing (web) service — a
+    // real risk whether the app has one service or ten.
+    let web_service_names: Vec<&str> = services
+        .iter()
+        .filter(|s| s.service_type == ServiceType::Web)
+        .map(|s| s.name.as_str())
+        .collect();
+    if env_plan.mode == "implicit_all"
+        && !web_service_names.is_empty()
+        && env_plan.services.iter().any(|svc| !svc.managed.is_empty())
+    {
+        findings.push(PreflightFinding::warning(
+            "MANAGED_CREDS_TO_WEB",
+            format!(
                 "Managed service credentials are implicitly available to every service, including {}. Add [services.<name>.env] managed = [...] to attach them only where needed.",
                 web_service_names.join(", "),
-            ));
-        } else {
-            for svc_plan in &env_plan.services {
-                let Some(svc) = services.iter().find(|s| s.name == svc_plan.service) else {
-                    continue;
-                };
-                if svc.service_type == ServiceType::Web && !svc_plan.managed.is_empty() {
-                    let handles: Vec<&str> =
-                        svc_plan.managed.iter().map(|m| m.handle.as_str()).collect();
-                    notes.push(format!(
+            ),
+        ));
+    } else {
+        for svc_plan in &env_plan.services {
+            let Some(svc) = services.iter().find(|s| s.name == svc_plan.service) else {
+                continue;
+            };
+            if svc.service_type == ServiceType::Web && !svc_plan.managed.is_empty() {
+                let handles: Vec<&str> =
+                    svc_plan.managed.iter().map(|m| m.handle.as_str()).collect();
+                findings.push(PreflightFinding::warning(
+                    "MANAGED_CREDS_TO_WEB",
+                    format!(
                         "Web service '{}' receives managed credentials: {}. Keep this only if browser-facing code really needs them server-side.",
                         svc.name,
                         handles.join(", "),
-                    ));
-                }
+                    ),
+                ));
             }
         }
     }
 
-    // Check for secrets leaked to frontend services via .env files
+    // Secret-shaped vars sitting in a web service's env file — they may ship to
+    // the browser. This is the finding that stamps the top-level
+    // `contains_secrets` marker on the JSON payload.
     for svc in services {
         if svc.service_type != ServiceType::Web {
             continue;
         }
-        // Check common env file locations in the service directory
-        let svc_path = std::path::Path::new(&svc.path);
-        for env_filename in &[".env", ".env.local", ".env.production"] {
-            let env_path = svc_path.join(env_filename);
+        // External-repo services build from the referenced repo; a local `.env`
+        // under the config dir is not part of that service's source, so scanning
+        // it would falsely emit SECRET_IN_WEB_SERVICE + contains_secrets.
+        if service_is_external_repo(resolved, &svc.name) {
+            continue;
+        }
+        // Resolve env files against the project's config dir, not the process
+        // CWD — `floo preflight <path>` runs from anywhere, and the prior
+        // `Path::new(&svc.path)` made this scan silently no-op off-cwd.
+        let svc_dir = resolved.config_dir.join(&svc.path);
+        // Scan the service's configured `env_file` (the source the deploy
+        // actually imports — e.g. `.floo.env` from `floo init`, declared in
+        // either floo.app.toml or floo.service.toml) in addition to the
+        // conventional candidates, so a secret in a custom env file isn't missed.
+        let configured_env_file = configured_env_file_for_service(resolved, svc);
+        let mut env_filenames: Vec<&str> = Vec::new();
+        if let Some(ef) = configured_env_file.as_deref() {
+            env_filenames.push(ef);
+        }
+        for default in [".env", ".env.local", ".env.production"] {
+            if !env_filenames.contains(&default) {
+                env_filenames.push(default);
+            }
+        }
+        for env_filename in env_filenames {
+            let env_path = svc_dir.join(env_filename);
             if let Ok(contents) = std::fs::read_to_string(&env_path) {
                 for line in contents.lines() {
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() || trimmed.starts_with('#') {
+                    let Some((key, _)) = parse_env_line(line) else {
                         continue;
-                    }
-                    if let Some((key, _)) = trimmed.split_once('=') {
-                        let key = key.trim();
-                        let is_frontend_var = key.starts_with("VITE_")
-                            || key.starts_with("NEXT_PUBLIC_")
-                            || key.starts_with("REACT_APP_");
-                        if !is_frontend_var && looks_like_secret(key) {
-                            notes.push(format!(
-                                "Secret-looking var '{}' in {}/{} — if this is a backend \
-                                 secret, remove it from the web service and set it on the \
-                                 api service: floo env set {}=<val> --services api",
-                                key, svc.name, env_filename, key
-                            ));
-                        }
+                    };
+                    // Check against the deployed (uppercase) form: deploy-sync
+                    // uppercases keys on import, so a lowercase `stripe_secret_key`
+                    // becomes the secret STRIPE_SECRET_KEY at runtime and must be
+                    // flagged. The canonical redactor rule carries the PUBLIC_KEY /
+                    // AWS_REGION allowlist, so preflight flags exactly what
+                    // `--json` would redact — no parallel heuristic that drifts.
+                    // The message keeps the var as written for recognizability.
+                    let key_upper = key.to_uppercase();
+                    let is_frontend_var = key_upper.starts_with("VITE_")
+                        || key_upper.starts_with("NEXT_PUBLIC_")
+                        || key_upper.starts_with("REACT_APP_");
+                    if !is_frontend_var && crate::redact::env_var_key_is_secret(&key_upper) {
+                        findings.push(
+                                PreflightFinding::warning(
+                                    "SECRET_IN_WEB_SERVICE",
+                                    format!(
+                                        "Secret-looking var '{}' in {}/{} — if this is a backend secret, remove it from the web service and set it on the api service: floo env set {}=<val> --services api",
+                                        key, svc.name, env_filename, key
+                                    ),
+                                )
+                                .with_path(&svc.path),
+                            );
                     }
                 }
             }
         }
     }
 
-    // Reminder to run preflight before every deploy
-    notes.push("Run 'floo preflight' before every deploy to catch issues early.".to_string());
-
-    notes
-}
-
-/// Heuristic: does this env var key look like it contains a secret?
-fn looks_like_secret(key: &str) -> bool {
-    let key_upper = key.to_uppercase();
-    let secret_patterns = [
-        "SECRET",
-        "KEY",
-        "TOKEN",
-        "PASSWORD",
-        "CREDENTIAL",
-        "DATABASE_URL",
-        "REDIS_URL",
-        "API_KEY",
-        "PRIVATE",
-        "AUTH",
-    ];
-    secret_patterns.iter().any(|p| key_upper.contains(p))
+    findings
 }
 
 fn env_contract_for_service(
@@ -1557,15 +2296,17 @@ fn display_env_injection_plan(plan: &EnvInjectionPlan) {
     eprintln!();
 }
 
-/// Display preflight info in human-readable format.
+/// Display preflight info in human-readable format. Renders the service table,
+/// env-injection plan, resources, and the build/run warnings from `findings`.
+/// Errors and the final ready/summary line are emitted by the caller so the
+/// summary lands after all sections (security findings included).
 fn display_preflight_human(
     app_name: &str,
     resolved: &project_config::ResolvedApp,
     services: &[ServiceConfig],
     per_service_detection: &[(String, DetectionResult)],
     env_injection_plan: &EnvInjectionPlan,
-    warnings: &[serde_json::Value],
-    errors: &[serde_json::Value],
+    findings: &[PreflightFinding],
 ) {
     let source_label = match resolved.source {
         AppSource::Flag => "--app flag".to_string(),
@@ -1646,24 +2387,53 @@ fn display_preflight_human(
         }
     }
 
-    for w in warnings {
-        let msg = w.get("message").and_then(|v| v.as_str()).unwrap_or("");
-        let path = w.get("path").and_then(|v| v.as_str()).unwrap_or("");
-        eprintln!("  \u{26a0} {path}: {msg}");
+    for f in findings.iter().filter(|f| f.severity == Severity::Warning) {
+        // The root service uses path "." — a "." : prefix there is just noise.
+        match f.path.as_deref() {
+            Some(path) if path != "." => {
+                eprintln!("  {} {path}: {}", Severity::Warning.glyph(), f.message)
+            }
+            _ => eprintln!("  {} {}", Severity::Warning.glyph(), f.message),
+        }
     }
+}
 
-    if errors.is_empty() {
-        // Closes feedback c9b70eb5: "no obvious signal anywhere in the Floo
-        // workflow that dev auto-deploys on GitHub push." The CLI is the
-        // surface the user is in front of right before pushing — surfacing
-        // the auto-deploy contract here means they don't have to leave for
-        // the docs to learn what `git push` will do next.
-        eprintln!();
-        eprintln!("  Deploys: dev auto-deploys on every `git push` to your default branch.");
-        eprintln!("           Cut a GitHub release to promote the same build to production.");
-        eprintln!(
-            "           See https://getfloo.com/docs/guides/golden-path.md for the full flow."
+/// Render typed security findings (info + warning) under a `Security:` header.
+fn render_security_findings_human(findings: &[PreflightFinding]) {
+    if findings.is_empty() {
+        return;
+    }
+    eprintln!("  Security:");
+    for f in findings {
+        eprintln!("    {} {}", f.severity.glyph(), f.message);
+    }
+    eprintln!();
+}
+
+/// Print the auto-deploy contract and the final "ready" line. Only called when
+/// the config has no errors; the warning count keeps a clean green honest.
+fn print_preflight_ready(findings: &[PreflightFinding]) {
+    // Closes feedback c9b70eb5: "no obvious signal anywhere in the Floo
+    // workflow that dev auto-deploys on GitHub push." The CLI is the surface
+    // the user is in front of right before pushing — surfacing the auto-deploy
+    // contract here means they don't have to leave for the docs.
+    eprintln!();
+    eprintln!("  Deploys: dev auto-deploys on every `git push` to your default branch.");
+    eprintln!("           Cut a GitHub release to promote the same build to production.");
+    eprintln!("           See https://getfloo.com/docs/guides/golden-path.md for the full flow.");
+
+    let warn_count = findings
+        .iter()
+        .filter(|f| f.severity == Severity::Warning)
+        .count();
+    if warn_count > 0 {
+        output::success(
+            &format!(
+                "Config valid with {warn_count} warning(s) \u{2014} review the warnings above before deploying."
+            ),
+            None,
         );
+    } else {
         output::success("Config valid \u{2014} ready to deploy.", None);
     }
 }
@@ -1880,25 +2650,13 @@ fn parse_env_file_soft(path: &Path) -> Option<Vec<(String, String)>> {
         Err(_) => return None,
     };
 
-    let mut vars = Vec::new();
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        let trimmed = trimmed.strip_prefix("export ").unwrap_or(trimmed);
-        if let Some((key, value)) = trimmed.split_once('=') {
-            let key = key.trim().to_uppercase();
-            let mut value = value.trim().to_string();
-            if (value.starts_with('"') && value.ends_with('"'))
-                || (value.starts_with('\'') && value.ends_with('\''))
-            {
-                value = value[1..value.len() - 1].to_string();
-            }
-            vars.push((key, value));
-        }
-    }
+    // Same line parser as preflight (`parse_env_line`); deploy-sync additionally
+    // uppercases keys because that's the form it imports the vars under.
+    let vars: Vec<(String, String)> = content
+        .lines()
+        .filter_map(parse_env_line)
+        .map(|(key, value)| (key.to_uppercase(), value.to_string()))
+        .collect();
 
     if vars.is_empty() {
         return None;
@@ -1909,51 +2667,75 @@ fn parse_env_file_soft(path: &Path) -> Option<Vec<(String, String)>> {
 
 /// Auto-import env vars from configured env_file on first deploy (server has 0 vars),
 /// or when --sync-env is passed. Reads env_file from service configs (source of truth).
+/// Every env_file the deploy will import, as `(service_name, env_file relative
+/// path, base_dir)`. THE single source of "what env files get imported": the
+/// root service's `floo.service.toml` `env_file`, plus each sub-service's
+/// `floo.service.toml` `env_file`. Inline `floo.app.toml` `[services.x] env_file`
+/// is intentionally NOT here — the deploy does not import it. Shared by
+/// `sync_env_vars_if_needed` (which imports these) and the preflight
+/// required-var satisfaction check (which verifies against these), so the set
+/// preflight treats as imported is, by construction, exactly what deploy imports.
+pub(crate) fn deploy_imported_env_files(
+    resolved: &project_config::ResolvedApp,
+) -> Vec<(String, String, PathBuf)> {
+    let mut entries: Vec<(String, String, PathBuf)> = Vec::new();
+
+    // Root service (floo.service.toml at the config dir).
+    if let Some(ref svc_config) = resolved.service_config {
+        if let Some(ref env_file) = svc_config.service.env_file {
+            entries.push((
+                svc_config.service.name.clone(),
+                env_file.clone(),
+                resolved.config_dir.clone(),
+            ));
+        }
+    }
+
+    // Sub-services: each app-config entry with a real subdir path, read from
+    // that subdir's floo.service.toml.
+    if let Some(ref app_config) = resolved.app_config {
+        for entry in app_config.services.values() {
+            // External-repo services build (and carry their env files) in the
+            // referenced repo, not the local checkout — the deploy can't import
+            // a local env_file for them, so they're not in the imported set.
+            if entry.repo.is_some() {
+                continue;
+            }
+            let Some(ref path_str) = entry.path else {
+                continue;
+            };
+            let normalized = path_str.strip_prefix("./").unwrap_or(path_str);
+            let normalized = normalized.strip_suffix('/').unwrap_or(normalized);
+            if normalized.is_empty() || normalized == "." {
+                continue;
+            }
+            let svc_dir = resolved.config_dir.join(normalized);
+            if let Ok(Some(svc_config)) = project_config::load_service_config(&svc_dir) {
+                if let Some(env_file) = svc_config.service.env_file {
+                    entries.push((svc_config.service.name.clone(), env_file, svc_dir));
+                }
+            }
+        }
+    }
+
+    entries
+}
+
 pub(crate) fn sync_env_vars_if_needed(
     client: &FlooClient,
     app_id: &str,
     resolved: &project_config::ResolvedApp,
     force_sync: bool,
 ) {
-    // Collect (service_name, env_file_path) from env_file field in service configs
+    // Resolve+validate each imported env_file to an absolute path (the shared
+    // helper decides WHICH files are imported; this loop validates them).
     let mut env_file_entries: Vec<(String, PathBuf)> = Vec::new();
-
-    // Check root service
-    if let Some(ref svc_config) = resolved.service_config {
-        if let Some(ref env_file) = svc_config.service.env_file {
-            match super::env::validate_env_file_path(env_file, &resolved.config_dir) {
-                Ok(path) => env_file_entries.push((svc_config.service.name.clone(), path)),
-                Err(msg) => {
-                    output::error(&msg, &ErrorCode::InvalidPath, None);
-                    process::exit(1);
-                }
-            }
-        }
-    }
-
-    // Check sub-services from app config
-    if let Some(ref app_config) = resolved.app_config {
-        for entry in app_config.services.values() {
-            if let Some(ref path_str) = entry.path {
-                let normalized = path_str.strip_prefix("./").unwrap_or(path_str);
-                let normalized = normalized.strip_suffix('/').unwrap_or(normalized);
-                if normalized.is_empty() || normalized == "." {
-                    continue;
-                }
-                let svc_dir = resolved.config_dir.join(normalized);
-                if let Ok(Some(svc_config)) = project_config::load_service_config(&svc_dir) {
-                    if let Some(ref env_file) = svc_config.service.env_file {
-                        match super::env::validate_env_file_path(env_file, &svc_dir) {
-                            Ok(path) => {
-                                env_file_entries.push((svc_config.service.name.clone(), path))
-                            }
-                            Err(msg) => {
-                                output::error(&msg, &ErrorCode::InvalidPath, None);
-                                process::exit(1);
-                            }
-                        }
-                    }
-                }
+    for (svc_name, env_file, base_dir) in deploy_imported_env_files(resolved) {
+        match super::env::validate_env_file_path(&env_file, &base_dir) {
+            Ok(path) => env_file_entries.push((svc_name, path)),
+            Err(msg) => {
+                output::error(&msg, &ErrorCode::InvalidPath, None);
+                process::exit(1);
             }
         }
     }
@@ -2272,6 +3054,146 @@ mod tests {
                 ("GOOD".to_string(), "value".to_string()),
                 ("ALSO_GOOD".to_string(), "123".to_string()),
             ]
+        );
+    }
+
+    // --- Cron schedule validation ---
+
+    #[test]
+    fn test_cron_schedule_accepts_standard_five_field() {
+        for expr in [
+            "0 9 * * *",       // every day 09:00
+            "*/5 * * * *",     // every 5 minutes
+            "0 0,12 * * *",    // midnight and noon
+            "0 9 * * 1-5",     // weekdays
+            "15 14 1 * *",     // 14:15 on the 1st
+            "0 22 * * 1-5",    // 22:00 weekdays
+            "23 0-20/2 * * *", // step over a range
+            "5 4 * * sun",     // named day
+            "0 0 1 jan *",     // named month
+            "  0 9 * * *  ",   // surrounding whitespace
+            "0 0 L * *",       // croniter: last day of month
+            "0 9 * * SUN#2",   // croniter: 2nd Sunday of the month
+            "0 9 * * fri#3",   // croniter: 3rd Friday of the month
+            "0 0 1,L * *",     // list mixing a number and an extension
+            "0 0 ? * MON",     // `?` in day-of-month (croniter day-field token)
+            "0 0 1 * ?",       // `?` in day-of-week
+        ] {
+            assert!(is_valid_cron_schedule(expr), "should accept '{expr}'");
+        }
+    }
+
+    #[test]
+    fn test_cron_schedule_accepts_macros() {
+        for expr in [
+            "@daily",
+            "@hourly",
+            "@weekly",
+            "@monthly",
+            "@yearly",
+            "@MIDNIGHT",
+        ] {
+            assert!(is_valid_cron_schedule(expr), "should accept '{expr}'");
+        }
+    }
+
+    #[test]
+    fn test_cron_schedule_rejects_non_cron_strings() {
+        for expr in [
+            "",                // empty
+            "daily",           // bare word
+            "every day",       // prose
+            "9am",             // prose
+            "0 9 * *",         // 4 fields
+            "0 9 * * * * * *", // 8 fields
+            "60 9 * * *",      // minute out of range
+            "0 24 * * *",      // hour out of range
+            "0 9 32 * *",      // day-of-month out of range
+            "0 9 * 13 *",      // month out of range
+            "0 9 * * 8 ",      // hmm dow 8 — see note below
+            "@reboot",         // not a floo-supported macro
+            "*/0 * * * *",     // zero step
+            "foo 9 * * *",     // alpha in the minute field
+            "0 jan * * *",     // alpha in the hour field
+            "L 9 * * *",       // extension token in the minute field
+            "0 0 * foo *",     // bogus month name (not JAN..DEC)
+            "0 0 * * xyz",     // bogus day name (not SUN..SAT)
+            "0 0 * mon *",     // day name in the month field
+            "0 0 * * jan",     // month name in the day-of-week field
+            "? 0 * * *",       // `?` in the minute field (croniter day-field only)
+            "0 ? * * *",       // `?` in the hour field
+        ] {
+            // dow allows 0-7 (7 == Sunday); 8 is out of range.
+            assert!(!is_valid_cron_schedule(expr), "should reject '{expr}'");
+        }
+    }
+
+    #[test]
+    fn test_cron_schedule_dow_seven_is_sunday() {
+        assert!(is_valid_cron_schedule("0 9 * * 7"));
+    }
+
+    // --- Finding helpers ---
+
+    #[test]
+    fn test_has_errors() {
+        assert!(!has_errors(&[]));
+        assert!(!has_errors(&[PreflightFinding::warning("W", "w".into())]));
+        assert!(!has_errors(&[PreflightFinding::info("I", "i".into())]));
+        assert!(has_errors(&[
+            PreflightFinding::warning("W", "w".into()),
+            PreflightFinding::error("E", "e".into()),
+        ]));
+    }
+
+    #[test]
+    fn test_finding_serializes_with_severity_and_omits_empty_optionals() {
+        let f = PreflightFinding::error("SERVICE_PATH_NOT_FOUND", "missing".into())
+            .with_path("api")
+            .with_hint("create it");
+        let v = serde_json::to_value(&f).unwrap();
+        assert_eq!(v["severity"], "error");
+        assert_eq!(v["code"], "SERVICE_PATH_NOT_FOUND");
+        assert_eq!(v["path"], "api");
+        assert_eq!(v["hint"], "create it");
+
+        // No path/hint -> keys omitted entirely.
+        let bare = PreflightFinding::info("X", "x".into());
+        let bv = serde_json::to_value(&bare).unwrap();
+        assert!(bv.get("path").is_none());
+        assert!(bv.get("hint").is_none());
+    }
+
+    #[test]
+    fn test_parse_env_line_strips_export_and_quotes() {
+        // `export FOO=bar` records key `FOO`, matching the deploy-sync parser.
+        assert_eq!(parse_env_line("export FOO=bar"), Some(("FOO", "bar")));
+        assert_eq!(
+            parse_env_line("  export  DATABASE_URL=\"x\"  "),
+            Some(("DATABASE_URL", "x"))
+        );
+        assert_eq!(parse_env_line("FOO=bar"), Some(("FOO", "bar")));
+        // `export` only stripped as a prefix word, not inside a key.
+        assert_eq!(parse_env_line("exported=1"), Some(("exported", "1")));
+        assert_eq!(parse_env_line("# comment"), None);
+        assert_eq!(parse_env_line(""), None);
+        // One matching quote pair only; a lone quote doesn't panic.
+        assert_eq!(parse_env_line("FOO='x'"), Some(("FOO", "x")));
+        assert_eq!(parse_env_line("FOO=\""), Some(("FOO", "\"")));
+    }
+
+    #[test]
+    fn test_parse_env_line_and_soft_agree_on_export_spacing() {
+        // The inspection parser and the deploy-sync import parser must read the
+        // SAME key from `export  FOO=bar` (multiple spaces). parse_env_file_soft
+        // additionally uppercases the key (its import normalization).
+        assert_eq!(parse_env_line("export  FOO=bar"), Some(("FOO", "bar")));
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join(".env");
+        fs::write(&path, "export  FOO=bar\n").unwrap();
+        assert_eq!(
+            parse_env_file_soft(&path),
+            Some(vec![("FOO".to_string(), "bar".to_string())])
         );
     }
 }
