@@ -667,8 +667,11 @@ pub enum GitHubCommands {
 #[derive(Subcommand)]
 pub enum EnvCommands {
     /// Set an environment variable on an app.
+    ///
+    /// Pass `KEY=VALUE` inline, or `KEY` alone with `--stdin` / `--value-file`
+    /// to keep a secret value out of argv, shell history, and `ps`.
     Set {
-        /// KEY=VALUE pair to set.
+        /// KEY=VALUE pair to set. With --stdin or --value-file, pass the KEY only.
         key_value: String,
 
         /// App name or ID (reads from config if omitted).
@@ -686,6 +689,16 @@ pub enum EnvCommands {
         /// Environment: dev or prod.
         #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
         env: String,
+
+        /// Read the value from stdin instead of the command line, keeping the
+        /// secret out of argv / shell history / `ps`. A single trailing newline
+        /// is stripped (so `echo "$SECRET" | floo env set KEY --stdin` works).
+        #[arg(long, conflicts_with = "value_file")]
+        stdin: bool,
+
+        /// Read the value from a file. A single trailing newline is stripped.
+        #[arg(long, value_name = "PATH", conflicts_with = "stdin")]
+        value_file: Option<PathBuf>,
     },
 
     /// List environment variables for an app.
@@ -1624,7 +1637,17 @@ pub fn run() {
                 services,
                 restart,
                 env,
-            } => commands::env::set(&key_value, app.as_deref(), &services, restart, &env),
+                stdin,
+                value_file,
+            } => commands::env::set(
+                &key_value,
+                app.as_deref(),
+                &services,
+                restart,
+                &env,
+                stdin,
+                value_file.as_deref(),
+            ),
             EnvCommands::List { app, services, env } => {
                 commands::env::list(app.as_deref(), &services, &env)
             }

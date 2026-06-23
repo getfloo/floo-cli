@@ -474,6 +474,163 @@ fn test_env_set_json() {
         .stdout(predicate::str::contains("MY_KEY"));
 }
 
+fn set_env_response_body() -> &'static str {
+    r#"{
+        "id":"00000000-0000-0000-0000-000000000001",
+        "app_id":"00000000-0000-0000-0000-0000000000aa",
+        "environment_id":"00000000-0000-0000-0000-0000000000ee",
+        "service_id":null,
+        "key":"API_KEY",
+        "masked_value":"********",
+        "created_at":"2026-04-24T00:00:00Z",
+        "updated_at":"2026-04-24T00:00:00Z"
+    }"#
+}
+
+#[test]
+fn test_env_set_stdin() {
+    // #1152: a secret value piped on stdin keeps it out of argv / shell history.
+    // The trailing newline from `echo` is stripped before it reaches the API.
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
+
+    let _m_set = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/env").as_str())
+        .match_query(Matcher::UrlEncoded("env".into(), "dev".into()))
+        .match_body(Matcher::Regex(r#""value":"supersecret""#.to_string()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(set_env_response_body())
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "env",
+            "set",
+            "API_KEY",
+            "--stdin",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .write_stdin("supersecret\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#));
+}
+
+#[test]
+fn test_env_set_value_file() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
+
+    let dir = TempDir::new().unwrap();
+    let secret_path = dir.path().join("secret.txt");
+    std::fs::write(&secret_path, "filesecret\n").unwrap();
+
+    let _m_set = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/env").as_str())
+        .match_query(Matcher::UrlEncoded("env".into(), "dev".into()))
+        .match_body(Matcher::Regex(r#""value":"filesecret""#.to_string()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(set_env_response_body())
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "env",
+            "set",
+            "API_KEY",
+            "--value-file",
+            secret_path.to_str().unwrap(),
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#));
+}
+
+#[test]
+fn test_env_set_stdin_rejects_inline_value() {
+    // KEY=VALUE alongside --stdin is ambiguous (value given two ways) — refuse.
+    let server = Server::new();
+    let home = setup_config(&server);
+
+    floo()
+        .args([
+            "env",
+            "set",
+            "API_KEY=inline",
+            "--stdin",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .write_stdin("piped")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("key only"));
+}
+
+#[test]
+fn test_env_set_dry_run_stdin_does_not_read() {
+    // Dry-run mutates nothing and must not consume stdin; it previews the key
+    // and names the value source. No POST mock is registered, so a real call
+    // would surface as an error — the test passing proves none was made.
+    let server = Server::new();
+    let home = setup_config(&server);
+
+    floo()
+        .args([
+            "env",
+            "set",
+            "API_KEY",
+            "--stdin",
+            "--dry-run",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("value from stdin"));
+}
+
+#[test]
+fn test_env_set_stdin_and_value_file_mutually_exclusive() {
+    // The value must come from exactly one source. clap's reciprocal
+    // conflicts_with rejects --stdin together with --value-file at parse time;
+    // this pins that wiring against accidental removal.
+    let server = Server::new();
+    let home = setup_config(&server);
+
+    floo()
+        .args([
+            "env",
+            "set",
+            "API_KEY",
+            "--stdin",
+            "--value-file",
+            "/tmp/whatever",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .write_stdin("x")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"));
+}
+
 #[test]
 fn test_env_list_json() {
     let mut server = Server::new();
