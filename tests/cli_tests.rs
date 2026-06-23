@@ -1158,6 +1158,856 @@ ingress = "public"
         ));
 }
 
+// --- #1154: preflight must fail/warn on guaranteed-to-fail configs ---
+
+/// A service whose `path` doesn't exist on disk has no build context — the
+/// deploy is guaranteed to fail. Preflight must error (exit 1, valid:false),
+/// not greenlight.
+#[test]
+fn test_preflight_errors_on_nonexistent_service_path() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[services.api]
+type = "api"
+path = "./does-not-exist"
+port = 8000
+ingress = "public"
+"#,
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""valid":false"#))
+        .stdout(predicate::str::contains(
+            r#""code":"SERVICE_PATH_NOT_FOUND""#,
+        ))
+        .stdout(predicate::str::contains(r#""severity":"error""#));
+}
+
+/// Service paths resolve against the CONFIG dir, not the invocation dir. When
+/// preflight runs from a subdirectory, `resolve_app_context` walks up to the
+/// config; a valid `path = "./api"` must not false-error SERVICE_PATH_NOT_FOUND.
+#[test]
+fn test_preflight_resolves_service_path_from_config_dir_not_cwd() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[services.api]
+type = "api"
+path = "./api"
+port = 8000
+ingress = "public"
+"#,
+    )
+    .unwrap();
+    std::fs::create_dir(project.path().join("api")).unwrap();
+    // A nested subdir the user might invoke preflight from.
+    let subdir = project.path().join("api").join("nested");
+    std::fs::create_dir(&subdir).unwrap();
+
+    floo()
+        .args(["--json", "preflight", subdir.to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""valid":true"#))
+        .stdout(predicate::str::contains("SERVICE_PATH_NOT_FOUND").not());
+}
+
+/// A migrate_command with no managed Postgres and no local DATABASE_URL warns —
+/// the migration step will fail. Warning (not error) because DATABASE_URL may
+/// be set server-side, which local preflight can't see. Still exits 0.
+#[test]
+fn test_preflight_warns_migrate_command_without_database() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[services.api]
+type = "api"
+path = "."
+port = 8000
+ingress = "public"
+migrate_command = "alembic upgrade head"
+"#,
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""valid":true"#))
+        .stdout(predicate::str::contains(
+            r#""code":"MIGRATE_COMMAND_NO_DATABASE""#,
+        ))
+        .stdout(predicate::str::contains(r#""severity":"warning""#));
+}
+
+/// A migrate_command is satisfied once managed Postgres is attached (it injects
+/// DATABASE_URL), so the warning must NOT fire.
+#[test]
+fn test_preflight_migrate_command_satisfied_by_managed_postgres() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[postgres]
+tier = "basic"
+
+[services.api]
+type = "api"
+path = "."
+port = 8000
+ingress = "public"
+migrate_command = "alembic upgrade head"
+"#,
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""valid":true"#))
+        .stdout(predicate::str::contains("MIGRATE_COMMAND_NO_DATABASE").not());
+}
+
+/// A declared `required` env var that no managed service injects and no local
+/// env file defines warns. Warning because it may be set server-side.
+#[test]
+fn test_preflight_warns_unsatisfied_required_env() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[services.api]
+type = "api"
+path = "."
+port = 8000
+ingress = "public"
+
+[services.api.env]
+required = ["STRIPE_SECRET_KEY"]
+"#,
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            r#""code":"REQUIRED_ENV_UNSATISFIED""#,
+        ))
+        .stdout(predicate::str::contains("STRIPE_SECRET_KEY"));
+}
+
+/// A required env var present in the CONFIGURED env_file is satisfied — the
+/// deploy imports that file, so preflight must not warn.
+#[test]
+fn test_preflight_required_env_satisfied_by_configured_env_file() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.service.toml"),
+        r#"[app]
+name = "myapp"
+
+[service]
+name = "api"
+type = "api"
+port = 8000
+ingress = "public"
+env_file = ".env"
+
+[env]
+required = ["STRIPE_SECRET_KEY"]
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        project.path().join(".env"),
+        "STRIPE_SECRET_KEY=sk_test_local\n",
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("REQUIRED_ENV_UNSATISFIED").not());
+}
+
+/// A required env var found only in an UNCONFIGURED `.env` (no `env_file` set)
+/// must still warn — the deploy only imports the configured env_file, so that
+/// var would be missing server-side. Regression guard for the false-negative
+/// where preflight scanned conventional `.env*` the deploy never imports.
+#[test]
+fn test_preflight_unconfigured_env_file_does_not_satisfy_required() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[services.api]
+type = "api"
+path = "."
+port = 8000
+ingress = "public"
+
+[services.api.env]
+required = ["STRIPE_SECRET_KEY"]
+"#,
+    )
+    .unwrap();
+    // A conventional .env the deploy will NOT import (no env_file configured).
+    std::fs::write(
+        project.path().join(".env"),
+        "STRIPE_SECRET_KEY=sk_test_local\n",
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            r#""code":"REQUIRED_ENV_UNSATISFIED""#,
+        ));
+}
+
+/// An INLINE floo.app.toml `env_file` does not satisfy a required var: the
+/// deploy's sync path only imports `env_file` declared in floo.service.toml, so
+/// an inline-only env file is never imported and the var would be missing.
+#[test]
+fn test_preflight_inline_env_file_does_not_satisfy_required() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[services.api]
+type = "api"
+path = "."
+port = 8000
+ingress = "public"
+env_file = ".floo.env"
+
+[services.api.env]
+required = ["STRIPE_SECRET_KEY"]
+"#,
+    )
+    .unwrap();
+    // The inline-declared env_file exists and has the var, but deploy-sync won't
+    // import it (inline env_file is not in deploy_imported_env_files).
+    std::fs::write(
+        project.path().join(".floo.env"),
+        "STRIPE_SECRET_KEY=sk_test_local\n",
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            r#""code":"REQUIRED_ENV_UNSATISFIED""#,
+        ));
+}
+
+/// A service sourced from an external `repo` builds from that repo, not the
+/// local checkout — its `path` won't exist locally and preflight must NOT
+/// hard-error SERVICE_PATH_NOT_FOUND on it.
+#[test]
+fn test_preflight_external_repo_service_skips_local_path_check() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[services.api]
+type = "api"
+repo = "getfloo/external-svc"
+path = "services/api"
+port = 8000
+ingress = "public"
+"#,
+    )
+    .unwrap();
+    // No local `services/api` dir — it lives in the external repo.
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""valid":true"#))
+        .stdout(predicate::str::contains("SERVICE_PATH_NOT_FOUND").not());
+}
+
+/// An external-`repo` web service must NOT have a local `.env` scanned for
+/// secrets — that file is not part of the external service's source, so
+/// emitting SECRET_IN_WEB_SERVICE / contains_secrets for it is a false positive.
+#[test]
+fn test_preflight_external_repo_service_skips_secret_scan() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[services.web]
+type = "web"
+repo = "getfloo/external-web"
+path = "."
+port = 3000
+ingress = "public"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        project.path().join(".env"),
+        "STRIPE_SECRET_KEY=sk_live_abc\n",
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("SECRET_IN_WEB_SERVICE").not())
+        .stdout(predicate::str::contains("contains_secrets").not());
+}
+
+/// An IMPORTED env_file (declared in floo.service.toml) that doesn't exist is a
+/// hard ERROR — the deploy's own `validate_env_file_path` exits on it, so
+/// preflight must not greenlight a config `floo deploy` always rejects.
+#[test]
+fn test_preflight_errors_on_missing_imported_env_file() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.service.toml"),
+        r#"[app]
+name = "myapp"
+
+[service]
+name = "api"
+type = "api"
+port = 8000
+ingress = "public"
+env_file = "missing.env"
+"#,
+    )
+    .unwrap();
+    // missing.env intentionally absent.
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""valid":false"#))
+        .stdout(predicate::str::contains(r#""code":"ENV_FILE_INVALID""#));
+}
+
+/// An invalid imported env_file in ANOTHER service must fail preflight even when
+/// `--services` filters to a different service: `floo deploy` validates the full
+/// (unfiltered) imported set and exits on any failure, so a `--services`-filtered
+/// preflight must not greenlight a config the deploy rejects.
+#[test]
+fn test_preflight_services_filter_does_not_hide_other_invalid_env_file() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[services.web]
+type = "web"
+path = "./web"
+
+[services.api]
+type = "api"
+path = "./api"
+"#,
+    )
+    .unwrap();
+    std::fs::create_dir(project.path().join("web")).unwrap();
+    std::fs::write(
+        project.path().join("web").join("floo.service.toml"),
+        "[app]\nname = \"myapp\"\n\n[service]\nname = \"web\"\ntype = \"web\"\nport = 3000\ningress = \"public\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir(project.path().join("api")).unwrap();
+    std::fs::write(
+        project.path().join("api").join("floo.service.toml"),
+        "[app]\nname = \"myapp\"\n\n[service]\nname = \"api\"\ntype = \"api\"\nport = 8000\ningress = \"internal\"\nenv_file = \"missing.env\"\n",
+    )
+    .unwrap();
+    // api/missing.env intentionally absent — deploy-sync would exit on it.
+
+    floo()
+        .args([
+            "--json",
+            "preflight",
+            project.path().to_str().unwrap(),
+            "--services",
+            "web",
+        ])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""valid":false"#))
+        .stdout(predicate::str::contains(r#""code":"ENV_FILE_INVALID""#));
+}
+
+/// A required env var present but EMPTY (`FOO=`) in the CONFIGURED env_file is
+/// NOT satisfied — the deploy treats empty as missing, so preflight must warn.
+#[test]
+fn test_preflight_required_env_empty_value_still_warns() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.service.toml"),
+        r#"[app]
+name = "myapp"
+
+[service]
+name = "api"
+type = "api"
+port = 8000
+ingress = "public"
+env_file = ".env"
+
+[env]
+required = ["STRIPE_SECRET_KEY"]
+"#,
+    )
+    .unwrap();
+    std::fs::write(project.path().join(".env"), "STRIPE_SECRET_KEY=\n").unwrap();
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            r#""code":"REQUIRED_ENV_UNSATISFIED""#,
+        ));
+}
+
+/// The web-secret scan covers a service's configured `env_file`, not only the
+/// conventional `.env*` names — a secret in `.floo.env` must still be flagged.
+#[test]
+fn test_preflight_scans_configured_env_file_for_web_secrets() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[services.web]
+type = "web"
+path = "."
+port = 3000
+ingress = "public"
+env_file = ".floo.env"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        project.path().join(".floo.env"),
+        "STRIPE_SECRET_KEY=sk_live_abc\n",
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            r#""code":"SECRET_IN_WEB_SERVICE""#,
+        ))
+        .stdout(predicate::str::contains(r#""contains_secrets":true"#));
+}
+
+/// Security findings must be surfaced for SINGLE-service apps too — pre-#1154
+/// the internet-facing note only appeared once a 2nd service existed.
+#[test]
+fn test_preflight_security_findings_for_single_service() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[services.web]
+type = "web"
+path = "."
+port = 3000
+ingress = "public"
+"#,
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            r#""code":"SERVICE_INTERNET_FACING""#,
+        ));
+}
+
+/// Managed credentials reaching a single public web service is a real exposure —
+/// surfaced as a warning even with only one service.
+#[test]
+fn test_preflight_managed_creds_to_single_web_service() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[postgres]
+tier = "basic"
+
+[services.web]
+type = "web"
+path = "."
+port = 3000
+ingress = "public"
+"#,
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""code":"MANAGED_CREDS_TO_WEB""#));
+}
+
+/// A secret-shaped var in a web service's .env stamps the documented top-level
+/// `contains_secrets` marker AND emits a typed SECRET_IN_WEB_SERVICE finding.
+#[test]
+fn test_preflight_emits_contains_secrets_marker() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[services.web]
+type = "web"
+path = "."
+port = 3000
+ingress = "public"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        project.path().join(".env"),
+        "STRIPE_SECRET_KEY=sk_live_abc\n",
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""contains_secrets":true"#))
+        .stdout(predicate::str::contains(
+            r#""code":"SECRET_IN_WEB_SERVICE""#,
+        ));
+}
+
+/// An allowlisted public key (`PUBLIC_KEY`) must NOT be flagged as a secret —
+/// preflight's scan uses the same allowlist as the redaction boundary, so it
+/// doesn't stamp `contains_secrets` for a value the redactor would let through.
+#[test]
+fn test_preflight_does_not_flag_allowlisted_public_key() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[services.web]
+type = "web"
+path = "."
+port = 3000
+ingress = "public"
+"#,
+    )
+    .unwrap();
+    std::fs::write(project.path().join(".env"), "PUBLIC_KEY=pk_abc\n").unwrap();
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("SECRET_IN_WEB_SERVICE").not())
+        .stdout(predicate::str::contains("contains_secrets").not());
+}
+
+/// A lower/mixed-case secret name is still flagged: deploy-sync uppercases keys
+/// on import, so `stripe_secret_key` becomes the secret STRIPE_SECRET_KEY at
+/// runtime. Preflight normalizes before the secret check to match.
+#[test]
+fn test_preflight_flags_lowercase_secret_in_web_service() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[services.web]
+type = "web"
+path = "."
+port = 3000
+ingress = "public"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        project.path().join(".env"),
+        "stripe_secret_key=sk_live_abc\n",
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            r#""code":"SECRET_IN_WEB_SERVICE""#,
+        ))
+        .stdout(predicate::str::contains(r#""contains_secrets":true"#));
+}
+
+/// The configured `env_file` resolves from `floo.service.toml` too (not only
+/// `floo.app.toml`), so a secret in a service-file-declared env file is flagged.
+#[test]
+fn test_preflight_scans_service_file_env_file_for_web_secrets() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        "[app]\nname = \"myapp\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project.path().join("floo.service.toml"),
+        r#"[app]
+name = "myapp"
+
+[service]
+name = "web"
+type = "web"
+port = 3000
+ingress = "public"
+env_file = ".floo.env"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        project.path().join(".floo.env"),
+        "STRIPE_SECRET_KEY=sk_live_abc\n",
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            r#""code":"SECRET_IN_WEB_SERVICE""#,
+        ))
+        .stdout(predicate::str::contains(r#""contains_secrets":true"#));
+}
+
+// --- #1154: [cron.*] validation and listing ---
+
+/// An invalid cron schedule deploys fine but never runs — preflight must error.
+#[test]
+fn test_preflight_errors_on_invalid_cron_schedule() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[services.web]
+type = "web"
+path = "."
+port = 3000
+ingress = "public"
+
+[cron.nightly]
+schedule = "every night at 9"
+command = "./cleanup.sh"
+service = "web"
+"#,
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""valid":false"#))
+        .stdout(predicate::str::contains(
+            r#""code":"CRON_INVALID_SCHEDULE""#,
+        ));
+}
+
+/// A cron job referencing a service that doesn't exist in a multi-service app is
+/// silently skipped server-side — preflight must error.
+#[test]
+fn test_preflight_errors_on_cron_unknown_service_multiservice() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[services.web]
+type = "web"
+path = "./web"
+port = 3000
+ingress = "public"
+
+[services.api]
+type = "api"
+path = "./api"
+port = 8000
+ingress = "internal"
+
+[cron.nightly]
+schedule = "0 9 * * *"
+command = "./cleanup.sh"
+service = "worker"
+"#,
+    )
+    .unwrap();
+    std::fs::create_dir(project.path().join("web")).unwrap();
+    std::fs::create_dir(project.path().join("api")).unwrap();
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""valid":false"#))
+        .stdout(predicate::str::contains(
+            r#""code":"CRON_SERVICE_NOT_FOUND""#,
+        ))
+        .stdout(predicate::str::contains(r#""severity":"error""#));
+}
+
+/// A valid cron job is listed in the JSON `cron` array and produces no findings.
+#[test]
+fn test_preflight_lists_valid_cron_in_json() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[services.web]
+type = "web"
+path = "."
+port = 3000
+ingress = "public"
+
+[cron.nightly]
+schedule = "0 9 * * *"
+command = "./cleanup.sh"
+service = "web"
+"#,
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""valid":true"#))
+        .stdout(predicate::str::contains(r#""cron":[{"#))
+        .stdout(predicate::str::contains(r#""name":"nightly""#))
+        .stdout(predicate::str::contains("CRON_INVALID_SCHEDULE").not())
+        .stdout(predicate::str::contains("CRON_SERVICE_NOT_FOUND").not());
+}
+
+/// Invalid-config preflight in --json emits exactly ONE JSON object (the prior
+/// code emitted both a success and an error object, breaking agent parsing).
+#[test]
+fn test_preflight_invalid_json_is_single_object() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[services.api]
+type = "api"
+path = "./missing"
+port = 8000
+ingress = "public"
+"#,
+    )
+    .unwrap();
+
+    let output = floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    // Exactly one parseable JSON object on stdout.
+    let parsed: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("stdout must be a single JSON object");
+    assert_eq!(parsed["success"], false);
+    assert_eq!(parsed["data"]["valid"], false);
+    assert!(parsed["error"]["code"].is_string());
+}
+
 // --- Dry-run matrix ---
 //
 // Every command that advertises --dry-run gets two assertions:
