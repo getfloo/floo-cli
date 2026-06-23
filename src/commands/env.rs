@@ -237,6 +237,59 @@ fn parse_env_file(path: &Path) -> Vec<(String, String)> {
     vars
 }
 
+/// Strip a single trailing newline (`\n` or `\r\n`) from a value read off a
+/// side channel. `echo "$SECRET"` and most editors append one; stripping
+/// exactly one keeps the common case ergonomic without mangling a value whose
+/// content genuinely contains newlines. Documented on the `--stdin` /
+/// `--value-file` flags so the behavior is not a surprise.
+fn strip_one_trailing_newline(mut s: String) -> String {
+    if s.ends_with('\n') {
+        s.pop();
+        if s.ends_with('\r') {
+            s.pop();
+        }
+    }
+    s
+}
+
+/// Read an env-var value from stdin (`--stdin`). Used to keep secrets out of
+/// argv / shell history / `ps`.
+fn read_stdin_value() -> String {
+    use std::io::Read;
+    let mut buf = String::new();
+    if let Err(e) = std::io::stdin().read_to_string(&mut buf) {
+        output::error(
+            &format!("Failed to read value from stdin: {e}"),
+            &ErrorCode::FileError,
+            Some("Pipe the value in, e.g. printf %s \"$SECRET\" | floo env set KEY --stdin"),
+        );
+        process::exit(1);
+    }
+    strip_one_trailing_newline(buf)
+}
+
+/// Read an env-var value from a file (`--value-file PATH`).
+fn read_value_file(path: &Path) -> String {
+    match std::fs::read_to_string(path) {
+        Ok(c) => strip_one_trailing_newline(c),
+        Err(e) => {
+            let msg = match e.kind() {
+                std::io::ErrorKind::NotFound => format!("Value file not found: {}", path.display()),
+                std::io::ErrorKind::PermissionDenied => {
+                    format!("Permission denied reading: {}", path.display())
+                }
+                _ => format!("Failed to read {}: {e}", path.display()),
+            };
+            output::error(
+                &msg,
+                &ErrorCode::FileError,
+                Some("Check the file path and permissions."),
+            );
+            process::exit(1);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
@@ -247,24 +300,50 @@ pub fn set(
     service_names: &[String],
     restart: bool,
     env: &str,
+    read_stdin: bool,
+    value_file: Option<&Path>,
 ) {
-    if !key_value.contains('=') {
-        output::error(
-            "Invalid format. Use KEY=VALUE.",
-            &ErrorCode::InvalidFormat,
-            Some("Example: floo env set DATABASE_URL=postgres://..."),
-        );
-        process::exit(1);
-    }
+    let from_side_channel = read_stdin || value_file.is_some();
 
-    let (key, value) = key_value.split_once('=').unwrap();
-    let key = key.to_uppercase();
+    // Resolve the key. With `--stdin` / `--value-file` the positional is the
+    // bare KEY and the value arrives off the command line, keeping secrets out
+    // of argv, shell history, and `ps` (#1152). Otherwise it is `KEY=VALUE`.
+    let key = if from_side_channel {
+        if key_value.contains('=') {
+            output::error(
+                "With --stdin or --value-file, pass the key only (no =VALUE).",
+                &ErrorCode::InvalidFormat,
+                Some("Example: printf %s \"$SECRET\" | floo env set API_KEY --stdin"),
+            );
+            process::exit(1);
+        }
+        key_value.to_uppercase()
+    } else {
+        if !key_value.contains('=') {
+            output::error(
+                "Invalid format. Use KEY=VALUE (or KEY with --stdin / --value-file).",
+                &ErrorCode::InvalidFormat,
+                Some("Example: floo env set DATABASE_URL=postgres://..."),
+            );
+            process::exit(1);
+        }
+        key_value.split_once('=').unwrap().0.to_uppercase()
+    };
 
     if output::is_dry_run_mode() {
+        // Dry-run mutates nothing, so it must NOT consume stdin or read the
+        // file — it previews the key/target only.
         let target = app_flag.unwrap_or("(reads from config)");
         let scope = format_env_scope(service_names, env);
         let restart_clause = if restart { " and restart" } else { "" };
-        let preview = format!("Would set {key} on {target}{scope}{restart_clause}.");
+        let source = if read_stdin {
+            " (value from stdin)"
+        } else if value_file.is_some() {
+            " (value from file)"
+        } else {
+            ""
+        };
+        let preview = format!("Would set {key} on {target}{scope}{restart_clause}{source}.");
         output::dry_run_preview(
             &preview,
             serde_json::json!({
@@ -274,6 +353,7 @@ pub fn set(
                 "services": service_names,
                 "env": env,
                 "will_restart": restart,
+                "value_source": if read_stdin { "stdin" } else if value_file.is_some() { "file" } else { "inline" },
             }),
         );
         return;
@@ -285,9 +365,22 @@ pub fn set(
     let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
     let targets = resolve_service_ids(&client, &app_id, &app_name, service_names);
 
+    // Read the side-channel value only AFTER every "this set can't run" check
+    // (auth, app/target resolution) has passed. Reading first would block an
+    // interactive `--stdin` on EOF — or consume a secret file/FIFO — for a
+    // logged-out user or a multi-service app with no `--services`, then error
+    // anyway (codex #1152). Dry-run already returned above without reading.
+    let value: String = if read_stdin {
+        read_stdin_value()
+    } else if let Some(path) = value_file {
+        read_value_file(path)
+    } else {
+        key_value.split_once('=').unwrap().1.to_string()
+    };
+
     let mut last_env_result = serde_json::Value::Null;
     for (service_id, service_name) in &targets {
-        match client.set_env_var(&app_id, &key, value, service_id.as_deref(), env) {
+        match client.set_env_var(&app_id, &key, &value, service_id.as_deref(), env) {
             Ok(result) => {
                 let target = format_target(&app_name, service_name.as_deref());
                 last_env_result = output::to_value(&result);
@@ -950,5 +1043,27 @@ mod tests {
         let vars = parse_env_file(&path);
         assert_eq!(vars[0].0, "DATABASE_URL");
         assert_eq!(vars[0].1, "postgres://user:pass@host/db?opt=val");
+    }
+
+    #[test]
+    fn test_strip_one_trailing_newline() {
+        assert_eq!(strip_one_trailing_newline("secret\n".to_string()), "secret");
+        assert_eq!(
+            strip_one_trailing_newline("secret\r\n".to_string()),
+            "secret"
+        );
+        assert_eq!(strip_one_trailing_newline("secret".to_string()), "secret");
+        // Only ONE trailing newline is stripped — a value that genuinely ends in
+        // a blank line keeps the rest.
+        assert_eq!(
+            strip_one_trailing_newline("secret\n\n".to_string()),
+            "secret\n"
+        );
+        // Interior newlines (multi-line values) are preserved.
+        assert_eq!(
+            strip_one_trailing_newline("line1\nline2\n".to_string()),
+            "line1\nline2"
+        );
+        assert_eq!(strip_one_trailing_newline(String::new()), "");
     }
 }
