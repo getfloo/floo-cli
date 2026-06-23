@@ -1506,6 +1506,77 @@ ingress = "public"
         .stdout(predicate::str::contains("contains_secrets").not());
 }
 
+/// The config-only `MIGRATE_COMMAND_NO_DATABASE` warning STILL runs for an
+/// external-`repo` service (it reads managed keys, not disk) — a migrate step
+/// with no DB fails wherever the source lives. It stays a warning (valid:true).
+#[test]
+fn test_preflight_external_repo_service_still_warns_migrate_without_db() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[services.api]
+type = "api"
+repo = "getfloo/external-api"
+path = "services/api"
+port = 8000
+ingress = "public"
+migrate_command = "alembic upgrade head"
+"#,
+    )
+    .unwrap();
+    // No local `services/api` dir and no [postgres] — external-repo source, but
+    // the migrate step still has no reachable database.
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""valid":true"#))
+        .stdout(predicate::str::contains(
+            r#""code":"MIGRATE_COMMAND_NO_DATABASE""#,
+        ))
+        // The disk checks are still skipped for external-repo.
+        .stdout(predicate::str::contains("SERVICE_PATH_NOT_FOUND").not())
+        .stdout(predicate::str::contains("REQUIRED_ENV_UNSATISFIED").not());
+}
+
+/// An external-`repo` service WITH managed Postgres does not warn — the migrate
+/// check is satisfied by the managed DATABASE_URL injection.
+#[test]
+fn test_preflight_external_repo_service_migrate_satisfied_by_postgres() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[postgres]
+tier = "basic"
+
+[services.api]
+type = "api"
+repo = "getfloo/external-api"
+path = "services/api"
+port = 8000
+ingress = "public"
+migrate_command = "alembic upgrade head"
+"#,
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""valid":true"#))
+        .stdout(predicate::str::contains("MIGRATE_COMMAND_NO_DATABASE").not());
+}
+
 /// An IMPORTED env_file (declared in floo.service.toml) that doesn't exist is a
 /// hard ERROR — the deploy's own `validate_env_file_path` exits on it, so
 /// preflight must not greenlight a config `floo deploy` always rejects.
