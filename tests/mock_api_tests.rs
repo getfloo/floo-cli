@@ -3782,3 +3782,71 @@ fn test_db_query_json_passthrough_exposes_contract() {
         .stdout(predicate::str::contains(r#""columns":["id","email"]"#))
         .stdout(predicate::str::contains("alice@example.com"));
 }
+
+const NOTIF_PREFS_DEFAULTS: &str = r#"{"preferences":[{"category":"deploy_success","label":"Deploy succeeded","description":"When a deploy finishes successfully.","enabled":false,"is_default":true},{"category":"billing","label":"Spend cap warnings","description":"When your org approaches its spend cap.","enabled":true,"is_default":true}]}"#;
+
+#[test]
+fn test_notifications_list_json() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+
+    let _m = server
+        .mock("GET", "/v1/notification-preferences")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(NOTIF_PREFS_DEFAULTS)
+        .create();
+
+    floo()
+        .args(["--json", "notifications", "list"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains("deploy_success"))
+        .stdout(predicate::str::contains(r#""enabled":false"#));
+}
+
+#[test]
+fn test_notifications_list_human_shows_category_and_label() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+
+    let _m = server
+        .mock("GET", "/v1/notification-preferences")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(NOTIF_PREFS_DEFAULTS)
+        .create();
+
+    floo()
+        .args(["notifications", "list"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("deploy_success"))
+        .stderr(predicate::str::contains("Deploy succeeded"));
+}
+
+#[test]
+fn test_notifications_set_json() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+
+    let _m = server
+        .mock("PATCH", "/v1/notification-preferences")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"preferences":[{"category":"deploy_success","label":"Deploy succeeded","description":"d","enabled":true,"is_default":false}]}"#,
+        )
+        .create();
+
+    floo()
+        .args(["--json", "notifications", "set", "deploy_success", "on"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(r#""enabled":true"#));
+}

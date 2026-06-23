@@ -681,3 +681,20 @@ pub struct AppAnalyticsEntry {
     pub error_rate: f64,
     pub avg_latency_ms: Option<i64>,
 }
+
+// --- Notification preferences ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationPreference {
+    pub category: String,
+    pub label: String,
+    pub description: String,
+    pub enabled: bool,
+    // True while inheriting the system default; false once the user has chosen.
+    pub is_default: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationPreferencesResponse {
+    pub preferences: Vec<NotificationPreference>,
+}

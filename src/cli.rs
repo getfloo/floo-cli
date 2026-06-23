@@ -250,6 +250,20 @@ Examples:
     )]
     Env(EnvCommands),
 
+    /// View and tune which emails floo sends you.
+    #[command(
+        subcommand,
+        after_help = "\
+Examples:
+  floo notifications list                     Show your email settings
+  floo notifications list --json              Machine-readable for agents
+  floo notifications set deploy_success on    Email me on every successful deploy
+  floo notifications set billing off          Stop spend-cap warning emails
+
+Run `floo notifications list` to see the available categories."
+    )]
+    Notifications(NotificationsCommands),
+
     /// Manage services for an app.
     #[command(subcommand)]
     Services(ServicesCommands),
@@ -783,6 +797,22 @@ pub enum EnvCommands {
         /// Environment: dev or prod.
         #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
         env: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum NotificationsCommands {
+    /// Show which emails floo sends you, and whether each is on or off.
+    List,
+
+    /// Turn one category of email on or off.
+    Set {
+        /// Category to change (run `floo notifications list` to see them).
+        category: String,
+
+        /// Whether to receive this category.
+        #[arg(value_parser = ["on", "off"])]
+        value: String,
     },
 }
 
@@ -1685,6 +1715,13 @@ pub fn run() {
                 } else {
                     commands::env::import_vars(file.as_deref(), app.as_deref(), &services, &env);
                 }
+            }
+        },
+
+        Commands::Notifications(sub) => match sub {
+            NotificationsCommands::List => commands::notifications::list(),
+            NotificationsCommands::Set { category, value } => {
+                commands::notifications::set(&category, &value)
             }
         },
 

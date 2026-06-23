@@ -238,6 +238,23 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn get_notification_preferences(
+        &self,
+    ) -> Result<NotificationPreferencesResponse, FlooApiError> {
+        let resp = self.get("/v1/notification-preferences")?;
+        self.handle_response(resp)
+    }
+
+    pub fn set_notification_preference(
+        &self,
+        category: &str,
+        enabled: bool,
+    ) -> Result<NotificationPreferencesResponse, FlooApiError> {
+        let body = serde_json::json!({ "category": category, "enabled": enabled });
+        let resp = self.patch_json("/v1/notification-preferences", &body)?;
+        self.handle_response(resp)
+    }
+
     pub fn update_member_role(
         &self,
         org_id: &str,

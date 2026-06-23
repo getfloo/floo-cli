@@ -203,6 +203,28 @@ fn command_tree() -> Vec<CommandInfo> {
             ],
         },
         CommandInfo {
+            name: "notifications",
+            description: "View and tune which emails floo sends you",
+            usage: "floo notifications <subcommand>",
+            requires_auth: true,
+            subcommands: vec![
+                CommandInfo {
+                    name: "list",
+                    description: "Show your email settings and whether each is on or off",
+                    usage: "floo notifications list",
+                    requires_auth: true,
+                    subcommands: vec![],
+                },
+                CommandInfo {
+                    name: "set",
+                    description: "Turn one category of email on or off",
+                    usage: "floo notifications set <category> <on|off>",
+                    requires_auth: true,
+                    subcommands: vec![],
+                },
+            ],
+        },
+        CommandInfo {
             name: "services",
             description: "Manage services for an app",
             usage: "floo services <subcommand>",
@@ -637,6 +659,7 @@ mod tests {
             "feedback",
             "init",
             "logs",
+            "notifications",
             "orgs",
             "preflight",
             "redeploy",
