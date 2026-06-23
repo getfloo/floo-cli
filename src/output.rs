@@ -160,6 +160,12 @@ pub fn table(headers: &[&str], rows: &[Vec<String>], data: Option<Value>) {
         print_json(&serde_json::json!({"success": true, "data": data}));
     } else {
         let mut t = Table::new();
+        // comfy_table's default preset renders the header separator as a solid
+        // run with no column crossings (`+=====+`), which misaligns with the
+        // body's `+--+--+` dividers (#1152). UTF8_FULL_CONDENSED draws proper
+        // column crossings in the header rule (`╞══╪══╡`) and drops the noisy
+        // inter-row lines, matching the CLI's existing Unicode output (✓, →).
+        t.load_preset(comfy_table::presets::UTF8_FULL_CONDENSED);
         t.set_header(headers.iter().map(Cell::new).collect::<Vec<_>>());
         for row in rows {
             t.add_row(row.iter().map(Cell::new).collect::<Vec<_>>());

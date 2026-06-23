@@ -290,6 +290,25 @@ fn value_looks_credential(s: &str) -> bool {
         || JWT_RE.is_match(s)
 }
 
+/// Classify whether an env var `{key, value}` pair holds a secret.
+///
+/// Uses the exact three-layer detection the JSON walker applies to a
+/// `{key, value}` object: the key name (UPPER_SNAKE secret tokens, or a
+/// lowercase secret field name) **or** the value's own credential shape.
+/// The human-mode `floo env get` reveal gate calls this so it agrees with the
+/// `--json` redactor on precisely which values are protected — the two output
+/// modes must never disagree on whether a value is exposed (#1152).
+///
+/// An empty value is never a secret: the JSON walker skips empty strings
+/// (`!s.is_empty()`), so the human gate must too, or `env get` on an
+/// empty-valued secret-named key would refuse while `--json` passes it through.
+pub fn is_secret(key: &str, value: &str) -> bool {
+    if value.is_empty() {
+        return false;
+    }
+    env_var_key_is_secret(key) || lowercase_field_is_secret(key) || value_looks_credential(value)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -427,11 +446,32 @@ mod tests {
 
     #[test]
     fn masked_value_field_is_left_alone() {
-        // `EnvVar.masked_value` is already redacted server-side; we
-        // shouldn't double-redact (the masked tail is informative).
-        let (out, found) = redact(json!({"key": "DATABASE_URL", "masked_value": "********d7fb"}));
+        // `EnvVar.masked_value` is already masked server-side to a fixed,
+        // content-free marker (#1152); we must not redact it (it carries no
+        // secret) nor mistake it for a value to protect.
+        let (out, found) = redact(json!({"key": "DATABASE_URL", "masked_value": "********"}));
         assert!(!found);
-        assert_eq!(out["masked_value"], "********d7fb");
+        assert_eq!(out["masked_value"], "********");
+    }
+
+    #[test]
+    fn is_secret_classifies_key_and_value() {
+        // Secret by key name (UPPER_SNAKE token or lowercase field name).
+        assert!(is_secret("DATABASE_URL", "anything"));
+        assert!(is_secret("MY_API_KEY", "x"));
+        assert!(is_secret("password", "x"));
+        // Non-secret keys (incl. allowlisted look-alikes) with plain values.
+        assert!(!is_secret("RAILS_ENV", "production"));
+        assert!(!is_secret("PORT", "3000"));
+        assert!(!is_secret("LOG_LEVEL", "debug"));
+        // Non-secret key name but a credential-shaped VALUE — caught by the
+        // value layer so human `env get` agrees with the JSON walker (#1152).
+        assert!(is_secret("MIGRATION_NOTE", "postgres://u:p@h/db"));
+        assert!(is_secret("NOTE", "floo_aaaaaaaaaaaaaaaaaaaaaaaa"));
+        // Empty value is never a secret — mirrors the JSON walker's empty-string
+        // skip, so human `env get` and `--json` agree on an empty-valued key.
+        assert!(!is_secret("DATABASE_URL", ""));
+        assert!(!is_secret("password", ""));
     }
 
     #[test]
@@ -656,9 +696,9 @@ mod snapshots {
         assert!(out.get("contains_secrets").is_none());
     }
 
-    /// `floo env list --json` — already returns `masked_value` from
-    /// the API. The masked tail must remain visible (it's the safe
-    /// debug signal); nothing should be flagged here.
+    /// `floo env list --json` — the API returns `masked_value` already masked
+    /// to the fixed `********` marker (#1152). The marker must pass through
+    /// untouched (it carries no secret); nothing should be flagged here.
     #[test]
     fn floo_env_list_masked_values_kept() {
         let _g = lock_default_redact();
@@ -666,16 +706,16 @@ mod snapshots {
             "success": true,
             "data": {
                 "env_vars": [
-                    {"key": "DATABASE_URL", "masked_value": "********d7fb"},
-                    {"key": "API_TOKEN",    "masked_value": "********be1c"},
+                    {"key": "DATABASE_URL", "masked_value": "********"},
+                    {"key": "API_TOKEN",    "masked_value": "********"},
                 ]
             }
         });
         let out = through_print_json(payload);
         assert!(collect_leaks(&out).is_empty());
         let arr = out["data"]["env_vars"].as_array().unwrap();
-        assert_eq!(arr[0]["masked_value"], "********d7fb");
-        assert_eq!(arr[1]["masked_value"], "********be1c");
+        assert_eq!(arr[0]["masked_value"], "********");
+        assert_eq!(arr[1]["masked_value"], "********");
     }
 
     /// `floo deploys watch --json` — historical leak of Cloud Run

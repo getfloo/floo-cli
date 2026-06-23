@@ -178,6 +178,11 @@ pub struct EnvVar {
     pub key: String,
     pub value: Option<String>,
     pub masked_value: Option<String>,
+    // Present on `env list` rows (the API serializes `service_id` per var); used
+    // to label which service each var belongs to in the all-services read view.
+    // `None` = app-level var. Absent on `env get` responses (defaults to None).
+    #[serde(default)]
+    pub service_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
