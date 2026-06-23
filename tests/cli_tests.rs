@@ -436,7 +436,7 @@ fn test_env_set_invalid_format() {
         .env("HOME", home.path().to_str().unwrap())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("Invalid format. Use KEY=VALUE."));
+        .stderr(predicate::str::contains("Invalid format. Use KEY=VALUE"));
 }
 
 #[test]
