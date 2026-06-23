@@ -5,10 +5,78 @@ use serde_json::Value;
 use crate::api_types::{
     ManagedPostgresBackup, ManagedPostgresRestoreResponse, ManagedServiceSummary,
 };
-use crate::errors::ErrorCode;
+use crate::errors::{ErrorCode, FlooError};
 use crate::output;
 
+/// The inclusive `--limit` bound the API enforces. Mirrors
+/// `DbQueryRequest.limit = Field(ge=1, le=10000)` in `api/app/routes/db.py` —
+/// that endpoint is the single source of truth; keep these in sync. Validating
+/// it client-side turns the API's framework-level 422 validation blob into a
+/// clean, `--json`-aware floo error before any request is built.
+const QUERY_LIMIT_RANGE: std::ops::RangeInclusive<u32> = 1..=10_000;
+
+/// Validate `db query` arguments offline (no auth, no network).
+///
+/// A malformed request must fail with a floo-shaped error that honors `--json`
+/// — never reach the API to bounce back a raw Pydantic/FastAPI validation blob,
+/// and never execute under `--dry-run`. Empty/whitespace SQL is caught here too
+/// so it surfaces as "query is empty" rather than the API's agent-mode DDL gate
+/// (an empty string classifies as DDL server-side). Pure and unit-tested so the
+/// preview and the real run share one notion of "valid".
+fn validate_query_args(sql: &str, limit: u32) -> Result<(), FlooError> {
+    if sql.trim().is_empty() {
+        return Err(FlooError::with_suggestion(
+            ErrorCode::Other("EMPTY_QUERY".to_string()),
+            "Query is empty.",
+            "Pass a SQL statement, e.g. `floo db query \"SELECT 1\"`.",
+        ));
+    }
+    if !QUERY_LIMIT_RANGE.contains(&limit) {
+        return Err(FlooError::with_suggestion(
+            ErrorCode::Other("INVALID_LIMIT".to_string()),
+            format!(
+                "--limit must be between {} and {} (got {limit}).",
+                QUERY_LIMIT_RANGE.start(),
+                QUERY_LIMIT_RANGE.end(),
+            ),
+            "Re-run with a --limit inside that range.",
+        ));
+    }
+    Ok(())
+}
+
 pub fn query(app_flag: Option<&str>, sql: &str, environment: &str, limit: u32) {
+    // Validate offline first so a bad request fails cleanly (honoring --json)
+    // before any auth/network — and so a --dry-run of an invalid query reports
+    // the same error the real run would, not a confident "would run".
+    if let Err(e) = validate_query_args(sql, limit) {
+        output::error(&e.message, &e.code, e.suggestion.as_deref());
+        process::exit(1);
+    }
+
+    // Dry-run stays offline and side-effect-free. `db query` executes ARBITRARY
+    // SQL (INSERT/UPDATE/DELETE/DDL), so it is NOT a read-only command — a dry
+    // run must never reach the API. Like every other --dry-run handler it runs
+    // before require_auth() (mirrors cron.rs / db migrate above).
+    if output::is_dry_run_mode() {
+        let target = app_flag.unwrap_or("(reads from config)");
+        let preview = format!(
+            "Would run this SQL against '{target}' (env: {environment}, limit: {limit}). \
+             No query is executed in dry-run mode.\nSQL: {sql}"
+        );
+        output::dry_run_preview(
+            &preview,
+            serde_json::json!({
+                "action": "db_query",
+                "app": app_flag,
+                "env": environment,
+                "limit": limit,
+                "sql": sql,
+            }),
+        );
+        return;
+    }
+
     super::require_auth();
     let client = super::init_client(None);
     let (app_id, _app_name) = super::resolve_app_from_config(&client, app_flag);
@@ -106,6 +174,21 @@ pub fn query(app_flag: Option<&str>, sql: &str, environment: &str, limit: u32) {
         &format!("{count} row{}", if count == 1 { "" } else { "s" }),
         None,
     );
+
+    // The API caps the result set and flags `truncated` when more rows match
+    // (it reads limit+1 to detect the overflow). Surface it so a capped result
+    // never silently looks complete. Report the actual returned `count`, not the
+    // requested limit, so the message stays honest if the contract changes.
+    if result
+        .get("truncated")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        output::info(
+            &format!("Showing the first {count} rows; more rows match. Raise --limit to see more."),
+            None,
+        );
+    }
 }
 
 pub fn schema(app_flag: Option<&str>) {
@@ -551,6 +634,49 @@ mod tests {
     #[test]
     fn test_value_to_display_string() {
         assert_eq!(value_to_display(&json!("hello")), "hello");
+    }
+
+    #[test]
+    fn test_validate_query_args_accepts_valid() {
+        assert!(validate_query_args("SELECT 1", 1).is_ok());
+        assert!(validate_query_args("SELECT 1", 1000).is_ok());
+        // Inclusive bounds: both ends are valid.
+        assert!(validate_query_args("SELECT 1", 10_000).is_ok());
+    }
+
+    #[test]
+    fn test_validate_query_args_rejects_empty_sql() {
+        for sql in ["", "   ", "\t\n"] {
+            let err = validate_query_args(sql, 100).unwrap_err();
+            assert_eq!(err.code.as_str(), "EMPTY_QUERY", "sql={sql:?}");
+        }
+    }
+
+    #[test]
+    fn test_validate_query_args_rejects_out_of_range_limit() {
+        // 0 is the only invalid low value reachable through the clap u32 arg.
+        assert_eq!(
+            validate_query_args("SELECT 1", 0)
+                .unwrap_err()
+                .code
+                .as_str(),
+            "INVALID_LIMIT"
+        );
+        assert_eq!(
+            validate_query_args("SELECT 1", 10_001)
+                .unwrap_err()
+                .code
+                .as_str(),
+            "INVALID_LIMIT"
+        );
+    }
+
+    #[test]
+    fn test_validate_query_args_empty_check_precedes_limit_check() {
+        // An empty query with a bad limit reports the empty-query error first —
+        // the SQL is the more fundamental problem to surface.
+        let err = validate_query_args("", 0).unwrap_err();
+        assert_eq!(err.code.as_str(), "EMPTY_QUERY");
     }
 
     #[test]
