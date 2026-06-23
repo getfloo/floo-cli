@@ -695,6 +695,54 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn create_managed_postgres_backup(
+        &self,
+        app_id: &str,
+        service_id: &str,
+        env: &str,
+    ) -> Result<ManagedPostgresBackup, FlooApiError> {
+        let resp = self.post_json(
+            &format!("/v1/apps/{app_id}/managed-services/{service_id}/postgres/backups?env={env}"),
+            &serde_json::json!({}),
+        )?;
+        self.handle_response(resp)
+    }
+
+    pub fn list_managed_postgres_backups(
+        &self,
+        app_id: &str,
+        service_id: &str,
+        env: Option<&str>,
+    ) -> Result<ManagedPostgresBackupsResponse, FlooApiError> {
+        let mut query = Vec::new();
+        if let Some(env) = env {
+            query.push(("env", env));
+        }
+        let resp = self.get_with_query(
+            &format!("/v1/apps/{app_id}/managed-services/{service_id}/postgres/backups"),
+            &query,
+        )?;
+        self.handle_response(resp)
+    }
+
+    pub fn restore_managed_postgres_backup(
+        &self,
+        app_id: &str,
+        service_id: &str,
+        backup_id: &str,
+        env: &str,
+    ) -> Result<ManagedPostgresRestoreResponse, FlooApiError> {
+        let body = serde_json::json!({
+            "backup_id": backup_id,
+            "env": env,
+        });
+        let resp = self.post_json(
+            &format!("/v1/apps/{app_id}/managed-services/{service_id}/postgres/restore"),
+            &body,
+        )?;
+        self.handle_response(resp)
+    }
+
     // --- Preflight ---
 
     pub fn preflight(
