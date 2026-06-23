@@ -481,15 +481,17 @@ fn test_env_list_json() {
     let _resolve = mock_resolve_app(&mut server);
     let _services = mock_list_services_one(&mut server);
 
+    // With no `--services`, `env list` reads all vars (service_id omitted).
+    // For a single-service app the API returns that service's vars plus
+    // app-level; the CLI keeps the plain Key/Value table (no Service column).
     let _m_list = server
         .mock("GET", format!("/v1/apps/{TEST_APP_ID}/env").as_str())
-        .match_query(Matcher::UrlEncoded(
-            "service_id".into(),
-            TEST_SERVICE_ID.into(),
-        ))
+        .match_query(Matcher::UrlEncoded("env".into(), "dev".into()))
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"env_vars":[{"key":"DATABASE_URL","masked_value":"post****"}]}"#)
+        .with_body(
+            r#"{"env_vars":[{"key":"DATABASE_URL","masked_value":"********","service_id":null}]}"#,
+        )
         .create();
 
     floo()
@@ -604,29 +606,105 @@ fn test_env_get_json_reveal_secrets() {
 }
 
 #[test]
-fn test_env_get_human_raw_stdout() {
+fn test_env_get_human_nonsecret_raw_stdout() {
+    // A non-secret key (LOG_LEVEL is on the redactor allowlist; "debug" is not
+    // credential-shaped) prints its plaintext to stdout in human mode, with no
+    // --reveal-secrets needed — `env get` stays convenient for plain config.
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
     let _services = mock_list_services_one(&mut server);
 
     let _m_get = server
-        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/env/MY_KEY").as_str())
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/env/LOG_LEVEL").as_str(),
+        )
         .match_query(Matcher::UrlEncoded(
             "service_id".into(),
             TEST_SERVICE_ID.into(),
         ))
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"key":"MY_KEY","value":"secret123"}"#)
+        .with_body(r#"{"key":"LOG_LEVEL","value":"debug"}"#)
         .create();
 
     floo()
-        .args(["env", "get", "MY_KEY", "--app", TEST_APP_NAME])
+        .args(["env", "get", "LOG_LEVEL", "--app", TEST_APP_NAME])
         .env("HOME", home.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("secret123"));
+        .stdout(predicate::str::contains("debug"));
+}
+
+#[test]
+fn test_env_get_human_secret_refused_without_reveal() {
+    // Regression for the #1152 inversion: human `env get` on a secret-shaped key
+    // must NOT print plaintext. It refuses with SECRET_REVEAL_REQUIRED and emits
+    // nothing usable on stdout — matching the --json path, which redacts.
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
+
+    let _m_get = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/env/DATABASE_URL").as_str(),
+        )
+        .match_query(Matcher::UrlEncoded(
+            "service_id".into(),
+            TEST_SERVICE_ID.into(),
+        ))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"key":"DATABASE_URL","value":"postgres://u:p@h/db"}"#)
+        .create();
+
+    floo()
+        .args(["env", "get", "DATABASE_URL", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("postgres://u:p@h/db").not())
+        .stderr(predicate::str::contains("reveal-secrets"));
+}
+
+#[test]
+fn test_env_get_human_secret_printed_with_reveal() {
+    // `--reveal-secrets` opts back in to plaintext on stdout for the same key.
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
+
+    let _m_get = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/env/DATABASE_URL").as_str(),
+        )
+        .match_query(Matcher::UrlEncoded(
+            "service_id".into(),
+            TEST_SERVICE_ID.into(),
+        ))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"key":"DATABASE_URL","value":"postgres://u:p@h/db"}"#)
+        .create();
+
+    floo()
+        .args([
+            "--reveal-secrets",
+            "env",
+            "get",
+            "DATABASE_URL",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("postgres://u:p@h/db"));
 }
 
 #[test]
@@ -671,20 +749,142 @@ fn test_env_import_json() {
 }
 
 #[test]
-fn test_env_multiple_services_error() {
+fn test_env_list_all_services_no_flag() {
+    // #1152: `env list` with no --services on a multi-service app no longer
+    // errors MULTIPLE_SERVICES. It reads every service's vars plus app-level in
+    // one pass (service_id omitted => the API returns all).
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
     let _services = mock_list_services_two(&mut server);
 
+    let _m_list = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/env").as_str())
+        .match_query(Matcher::UrlEncoded("env".into(), "dev".into()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"env_vars":[
+                {"key":"DATABASE_URL","masked_value":"********","service_id":"svc-uuid-1234"},
+                {"key":"API_TOKEN","masked_value":"********","service_id":"svc-uuid-5678"},
+                {"key":"LOG_LEVEL","masked_value":"********","service_id":null}
+            ]}"#,
+        )
+        .create();
+
     floo()
         .args(["--json", "env", "list", "--app", TEST_APP_NAME])
         .env("HOME", home.path())
         .assert()
-        .failure()
-        .stdout(predicate::str::contains("MULTIPLE_SERVICES"))
-        .stdout(predicate::str::contains("web"))
-        .stdout(predicate::str::contains("api"));
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains("DATABASE_URL"))
+        .stdout(predicate::str::contains("API_TOKEN"))
+        .stdout(predicate::str::contains("LOG_LEVEL"));
+}
+
+#[test]
+fn test_env_list_human_shows_scope_when_mixed() {
+    // codex #1152: even a single-service app can return app-level rows
+    // alongside the service's. The human table must label the scope so the two
+    // are distinguishable — the `Service` column appears whenever scopes differ.
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
+
+    let _m_list = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/env").as_str())
+        .match_query(Matcher::UrlEncoded("env".into(), "dev".into()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"env_vars":[
+                {{"key":"APP_WIDE","masked_value":"********","service_id":null}},
+                {{"key":"DB_URL","masked_value":"********","service_id":"{TEST_SERVICE_ID}"}}
+            ]}}"#
+        ))
+        .create();
+
+    // Human mode renders the table to stderr.
+    floo()
+        .args(["env", "list", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Service"))
+        .stderr(predicate::str::contains("(app)"))
+        .stderr(predicate::str::contains(TEST_SERVICE_NAME));
+}
+
+#[test]
+fn test_env_list_human_shows_scope_when_multi_service_single_scope() {
+    // codex #1152: a multi-service app whose vars currently all sit in one
+    // service must still show the Service column — otherwise rows are
+    // indistinguishable from app-level or another service's vars.
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_two(&mut server);
+
+    let _m_list = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/env").as_str())
+        .match_query(Matcher::UrlEncoded("env".into(), "dev".into()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"env_vars":[
+                {{"key":"DB_URL","masked_value":"********","service_id":"{TEST_SERVICE_ID}"}},
+                {{"key":"WORKERS","masked_value":"********","service_id":"{TEST_SERVICE_ID}"}}
+            ]}}"#
+        ))
+        .create();
+
+    floo()
+        .args(["env", "list", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Service"))
+        .stderr(predicate::str::contains(TEST_SERVICE_NAME));
+}
+
+#[test]
+fn test_env_list_human_no_scope_column_when_serviceless() {
+    // A service-less app has a single possible scope (app-level), so the plain
+    // Key/Value table reads cleaner — no Service column.
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _services = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/services").as_str())
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"services":[]}"#)
+        .create();
+
+    let _m_list = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/env").as_str())
+        .match_query(Matcher::UrlEncoded("env".into(), "dev".into()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"env_vars":[{"key":"LOG_LEVEL","masked_value":"********","service_id":null}]}"#,
+        )
+        .create();
+
+    floo()
+        .args(["env", "list", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("LOG_LEVEL"))
+        .stderr(predicate::str::contains("Service").not());
 }
 
 // ───────────────────────── Domains ─────────────────────────

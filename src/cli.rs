@@ -689,6 +689,11 @@ pub enum EnvCommands {
     },
 
     /// List environment variables for an app.
+    ///
+    /// Values are shown masked (`********`); the value itself is never echoed
+    /// here. With no `--services`, lists every service's vars plus app-level in
+    /// one pass — with a `Service` column labelling each row's scope whenever the
+    /// app has services (a service-less app keeps the plain Key/Value table).
     List {
         /// App name or ID (reads from config if omitted).
         #[arg(short, long)]
@@ -722,6 +727,11 @@ pub enum EnvCommands {
     },
 
     /// Get an environment variable's plaintext value.
+    ///
+    /// Secret-shaped values (by key name or value content) are refused unless
+    /// you pass `--reveal-secrets`, in both human and `--json` output, so a
+    /// secret is never echoed to a terminal or transcript by accident. Plain,
+    /// non-secret values print without the flag.
     Get {
         /// Environment variable key.
         key: String,

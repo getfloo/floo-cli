@@ -359,8 +359,17 @@ pub fn list(app_flag: Option<&str>, service_names: &[String], env: &str) {
     super::require_auth();
     let client = super::init_client(None);
     let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
-    let targets = resolve_service_ids(&client, &app_id, &app_name, service_names);
 
+    // No `--services` => "list all env vars" (the documented behavior, and the
+    // `--help` example). A multi-service app no longer errors with
+    // MULTIPLE_SERVICES; it reads every service's vars plus app-level in one
+    // pass (#1152). With `--services`, each named service is listed in turn.
+    if service_names.is_empty() {
+        list_all_services(&client, &app_id, &app_name, env);
+        return;
+    }
+
+    let targets = resolve_service_ids(&client, &app_id, &app_name, service_names);
     for (service_id, service_name) in &targets {
         let result = match client.list_env_vars(&app_id, service_id.as_deref(), env) {
             Ok(r) => r,
@@ -394,6 +403,90 @@ pub fn list(app_flag: Option<&str>, service_names: &[String], env: &str) {
 
         output::table(&["Key", "Value"], &rows, Some(output::to_value(&result)));
     }
+}
+
+/// List every env var on the app — app-level plus every service's — in a single
+/// read. The API returns all vars when `service_id` is omitted.
+///
+/// Scope labelling is by construction, not a heuristic: a row's scope (app-level
+/// vs which service) is ambiguous exactly when the app HAS a service — then
+/// "app-level vs service-scoped" is a real distinction every row needs spelled
+/// out. A service-less app has a single possible scope (app-level), so it gets
+/// the plain `Key`/`Value` table. `services.is_empty()` is the whole rule; the
+/// earlier scope-count / span conditions were guard-pile refinements that each
+/// left another row-shape unlabelled (#1152 architectural pause).
+fn list_all_services(client: &FlooClient, app_id: &str, app_name: &str, env: &str) {
+    let result = match client.list_env_vars(app_id, None, env) {
+        Ok(r) => r,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+
+    if result.env_vars.is_empty() {
+        if output::is_json_mode() {
+            output::success("No env vars.", Some(serde_json::json!({"env_vars": []})));
+        } else {
+            output::info(
+                &format!("No environment variables set on {app_name}."),
+                None,
+            );
+        }
+        return;
+    }
+
+    let services = match client.list_services(app_id, None) {
+        Ok(r) => r.services,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+
+    if services.is_empty() {
+        let rows: Vec<Vec<String>> = result
+            .env_vars
+            .iter()
+            .map(|ev| {
+                vec![
+                    ev.key.clone(),
+                    ev.masked_value.as_deref().unwrap_or("-").to_string(),
+                ]
+            })
+            .collect();
+        output::table(&["Key", "Value"], &rows, Some(output::to_value(&result)));
+        return;
+    }
+
+    let service_name = |service_id: &Option<String>| -> String {
+        match service_id {
+            Some(id) => services
+                .iter()
+                .find(|s| s.id == *id)
+                .map(|s| s.name.clone())
+                .unwrap_or_else(|| "(unknown)".to_string()),
+            None => "(app)".to_string(),
+        }
+    };
+
+    let rows: Vec<Vec<String>> = result
+        .env_vars
+        .iter()
+        .map(|ev| {
+            vec![
+                ev.key.clone(),
+                service_name(&ev.service_id),
+                ev.masked_value.as_deref().unwrap_or("-").to_string(),
+            ]
+        })
+        .collect();
+
+    output::table(
+        &["Key", "Service", "Value"],
+        &rows,
+        Some(output::to_value(&result)),
+    );
 }
 
 pub fn remove(key: &str, app_flag: Option<&str>, service_names: &[String], env: &str) {
@@ -463,10 +556,25 @@ pub fn get(key: &str, app_flag: Option<&str>, service_flag: Option<&str>, env: &
     });
 
     if output::is_json_mode() {
+        // JSON mode redacts secret-shaped values at the `print_json` boundary
+        // (unless `--reveal-secrets`) and stamps `contains_secrets`. Leave it to
+        // that chokepoint so `env get --json` matches every other command.
         output::success(
             &format!("Got {key}."),
             Some(serde_json::json!({"key": key, "value": value})),
         );
+    } else if crate::redact::is_secret(&key, value) && !crate::redact::is_reveal_secrets() {
+        // Human mode mirrors the JSON redactor's classifier: refuse to print a
+        // secret-shaped value to the terminal (and into shell history / a
+        // transcript) without an explicit opt-in. Erroring rather than printing
+        // a placeholder keeps `env get`'s contract honest — it returns the
+        // usable value or fails, never a lying "***REDACTED***" stand-in (#1152).
+        output::error(
+            &format!("{key} looks like a secret; refusing to print it in plaintext."),
+            &ErrorCode::SecretRevealRequired,
+            Some("Re-run with --reveal-secrets to print the value."),
+        );
+        process::exit(1);
     } else {
         output::raw_value(value);
     }
