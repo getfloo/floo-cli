@@ -24,6 +24,7 @@ pub mod feedback;
 pub mod github;
 pub mod init;
 pub mod logs;
+pub mod notifications;
 pub mod orgs;
 pub mod releases;
 pub mod reparo;
