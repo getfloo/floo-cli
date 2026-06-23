@@ -1544,11 +1544,26 @@ fn validate_preflight(
             );
         }
 
+        // Managed-injection keys this service receives (DATABASE_URL, REDIS_URL,
+        // …) — config-only, derived from the env injection plan, no disk access.
+        let managed_keys = managed_keys_for_service(env_plan, &svc.name);
+
         // A service sourced from an external `repo` builds from THAT repo, not
-        // the local checkout — its `path` is relative to the external repo and
-        // won't exist locally. None of the local-disk checks below apply, and
-        // erroring on the missing local path would false-block a valid config.
+        // the local checkout — its `path`/Dockerfile/env files live in the
+        // referenced repo, so the local-disk checks below don't apply and the
+        // local env-file-based required-env check would be a false-positive
+        // flood (we can't see the external repo's env). But a `migrate_command`
+        // still needs a database floo provides — a config-only check (no disk) —
+        // so it runs here (with an empty local env_file set, since an
+        // external-repo service imports no local env file) before we skip the
+        // rest.
         if service_is_external_repo(resolved, &svc.name) {
+            check_migrate_command_no_database(
+                svc,
+                &managed_keys,
+                &std::collections::HashSet::new(),
+                &mut findings,
+            );
             continue;
         }
 
@@ -1585,7 +1600,6 @@ fn validate_preflight(
         // inline floo.app.toml env_file is declared but never imported, so it
         // must not count. Server-side `floo env set` vars are invisible here,
         // which is why the consumers below warn rather than error.
-        let managed_keys = managed_keys_for_service(env_plan, &svc.name);
         let imported_env_file = imported_env_files.get(&svc.name);
         let env_file_keys = match imported_env_file {
             Some((env_file, base)) => env_file_keys_for_service(base, Some(env_file.as_str())),
@@ -1617,27 +1631,10 @@ fn validate_preflight(
             }
         }
 
-        // A migrate_command needs a database to run against. floo's database is
-        // managed Postgres; if none is reachable from anything local preflight
-        // can see (no managed Postgres attached, no DATABASE_URL in an env
-        // file), the migration step will fail. Warn rather than error because
-        // DATABASE_URL may legitimately be set server-side via `floo env set`.
-        if svc.migrate_command.is_some()
-            && !managed_keys.contains("DATABASE_URL")
-            && !env_file_keys.contains("DATABASE_URL")
-        {
-            findings.push(
-                PreflightFinding::warning(
-                    "MIGRATE_COMMAND_NO_DATABASE",
-                    format!(
-                        "Service '{}' declares migrate_command but no database is reachable from local config — no managed Postgres is attached and no DATABASE_URL is set in a local env file. The migration step will fail unless DATABASE_URL is set another way.",
-                        svc.name
-                    ),
-                )
-                .with_path(&svc.path)
-                .with_hint("Add `[postgres]` to floo.app.toml (or `floo services add postgres`), or set DATABASE_URL with `floo env set`."),
-            );
-        }
+        // A migrate_command needs a database to run against (config-only check;
+        // see the helper). Local services pass the keys from their imported
+        // env_file so a locally-declared DATABASE_URL satisfies it.
+        check_migrate_command_no_database(svc, &managed_keys, &env_file_keys, &mut findings);
 
         // Required env vars the deploy can't satisfy from local config.
         let svc_plan = env_plan.services.iter().find(|p| p.service == svc.name);
@@ -1913,6 +1910,37 @@ fn configured_env_file_for_service(
         .ok()
         .flatten()
         .and_then(|cfg| cfg.service.env_file)
+}
+
+/// Emit `MIGRATE_COMMAND_NO_DATABASE` if a service declares a `migrate_command`
+/// but no database is reachable from local config. This is a CONFIG-ONLY check —
+/// it reads the managed-injection keys plus whatever keys the service's imported
+/// env_file declares, with no service-source disk access — so it applies to
+/// external-repo services too: a migrate step with no DB fails wherever the
+/// service's source lives. Callers pass an empty `env_file_keys` for
+/// external-repo services (they import no local env file).
+fn check_migrate_command_no_database(
+    svc: &ServiceConfig,
+    managed_keys: &std::collections::HashSet<String>,
+    env_file_keys: &std::collections::HashSet<String>,
+    findings: &mut Vec<PreflightFinding>,
+) {
+    if svc.migrate_command.is_some()
+        && !managed_keys.contains("DATABASE_URL")
+        && !env_file_keys.contains("DATABASE_URL")
+    {
+        findings.push(
+            PreflightFinding::warning(
+                "MIGRATE_COMMAND_NO_DATABASE",
+                format!(
+                    "Service '{}' declares migrate_command but no database is reachable from local config — no managed Postgres is attached and no DATABASE_URL is set in a local env file. The migration step will fail unless DATABASE_URL is set another way.",
+                    svc.name
+                ),
+            )
+            .with_path(&svc.path)
+            .with_hint("Add `[postgres]` to floo.app.toml (or `floo services add postgres`), or set DATABASE_URL with `floo env set`."),
+        );
+    }
 }
 
 /// The managed-injection keys a service receives, per the env injection plan
