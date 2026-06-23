@@ -1451,6 +1451,7 @@ const DRY_RUN_SUPPORTED_COMMANDS: &[&str] = &[
     "cron run",
     "deploys rollback",
     "db migrate",
+    "db query",
 ];
 
 fn reject_unsupported_dry_run(command: &Commands) {
@@ -1996,6 +1997,18 @@ mod tests {
             (
                 "db migrate",
                 &["floo", "db", "migrate", "--app", "myapp", "--dry-run"],
+            ),
+            (
+                "db query",
+                &[
+                    "floo",
+                    "db",
+                    "query",
+                    "SELECT 1",
+                    "--app",
+                    "myapp",
+                    "--dry-run",
+                ],
             ),
         ];
 
