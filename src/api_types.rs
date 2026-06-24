@@ -636,6 +636,12 @@ pub struct AnalyticsSummary {
     pub avg_latency_ms: Option<i64>,
     pub p95_latency_ms: Option<i64>,
     pub unique_users: Option<i64>,
+    // Requests the gateway answered without proxying to the backend (rejections
+    // + gateway-owned endpoints). Explains why latency is measured over fewer
+    // requests than total. `#[serde(default)]` keeps the CLI working against an
+    // API that predates the field (None = unknown).
+    #[serde(default)]
+    pub gateway_handled_requests: Option<i64>,
     pub status_code_breakdown: Option<HashMap<String, i64>>,
     pub total_apps_with_traffic: Option<i64>,
 }

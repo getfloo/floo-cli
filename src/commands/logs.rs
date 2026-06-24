@@ -13,6 +13,27 @@ use crate::resolve::resolve_app;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_TRANSIENT_RETRIES: u32 = 3;
+/// Server-side cap on `limit` for both /logs and /requests (FastAPI `le=500`).
+/// Clamp client-side so `--tail 9999` shows the most recent 500 with a clear
+/// note instead of leaking a raw Pydantic validation error (#1155 finding #5).
+const MAX_LOG_LINES: u32 = 500;
+
+/// Clamp `--tail` to the server maximum, emitting a one-line note when it caps.
+fn clamp_tail(tail: u32) -> u32 {
+    if tail > MAX_LOG_LINES {
+        if !output::is_json_mode() {
+            output::info(
+                &format!(
+                    "--tail {tail} exceeds the maximum; showing the most recent {MAX_LOG_LINES} lines."
+                ),
+                None,
+            );
+        }
+        MAX_LOG_LINES
+    } else {
+        tail
+    }
+}
 
 pub struct LogsArgs {
     pub app_flag: Option<String>,
@@ -338,6 +359,7 @@ pub fn logs(args: LogsArgs) {
 
     let app_name = &app_data.name;
     let app_id = &app_data.id;
+    let tail = clamp_tail(args.tail);
 
     let filter = LogsFilter {
         since: args.since.as_deref(),
@@ -355,13 +377,13 @@ pub fn logs(args: LogsArgs) {
     }
 
     if args.live {
-        live_logs(&client, app_id, args.tail, &filter);
+        live_logs(&client, app_id, tail, &filter);
     } else {
         batch_logs(
             &client,
             app_id,
             app_name,
-            args.tail,
+            tail,
             &filter,
             args.output_path.as_deref(),
         );
@@ -630,18 +652,20 @@ pub fn request_logs(args: RequestLogsArgs) {
         }
     };
 
+    let tail = clamp_tail(args.tail);
+
     if args.live {
         live_request_logs(
             &client,
             &app_data.id,
             &app_data.name,
-            args.tail,
+            tail,
             args.since.as_deref(),
         );
         return;
     }
 
-    let result = match client.get_request_logs(&app_data.id, args.tail, args.since.as_deref()) {
+    let result = match client.get_request_logs(&app_data.id, tail, args.since.as_deref()) {
         Ok(r) => r,
         Err(e) => {
             output::error(
@@ -664,7 +688,15 @@ pub fn request_logs(args: RequestLogsArgs) {
     }
 
     if result.requests.is_empty() {
-        output::dim_line(&format!("No requests yet for {}.", app_data.name));
+        output::dim_line(&format!(
+            "No requests in the last 7 days for {}.",
+            app_data.name
+        ));
+        output::info(
+            "Gateway request logs are retained ~7 days. For longer windows use \
+             `floo analytics` (aggregated totals up to 90 days).",
+            None,
+        );
         return;
     }
 
@@ -673,6 +705,15 @@ pub fn request_logs(args: RequestLogsArgs) {
     for entry in result.requests.iter().rev() {
         output::dim_line(&format_request_line(entry));
     }
+    // The two surfaces read different stores (raw 7-day requests vs aggregated
+    // 90-day analytics), so they legitimately differ for older traffic. Make
+    // the horizon explicit rather than leaving "analytics shows 145, requests
+    // shows fewer" a silent contradiction (#1155 finding #3).
+    output::info(
+        "Showing raw gateway requests from the last ~7 days. `floo analytics` \
+         aggregates totals over a longer window.",
+        None,
+    );
 }
 
 fn live_request_logs(
@@ -917,6 +958,15 @@ mod tests {
     #[test]
     fn test_should_show_prefix_empty_is_false() {
         assert!(!should_show_prefix(&[]));
+    }
+
+    #[test]
+    fn test_clamp_tail_caps_at_server_max() {
+        assert_eq!(clamp_tail(MAX_LOG_LINES + 1), MAX_LOG_LINES);
+        assert_eq!(clamp_tail(9999), MAX_LOG_LINES);
+        assert_eq!(clamp_tail(MAX_LOG_LINES), MAX_LOG_LINES);
+        assert_eq!(clamp_tail(100), 100);
+        assert_eq!(clamp_tail(1), 1);
     }
 
     fn make_request_entry(ts: &str) -> RequestLogEntry {

@@ -40,8 +40,13 @@ pub struct Cli {
 pub enum Commands {
     /// View traffic analytics for an app or org.
     Analytics {
-        /// App name or ID. Omit for org-level overview.
+        /// App name or ID (positional). Omit for org-level overview.
         app: Option<String>,
+
+        /// App name or ID — `--app` form, consistent with `floo logs`. Takes
+        /// precedence over the positional argument if both are given.
+        #[arg(short = 'a', long = "app")]
+        app_flag: Option<String>,
 
         /// Time period: 7d, 30d, or 90d.
         #[arg(short, long, default_value = "30d", value_parser = ["7d", "30d", "90d"])]
@@ -409,7 +414,7 @@ pub struct LogsOptions {
     #[arg(short, long)]
     app: Option<String>,
 
-    /// Number of log lines to show.
+    /// Number of log lines to show (max 500; higher values are capped).
     #[arg(short, long, visible_alias = "limit", default_value = "100")]
     tail: u32,
 
@@ -421,7 +426,7 @@ pub struct LogsOptions {
     #[arg(short, long)]
     error: bool,
 
-    /// Minimum severity level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
+    /// Minimum severity level (DEFAULT, DEBUG, INFO, WARNING, ERROR, CRITICAL).
     #[arg(long)]
     severity: Option<String>,
 
@@ -1553,7 +1558,11 @@ pub fn run() {
     };
 
     match cli.command {
-        Commands::Analytics { app, period } => commands::analytics::analytics(app, &period),
+        Commands::Analytics {
+            app,
+            app_flag,
+            period,
+        } => commands::analytics::analytics(app_flag.or(app), &period),
 
         Commands::Init { name, path } => commands::init::init(name, path),
 
@@ -2122,5 +2131,40 @@ mod tests {
         ])
         .unwrap();
         assert!(dry_run_is_unsupported(&cli.command));
+    }
+
+    #[test]
+    fn analytics_accepts_app_flag_and_positional() {
+        // --app flag form, consistent with `floo logs`
+        let cli = Cli::try_parse_from(["floo", "analytics", "--app", "myapp"]).unwrap();
+        let Commands::Analytics { app, app_flag, .. } = cli.command else {
+            panic!("expected Analytics");
+        };
+        assert_eq!(app_flag.or(app), Some("myapp".to_string()));
+
+        // positional form still works (back-compat)
+        let cli = Cli::try_parse_from(["floo", "analytics", "myapp"]).unwrap();
+        let Commands::Analytics { app, app_flag, .. } = cli.command else {
+            panic!("expected Analytics");
+        };
+        assert_eq!(app_flag.or(app), Some("myapp".to_string()));
+    }
+
+    #[test]
+    fn analytics_app_flag_takes_precedence_over_positional() {
+        let cli = Cli::try_parse_from(["floo", "analytics", "pos", "--app", "flag"]).unwrap();
+        let Commands::Analytics { app, app_flag, .. } = cli.command else {
+            panic!("expected Analytics");
+        };
+        assert_eq!(app_flag.or(app), Some("flag".to_string()));
+    }
+
+    #[test]
+    fn analytics_omitted_app_is_org_level() {
+        let cli = Cli::try_parse_from(["floo", "analytics"]).unwrap();
+        let Commands::Analytics { app, app_flag, .. } = cli.command else {
+            panic!("expected Analytics");
+        };
+        assert_eq!(app_flag.or(app), None);
     }
 }
