@@ -1529,9 +1529,79 @@ fn reject_unsupported_dry_run(command: &Commands) {
     std::process::exit(1);
 }
 
+/// Scan raw argv for the global `--json` flag, stopping at the `--`
+/// end-of-options separator so passthrough args (`floo run -- cmd --json`)
+/// don't count as an output-mode request. Runs before clap parsing so a parse
+/// failure under `--json` can still honor the JSON output contract (#1156).
+fn json_flag_in_argv(args: &[OsString]) -> bool {
+    for arg in args.iter().skip(1) {
+        match arg.to_str() {
+            Some("--") => return false,
+            Some("--json") => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// First actionable line of a clap parse error, minus clap's `error:` prefix.
+/// clap renders multi-line output (`error: …\n\nUsage: …`); the usage block is
+/// a human affordance dropped from the JSON message. Pure so it can be tested
+/// without spawning a process.
+fn clap_error_message(err: &clap::Error) -> String {
+    let rendered = err.to_string();
+    let first_line = rendered
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("invalid arguments");
+    first_line
+        .strip_prefix("error:")
+        .unwrap_or(first_line)
+        .trim()
+        .to_string()
+}
+
+/// Render a clap parse failure as a JSON error and exit, so agents that always
+/// pass `--json` get `{"success":false,"error":{...}}` instead of clap's
+/// plain-text usage dump (#1156). Exit code matches clap's usage-error
+/// convention (`err.exit_code()`, normally 2); only the rendering changes.
+fn exit_with_clap_error_json(err: &clap::Error) -> ! {
+    output::error(
+        &clap_error_message(err),
+        &crate::errors::ErrorCode::InvalidArguments,
+        Some("Run the command with --help for usage."),
+    );
+    std::process::exit(err.exit_code());
+}
+
 pub fn run() {
     let args = rewrite_bare_version_flag(std::env::args_os().collect());
-    let cli = Cli::parse_from(args);
+
+    // Detect `--json` from raw argv BEFORE clap parses. A parse failure makes
+    // clap exit with plain-text usage on stderr (exit 2) *before* the parsed
+    // `--json` flag is ever visible, so an agent that always passes `--json`
+    // would get non-JSON on any malformed invocation — e.g. `floo doctor
+    // --json` (missing subcommand) (#1156). This fixes the whole class, not
+    // just `doctor`.
+    let json_requested = json_flag_in_argv(&args);
+    let cli = match Cli::try_parse_from(args) {
+        Ok(cli) => cli,
+        Err(err) => {
+            // `use_stderr()` is false only for `--help`/`--version` displays —
+            // explicit requests for human text that we leave to clap even
+            // under `--json`. Every real parse error becomes a JSON error so
+            // the `--json` contract holds.
+            if json_requested && err.use_stderr() {
+                // Parsing failed before the normal `set_json_mode` below ran,
+                // so enable it here from the raw-argv detection — otherwise
+                // `output::error` would fall back to human text on stderr.
+                output::set_json_mode(true);
+                exit_with_clap_error_json(&err);
+            }
+            err.exit();
+        }
+    };
 
     if cli.json {
         output::set_json_mode(true);
@@ -2166,5 +2236,79 @@ mod tests {
             panic!("expected Analytics");
         };
         assert_eq!(app_flag.or(app), None);
+    }
+
+    // --- `--json` arg-error contract (#1156) ---
+
+    /// Parse `args` expecting failure, returning the clap error. Avoids
+    /// `unwrap_err()`, which would require `Cli: Debug` (not derived).
+    fn parse_err(args: &[&str]) -> clap::Error {
+        match Cli::try_parse_from(args.iter().copied()) {
+            Ok(_) => panic!("expected a clap parse error for {args:?}"),
+            Err(e) => e,
+        }
+    }
+
+    #[test]
+    fn json_flag_detected_anywhere_before_separator() {
+        assert!(json_flag_in_argv(&argv(&["floo", "--json", "doctor"])));
+        assert!(json_flag_in_argv(&argv(&["floo", "doctor", "--json"])));
+        assert!(!json_flag_in_argv(&argv(&["floo", "doctor"])));
+        assert!(!json_flag_in_argv(&argv(&["floo"])));
+    }
+
+    #[test]
+    fn json_flag_after_double_dash_does_not_count() {
+        // `--json` in passthrough args is the wrapped command's flag, not a
+        // request for the CLI's JSON output mode.
+        assert!(!json_flag_in_argv(&argv(&[
+            "floo",
+            "run",
+            "--service",
+            "api",
+            "--",
+            "mycmd",
+            "--json",
+        ])));
+        // …but a real `--json` before the separator still counts.
+        assert!(json_flag_in_argv(&argv(&[
+            "floo",
+            "run",
+            "--json",
+            "--service",
+            "api",
+            "--",
+            "mycmd",
+            "--json",
+        ])));
+    }
+
+    #[test]
+    fn clap_error_message_strips_prefix_and_usage() {
+        // The #1156 case: `floo doctor --json` (missing subcommand) yields a
+        // `MissingSubcommand` error rendered as
+        //   error: 'floo doctor' requires a subcommand but one was not provided
+        //     [subcommands: ...]
+        //   Usage: ...
+        // The JSON message keeps only the first actionable line, with clap's
+        // `error:` prefix and the usage/hint block dropped.
+        let err = parse_err(&["floo", "doctor", "--json"]);
+        let msg = clap_error_message(&err);
+        assert!(
+            msg.contains("requires a subcommand but one was not provided"),
+            "unexpected message: {msg}",
+        );
+        assert!(!msg.starts_with("error:"));
+        assert!(!msg.contains("Usage:"));
+        assert!(!msg.contains("[subcommands:"));
+    }
+
+    #[test]
+    fn clap_missing_subcommand_is_a_real_error_not_a_help_display() {
+        // The discriminator the run() error path relies on: a missing
+        // subcommand under `--json` is `use_stderr() == true`, so it converts
+        // to JSON, whereas `--help`/`--version` are stdout displays that don't.
+        assert!(parse_err(&["floo", "doctor", "--json"]).use_stderr());
+        assert!(!parse_err(&["floo", "--help"]).use_stderr());
     }
 }

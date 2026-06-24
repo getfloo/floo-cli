@@ -3850,3 +3850,81 @@ fn test_notifications_set_json() {
         .stdout(predicate::str::contains(r#""success":true"#))
         .stdout(predicate::str::contains(r#""enabled":true"#));
 }
+
+// ───────────────────────── Doctor (#1156) ─────────────────────────
+
+/// Mock GET /v1/apps/{id}/doctor/accounts with a caller-supplied body so each
+/// test controls the drift list and (optional) drift_detected field.
+fn mock_doctor_accounts(server: &mut Server, body: &str) -> Mock {
+    server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/doctor/accounts").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(body)
+        .create()
+}
+
+fn doctor_body(drift_detected_field: &str, drift_items: &str) -> String {
+    format!(
+        r#"{{"app_id":"{TEST_APP_ID}","app_name":"{TEST_APP_NAME}","requested":{{"access_mode":"accounts","access_policy":"invite","allowed_domains":[]}},"serving":[],"latest_deploy":null{drift_detected_field},"drift":[{drift_items}]}}"#
+    )
+}
+
+const DRIFT_ITEM: &str =
+    r#"{"kind":"access_mode_drift","summary":"gateway serves public","likely_fix":null}"#;
+
+#[test]
+fn test_doctor_accounts_json_no_drift_exits_zero() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _doctor = mock_doctor_accounts(&mut server, &doctor_body(r#","drift_detected":false"#, ""));
+
+    floo()
+        .args(["--json", "doctor", "accounts", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success() // exit 0 ⇔ drift_detected:false
+        .stdout(predicate::str::contains(r#""drift_detected":false"#));
+}
+
+#[test]
+fn test_doctor_accounts_json_drift_exits_one_and_body_agrees() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _doctor = mock_doctor_accounts(
+        &mut server,
+        &doctor_body(r#","drift_detected":true"#, DRIFT_ITEM),
+    );
+
+    // Exit code (1) and the body verdict (drift_detected:true) agree — the
+    // core #1156 contract: an agent branching on either reaches the same answer.
+    floo()
+        .args(["--json", "doctor", "accounts", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(r#""drift_detected":true"#))
+        .stdout(predicate::str::contains("access_mode_drift"));
+}
+
+#[test]
+fn test_doctor_accounts_json_old_api_no_field_derives_from_drift_list() {
+    // An API predating drift_detected omits the field; the CLI derives the
+    // verdict from the drift list and still emits a definitive bool + exit 1.
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _doctor = mock_doctor_accounts(&mut server, &doctor_body("", DRIFT_ITEM));
+
+    floo()
+        .args(["--json", "doctor", "accounts", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(r#""drift_detected":true"#));
+}

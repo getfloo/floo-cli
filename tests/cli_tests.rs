@@ -96,6 +96,62 @@ fn test_no_args_shows_help() {
         .stderr(predicate::str::contains("Usage: floo"));
 }
 
+// --- `--json` arg-error contract (#1156) ---
+// An agent that always passes `--json` must get JSON on EVERY terminal output,
+// including clap parse failures. clap's auto-exit would otherwise dump
+// plain-text usage to stderr before the parsed `--json` flag is ever applied.
+
+#[test]
+fn test_doctor_json_missing_subcommand_emits_json_error() {
+    // The exact case from #1156: `floo doctor --json` with no subcommand.
+    floo()
+        .args(["doctor", "--json"])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""success":false"#))
+        .stdout(predicate::str::contains(r#""code":"INVALID_ARGUMENTS""#))
+        .stdout(predicate::str::contains("requires a subcommand"))
+        // JSON mode must not leak human text to stderr — agents read stdout.
+        .stderr(predicate::str::is_empty());
+}
+
+#[test]
+fn test_doctor_missing_subcommand_human_unchanged() {
+    // Without `--json`, the human path is untouched: clap renders usage/help,
+    // and nothing JSON-shaped appears on stdout.
+    floo()
+        .arg("doctor")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""success""#).not());
+}
+
+#[test]
+fn test_unknown_subcommand_with_json_emits_json_error() {
+    // The fix is the whole class, not just `doctor`: any parse failure under
+    // `--json` becomes a JSON error.
+    floo()
+        .args(["--json", "definitely-not-a-command"])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""success":false"#))
+        .stdout(predicate::str::contains(r#""code":"INVALID_ARGUMENTS""#));
+}
+
+#[test]
+fn test_help_with_json_still_human() {
+    // `--help`/`--version` are explicit requests for human text and are left
+    // to clap even under `--json` (they exit 0 and write to stdout).
+    floo()
+        .args(["--help", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Manage and observe web apps. Deploys are git-driven.",
+        ))
+        .stdout(predicate::str::contains(r#""success""#).not());
+}
+
 // --- Auth subcommand ---
 
 #[test]

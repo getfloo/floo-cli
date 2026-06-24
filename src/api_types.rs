@@ -623,6 +623,14 @@ pub struct AccountsDoctorResponse {
     pub requested: AccountsDoctorRequested,
     pub serving: Vec<AccountsDoctorRoute>,
     pub latest_deploy: Option<AccountsDoctorLatestDeploy>,
+    /// Single health verdict (#1156). `Option` + `#[serde(default)]` so a
+    /// response from an API predating this field deserializes as `None` instead
+    /// of erroring. The command does not trust the incoming value: it derives
+    /// the verdict from `drift` (the evidence it renders) and canonicalizes it
+    /// back onto this field, so the emitted body always carries a definitive
+    /// bool that agrees with both the drift list and the exit code.
+    #[serde(default)]
+    pub drift_detected: Option<bool>,
     pub drift: Vec<AccountsDoctorDrift>,
 }
 
