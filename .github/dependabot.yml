@@ -1,0 +1,41 @@
+# Dependabot configuration for getfloo/floo-cli.
+#
+# Configures SCHEDULED VERSION updates. The other layer NOT affected by the
+# cooldown below is Dependabot SECURITY updates (repo setting), which patch a
+# disclosed CVE promptly. (Unlike the floo monorepo, floo-cli has no CI
+# osv-scanner gate yet — Dependabot alerts + security updates are the coverage
+# here; a CI cargo/osv audit would be a reasonable fast-follow.)
+#
+# DELIBERATE LAG (supply-chain defense). `cooldown` makes Dependabot refuse to
+# propose a release until it has aged past the window. We do NOT adopt the newest
+# version immediately: a freshly-published release can be malicious (a hijacked
+# crates.io account / poisoned publish). Aging it out gives the ecosystem time to
+# detect + yank a bad version first. Known CVEs are still patched promptly by the
+# security-updates layer — lagging version updates means aged, not vulnerable.
+version: 2
+updates:
+  # ── Rust (cargo) ──
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+    groups:
+      cargo:
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+
+  # ── GitHub Actions (.github/workflows) ──
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+    groups:
+      actions:
+        patterns: ["*"]
+    open-pull-requests-limit: 5
