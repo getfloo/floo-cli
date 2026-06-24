@@ -213,6 +213,16 @@ confirmation. See also: floo docs state-model.
   and no schema prefix. Rails (`t.vector`), Django, SQLAlchemy, and Prisma
   all emit the bare type. Full guide: https://docs.getfloo.com/guides/databases
 
+  Preview database branches are preview-owned managed Postgres branches.
+  Inspect them from the terminal:
+
+    floo db branches list <preview-slug> --app <name>
+    floo db branches show <preview-slug> --app <name> --name default
+    floo db branches reset <preview-slug> --app <name> --yes
+
+  Reset drops and recreates only the preview branch. Dev and prod databases
+  are untouched, and JSON output never includes plaintext credentials.
+
   In multi-service apps, attach those credentials per service:
     [services.api.env]
     managed = [\"postgres\", \"redis\"]

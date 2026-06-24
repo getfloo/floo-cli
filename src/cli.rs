@@ -1314,6 +1314,73 @@ Examples:
         #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
         env: String,
     },
+
+    /// Inspect and reset preview database branches.
+    #[command(subcommand)]
+    Branches(DbBranchesCommands),
+}
+
+#[derive(Subcommand)]
+pub enum DbBranchesCommands {
+    /// List managed Postgres branches backing one preview.
+    #[command(after_help = "\
+Examples:
+  floo db branches list feat-db-abcde --app my-app
+  floo db branches list feat-db-abcde --app my-app --json
+
+Preview database branches are preview-owned. Dev and prod databases are not
+listed or reset by this surface.")]
+    List {
+        /// Preview slug from PR preview URLs or `floo previews` surfaces.
+        preview: String,
+
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+
+    /// Show one preview database branch.
+    #[command(after_help = "\
+Examples:
+  floo db branches show feat-db-abcde --app my-app
+  floo db branches show feat-db-abcde --app my-app --name analytics")]
+    Show {
+        /// Preview slug from PR preview URLs or `floo previews` surfaces.
+        preview: String,
+
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Managed Postgres branch name.
+        #[arg(long, default_value = "default")]
+        name: String,
+    },
+
+    /// Reset one preview database branch.
+    #[command(after_help = "\
+Examples:
+  floo db branches reset feat-db-abcde --app my-app --name default
+  floo db branches reset feat-db-abcde --app my-app --yes --json
+
+Reset drops and recreates preview-owned state only. It does not touch dev or
+prod databases.")]
+    Reset {
+        /// Preview slug from PR preview URLs or `floo previews` surfaces.
+        preview: String,
+
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Managed Postgres branch name.
+        #[arg(long, default_value = "default")]
+        name: String,
+
+        /// Skip the y/N prompt. Required in non-interactive contexts.
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1514,6 +1581,7 @@ const DRY_RUN_SUPPORTED_COMMANDS: &[&str] = &[
     "deploys rollback",
     "db migrate",
     "db query",
+    "db branches reset",
 ];
 
 fn reject_unsupported_dry_run(command: &Commands) {
@@ -1930,6 +1998,20 @@ pub fn run() {
                 name,
                 env,
             } => commands::db::restore(app.as_deref(), &name, &env, &backup_id),
+            DbCommands::Branches(sub) => match sub {
+                DbBranchesCommands::List { preview, app } => {
+                    commands::db::branches_list(app.as_deref(), &preview)
+                }
+                DbBranchesCommands::Show { preview, app, name } => {
+                    commands::db::branches_show(app.as_deref(), &preview, &name)
+                }
+                DbBranchesCommands::Reset {
+                    preview,
+                    app,
+                    name,
+                    yes,
+                } => commands::db::branches_reset(app.as_deref(), &preview, &name, yes),
+            },
         },
 
         Commands::Cron(sub) => match sub {
@@ -2159,6 +2241,19 @@ mod tests {
                     "db",
                     "query",
                     "SELECT 1",
+                    "--app",
+                    "myapp",
+                    "--dry-run",
+                ],
+            ),
+            (
+                "db branches reset",
+                &[
+                    "floo",
+                    "db",
+                    "branches",
+                    "reset",
+                    "feat-db-abcde",
                     "--app",
                     "myapp",
                     "--dry-run",

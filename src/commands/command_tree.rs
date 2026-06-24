@@ -504,6 +504,35 @@ fn command_tree() -> Vec<CommandInfo> {
                     requires_auth: true,
                     subcommands: vec![],
                 },
+                CommandInfo {
+                    name: "branches",
+                    description: "Inspect and reset preview database branches",
+                    usage: "floo db branches <list|show|reset> <preview> --app <name>",
+                    requires_auth: true,
+                    subcommands: vec![
+                        CommandInfo {
+                            name: "list",
+                            description: "List managed Postgres branches backing one preview",
+                            usage: "floo db branches list <preview> --app <name>",
+                            requires_auth: true,
+                            subcommands: vec![],
+                        },
+                        CommandInfo {
+                            name: "show",
+                            description: "Show one preview database branch",
+                            usage: "floo db branches show <preview> --app <name> [--name default]",
+                            requires_auth: true,
+                            subcommands: vec![],
+                        },
+                        CommandInfo {
+                            name: "reset",
+                            description: "Reset one preview database branch without touching dev/prod",
+                            usage: "floo db branches reset <preview> --app <name> [--name default] --yes",
+                            requires_auth: true,
+                            subcommands: vec![],
+                        },
+                    ],
+                },
             ],
         },
         CommandInfo {

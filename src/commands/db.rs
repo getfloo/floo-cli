@@ -4,6 +4,7 @@ use serde_json::Value;
 
 use crate::api_types::{
     ManagedPostgresBackup, ManagedPostgresRestoreResponse, ManagedServiceSummary,
+    PreviewDatabaseBranch, PreviewEnvironment,
 };
 use crate::errors::{ErrorCode, FlooError};
 use crate::output;
@@ -529,6 +530,199 @@ pub fn restore(app_flag: Option<&str>, name: &str, env: &str, backup_id: &str) {
     render_restore(&response, &app_name, name, env);
 }
 
+pub fn branches_list(app_flag: Option<&str>, preview_identifier: &str) {
+    super::require_auth();
+    let client = super::init_client(None);
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
+    let preview_slug = resolve_preview_slug(&client, &app_id, &app_name, preview_identifier);
+
+    let preview = match client.get_preview(&app_id, &preview_slug) {
+        Ok(preview) => preview,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+    let branches = match client.list_preview_database_branches(&app_id, &preview_slug) {
+        Ok(response) => response.database_branches,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+
+    if output::is_json_mode() {
+        output::success(
+            "Preview database branches retrieved.",
+            Some(serde_json::json!({
+                "app": {
+                    "id": app_id,
+                    "name": app_name,
+                },
+                "preview": preview_json(&preview),
+                "database_branches": output::to_value(&branches),
+                "total": branches.len(),
+            })),
+        );
+        return;
+    }
+
+    output::info(
+        &format!(
+            "Preview database branches for {app_name} (preview: {}):",
+            preview.slug
+        ),
+        None,
+    );
+    render_preview_context(&preview);
+    if branches.is_empty() {
+        output::info(
+            "No preview database branches. This preview has no managed Postgres attachment.",
+            None,
+        );
+        return;
+    }
+    render_branch_table(&branches);
+}
+
+pub fn branches_show(app_flag: Option<&str>, preview_identifier: &str, name: &str) {
+    super::require_auth();
+    let client = super::init_client(None);
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
+    let preview_slug = resolve_preview_slug(&client, &app_id, &app_name, preview_identifier);
+
+    let branch = match client.get_preview_database_branch(&app_id, &preview_slug, name) {
+        Ok(branch) => branch,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+
+    if output::is_json_mode() {
+        output::success(
+            "Preview database branch retrieved.",
+            Some(serde_json::json!({
+                "app": {
+                    "id": app_id,
+                    "name": app_name,
+                },
+                "preview": {
+                    "slug": preview_slug,
+                    "environment_name": "preview",
+                },
+                "database_branch": output::to_value(&branch),
+            })),
+        );
+        return;
+    }
+
+    output::info(
+        &format!(
+            "Preview database branch {} for {app_name} (preview: {preview_slug}):",
+            branch.name
+        ),
+        None,
+    );
+    render_branch_detail(&branch);
+}
+
+pub fn branches_reset(app_flag: Option<&str>, preview_identifier: &str, name: &str, yes: bool) {
+    use crate::confirm::{confirm_tier2, ConfirmOutcome, RiskMetadata, Tier};
+
+    if output::is_dry_run_mode() {
+        let risk: RiskMetadata = Tier::Two.into();
+        let preview_slug = normalize_preview_identifier(preview_identifier)
+            .unwrap_or_else(|| preview_identifier.trim().to_string());
+        output::dry_run_preview(
+            &format!(
+                "Would reset preview database branch '{name}' on preview '{preview_slug}'. Dev and prod are untouched."
+            ),
+            serde_json::json!({
+                "action": "preview_database_branch_reset",
+                "app": app_flag,
+                "preview": preview_slug,
+                "branch": name,
+                "destructive": risk.destructive,
+                "data_loss": risk.data_loss,
+                "tier": risk.tier,
+                "scope": "preview",
+                "dev_prod_untouched": true,
+            }),
+        );
+        return;
+    }
+
+    super::require_auth();
+    let client = super::init_client(None);
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
+    let preview_slug = resolve_preview_slug(&client, &app_id, &app_name, preview_identifier);
+
+    match confirm_tier2(
+        "Reset preview database branch",
+        &format!("{name} on {app_name}/{preview_slug} (dev/prod untouched)"),
+        yes,
+    ) {
+        ConfirmOutcome::Proceed => {}
+        ConfirmOutcome::Aborted => {
+            if output::is_json_mode() {
+                output::success("Cancelled.", Some(serde_json::json!({"cancelled": true})));
+            } else {
+                output::info("Cancelled.", None);
+            }
+            process::exit(0);
+        }
+        ConfirmOutcome::Refused { suggestion } => {
+            crate::confirm::exit_refused(
+                &format!(
+                    "Refusing to reset preview database branch '{name}' on {app_name}/{preview_slug} without explicit confirmation; dev/prod untouched."
+                ),
+                &suggestion,
+            );
+        }
+    }
+
+    let branch = match client.reset_preview_database_branch(&app_id, &preview_slug, name) {
+        Ok(branch) => branch,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+
+    let risk: RiskMetadata = Tier::Two.into();
+    if output::is_json_mode() {
+        output::success(
+            "Preview database branch reset.",
+            Some(serde_json::json!({
+                "app": {
+                    "id": app_id,
+                    "name": app_name,
+                },
+                "preview": {
+                    "slug": preview_slug,
+                    "environment_name": "preview",
+                },
+                "database_branch": output::to_value(&branch),
+                "destructive": risk.destructive,
+                "data_loss": risk.data_loss,
+                "tier": risk.tier,
+                "scope": "preview",
+                "dev_prod_untouched": true,
+            })),
+        );
+        return;
+    }
+
+    output::success(
+        &format!(
+            "Reset preview database branch {name} for {app_name}/{preview_slug}. Dev and prod were untouched."
+        ),
+        None,
+    );
+    render_branch_detail(&branch);
+}
+
 fn resolve_postgres_service(
     client: &crate::api_client::FlooClient,
     app_id: &str,
@@ -557,6 +751,186 @@ fn resolve_postgres_service(
             );
             process::exit(1);
         }
+    }
+}
+
+fn resolve_preview_slug(
+    client: &crate::api_client::FlooClient,
+    app_id: &str,
+    app_name: &str,
+    preview_identifier: &str,
+) -> String {
+    if let Some(slug) = normalize_preview_identifier(preview_identifier) {
+        return slug;
+    }
+
+    let listing = match client.list_previews(app_id) {
+        Ok(response) => response,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+
+    let matches: Vec<&PreviewEnvironment> = listing
+        .previews
+        .iter()
+        .filter(|preview| {
+            preview.slug == preview_identifier
+                || preview.source_branch.as_deref() == Some(preview_identifier)
+                || preview
+                    .pr_number
+                    .map(|pr_number| format!("#{pr_number}") == preview_identifier)
+                    .unwrap_or(false)
+        })
+        .collect();
+
+    match matches.as_slice() {
+        [preview] => preview.slug.clone(),
+        [] => {
+            output::error(
+                &format!("Preview '{preview_identifier}' not found on {app_name}."),
+                &ErrorCode::Other("PREVIEW_NOT_FOUND".to_string()),
+                Some("Pass the preview slug from the preview URL, or run the list command with a known slug."),
+            );
+            process::exit(1);
+        }
+        _ => {
+            output::error(
+                &format!("Preview identifier '{preview_identifier}' is ambiguous on {app_name}."),
+                &ErrorCode::Other("AMBIGUOUS_PREVIEW_IDENTIFIER".to_string()),
+                Some("Pass the exact preview slug, e.g. the part after '-preview-' in the preview URL."),
+            );
+            process::exit(1);
+        }
+    }
+}
+
+fn normalize_preview_identifier(identifier: &str) -> Option<String> {
+    let trimmed = identifier.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let without_scheme = trimmed
+        .strip_prefix("https://")
+        .or_else(|| trimmed.strip_prefix("http://"))
+        .unwrap_or(trimmed);
+    let host = without_scheme.split('/').next().unwrap_or(without_scheme);
+    if let Some(prefix_start) = host.find("-preview-") {
+        let after_prefix = &host[prefix_start + "-preview-".len()..];
+        let label = after_prefix.split('.').next().unwrap_or(after_prefix);
+        return Some(label.to_string());
+    }
+    if trimmed.contains("://")
+        || trimmed.contains(".")
+        || trimmed.contains('/')
+        || trimmed.starts_with('#')
+    {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+fn preview_json(preview: &PreviewEnvironment) -> serde_json::Value {
+    serde_json::json!({
+        "id": preview.id,
+        "slug": preview.slug,
+        "environment_name": "preview",
+        "source_branch": preview.source_branch,
+        "pr_number": preview.pr_number,
+        "url": preview.url,
+        "latest_deploy_id": preview.latest_deploy_id,
+        "latest_deploy_status": preview.latest_deploy_status,
+        "latest_commit_sha": preview.latest_commit_sha,
+        "ttl_hours": preview.ttl_hours,
+        "expires_at": preview.expires_at,
+        "resources": output::to_value(&preview.resources),
+    })
+}
+
+fn render_preview_context(preview: &PreviewEnvironment) {
+    if let Some(source_branch) = &preview.source_branch {
+        output::info(&format!("  Source:  {source_branch}"), None);
+    }
+    if let Some(url) = &preview.url {
+        output::info(&format!("  URL:     {url}"), None);
+    }
+    if let Some(expires_at) = &preview.expires_at {
+        output::info(&format!("  Expires: {expires_at}"), None);
+    }
+}
+
+fn render_branch_table(branches: &[PreviewDatabaseBranch]) {
+    let rows: Vec<Vec<String>> = branches
+        .iter()
+        .map(|branch| {
+            vec![
+                branch.name.clone(),
+                branch.source_environment.clone(),
+                branch.resource_status.clone(),
+                branch.hydration_mode.clone(),
+                branch
+                    .schema_name
+                    .clone()
+                    .unwrap_or_else(|| "-".to_string()),
+                branch.expires_at.clone().unwrap_or_else(|| "-".to_string()),
+                reset_status(branch),
+            ]
+        })
+        .collect();
+    output::table(
+        &[
+            "Name",
+            "Source",
+            "Status",
+            "Hydration",
+            "Schema",
+            "Expires",
+            "Reset",
+        ],
+        &rows,
+        None,
+    );
+}
+
+fn render_branch_detail(branch: &PreviewDatabaseBranch) {
+    output::info(&format!("  Name:      {}", branch.name), None);
+    output::info(&format!("  Preview:   {}", branch.preview_slug), None);
+    output::info(&format!("  Source:    {}", branch.source_environment), None);
+    output::info(&format!("  Status:    {}", branch.resource_status), None);
+    output::info(&format!("  Hydration: {}", branch.hydration_mode), None);
+    output::info(
+        &format!(
+            "  Schema:    {}",
+            branch.schema_name.as_deref().unwrap_or("-")
+        ),
+        None,
+    );
+    output::info(
+        &format!(
+            "  Role:      {}",
+            branch.role_name.as_deref().unwrap_or("-")
+        ),
+        None,
+    );
+    output::info(
+        &format!(
+            "  Expires:   {}",
+            branch.expires_at.as_deref().unwrap_or("-")
+        ),
+        None,
+    );
+    output::info(&format!("  Reset:     {}", reset_status(branch)), None);
+}
+
+fn reset_status(branch: &PreviewDatabaseBranch) -> String {
+    if branch.reset_eligible {
+        "eligible".to_string()
+    } else {
+        branch
+            .reset_blocked_reason
+            .clone()
+            .unwrap_or_else(|| "blocked".to_string())
     }
 }
 
