@@ -760,6 +760,63 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    // --- Preview database branches ---
+
+    pub fn list_previews(
+        &self,
+        app_id: &str,
+    ) -> Result<PreviewEnvironmentListResponse, FlooApiError> {
+        let resp = self.get(&format!("/v1/apps/{app_id}/previews"))?;
+        self.handle_response(resp)
+    }
+
+    pub fn get_preview(
+        &self,
+        app_id: &str,
+        preview_slug: &str,
+    ) -> Result<PreviewEnvironment, FlooApiError> {
+        let resp = self.get(&format!("/v1/apps/{app_id}/previews/{preview_slug}"))?;
+        self.handle_response(resp)
+    }
+
+    pub fn list_preview_database_branches(
+        &self,
+        app_id: &str,
+        preview_slug: &str,
+    ) -> Result<PreviewDatabaseBranchListResponse, FlooApiError> {
+        let resp = self.get(&format!(
+            "/v1/apps/{app_id}/previews/{preview_slug}/database-branches"
+        ))?;
+        self.handle_response(resp)
+    }
+
+    pub fn get_preview_database_branch(
+        &self,
+        app_id: &str,
+        preview_slug: &str,
+        branch_name: &str,
+    ) -> Result<PreviewDatabaseBranch, FlooApiError> {
+        let resp = self.get(&format!(
+            "/v1/apps/{app_id}/previews/{preview_slug}/database-branches/{branch_name}"
+        ))?;
+        self.handle_response(resp)
+    }
+
+    pub fn reset_preview_database_branch(
+        &self,
+        app_id: &str,
+        preview_slug: &str,
+        branch_name: &str,
+    ) -> Result<PreviewDatabaseBranch, FlooApiError> {
+        let resp = self.post_json(
+            &format!(
+                "/v1/apps/{app_id}/previews/{preview_slug}/database-branches/{branch_name}/reset"
+            ),
+            &serde_json::json!({}),
+        )?;
+        self.handle_response(resp)
+    }
+
     // --- Preflight ---
 
     pub fn preflight(

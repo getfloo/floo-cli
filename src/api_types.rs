@@ -329,6 +329,70 @@ pub struct ManagedPostgresRestoreResponse {
     pub restored_at: String,
 }
 
+// --- Preview database branches ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewDatabaseBranch {
+    pub id: Option<String>,
+    pub managed_service_id: Option<String>,
+    pub name: String,
+    pub source_environment: String,
+    pub preview_slug: String,
+    pub resource_status: String,
+    pub hydration_mode: String,
+    pub schema_name: Option<String>,
+    pub role_name: Option<String>,
+    pub base_schema_name: Option<String>,
+    pub base_role_name: Option<String>,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+    pub expires_at: Option<String>,
+    pub reset_eligible: bool,
+    pub reset_blocked_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewDatabaseBranchListResponse {
+    pub database_branches: Vec<PreviewDatabaseBranch>,
+    pub total: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewResource {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub resource_type: String,
+    pub name: String,
+    pub status: String,
+    pub external_resource_id: Option<String>,
+    pub expires_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewEnvironment {
+    pub id: String,
+    pub app_id: String,
+    pub slug: String,
+    pub source_branch: Option<String>,
+    pub pr_number: Option<u32>,
+    pub url: Option<String>,
+    pub latest_deploy_id: Option<String>,
+    pub latest_deploy_status: Option<String>,
+    pub latest_commit_sha: Option<String>,
+    pub ttl_hours: Option<u32>,
+    pub expires_at: Option<String>,
+    #[serde(default)]
+    pub resources: Vec<PreviewResource>,
+    #[serde(default)]
+    pub database_branches: Vec<PreviewDatabaseBranch>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewEnvironmentListResponse {
+    pub previews: Vec<PreviewEnvironment>,
+    pub total: u32,
+}
+
 // --- Preflight ---
 // Mirrors api/app/schemas/preflight.py. Keep these two in lock-step.
 

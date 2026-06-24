@@ -147,6 +147,54 @@ fn mock_services_multi(server: &mut Server) -> Mock {
         .create()
 }
 
+fn preview_branch_json(name: &str, status: &str, reset_eligible: bool) -> String {
+    let blocked = if reset_eligible {
+        "null".to_string()
+    } else {
+        r#""latest deploy is building""#.to_string()
+    };
+    format!(
+        r#"{{
+            "id":"resource-{name}",
+            "managed_service_id":"ms-{name}",
+            "name":"{name}",
+            "source_environment":"dev",
+            "preview_slug":"feat-db-abcde",
+            "resource_status":"{status}",
+            "hydration_mode":"clone-dev",
+            "schema_name":"app_default_preview_feat_db_abcde",
+            "role_name":"floo_app_default_preview_feat_db_abcde",
+            "base_schema_name":"app_default_dev",
+            "base_role_name":"floo_app_default_dev",
+            "created_at":"2026-06-24T10:00:00Z",
+            "updated_at":"2026-06-24T10:01:00Z",
+            "expires_at":"2026-06-27T10:00:00Z",
+            "reset_eligible":{reset_eligible},
+            "reset_blocked_reason":{blocked}
+        }}"#
+    )
+}
+
+fn preview_detail_json(branches: &str) -> String {
+    format!(
+        r#"{{
+            "id":"env-preview-1",
+            "app_id":"{TEST_APP_ID}",
+            "slug":"feat-db-abcde",
+            "source_branch":"feat/db-branch",
+            "pr_number":42,
+            "url":"https://my-app-preview-feat-db-abcde.on.getfloo.com",
+            "latest_deploy_id":"deploy-preview-1",
+            "latest_deploy_status":"live",
+            "latest_commit_sha":"abc123",
+            "ttl_hours":72,
+            "expires_at":"2026-06-27T10:00:00Z",
+            "resources":[],
+            "database_branches":[{branches}]
+        }}"#
+    )
+}
+
 // ───────────────────────── Apps ─────────────────────────
 
 #[test]
@@ -1904,6 +1952,229 @@ fn test_services_list_json_returns_both_app_and_managed_services() {
         .stdout(predicate::str::contains("managed_services"))
         .stdout(predicate::str::contains("web"))
         .stdout(predicate::str::contains("postgres"));
+}
+
+#[test]
+fn test_db_branches_list_json_returns_preview_context_and_branch_contract() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let branch = preview_branch_json("default", "ready", true);
+    let _preview = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(preview_detail_json(&branch))
+        .create();
+    let _branches = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde/database-branches").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(r#"{{"database_branches":[{branch}],"total":1}}"#))
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "db",
+            "branches",
+            "list",
+            "feat-db-abcde",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""environment_name":"preview""#))
+        .stdout(predicate::str::contains(r#""source_environment":"dev""#))
+        .stdout(predicate::str::contains(r#""hydration_mode":"clone-dev""#))
+        .stdout(predicate::str::contains(r#""resource_status":"ready""#))
+        .stdout(predicate::str::contains(
+            "app_default_preview_feat_db_abcde",
+        ))
+        .stdout(predicate::str::contains("postgresql://").not())
+        .stdout(predicate::str::contains("password").not());
+}
+
+#[test]
+fn test_db_branches_list_empty_state_names_missing_managed_postgres() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _preview = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(preview_detail_json(""))
+        .create();
+    let _branches = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde/database-branches").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"database_branches":[],"total":0}"#)
+        .create();
+
+    floo()
+        .args([
+            "db",
+            "branches",
+            "list",
+            "feat-db-abcde",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "This preview has no managed Postgres attachment",
+        ));
+}
+
+#[test]
+fn test_db_branches_show_surfaces_branch_not_found_code() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _branch = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde/database-branches/analytics")
+                .as_str(),
+        )
+        .with_status(404)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"detail":{"code":"PREVIEW_DATABASE_BRANCH_NOT_FOUND","message":"Preview database branch not found."}}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "db",
+            "branches",
+            "show",
+            "feat-db-abcde",
+            "--name",
+            "analytics",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            "PREVIEW_DATABASE_BRANCH_NOT_FOUND",
+        ));
+}
+
+#[test]
+fn test_db_branches_source_branch_identifier_reports_ambiguous_preview() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let branch = preview_branch_json("default", "ready", true);
+    let preview_a = preview_detail_json(&branch);
+    let preview_b = preview_a.replace("feat-db-abcde", "feat-db-f00ba");
+    let _previews = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/previews").as_str())
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"previews":[{preview_a},{preview_b}],"total":2}}"#
+        ))
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "db",
+            "branches",
+            "list",
+            "feat/db-branch",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("AMBIGUOUS_PREVIEW_IDENTIFIER"));
+}
+
+#[test]
+fn test_db_branches_reset_refuses_without_confirmation_in_json_mode() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    floo()
+        .args([
+            "--json",
+            "db",
+            "branches",
+            "reset",
+            "feat-db-abcde",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("CONFIRMATION_REQUIRED"))
+        .stdout(predicate::str::contains("dev/prod untouched"))
+        .stdout(predicate::str::contains("--yes"));
+}
+
+#[test]
+fn test_db_branches_reset_with_yes_calls_preview_scoped_endpoint() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _reset = server
+        .mock(
+            "POST",
+            format!(
+                "/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde/database-branches/default/reset"
+            )
+            .as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(preview_branch_json("default", "ready", true))
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "db",
+            "branches",
+            "reset",
+            "feat-db-abcde",
+            "--app",
+            TEST_APP_NAME,
+            "--yes",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""dev_prod_untouched":true"#))
+        .stdout(predicate::str::contains(r#""scope":"preview""#))
+        .stdout(predicate::str::contains(r#""database_branch":{"#))
+        .stdout(predicate::str::contains("postgresql://").not());
 }
 
 #[test]
