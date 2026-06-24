@@ -851,6 +851,7 @@ impl FlooClient {
         since: Option<&str>,
         severity: Option<&str>,
         service: Option<&str>,
+        cron: Option<&str>,
         search: Option<&str>,
         deployment: Option<&str>,
         environment: Option<&str>,
@@ -866,6 +867,9 @@ impl FlooClient {
         }
         if let Some(svc) = service {
             params.push(("service", svc));
+        }
+        if let Some(c) = cron {
+            params.push(("cron", c));
         }
         if let Some(q) = search {
             params.push(("search", q));
