@@ -185,6 +185,8 @@ floo logs --app my-app                             # last 100 lines
 floo logs --app my-app --since 1h --error          # errors in last hour
 floo logs --app my-app --live                      # stream real-time
 floo logs --app my-app --search "panic" --json     # search + JSON
+floo logs --app my-app --services web              # one service (multi-service apps)
+floo logs --app my-app --cron nightly-report       # a specific cron job's output
 ```
 
 ### Preflight and Redeploy

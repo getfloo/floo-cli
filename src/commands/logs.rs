@@ -20,6 +20,7 @@ pub struct LogsArgs {
     pub since: Option<String>,
     pub severity: Option<String>,
     pub services: Vec<String>,
+    pub cron: Option<String>,
     pub search: Option<String>,
     pub deployment: Option<String>,
     pub cursor: Option<String>,
@@ -32,10 +33,40 @@ struct LogsFilter<'a> {
     since: Option<&'a str>,
     severity: Option<&'a str>,
     services: &'a [String],
+    cron: Option<&'a str>,
     search: Option<&'a str>,
     deployment: Option<&'a str>,
     environment: Option<&'a str>,
     cursor: Option<&'a str>,
+}
+
+/// The attribution tag for a log line: cron jobs render as `cron:<name>`,
+/// service entries as the service name. The API now always resolves a name
+/// (single-service apps attribute to the app itself), so `unknown` is only a
+/// last-resort guard for an entry that carries neither identity.
+fn attribution_label(entry: &LogEntry) -> Option<String> {
+    if let Some(cron) = entry.cron_job_name.as_deref() {
+        return Some(format!("cron:{cron}"));
+    }
+    entry.service_name.clone()
+}
+
+/// Show the per-line `[attribution]` prefix only when the rendered set spans
+/// more than one distinct service/cron. A single-service app (one label for
+/// every line) renders clean, untagged lines instead of a redundant — and
+/// previously `[unknown]` — prefix; a multi-service or service+cron mix tags
+/// each line so the operator can tell them apart.
+fn should_show_prefix(entries: &[LogEntry]) -> bool {
+    let mut seen = std::collections::HashSet::new();
+    for entry in entries {
+        if let Some(label) = attribution_label(entry) {
+            seen.insert(label);
+            if seen.len() > 1 {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn format_log_line(entry: &LogEntry, show_service_prefix: bool) -> String {
@@ -51,9 +82,9 @@ fn format_log_line(entry: &LogEntry, show_service_prefix: bool) -> String {
     };
 
     if show_service_prefix {
-        let service = entry.service_name.as_deref().unwrap_or("unknown");
-        let colored_service = format!("[{}]", service).blue().bold().to_string();
-        format!("{colored_service} {ts} [{colored_sev}] {msg}")
+        let label = attribution_label(entry).unwrap_or_else(|| "unknown".to_string());
+        let colored_label = format!("[{label}]").blue().bold().to_string();
+        format!("{colored_label} {ts} [{colored_sev}] {msg}")
     } else {
         format!("{ts} [{colored_sev}] {msg}")
     }
@@ -65,8 +96,8 @@ fn format_log_line_plain(entry: &LogEntry, show_service_prefix: bool) -> String 
     let msg = entry.message.as_deref().unwrap_or("");
 
     if show_service_prefix {
-        let svc = entry.service_name.as_deref().unwrap_or("unknown");
-        format!("[{svc}] {ts} [{sev}] {msg}")
+        let label = attribution_label(entry).unwrap_or_else(|| "unknown".to_string());
+        format!("[{label}] {ts} [{sev}] {msg}")
     } else {
         format!("{ts} [{sev}] {msg}")
     }
@@ -86,6 +117,7 @@ fn fetch_logs(
             filter.since,
             filter.severity,
             service,
+            filter.cron,
             filter.search,
             filter.deployment,
             filter.environment,
@@ -106,6 +138,7 @@ fn fetch_logs(
                 filter.since,
                 filter.severity,
                 Some(svc),
+                None,
                 filter.search,
                 filter.deployment,
                 filter.environment,
@@ -153,6 +186,7 @@ fn try_fetch_logs(
             filter.since,
             filter.severity,
             service,
+            filter.cron,
             filter.search,
             filter.deployment,
             filter.environment,
@@ -168,6 +202,7 @@ fn try_fetch_logs(
                 filter.since,
                 filter.severity,
                 Some(svc),
+                None,
                 filter.search,
                 filter.deployment,
                 filter.environment,
@@ -187,7 +222,9 @@ fn try_fetch_logs(
 fn print_context_header(app_name: &str, source_label: &str, filter: &LogsFilter) {
     eprintln!();
     eprintln!("  {} {} (from {})", "App:".bold(), app_name, source_label);
-    if filter.services.is_empty() {
+    if let Some(cron) = filter.cron {
+        eprintln!("  {} {}", "Cron:".bold(), cron);
+    } else if filter.services.is_empty() {
         eprintln!("  {} all", "Services:".bold());
     } else {
         eprintln!("  {} {}", "Services:".bold(), filter.services.join(", "));
@@ -301,12 +338,12 @@ pub fn logs(args: LogsArgs) {
 
     let app_name = &app_data.name;
     let app_id = &app_data.id;
-    let show_service_prefix = args.services.len() != 1;
 
     let filter = LogsFilter {
         since: args.since.as_deref(),
         severity: args.severity.as_deref(),
         services: &args.services,
+        cron: args.cron.as_deref(),
         search: args.search.as_deref(),
         deployment: args.deployment.as_deref(),
         environment: args.env.as_deref(),
@@ -318,7 +355,7 @@ pub fn logs(args: LogsArgs) {
     }
 
     if args.live {
-        live_logs(&client, app_id, args.tail, &filter, show_service_prefix);
+        live_logs(&client, app_id, args.tail, &filter);
     } else {
         batch_logs(
             &client,
@@ -326,7 +363,6 @@ pub fn logs(args: LogsArgs) {
             app_name,
             args.tail,
             &filter,
-            show_service_prefix,
             args.output_path.as_deref(),
         );
     }
@@ -338,7 +374,6 @@ fn batch_logs(
     app_name: &str,
     tail: u32,
     filter: &LogsFilter,
-    show_service_prefix: bool,
     output_path: Option<&Path>,
 ) {
     let logs = fetch_logs(client, app_id, tail, filter);
@@ -349,6 +384,8 @@ fn batch_logs(
     if response.limit.is_none() {
         response.limit = Some(tail);
     }
+
+    let show_service_prefix = should_show_prefix(&response.logs);
 
     if response.logs.is_empty() {
         if output::is_json_mode() {
@@ -422,16 +459,15 @@ fn write_logs_to_file(path: &Path, response: &LogsResponse, show_service_prefix:
     }
 }
 
-fn live_logs(
-    client: &crate::api_client::FlooClient,
-    app_id: &str,
-    tail: u32,
-    filter: &LogsFilter,
-    show_service_prefix: bool,
-) {
+fn live_logs(client: &crate::api_client::FlooClient, app_id: &str, tail: u32, filter: &LogsFilter) {
     let is_json = output::is_json_mode();
 
     let logs_response = fetch_logs(client, app_id, tail, filter);
+
+    // Decide the prefix once from the initial page so the stream stays
+    // visually stable: a single-service app never sprouts a prefix mid-stream,
+    // a multi-service/service+cron mix keeps it for every line.
+    let show_service_prefix = should_show_prefix(&logs_response.logs);
 
     let mut last_timestamp: Option<String> = None;
 
@@ -459,6 +495,7 @@ fn live_logs(
             since: since_filter,
             severity: filter.severity,
             services: filter.services,
+            cron: filter.cron,
             search: filter.search,
             deployment: filter.deployment,
             environment: filter.environment,
@@ -811,6 +848,75 @@ mod tests {
         let line = format_log_line(&entry, true);
         assert!(line.contains("[unknown]"));
         assert!(line.contains("something broke"));
+    }
+
+    fn make_log_with_cron(ts: &str, sev: &str, msg: &str, cron: &str) -> LogEntry {
+        LogEntry {
+            timestamp: Some(ts.to_string()),
+            severity: Some(sev.to_string()),
+            message: Some(msg.to_string()),
+            deployment_id: None,
+            request_id: None,
+            labels: None,
+            service_name: None,
+            cron_job_name: Some(cron.to_string()),
+            deploy_context: None,
+            severity_class: None,
+            lifecycle_noise: None,
+        }
+    }
+
+    #[test]
+    fn test_attribution_label_prefers_cron() {
+        let cron = make_log_with_cron("t", "INFO", "tick", "nightly-report");
+        assert_eq!(
+            attribution_label(&cron).as_deref(),
+            Some("cron:nightly-report")
+        );
+        let svc = make_log_with_service("t", "INFO", "req", "web");
+        assert_eq!(attribution_label(&svc).as_deref(), Some("web"));
+    }
+
+    #[test]
+    fn test_format_log_line_renders_cron_prefix() {
+        let entry = make_log_with_cron("2024-01-01T00:00:00Z", "INFO", "cron ran", "nightly");
+        let line = format_log_line(&entry, true);
+        assert!(line.contains("[cron:nightly]"));
+        assert!(line.contains("cron ran"));
+    }
+
+    #[test]
+    fn test_should_show_prefix_single_service_is_clean() {
+        // A single-service app: every line attributes to the same name (the
+        // app), so no redundant per-line prefix — and never [unknown].
+        let entries = vec![
+            make_log_with_service("t1", "INFO", "a", "my-app"),
+            make_log_with_service("t2", "INFO", "b", "my-app"),
+        ];
+        assert!(!should_show_prefix(&entries));
+    }
+
+    #[test]
+    fn test_should_show_prefix_multi_service_tags_lines() {
+        let entries = vec![
+            make_log_with_service("t1", "INFO", "a", "web"),
+            make_log_with_service("t2", "INFO", "b", "worker"),
+        ];
+        assert!(should_show_prefix(&entries));
+    }
+
+    #[test]
+    fn test_should_show_prefix_service_plus_cron_mix() {
+        let entries = vec![
+            make_log_with_service("t1", "INFO", "a", "my-app"),
+            make_log_with_cron("t2", "INFO", "b", "nightly"),
+        ];
+        assert!(should_show_prefix(&entries));
+    }
+
+    #[test]
+    fn test_should_show_prefix_empty_is_false() {
+        assert!(!should_show_prefix(&[]));
     }
 
     fn make_request_entry(ts: &str) -> RequestLogEntry {

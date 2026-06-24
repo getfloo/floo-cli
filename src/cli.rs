@@ -429,6 +429,10 @@ pub struct LogsOptions {
     #[arg(long)]
     services: Vec<String>,
 
+    /// Filter logs to a specific cron job by name.
+    #[arg(long, conflicts_with = "services")]
+    cron: Option<String>,
+
     /// Filter log messages by text (case-insensitive).
     #[arg(long)]
     search: Option<String>,
@@ -1944,6 +1948,7 @@ pub fn run() {
                     since: options.since,
                     severity,
                     services: options.services,
+                    cron: options.cron,
                     search: options.search,
                     deployment: options.deployment,
                     cursor: options.cursor,
