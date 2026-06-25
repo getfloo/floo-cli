@@ -422,7 +422,10 @@ impl FlooClient {
     }
 
     pub fn list_deploys(&self, app_id: &str) -> Result<ListDeploysResponse, FlooApiError> {
-        let resp = self.get(&format!("/v1/apps/{app_id}/deploys"))?;
+        let resp = self.get_with_query(
+            &format!("/v1/apps/{app_id}/deploys"),
+            &[("include_build_logs", "false")],
+        )?;
         self.handle_response(resp)
     }
 

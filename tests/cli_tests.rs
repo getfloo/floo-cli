@@ -522,7 +522,7 @@ fn test_deploy_list_help() {
         .args(["deploys", "list", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("List deploy history"));
+        .stdout(predicate::str::contains("List compact deploy history"));
 }
 
 #[test]

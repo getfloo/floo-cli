@@ -1101,7 +1101,7 @@ pub enum ReleasesCommands {
 
 #[derive(Subcommand)]
 pub enum DeploysSubcommands {
-    /// List deploy history for an app.
+    /// List compact deploy history for an app (no build logs).
     List {
         /// App name or ID (uses config file if omitted).
         #[arg(short, long)]

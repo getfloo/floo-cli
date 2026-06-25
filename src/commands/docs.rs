@@ -639,7 +639,7 @@ Floo Deploy Flow
 
 ## Deploy History
 
-  floo deploys list --app <name>    — list past deploys
+  floo deploys list --app <name>    — list past deploys without build logs
   floo deploys logs <id> --app <n>  — build logs for a specific deploy
   floo deploys watch --app <name>   — stream deploy progress in real-time
   floo deploys rollback <app> <id>  — rollback to a previous deploy
