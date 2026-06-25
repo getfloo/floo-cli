@@ -1106,6 +1106,14 @@ pub enum DeploysSubcommands {
         /// App name or ID (uses config file if omitted).
         #[arg(short, long)]
         app: Option<String>,
+
+        /// Maximum deploy rows to return.
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
+
+        /// Continue from a previous next_cursor value.
+        #[arg(long)]
+        cursor: Option<String>,
     },
 
     /// Show build logs for a deploy (defaults to the latest deploy).
@@ -1740,7 +1748,9 @@ pub fn run() {
         } => commands::deploy::deploy(path, app, services, rebuild, sync_env, skip_migrations),
 
         Commands::Deploys(sub) => match sub {
-            DeploysSubcommands::List { app } => commands::deploys::list(app.as_deref()),
+            DeploysSubcommands::List { app, limit, cursor } => {
+                commands::deploys::list(app.as_deref(), limit, cursor.as_deref())
+            }
             DeploysSubcommands::Logs {
                 deploy_id,
                 app,

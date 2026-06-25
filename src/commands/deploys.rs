@@ -95,11 +95,20 @@ pub fn status(app: Option<&str>, deploy_id: Option<&str>) {
         "commit": commit_short,
         "status": deploy_status,
         "app_status": app_status,
+        "status_semantics": {
+            "status": "deploy_attempt",
+            "app_status": "currently_serving_app",
+        },
         "url": gateway_url,
         "image_built": image_built,
         "service_ready": service_ready,
         "host_bound": host_bound,
+        "failure_reason": failure_reason(&deploy),
+        "failing_stage": failure_stage(&deploy),
         "created_at": deploy.created_at,
+        "started_at": deploy.started_at,
+        "finished_at": deploy.finished_at,
+        "duration_ms": deploy.duration_ms,
         "next_command": next_command,
     });
 
@@ -111,10 +120,10 @@ pub fn status(app: Option<&str>, deploy_id: Option<&str>) {
     let header = format!("{} ({})", app_name, deploy.id);
     output::bold_line(&header);
     output::dim_line(&format!(
-        "  status:        {}",
+        "  status:        {} (deploy attempt)",
         colored_status(deploy_status)
     ));
-    output::dim_line(&format!("  app_status:    {}", app_status));
+    output::dim_line(&format!("  app_status:    {} (current app)", app_status));
     output::dim_line(&format!(
         "  commit:        {}",
         commit_short.unwrap_or("\u{2014}")
@@ -126,6 +135,14 @@ pub fn status(app: Option<&str>, deploy_id: Option<&str>) {
     output::dim_line(&format!("  image_built:   {}", image_built));
     output::dim_line(&format!("  service_ready: {}", service_ready));
     output::dim_line(&format!("  host_bound:    {}", host_bound));
+    output::dim_line(&format!(
+        "  duration:      {}",
+        format_duration_ms(deploy.duration_ms)
+    ));
+    if let Some(reason) = failure_reason(&deploy) {
+        let stage = failure_stage(&deploy).unwrap_or("unknown");
+        output::dim_line(&format!("  failure:       {stage}: {reason}"));
+    }
     output::dim_line(&format!("  next_command:  {}", next_command));
 }
 
@@ -155,22 +172,35 @@ fn deploy_list_payload(result: &crate::api_types::ListDeploysResponse) -> serde_
                 "url": &d.url,
                 "runtime": &d.runtime,
                 "created_at": &d.created_at,
+                "started_at": &d.started_at,
+                "finished_at": &d.finished_at,
+                "duration_ms": &d.duration_ms,
+                "failure_reason": failure_reason(d),
+                "failing_stage": failure_stage(d),
                 "triggered_by": &d.triggered_by,
                 "commit_sha": &d.commit_sha,
                 "environment_name": &d.environment_name,
             })
         })
         .collect();
-    serde_json::json!({ "deploys": deploys })
+    serde_json::json!({
+        "deploys": deploys,
+        "total": result.total,
+        "page": result.page,
+        "per_page": result.per_page,
+        "limit": result.limit,
+        "next_cursor": result.next_cursor,
+        "has_more": result.has_more,
+    })
 }
 
-pub fn list(app: Option<&str>) {
+pub fn list(app: Option<&str>, limit: u32, cursor: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);
 
     let (app_id, _app_name) = super::resolve_app_from_config(&client, app);
 
-    let result = match client.list_deploys(&app_id) {
+    let result = match client.list_deploys_paginated(&app_id, limit, cursor) {
         Ok(r) => r,
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
@@ -180,10 +210,7 @@ pub fn list(app: Option<&str>) {
 
     if result.deploys.is_empty() {
         if output::is_json_mode() {
-            output::success(
-                "No deploys found.",
-                Some(serde_json::json!({"deploys": []})),
-            );
+            output::success("No deploys found.", Some(deploy_list_payload(&result)));
         } else {
             output::info("No deploys found.", None);
         }
@@ -203,13 +230,22 @@ pub fn list(app: Option<&str>) {
             let status = d.status.as_deref().unwrap_or("-");
             let env = d.environment_name.as_deref().unwrap_or("\u{2014}");
             let created = d.created_at.as_deref().unwrap_or("-");
+            let duration = format_duration_ms(d.duration_ms);
+            let failure = failure_reason(d)
+                .map(|reason| {
+                    let stage = failure_stage(d).unwrap_or("unknown");
+                    truncate_text(&format!("{stage}: {reason}"), 64)
+                })
+                .unwrap_or_else(|| "\u{2014}".to_string());
             vec![
                 short_id,
                 colored_status(status),
                 env.to_string(),
                 d.triggered_by.as_deref().unwrap_or("\u{2014}").to_string(),
                 commit.to_string(),
+                duration,
                 relative_time(created),
+                failure,
             ]
         })
         .collect();
@@ -221,17 +257,78 @@ pub fn list(app: Option<&str>) {
             "Env",
             "Triggered By",
             "Commit",
+            "Duration",
             "Created",
+            "Failure",
         ],
         &rows,
         Some(deploy_list_payload(&result)),
     );
+    if let Some(next_cursor) = result.next_cursor.as_deref() {
+        let app_arg = app.map(|name| format!(" --app {name}")).unwrap_or_default();
+        output::dim_line(&format!(
+            "More deploys available. Next: floo deploys list{app_arg} --limit {} --cursor {next_cursor}",
+            result.limit.unwrap_or(limit)
+        ));
+    }
 }
 
 /// Check if a log string is meaningful (not empty or placeholder text).
 fn is_real_log(logs: &str) -> bool {
     let trimmed = logs.trim();
     !trimmed.is_empty() && trimmed != "[no message content]"
+}
+
+fn failure_stage(deploy: &Deploy) -> Option<&str> {
+    deploy
+        .failing_stage
+        .as_deref()
+        .or(deploy.failure_stage.as_deref())
+        .or(deploy
+            .failure_root_cause
+            .as_ref()
+            .and_then(|cause| cause.stage.as_deref()))
+        .or(deploy.failure_step.as_deref())
+}
+
+fn failure_reason(deploy: &Deploy) -> Option<&str> {
+    deploy
+        .failure_reason
+        .as_deref()
+        .or(deploy
+            .failure_root_cause
+            .as_ref()
+            .and_then(|cause| cause.reason.as_deref()))
+        .or(deploy.failure_message.as_deref())
+}
+
+fn format_duration_ms(duration_ms: Option<i64>) -> String {
+    let Some(duration_ms) = duration_ms else {
+        return "\u{2014}".to_string();
+    };
+    if duration_ms < 1000 {
+        return format!("{duration_ms}ms");
+    }
+    let total_seconds = duration_ms / 1000;
+    let minutes = total_seconds / 60;
+    let seconds = total_seconds % 60;
+    if minutes > 0 {
+        format!("{minutes}m {seconds}s")
+    } else {
+        format!("{seconds}s")
+    }
+}
+
+fn truncate_text(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    let mut truncated = value
+        .chars()
+        .take(max_chars.saturating_sub(1))
+        .collect::<String>();
+    truncated.push('\u{2026}');
+    truncated
 }
 
 /// Print deploy metadata header to stderr.
@@ -253,6 +350,14 @@ fn print_deploy_header(deploy: &Deploy) {
     output::dim_line(&format!("  Commit:  {commit}"));
     output::dim_line(&format!("  By:      {triggered_by}"));
     output::dim_line(&format!("  Created: {created}"));
+    output::dim_line(&format!(
+        "  Duration: {}",
+        format_duration_ms(deploy.duration_ms)
+    ));
+    if let Some(reason) = failure_reason(deploy) {
+        let stage = failure_stage(deploy).unwrap_or("unknown");
+        output::dim_line(&format!("  Failure: {stage}: {reason}"));
+    }
     output::dim_line("");
 }
 
