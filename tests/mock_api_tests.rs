@@ -1442,10 +1442,14 @@ fn test_deploy_list_json() {
             "GET",
             format!("/v1/apps/{TEST_APP_ID}/deploys").as_str(),
         )
+        .match_query(Matcher::UrlEncoded(
+            "include_build_logs".into(),
+            "false".into(),
+        ))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
-            r#"{"deploys":[{"id":"deploy-123","status":"live","runtime":"nodejs","created_at":"2024-01-01T00:00:00Z"}]}"#,
+            r#"{"deploys":[{"id":"deploy-123","status":"live","runtime":"nodejs","created_at":"2024-01-01T00:00:00Z","build_logs":"massive-build-log"}]}"#,
         )
         .create();
 
@@ -1456,7 +1460,9 @@ fn test_deploy_list_json() {
         .success()
         .stdout(predicate::str::contains(r#""success":true"#))
         .stdout(predicate::str::contains("deploys"))
-        .stdout(predicate::str::contains("deploy-123"));
+        .stdout(predicate::str::contains("deploy-123"))
+        .stdout(predicate::str::contains("build_logs").not())
+        .stdout(predicate::str::contains("massive-build-log").not());
 }
 
 #[test]
@@ -2726,6 +2732,10 @@ fn test_deploy_list_from_config() {
             "GET",
             format!("/v1/apps/{TEST_APP_ID}/deploys").as_str(),
         )
+        .match_query(Matcher::UrlEncoded(
+            "include_build_logs".into(),
+            "false".into(),
+        ))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(r#"{"deploys":[{"id":"deploy-123","status":"live","runtime":"nodejs","created_at":"2024-01-01T00:00:00Z"}]}"#)

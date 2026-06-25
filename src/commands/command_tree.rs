@@ -51,7 +51,7 @@ fn command_tree() -> Vec<CommandInfo> {
             subcommands: vec![
                 CommandInfo {
                     name: "list",
-                    description: "List deploy history for an app",
+                    description: "List compact deploy history for an app (no build logs)",
                     usage: "floo deploys list --app <name>",
                     requires_auth: true,
                     subcommands: vec![],

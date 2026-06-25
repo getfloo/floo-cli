@@ -144,6 +144,26 @@ fn derive_next_command(deploy_status: &str, host_bound: bool) -> &'static str {
     }
 }
 
+fn deploy_list_payload(result: &crate::api_types::ListDeploysResponse) -> serde_json::Value {
+    let deploys: Vec<serde_json::Value> = result
+        .deploys
+        .iter()
+        .map(|d| {
+            serde_json::json!({
+                "id": &d.id,
+                "status": &d.status,
+                "url": &d.url,
+                "runtime": &d.runtime,
+                "created_at": &d.created_at,
+                "triggered_by": &d.triggered_by,
+                "commit_sha": &d.commit_sha,
+                "environment_name": &d.environment_name,
+            })
+        })
+        .collect();
+    serde_json::json!({ "deploys": deploys })
+}
+
 pub fn list(app: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);
@@ -204,7 +224,7 @@ pub fn list(app: Option<&str>) {
             "Created",
         ],
         &rows,
-        Some(output::to_value(&result)),
+        Some(deploy_list_payload(&result)),
     );
 }
 
