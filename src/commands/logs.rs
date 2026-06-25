@@ -72,14 +72,17 @@ fn attribution_label(entry: &LogEntry) -> Option<String> {
     entry.service_name.clone()
 }
 
-/// Show the per-line `[attribution]` prefix only when the rendered set spans
-/// more than one distinct service/cron. A single-service app (one label for
-/// every line) renders clean, untagged lines instead of a redundant — and
-/// previously `[unknown]` — prefix; a multi-service or service+cron mix tags
-/// each line so the operator can tell them apart.
+/// Show the per-line `[attribution]` prefix for every cron row and for mixed
+/// service sets. Cron logs always need the visible `cron:<name>` marker because
+/// they are Cloud Run Job output, not service revision output. A single-service
+/// service-only app still renders clean, untagged lines instead of a redundant
+/// prefix.
 fn should_show_prefix(entries: &[LogEntry]) -> bool {
     let mut seen = std::collections::HashSet::new();
     for entry in entries {
+        if entry.cron_job_name.is_some() {
+            return true;
+        }
         if let Some(label) = attribution_label(entry) {
             seen.insert(label);
             if seen.len() > 1 {

@@ -1665,6 +1665,37 @@ fn test_logs_human() {
 }
 
 #[test]
+fn test_logs_human_cron_rows_show_cron_prefix_even_when_filtered() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _m_logs = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/logs").as_str(),
+        )
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("limit".into(), "100".into()),
+            Matcher::UrlEncoded("cron".into(), "knowledge-sync".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"logs":[{"timestamp":"2024-01-01T00:00:00Z","severity":"DEFAULT","message":"sync complete","service_name":null,"cron_job_name":"knowledge-sync"}],"app_name":"my-app"}"#,
+        )
+        .create();
+
+    floo()
+        .args(["logs", "--app", TEST_APP_NAME, "--cron", "knowledge-sync"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("[cron:knowledge-sync]"))
+        .stderr(predicate::str::contains("sync complete"));
+}
+
+#[test]
 fn test_logs_from_config_file() {
     let mut server = Server::new();
     let home = setup_config(&server);
