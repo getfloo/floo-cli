@@ -165,7 +165,7 @@ Examples:
   floo redeploy --app my-app               Redeploy with fresh env vars (no rebuild)
   floo redeploy --app my-app --rebuild     Force a full rebuild from latest commit
   floo redeploy                            Redeploy from current project directory
-  floo redeploy --services api             Redeploy specific services only
+  floo redeploy --service api              Redeploy specific services only
 
 Note: The primary way to deploy is `git push`. Use `floo redeploy` when you
 need to apply env var changes or force a rebuild without a code change.")]
@@ -734,7 +734,7 @@ pub enum EnvCommands {
     /// List environment variables for an app.
     ///
     /// Values are shown masked (`********`); the value itself is never echoed
-    /// here. With no `--services`, lists every service's vars plus app-level in
+    /// here. With no `--service`, lists every service's vars plus app-level in
     /// one pass — with a `Service` column labelling each row's scope whenever the
     /// app has services (a service-less app keeps the plain Key/Value table).
     List {
@@ -991,14 +991,13 @@ pub enum DomainsCommands {
     },
 
     /// List custom domains for an app.
+    ///
+    /// Custom domains are app/ingress-level, so this lists every domain on the
+    /// app regardless of which service each routes to — no service target.
     List {
         /// App name or ID (uses config file if omitted).
         #[arg(short, long)]
         app: Option<String>,
-
-        /// Target service name (required for multi-service apps).
-        #[arg(long)]
-        services: Option<String>,
     },
 
     /// Verify DNS for a pending custom domain.
@@ -1022,10 +1021,6 @@ pub enum DomainsCommands {
         /// App name or ID (uses config file if omitted).
         #[arg(short, long)]
         app: Option<String>,
-
-        /// Target service name (required for multi-service apps).
-        #[arg(long)]
-        services: Option<String>,
 
         /// Skip the y/N prompt. Required in non-interactive contexts.
         #[arg(long)]
@@ -1953,18 +1948,13 @@ pub fn run() {
                 app,
                 services,
             } => commands::domains::add(&hostname, app.as_deref(), services.as_deref()),
-            DomainsCommands::List { app, services } => {
-                commands::domains::list(app.as_deref(), services.as_deref())
-            }
+            DomainsCommands::List { app } => commands::domains::list(app.as_deref()),
             DomainsCommands::Verify { hostname, app } => {
                 commands::domains::verify(&hostname, app.as_deref())
             }
-            DomainsCommands::Remove {
-                hostname,
-                app,
-                services,
-                yes,
-            } => commands::domains::remove(&hostname, app.as_deref(), services.as_deref(), yes),
+            DomainsCommands::Remove { hostname, app, yes } => {
+                commands::domains::remove(&hostname, app.as_deref(), yes)
+            }
             DomainsCommands::Show { hostname, app } => {
                 commands::domains::status(&hostname, app.as_deref())
             }
@@ -2469,6 +2459,34 @@ mod tests {
             panic!("expected Logs");
         };
         assert_eq!(options.services, vec!["api", "web"]);
+    }
+
+    #[test]
+    fn domains_list_and_remove_reject_service_flag() {
+        // #1161: custom domains are app/ingress-level, so `list`/`remove` no
+        // longer accept a service target (it was required-but-ignored before).
+        // clap must reject the removed flag in either spelling.
+        let invocations: &[&[&str]] = &[
+            &["floo", "domains", "list", "--service", "api"],
+            &["floo", "domains", "list", "--services", "api"],
+            &[
+                "floo",
+                "domains",
+                "remove",
+                "x.com",
+                "--service",
+                "api",
+                "--yes",
+            ],
+        ];
+        for args in invocations {
+            let err = parse_err(args);
+            assert_eq!(
+                err.kind(),
+                clap::error::ErrorKind::UnknownArgument,
+                "expected UnknownArgument for {args:?}",
+            );
+        }
     }
 
     // --- `--json` arg-error contract (#1156) ---
