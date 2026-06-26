@@ -49,7 +49,7 @@ pub fn resolve_app_context(cwd: &Path, app_flag: Option<&str>) -> Result<Resolve
                     current.display()
                 ),
                 format!(
-                    "Migrate to {} + {}. See https://getfloo.com/docs/migration for details.",
+                    "Migrate to {} + {}. See https://getfloo.com/docs/reference/config-spec for details.",
                     APP_CONFIG_FILE, SERVICE_CONFIG_FILE
                 ),
             ));
