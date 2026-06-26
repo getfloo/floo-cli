@@ -208,6 +208,36 @@ fn test_apps_list_json() {
 }
 
 #[test]
+fn test_billing_spend_cap_get_json_uses_cents_key() {
+    // #1161: `spend-cap get` emits the cap as `spend_cap_cents`, consistent
+    // with `billing usage` and every other *_cents field. The bare `spend_cap`
+    // key that drifted between the two commands is gone.
+    let mut server = Server::new();
+    let home = setup_config(&server);
+
+    let _m = server
+        .mock("GET", "/v1/orgs/me")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"id":"{TEST_ORG_ID}","name":"Test Org","slug":"test-org","spend_cap":5000,"current_period_spend_cents":1200,"spend_cap_exceeded":false}}"#
+        ))
+        .create();
+
+    floo()
+        .args(["--json", "billing", "spend-cap", "get"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""spend_cap_cents":5000"#))
+        .stdout(predicate::str::contains(
+            r#""current_period_spend_cents":1200"#,
+        ))
+        // The drifted bare key (`"spend_cap":`) must not reappear.
+        .stdout(predicate::str::contains(r#""spend_cap":"#).not());
+}
+
+#[test]
 fn test_apps_list_human() {
     let mut server = Server::new();
     let home = setup_config(&server);
