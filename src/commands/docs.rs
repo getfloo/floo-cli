@@ -485,14 +485,14 @@ Floo Config Files
   Env vars are scoped per service. In multi-service apps, you MUST specify
   which service receives the variable:
 
-    floo env set DATABASE_URL=postgres://... --services api
-    floo env set REDIS_URL=redis://... --services api,worker
+    floo env set DATABASE_URL=postgres://... --service api
+    floo env set REDIS_URL=redis://... --service api --service worker
 
   Scoping rules:
 
   - Single-service app: env vars go to the only service (no flag needed)
   - Multi-service app with 1 service: auto-targets that service
-  - Multi-service app with 2+ services: --services is REQUIRED
+  - Multi-service app with 2+ services: --service is REQUIRED
 
   SECURITY: Secrets set on a frontend service (web, dashboard) end up in
   the container runtime. Build-time vars (VITE_*, NEXT_PUBLIC_*, REACT_APP_*)
@@ -502,17 +502,17 @@ Floo Config Files
   Recommended pattern for multi-service apps:
 
     # Backend secrets — api/worker only
-    floo env set DATABASE_URL=postgres://... --services api
-    floo env set LINEAR_API_KEY=lin_... --services api
-    floo env set REDIS_URL=redis://... --services api,worker
+    floo env set DATABASE_URL=postgres://... --service api
+    floo env set LINEAR_API_KEY=lin_... --service api
+    floo env set REDIS_URL=redis://... --service api --service worker
 
     # Frontend config — web only (public, not secret)
-    floo env set VITE_API_URL=https://my-app.getfloo.com/api --services web
+    floo env set VITE_API_URL=https://my-app.getfloo.com/api --service web
 
   List env vars per service:
 
-    floo env list --services api
-    floo env list --services web
+    floo env list --service api
+    floo env list --service web
 
   Managed service env vars are generated at app scope, then attached to
   services by [services.<name>.env] managed:
@@ -563,7 +563,7 @@ Floo Deploy Flow
   Use `floo redeploy` when you need to redeploy without a code change
   (e.g., after updating env vars):
 
-    floo env set API_KEY=new-value --app myapp --services api
+    floo env set API_KEY=new-value --app myapp --service api
     floo redeploy --app myapp
 
 ## First Deploy
@@ -633,7 +633,7 @@ Floo Deploy Flow
   floo redeploy --app <name>       — redeploy with fresh env vars (no rebuild)
   floo redeploy --app <name> --rebuild  — force a full rebuild from latest commit
   floo redeploy [path]             — full redeploy from local project directory
-  floo redeploy --services <name>  — redeploy specific services only
+  floo redeploy --service <name>  — redeploy specific services only
   floo redeploy --sync-env         — re-sync env vars from env_file before redeploying
   floo redeploy --rebuild --skip-migrations  — hotfix path: bypass MIGRATE step
 
@@ -927,7 +927,7 @@ Floo — Golden Path
 
   For multi-service apps, target a specific service:
 
-  floo domains add api.example.com --app my-app --services api
+  floo domains add api.example.com --app my-app --service api
 
 ## How to Roll Back
 
@@ -938,7 +938,7 @@ Floo — Golden Path
 
   floo logs query --app my-app --since 1h --error
   floo logs tail --app my-app --env prod
-  floo logs query --app my-app --services web        # one service (multi-service apps)
+  floo logs query --app my-app --service web        # one service (multi-service apps)
   floo logs query --app my-app --cron nightly-report # a specific cron job's output
   floo logs query --app my-app --deployment latest --json
   floo logs query --app my-app --json --limit 100 --cursor \"$NEXT_CURSOR\"
@@ -1045,7 +1045,7 @@ Floo Templates — Copy-Paste App Structures
   3. floo preflight                            # validate both services
   4. git push origin main                      # push to GitHub first
   5. floo apps github connect owner/my-app     # triggers first deploy
-  6. floo env set DATABASE_URL=<url> --services api  # managed postgres auto-sets this
+  6. floo env set DATABASE_URL=<url> --service api  # managed postgres auto-sets this
   7. floo apps show my-app                     # get your URL
 
 ### Local Development (two terminals)
@@ -1064,11 +1064,11 @@ Floo Templates — Copy-Paste App Structures
 ### Env Vars
 
   Backend secrets (api service only):
-    floo env set DATABASE_URL=postgres://... --services api
-    floo env set SECRET_KEY=... --services api
+    floo env set DATABASE_URL=postgres://... --service api
+    floo env set SECRET_KEY=... --service api
 
   Frontend config (web service only, public — baked into JS bundle):
-    floo env set VITE_API_URL=/api --services web
+    floo env set VITE_API_URL=/api --service web
 
   SECURITY: Never set backend secrets on the web service.
   Build-time vars (VITE_*, NEXT_PUBLIC_*) are visible to end users.

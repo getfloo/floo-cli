@@ -127,7 +127,7 @@ Examples:
   floo run --service api --json -- pytest             Machine-readable exit code")]
     Run {
         /// Service name to inject env vars for (from floo.app.toml).
-        #[arg(long, required = true)]
+        #[arg(long = "service", visible_alias = "services", required = true)]
         service: String,
 
         /// App name or ID. Overrides the app name in floo.app.toml, but the
@@ -155,7 +155,7 @@ Examples:
         app: Option<String>,
 
         /// Validate only these services.
-        #[arg(short, long = "services")]
+        #[arg(short, long = "service", visible_alias = "services")]
         services: Vec<String>,
     },
 
@@ -178,8 +178,8 @@ need to apply env var changes or force a rebuild without a code change.")]
         #[arg(short, long)]
         app: Option<String>,
 
-        /// Deploy only these services (repeatable: --services api --services web).
-        #[arg(short, long = "services")]
+        /// Deploy only these services (repeatable: --service api --service web).
+        #[arg(short, long = "service", visible_alias = "services")]
         services: Vec<String>,
 
         /// Force a full rebuild from the latest commit (re-download source and run Cloud Build).
@@ -431,7 +431,7 @@ pub struct LogsOptions {
     severity: Option<String>,
 
     /// Filter logs to specific services (repeatable).
-    #[arg(long)]
+    #[arg(long = "service", visible_alias = "services")]
     services: Vec<String>,
 
     /// Filter logs to a specific cron job by name.
@@ -702,7 +702,7 @@ pub enum EnvCommands {
         app: Option<String>,
 
         /// Target specific services (repeatable).
-        #[arg(long)]
+        #[arg(long = "service", visible_alias = "services")]
         services: Vec<String>,
 
         /// Restart the app after setting the env var (redeploy with fresh env vars).
@@ -736,7 +736,7 @@ pub enum EnvCommands {
         app: Option<String>,
 
         /// Target specific services (repeatable).
-        #[arg(long)]
+        #[arg(long = "service", visible_alias = "services")]
         services: Vec<String>,
 
         /// Environment: dev or prod.
@@ -754,7 +754,7 @@ pub enum EnvCommands {
         app: Option<String>,
 
         /// Target specific services (repeatable).
-        #[arg(long)]
+        #[arg(long = "service", visible_alias = "services")]
         services: Vec<String>,
 
         /// Environment: dev or prod.
@@ -777,7 +777,7 @@ pub enum EnvCommands {
         app: Option<String>,
 
         /// Target a specific service.
-        #[arg(long)]
+        #[arg(long = "service", visible_alias = "services")]
         service: Option<String>,
 
         /// Environment: dev or prod.
@@ -796,7 +796,7 @@ pub enum EnvCommands {
         app: Option<String>,
 
         /// Target specific services (repeatable).
-        #[arg(long, conflicts_with = "all")]
+        #[arg(long = "service", visible_alias = "services", conflicts_with = "all")]
         services: Vec<String>,
 
         /// Import env vars for all services using their configured env_file paths.
@@ -853,7 +853,11 @@ pub enum ServicesCommands {
         app: Option<String>,
 
         /// Service name. Mutually exclusive with the positional form.
-        #[arg(long = "service", alias = "services", conflicts_with = "service_name")]
+        #[arg(
+            long = "service",
+            visible_alias = "services",
+            conflicts_with = "service_name"
+        )]
         service: Option<String>,
     },
 
@@ -974,8 +978,8 @@ pub enum DomainsCommands {
         #[arg(short, long)]
         app: Option<String>,
 
-        /// Target service name (required for multi-service apps).
-        #[arg(long)]
+        /// Route this domain to a specific service (required for multi-service apps).
+        #[arg(long = "service", visible_alias = "services")]
         services: Option<String>,
     },
 
@@ -2341,6 +2345,98 @@ mod tests {
             panic!("expected Analytics");
         };
         assert_eq!(app_flag.or(app), None);
+    }
+
+    // --- #1161: `--service` canonical, `--services` alias, CLI-wide ---
+    //
+    // Every service-targeting flag accepts both spellings so agents never have
+    // to special-case singular vs plural per subcommand. Canonical is
+    // `--service`; `--services` is a visible alias (same arg id), so existing
+    // scripts keep working and `--service` is the one true name in help.
+
+    #[test]
+    fn run_accepts_both_service_spellings() {
+        for flag in ["--service", "--services"] {
+            let cli = Cli::try_parse_from(["floo", "run", flag, "api", "--", "echo", "hi"])
+                .unwrap_or_else(|e| panic!("clap rejected `run {flag}`: {e}"));
+            let Commands::Run { service, .. } = cli.command else {
+                panic!("expected Run");
+            };
+            assert_eq!(service, "api", "run {flag}");
+        }
+    }
+
+    #[test]
+    fn env_get_accepts_both_service_spellings() {
+        for flag in ["--service", "--services"] {
+            let cli = Cli::try_parse_from(["floo", "env", "get", "KEY", flag, "api"])
+                .unwrap_or_else(|e| panic!("clap rejected `env get {flag}`: {e}"));
+            let Commands::Env(EnvCommands::Get { service, .. }) = cli.command else {
+                panic!("expected Env::Get");
+            };
+            assert_eq!(service.as_deref(), Some("api"), "env get {flag}");
+        }
+    }
+
+    #[test]
+    fn domains_add_accepts_both_service_spellings() {
+        for flag in ["--service", "--services"] {
+            let cli = Cli::try_parse_from(["floo", "domains", "add", "x.com", flag, "api"])
+                .unwrap_or_else(|e| panic!("clap rejected `domains add {flag}`: {e}"));
+            let Commands::Domains(DomainsCommands::Add { services, .. }) = cli.command else {
+                panic!("expected Domains::Add");
+            };
+            assert_eq!(services.as_deref(), Some("api"), "domains add {flag}");
+        }
+    }
+
+    #[test]
+    fn logs_accepts_both_service_spellings_and_repeats() {
+        for flag in ["--service", "--services"] {
+            let cli = Cli::try_parse_from(["floo", "logs", flag, "api", flag, "web"])
+                .unwrap_or_else(|e| panic!("clap rejected `logs {flag}`: {e}"));
+            let Commands::Logs { options, .. } = cli.command else {
+                panic!("expected Logs");
+            };
+            assert_eq!(options.services, vec!["api", "web"], "logs {flag}");
+        }
+    }
+
+    #[test]
+    fn env_set_accepts_both_service_spellings_and_repeats() {
+        for flag in ["--service", "--services"] {
+            let cli = Cli::try_parse_from(["floo", "env", "set", "K=V", flag, "api", flag, "web"])
+                .unwrap_or_else(|e| panic!("clap rejected `env set {flag}`: {e}"));
+            let Commands::Env(EnvCommands::Set { services, .. }) = cli.command else {
+                panic!("expected Env::Set");
+            };
+            assert_eq!(services, vec!["api", "web"], "env set {flag}");
+        }
+    }
+
+    #[test]
+    fn redeploy_accepts_both_service_spellings_and_short() {
+        // `redeploy` keeps its `-s` short form alongside the renamed long flag.
+        for flag in ["--service", "--services", "-s"] {
+            let cli = Cli::try_parse_from(["floo", "redeploy", flag, "api"])
+                .unwrap_or_else(|e| panic!("clap rejected `redeploy {flag}`: {e}"));
+            let Commands::Redeploy { services, .. } = cli.command else {
+                panic!("expected Redeploy");
+            };
+            assert_eq!(services, vec!["api"], "redeploy {flag}");
+        }
+    }
+
+    #[test]
+    fn mixed_service_spellings_address_one_arg() {
+        // Both spellings target the same arg id, so on a repeatable flag they
+        // accumulate in order rather than colliding as two distinct args.
+        let cli =
+            Cli::try_parse_from(["floo", "logs", "--service", "api", "--services", "web"]).unwrap();
+        let Commands::Logs { options, .. } = cli.command else {
+            panic!("expected Logs");
+        };
+        assert_eq!(options.services, vec!["api", "web"]);
     }
 
     // --- `--json` arg-error contract (#1156) ---
