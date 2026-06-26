@@ -329,9 +329,16 @@ Examples:
         context: Option<String>,
     },
 
-    /// Built-in platform documentation.
+    /// Built-in platform documentation. Run `floo docs` (no topic) for the
+    /// full list of topics with one-line descriptions.
+    #[command(after_help = "\
+Topics: golden-path, quickstart, build, nextjs, rails, fastapi, django,
+express, templates, services, config, cron, deploy, auth, notifications,
+feedback.
+Aliases: storage -> services, app-toml -> config.
+Run `floo docs` (no topic) for a one-line description of each topic.")]
     Docs {
-        /// Topic: services, config, deploy. Omit for overview.
+        /// Documentation topic to display. Omit for the overview.
         topic: Option<String>,
     },
 
@@ -2149,6 +2156,31 @@ mod tests {
 
     fn argv(parts: &[&str]) -> Vec<OsString> {
         parts.iter().map(OsString::from).collect()
+    }
+
+    /// `floo docs --help` must list every topic and alias. Pinned to the
+    /// `TOPICS`/`ALIASES` tables so the help block can't silently drift —
+    /// before #1159 it advertised only "services, config, deploy".
+    #[test]
+    fn docs_help_lists_every_topic_and_alias() {
+        use clap::CommandFactory;
+        let mut cmd = Cli::command();
+        let docs = cmd
+            .find_subcommand_mut("docs")
+            .expect("docs subcommand exists");
+        let help = docs.render_long_help().to_string();
+        for (name, _) in crate::commands::docs::TOPICS {
+            assert!(
+                help.contains(name),
+                "`floo docs --help` is missing topic '{name}'",
+            );
+        }
+        for (alias, _) in crate::commands::docs::ALIASES {
+            assert!(
+                help.contains(alias),
+                "`floo docs --help` is missing alias '{alias}'",
+            );
+        }
     }
 
     fn strs(args: &[OsString]) -> Vec<&str> {

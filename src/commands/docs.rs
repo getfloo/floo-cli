@@ -36,12 +36,12 @@ never uploads code.
   floo docs django     — build and deploy a Django app on floo (end-to-end)
   floo docs express    — build and deploy an Express app on floo (end-to-end)
   floo docs templates  — copy-paste app structures (React+FastAPI, Next.js, etc.)
-  floo docs services   — service types and managed services
-  floo docs storage    — managed Storage restore commands
-  floo docs config     — config file formats with examples
+  floo docs services   — service types and managed services (alias: storage)
+  floo docs config     — config file formats with examples (alias: app-toml)
   floo docs cron       — [cron.<name>] schema, schedules, and CLI surface
   floo docs deploy     — detailed deploy flow and runtime detection
   floo docs auth       — add user authentication to your app
+  floo docs notifications — control which emails floo sends you
   floo docs feedback   — report bugs, friction, or feature requests
   floo --help          — all available commands
   floo <command> --help — details for a specific command
@@ -163,7 +163,7 @@ deployable. Floo distinguishes two kinds by how they are authored:
 The split matters: removing a line from floo.app.toml that deleted a
 database would be catastrophic, so managed services are never coupled to
 config-file edits. Destruction is always an explicit CLI command with
-confirmation. See also: floo docs state-model.
+confirmation.
 
 ## App Services (your code)
 
@@ -211,7 +211,7 @@ confirmation. See also: floo docs state-model.
   Postgres ships with pgvector enabled. The `vector` type resolves
   unqualified: use it in migrations and queries with no CREATE EXTENSION
   and no schema prefix. Rails (`t.vector`), Django, SQLAlchemy, and Prisma
-  all emit the bare type. Full guide: https://docs.getfloo.com/guides/databases
+  all emit the bare type. Full guide: https://getfloo.com/docs/guides/databases
 
   Preview database branches are preview-owned managed Postgres branches.
   Inspect them from the terminal:
@@ -776,7 +776,7 @@ curl testing or scripts, send the headers yourself:
        -H \"X-Floo-User-Id: dev-user-1\" \\
        http://localhost:3000/dashboard
 
-Full docs: https://docs.getfloo.com/guides/app-auth
+Full docs: https://getfloo.com/docs/guides/app-auth
 ";
 
 const FEEDBACK: &str = "\
@@ -1158,7 +1158,7 @@ end-to-end in a real Rails / Next.js / Django / etc. project.
 If you know which capability you need, jump to the capability guide. If
 you're starting a new project, start with the stack guide.
 
-Full guides: https://docs.getfloo.com/build/
+Full guides: https://getfloo.com/docs/build/
 ";
 
 const RAILS: &str = "\
@@ -1295,7 +1295,7 @@ Add the CNAME shown in the output at your DNS provider.
   - asset compilation runs in the Dockerfile (RAILS_SERVE_STATIC_FILES=1)
   - Rails 7+ force_ssl works correctly behind floo's edge (X-Forwarded-Proto)
 
-Full guide with complete Ruby code: https://docs.getfloo.com/build/rails
+Full guide with complete Ruby code: https://getfloo.com/docs/build/rails
 ";
 
 const NEXTJS: &str = "\
@@ -1369,7 +1369,7 @@ Then in a Server Component or Route Handler:
   - output: \"standalone\" in next.config.js
   - Never expose tokens to client components
 
-Full guide with complete TypeScript code: https://docs.getfloo.com/build/nextjs
+Full guide with complete TypeScript code: https://getfloo.com/docs/build/nextjs
 ";
 
 const FASTAPI: &str = "\
@@ -1442,7 +1442,7 @@ Then a FastAPI dependency:
   - Don't mix asyncpg and psycopg2 — pick one
   - X-Forwarded-Proto: build absolute URLs from forwarded scheme
 
-Full guide with complete Python code: https://docs.getfloo.com/build/fastapi
+Full guide with complete Python code: https://getfloo.com/docs/build/fastapi
 ";
 
 const DJANGO: &str = "\
@@ -1535,7 +1535,7 @@ headers with HTTP_ and uppercases them):
   - DJANGO_SECRET_KEY must be set or sessions can be forged
   - SECURE_PROXY_SSL_HEADER required for is_secure() to work behind floo
 
-Full guide with complete Python code: https://docs.getfloo.com/build/django
+Full guide with complete Python code: https://getfloo.com/docs/build/django
 ";
 
 const EXPRESS: &str = "\
@@ -1609,7 +1609,7 @@ won't get set behind floo's edge.
   - SESSION_SECRET required for cookie-session
   - For server-side sessions: floo services add redis + connect-redis
 
-Full guide with complete JavaScript code: https://docs.getfloo.com/build/express
+Full guide with complete JavaScript code: https://getfloo.com/docs/build/express
 ";
 
 const CRON: &str = "\
@@ -1684,32 +1684,43 @@ deploy (added, updated, or removed to match config).
   https://getfloo.com/docs/reference/config-spec   — full [cron.<name>] schema reference
 ";
 
-const TOPICS: &[(&str, &str)] = &[
-    ("quickstart", QUICKSTART),
+// Canonical docs topics, in the order the overview lists them. This table is
+// the single source of truth for which `floo docs` topics exist: the overview
+// listing, the `floo docs --help` block, and every `floo docs <topic>`
+// cross-reference are all pinned back to it by tests in this module (and the
+// `--help` block by a test in `cli.rs`). Add a topic here and those tests fail
+// until the overview and `--help` list it too.
+pub(crate) const TOPICS: &[(&str, &str)] = &[
     ("golden-path", HOWTO),
+    ("quickstart", QUICKSTART),
     ("build", BUILD),
     ("nextjs", NEXTJS),
     ("rails", RAILS),
     ("fastapi", FASTAPI),
     ("django", DJANGO),
     ("express", EXPRESS),
+    ("templates", TEMPLATES),
     ("services", SERVICES),
-    ("storage", SERVICES),
     ("config", CONFIG),
-    ("app-toml", CONFIG), // alias — agents can run `floo docs app-toml` after `floo init`
     ("cron", CRON),
     ("deploy", DEPLOY),
     ("auth", AUTH),
-    ("feedback", FEEDBACK),
     ("notifications", NOTIFICATIONS),
-    ("templates", TEMPLATES),
+    ("feedback", FEEDBACK),
 ];
+
+// Convenience aliases. An agent types the concrete noun it already has — a
+// managed-service name (`storage`) or a config filename (`app-toml`) — and
+// lands on the canonical topic instead of hitting "Unknown docs topic". Each
+// alias resolves to a TOPICS name and is surfaced in the overview so it stays
+// discoverable; both invariants are pinned by tests in this module.
+pub(crate) const ALIASES: &[(&str, &str)] = &[("storage", "services"), ("app-toml", "config")];
 
 pub fn docs(topic: Option<&str>) {
     let (topic_name, content) = match topic {
         None => ("overview", OVERVIEW),
-        Some(t) => match TOPICS.iter().find(|(name, _)| *name == t) {
-            Some((name, content)) => (*name, *content),
+        Some(t) => match resolve_topic(t) {
+            Some(resolved) => resolved,
             None => {
                 let available: Vec<&str> = TOPICS.iter().map(|(n, _)| *n).collect();
                 output::error(
@@ -1733,6 +1744,18 @@ pub fn docs(topic: Option<&str>) {
     } else {
         eprintln!("{}", content.trim());
     }
+}
+
+/// Resolve a requested topic name to its `(canonical_name, content)`. Accepts
+/// both canonical topics and convenience aliases; an alias resolves to the
+/// canonical topic's name and content, so `floo docs storage` and
+/// `floo docs services` are indistinguishable downstream.
+fn resolve_topic(t: &str) -> Option<(&'static str, &'static str)> {
+    if let Some(entry) = TOPICS.iter().find(|(name, _)| *name == t) {
+        return Some(*entry);
+    }
+    let target = ALIASES.iter().find(|(alias, _)| *alias == t)?.1;
+    TOPICS.iter().find(|(name, _)| *name == target).copied()
 }
 
 #[cfg(test)]
@@ -1862,7 +1885,7 @@ mod tests {
         assert!(BUILD.contains("floo docs fastapi"));
         assert!(BUILD.contains("floo docs django"));
         assert!(BUILD.contains("floo docs express"));
-        assert!(BUILD.contains("docs.getfloo.com/build/"));
+        assert!(BUILD.contains("getfloo.com/docs/build"));
     }
 
     #[test]
@@ -1918,7 +1941,7 @@ mod tests {
             );
             assert!(content.contains("floo dev"), "{stack}: missing 'floo dev'");
             assert!(
-                content.contains("docs.getfloo.com/build/"),
+                content.contains("getfloo.com/docs/build"),
                 "{stack}: missing link to full guide"
             );
         }
@@ -1963,5 +1986,75 @@ mod tests {
                 "{stack}: leaked 'Hosted app OAuth'"
             );
         }
+    }
+
+    /// Every `floo docs <topic>` mention across the overview and every topic
+    /// body must resolve to a real topic or alias. The dead
+    /// `floo docs state-model` cross-reference (#1159) is exactly what this
+    /// pins — the whole class, not just that one instance.
+    #[test]
+    fn test_every_floo_docs_cross_reference_resolves() {
+        let valid: std::collections::HashSet<&str> = TOPICS
+            .iter()
+            .map(|(n, _)| *n)
+            .chain(ALIASES.iter().map(|(a, _)| *a))
+            .collect();
+        let re = regex::Regex::new(r"floo docs ([a-z][a-z-]*)").unwrap();
+        let mut bodies: Vec<&str> = TOPICS.iter().map(|(_, c)| *c).collect();
+        bodies.push(OVERVIEW);
+        for body in bodies {
+            for cap in re.captures_iter(body) {
+                let referenced = cap.get(1).unwrap().as_str();
+                assert!(
+                    valid.contains(referenced),
+                    "cross-reference `floo docs {referenced}` has no matching topic or alias",
+                );
+            }
+        }
+    }
+
+    /// Every canonical topic must be listed in the overview so an agent reading
+    /// `floo docs` can discover all of them. `notifications` was invisible here
+    /// before #1159.
+    #[test]
+    fn test_overview_lists_every_canonical_topic() {
+        for (name, _) in TOPICS {
+            assert!(
+                OVERVIEW.contains(&format!("floo docs {name}")),
+                "overview is missing `floo docs {name}`",
+            );
+        }
+    }
+
+    /// Every alias must resolve to a real canonical topic, must not shadow a
+    /// canonical name, and must be surfaced in the overview so it stays
+    /// discoverable rather than being a hidden duplicate (#1159).
+    #[test]
+    fn test_every_alias_resolves_to_canonical_topic() {
+        for (alias, target) in ALIASES {
+            assert!(
+                TOPICS.iter().any(|(n, _)| n == target),
+                "alias `{alias}` points at unknown canonical topic `{target}`",
+            );
+            assert!(
+                !TOPICS.iter().any(|(n, _)| n == alias),
+                "alias `{alias}` collides with a canonical topic name",
+            );
+            assert!(
+                OVERVIEW.contains(alias),
+                "alias `{alias}` is not surfaced in the overview",
+            );
+        }
+    }
+
+    /// Dispatching an alias returns the canonical topic's name and content; an
+    /// unknown topic returns None so the caller shows the available-topics hint.
+    #[test]
+    fn test_alias_dispatch_resolves_to_canonical() {
+        assert_eq!(resolve_topic("storage"), Some(("services", SERVICES)));
+        assert_eq!(resolve_topic("app-toml"), Some(("config", CONFIG)));
+        assert_eq!(resolve_topic("services"), Some(("services", SERVICES)));
+        assert!(resolve_topic("state-model").is_none());
+        assert!(resolve_topic("definitely-not-a-topic").is_none());
     }
 }
