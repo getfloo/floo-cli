@@ -154,8 +154,13 @@ Examples:
         #[arg(short, long)]
         app: Option<String>,
 
-        /// Validate only these services.
-        #[arg(short, long = "service", visible_alias = "services")]
+        /// Validate only these services (repeatable, or comma-separated).
+        #[arg(
+            short,
+            long = "service",
+            visible_alias = "services",
+            value_delimiter = ','
+        )]
         services: Vec<String>,
     },
 
@@ -178,8 +183,13 @@ need to apply env var changes or force a rebuild without a code change.")]
         #[arg(short, long)]
         app: Option<String>,
 
-        /// Deploy only these services (repeatable: --service api --service web).
-        #[arg(short, long = "service", visible_alias = "services")]
+        /// Deploy only these services (--service api --service web, or --service api,web).
+        #[arg(
+            short,
+            long = "service",
+            visible_alias = "services",
+            value_delimiter = ','
+        )]
         services: Vec<String>,
 
         /// Force a full rebuild from the latest commit (re-download source and run Cloud Build).
@@ -437,8 +447,8 @@ pub struct LogsOptions {
     #[arg(long)]
     severity: Option<String>,
 
-    /// Filter logs to specific services (repeatable).
-    #[arg(long = "service", visible_alias = "services")]
+    /// Filter logs to specific services (repeatable, or comma-separated).
+    #[arg(long = "service", visible_alias = "services", value_delimiter = ',')]
     services: Vec<String>,
 
     /// Filter logs to a specific cron job by name.
@@ -721,8 +731,8 @@ pub enum EnvCommands {
         #[arg(short, long)]
         app: Option<String>,
 
-        /// Target specific services (repeatable).
-        #[arg(long = "service", visible_alias = "services")]
+        /// Target specific services (repeatable, or comma-separated).
+        #[arg(long = "service", visible_alias = "services", value_delimiter = ',')]
         services: Vec<String>,
 
         /// Restart the app after setting the env var (redeploy with fresh env vars).
@@ -755,8 +765,8 @@ pub enum EnvCommands {
         #[arg(short, long)]
         app: Option<String>,
 
-        /// Target specific services (repeatable).
-        #[arg(long = "service", visible_alias = "services")]
+        /// Target specific services (repeatable, or comma-separated).
+        #[arg(long = "service", visible_alias = "services", value_delimiter = ',')]
         services: Vec<String>,
 
         /// Environment: dev or prod.
@@ -773,8 +783,8 @@ pub enum EnvCommands {
         #[arg(short, long)]
         app: Option<String>,
 
-        /// Target specific services (repeatable).
-        #[arg(long = "service", visible_alias = "services")]
+        /// Target specific services (repeatable, or comma-separated).
+        #[arg(long = "service", visible_alias = "services", value_delimiter = ',')]
         services: Vec<String>,
 
         /// Environment: dev or prod.
@@ -815,8 +825,13 @@ pub enum EnvCommands {
         #[arg(short, long)]
         app: Option<String>,
 
-        /// Target specific services (repeatable).
-        #[arg(long = "service", visible_alias = "services", conflicts_with = "all")]
+        /// Target specific services (repeatable, or comma-separated).
+        #[arg(
+            long = "service",
+            visible_alias = "services",
+            value_delimiter = ',',
+            conflicts_with = "all"
+        )]
         services: Vec<String>,
 
         /// Import env vars for all services using their configured env_file paths.
@@ -2473,6 +2488,54 @@ mod tests {
             panic!("expected Logs");
         };
         assert_eq!(options.services, vec!["api", "web"]);
+    }
+
+    // --- #192: comma-separated lists on multi-value service flags ---
+
+    #[test]
+    fn multi_value_service_flag_splits_on_comma() {
+        // The repeatable Vec service flags accept comma-separated lists, and
+        // the comma form composes with repetition.
+        let cli = Cli::try_parse_from(["floo", "logs", "--service", "api,web"]).unwrap();
+        let Commands::Logs { options, .. } = cli.command else {
+            panic!("expected Logs");
+        };
+        assert_eq!(options.services, vec!["api", "web"]);
+
+        // Comma and repetition accumulate together.
+        let cli = Cli::try_parse_from([
+            "floo",
+            "logs",
+            "--service",
+            "api,web",
+            "--services",
+            "worker",
+        ])
+        .unwrap();
+        let Commands::Logs { options, .. } = cli.command else {
+            panic!("expected Logs");
+        };
+        assert_eq!(options.services, vec!["api", "web", "worker"]);
+
+        // `env set` is the same shape.
+        let cli =
+            Cli::try_parse_from(["floo", "env", "set", "K=V", "--service", "api,worker"]).unwrap();
+        let Commands::Env(EnvCommands::Set { services, .. }) = cli.command else {
+            panic!("expected Env::Set");
+        };
+        assert_eq!(services, vec!["api", "worker"]);
+    }
+
+    #[test]
+    fn single_value_service_flag_does_not_split_on_comma() {
+        // The delimiter is scoped to the repeatable Vec flags; single-target
+        // flags keep the value intact (a bogus name here, but unsplit).
+        let cli =
+            Cli::try_parse_from(["floo", "env", "get", "KEY", "--service", "api,web"]).unwrap();
+        let Commands::Env(EnvCommands::Get { service, .. }) = cli.command else {
+            panic!("expected Env::Get");
+        };
+        assert_eq!(service.as_deref(), Some("api,web"));
     }
 
     #[test]
