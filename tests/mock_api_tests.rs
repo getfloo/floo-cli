@@ -1442,14 +1442,14 @@ fn test_deploy_list_json() {
             "GET",
             format!("/v1/apps/{TEST_APP_ID}/deploys").as_str(),
         )
-        .match_query(Matcher::UrlEncoded(
-            "include_build_logs".into(),
-            "false".into(),
-        ))
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("include_build_logs".into(), "false".into()),
+            Matcher::UrlEncoded("limit".into(), "20".into()),
+        ]))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
-            r#"{"deploys":[{"id":"deploy-123","status":"live","runtime":"nodejs","created_at":"2024-01-01T00:00:00Z","build_logs":"massive-build-log"}]}"#,
+            r#"{"deploys":[{"id":"deploy-123","status":"live","runtime":"nodejs","created_at":"2024-01-01T00:00:00Z","started_at":"2024-01-01T00:00:00Z","finished_at":"2024-01-01T00:02:00Z","duration_ms":120000,"failure_reason":null,"failing_stage":null,"build_logs":"massive-build-log"}],"total":1,"page":1,"per_page":20,"limit":20,"next_cursor":"cursor-next","has_more":true}"#,
         )
         .create();
 
@@ -1461,8 +1461,53 @@ fn test_deploy_list_json() {
         .stdout(predicate::str::contains(r#""success":true"#))
         .stdout(predicate::str::contains("deploys"))
         .stdout(predicate::str::contains("deploy-123"))
+        .stdout(predicate::str::contains(r#""duration_ms":120000"#))
+        .stdout(predicate::str::contains(r#""next_cursor":"cursor-next""#))
+        .stdout(predicate::str::contains(r#""has_more":true"#))
         .stdout(predicate::str::contains("build_logs").not())
         .stdout(predicate::str::contains("massive-build-log").not());
+}
+
+#[test]
+fn test_deploy_list_json_sends_cursor_and_limit() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _m_list = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/deploys").as_str(),
+        )
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("include_build_logs".into(), "false".into()),
+            Matcher::UrlEncoded("limit".into(), "2".into()),
+            Matcher::UrlEncoded("cursor".into(), "cursor-1".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"deploys":[],"total":5,"page":2,"per_page":2,"limit":2,"next_cursor":"cursor-2","has_more":true}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "deploys",
+            "list",
+            "--app",
+            TEST_APP_NAME,
+            "--limit",
+            "2",
+            "--cursor",
+            "cursor-1",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""limit":2"#))
+        .stdout(predicate::str::contains(r#""next_cursor":"cursor-2""#));
 }
 
 #[test]

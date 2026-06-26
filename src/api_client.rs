@@ -429,6 +429,28 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn list_deploys_paginated(
+        &self,
+        app_id: &str,
+        limit: u32,
+        cursor: Option<&str>,
+    ) -> Result<ListDeploysResponse, FlooApiError> {
+        let limit_value = limit.to_string();
+        let mut owned_query: Vec<(&str, String)> = vec![
+            ("include_build_logs", "false".to_string()),
+            ("limit", limit_value),
+        ];
+        if let Some(cursor) = cursor {
+            owned_query.push(("cursor", cursor.to_string()));
+        }
+        let query: Vec<(&str, &str)> = owned_query
+            .iter()
+            .map(|(key, value)| (*key, value.as_str()))
+            .collect();
+        let resp = self.get_with_query(&format!("/v1/apps/{app_id}/deploys"), &query)?;
+        self.handle_response(resp)
+    }
+
     // --- Doctor ---
 
     pub fn diagnose_accounts(

@@ -147,6 +147,18 @@ pub struct ListAppsResponse {
 // --- Deploy ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FailureRootCause {
+    pub stage: Option<String>,
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub details: Option<serde_json::Value>,
+    #[serde(default)]
+    pub first_failure_at: Option<String>,
+    #[serde(default)]
+    pub root_cause_event_excerpt: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Deploy {
     pub id: String,
     pub status: Option<String>,
@@ -159,6 +171,26 @@ pub struct Deploy {
     pub commit_sha: Option<String>,
     #[serde(default)]
     pub environment_name: Option<String>,
+    #[serde(default)]
+    pub failure_category: Option<String>,
+    #[serde(default)]
+    pub failure_message: Option<String>,
+    #[serde(default)]
+    pub failure_step: Option<String>,
+    #[serde(default)]
+    pub failure_root_cause: Option<FailureRootCause>,
+    #[serde(default)]
+    pub failure_reason: Option<String>,
+    #[serde(default)]
+    pub failure_stage: Option<String>,
+    #[serde(default)]
+    pub failing_stage: Option<String>,
+    #[serde(default)]
+    pub started_at: Option<String>,
+    #[serde(default)]
+    pub finished_at: Option<String>,
+    #[serde(default)]
+    pub duration_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -169,6 +201,18 @@ pub struct AppPasswordResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListDeploysResponse {
     pub deploys: Vec<Deploy>,
+    #[serde(default)]
+    pub total: Option<u64>,
+    #[serde(default)]
+    pub page: Option<u32>,
+    #[serde(default)]
+    pub per_page: Option<u32>,
+    #[serde(default)]
+    pub limit: Option<u32>,
+    #[serde(default)]
+    pub next_cursor: Option<String>,
+    #[serde(default)]
+    pub has_more: bool,
 }
 
 // --- Env Var ---
