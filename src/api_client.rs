@@ -266,6 +266,17 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn create_org_invite(
+        &self,
+        org_id: &str,
+        email: &str,
+        role: &str,
+    ) -> Result<CreateInviteResponse, FlooApiError> {
+        let body = serde_json::json!({"email": email, "role": role});
+        let resp = self.post_json(&format!("/v1/orgs/{org_id}/invites"), &body)?;
+        self.handle_response(resp)
+    }
+
     // --- Access ---
 
     pub fn grant_app_access(&self, app_id: &str, email: &str) -> Result<Value, FlooApiError> {

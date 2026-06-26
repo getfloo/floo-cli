@@ -287,6 +287,47 @@ fn test_billing_usage_period_scopes_derived_fields() {
 }
 
 #[test]
+fn test_orgs_invite_json_assigns_role_and_redacts_url() {
+    // #1161: `orgs invite` resolves the current org, POSTs email + role in one
+    // step, and returns a one-time invite_url that is secret-shaped (redacted
+    // in JSON, never printed raw).
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _org = mock_org_me(&mut server);
+
+    let _invite = server
+        .mock("POST", format!("/v1/orgs/{TEST_ORG_ID}/invites").as_str())
+        .match_body(Matcher::PartialJson(serde_json::json!({
+            "email": "alice@example.com",
+            "role": "admin",
+        })))
+        .with_status(201)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"id":"inv-1","org_id":"org-uuid-5678","email":"alice@example.com","role":"admin","status":"pending","invited_by_id":"u-1","expires_at":"2026-07-01T00:00:00Z","created_at":"2026-06-26T00:00:00Z","invite_url":"https://app.getfloo.com/invite/secret-token-xyz"}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "orgs",
+            "invite",
+            "alice@example.com",
+            "--role",
+            "admin",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(r#""role":"admin""#))
+        // The one-time invite_url is secret-shaped: redacted, never raw.
+        .stdout(predicate::str::contains("secret-token-xyz").not())
+        .stdout(predicate::str::contains("contains_secrets"));
+}
+
+#[test]
 fn test_apps_list_human() {
     let mut server = Server::new();
     let home = setup_config(&server);

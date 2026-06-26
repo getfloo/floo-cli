@@ -113,6 +113,18 @@ pub struct MemberRoleResponse {
     pub role: String,
 }
 
+/// Response from creating an org invite. `invite_url` is a one-time link and is
+/// treated as secret-shaped by the redactor (see `redact::SECRET_FIELD_NAMES`),
+/// so it is redacted in `--json` output unless `--reveal-secrets` is passed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateInviteResponse {
+    pub email: String,
+    pub role: String,
+    pub status: String,
+    pub invite_url: String,
+    pub expires_at: String,
+}
+
 // --- App ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

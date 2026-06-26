@@ -563,6 +563,19 @@ pub enum OrgsCommands {
     #[command(subcommand)]
     Members(MembersCommands),
 
+    /// Invite a user to the current org with a role, in one step.
+    ///
+    /// Sends an invite email and returns a one-time invite link. The role is
+    /// assigned on acceptance, with no separate `orgs members set-role` call.
+    Invite {
+        /// Email address to invite.
+        email: String,
+
+        /// Role to grant: admin, member, or viewer.
+        #[arg(long, default_value = "member", value_parser = ["admin", "member", "viewer"])]
+        role: String,
+    },
+
     /// Switch the default org for subsequent commands.
     Switch {
         /// Org slug or ID.
@@ -1802,6 +1815,7 @@ pub fn run() {
                     commands::orgs::set_role(&user_id, &role)
                 }
             },
+            OrgsCommands::Invite { email, role } => commands::orgs::invite(&email, &role),
             OrgsCommands::Switch { org_slug } => commands::orgs::switch(&org_slug),
         },
 
@@ -2487,6 +2501,28 @@ mod tests {
                 "expected UnknownArgument for {args:?}",
             );
         }
+    }
+
+    #[test]
+    fn orgs_invite_role_flag_parses_defaults_and_validates() {
+        // #1161: `orgs invite --role` captures the role in one step; the
+        // default is member; clap rejects anything outside admin/member/viewer.
+        let cli =
+            Cli::try_parse_from(["floo", "orgs", "invite", "a@x.com", "--role", "admin"]).unwrap();
+        let Commands::Orgs(OrgsCommands::Invite { email, role }) = cli.command else {
+            panic!("expected Orgs::Invite");
+        };
+        assert_eq!(email, "a@x.com");
+        assert_eq!(role, "admin");
+
+        let cli = Cli::try_parse_from(["floo", "orgs", "invite", "a@x.com"]).unwrap();
+        let Commands::Orgs(OrgsCommands::Invite { role, .. }) = cli.command else {
+            panic!("expected Orgs::Invite");
+        };
+        assert_eq!(role, "member", "default role");
+
+        let err = parse_err(&["floo", "orgs", "invite", "a@x.com", "--role", "owner"]);
+        assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
     }
 
     // --- `--json` arg-error contract (#1156) ---
