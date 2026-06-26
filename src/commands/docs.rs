@@ -197,7 +197,14 @@ confirmation.
   lock file or in your repo:
     postgres → DATABASE_URL + PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD
     redis    → REDIS_URL
-    storage  → STORAGE_BUCKET + STORAGE_URL (use STORAGE_URL for signed URLs)
+    storage  → STORAGE_BUCKET (read/write via the GCS SDK over ADC)
+
+  Your app reaches storage with the native GCS SDK (Rails Active Storage
+  `:google` in proxy mode). floo runs your container as a service account
+  with read/write on the bucket, so ADC just works — no key file, no
+  project id. STORAGE_URL is a floo operator endpoint, not your app's
+  runtime path, and S3-compatible SDKs are not supported.
+  Full guide: https://getfloo.com/docs/guides/cloud-storage
 
   Managed Storage buckets keep noncurrent object versions for 30 days.
   To recover an overwritten or deleted object:
