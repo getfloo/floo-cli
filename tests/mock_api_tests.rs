@@ -130,23 +130,6 @@ fn mock_services_single(server: &mut Server) -> Mock {
         .create()
 }
 
-/// Mock two user-managed services (api + web).
-fn mock_services_multi(server: &mut Server) -> Mock {
-    server
-        .mock(
-            "GET",
-            format!("/v1/apps/{TEST_APP_ID}/services").as_str(),
-        )
-        .match_query(Matcher::AllOf(vec![
-            Matcher::UrlEncoded("page".into(), "1".into()),
-            Matcher::UrlEncoded("per_page".into(), "100".into()),
-        ]))
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(r#"{"services":[{"id":"svc-api-1","name":"api","type":"api","status":"live","cloud_run_url":"https://api.floo.app","port":8000},{"id":"svc-web-1","name":"web","type":"web","status":"live","cloud_run_url":"https://web.floo.app","port":3000}]}"#)
-        .create()
-}
-
 fn preview_branch_json(name: &str, status: &str, reset_eligible: bool) -> String {
     let blocked = if reset_eligible {
         "null".to_string()
@@ -1217,26 +1200,14 @@ fn test_domains_remove_json_with_yes_flag() {
 }
 
 #[test]
-fn test_domains_list_multi_service_requires_services_flag() {
+fn test_domains_list_is_app_level_on_multi_service() {
+    // #1161: custom domains are app/ingress-level, so `domains list` lists
+    // every domain on the app and never demands a service target — even on a
+    // multi-service app. It does not resolve services at all (no /services
+    // call is mocked here, and the command must still succeed).
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
-    let _services = mock_services_multi(&mut server);
-
-    floo()
-        .args(["--json", "domains", "list", "--app", TEST_APP_NAME])
-        .env("HOME", home.path())
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains("MULTIPLE_SERVICES_NO_TARGET"));
-}
-
-#[test]
-fn test_domains_list_multi_service_with_services_flag() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let _resolve = mock_resolve_app(&mut server);
-    let _services = mock_services_multi(&mut server);
 
     let _m_list = server
         .mock(
@@ -1249,15 +1220,7 @@ fn test_domains_list_multi_service_with_services_flag() {
         .create();
 
     floo()
-        .args([
-            "--json",
-            "domains",
-            "list",
-            "--app",
-            TEST_APP_NAME,
-            "--services",
-            "api",
-        ])
+        .args(["--json", "domains", "list", "--app", TEST_APP_NAME])
         .env("HOME", home.path())
         .assert()
         .success()

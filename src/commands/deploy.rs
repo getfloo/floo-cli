@@ -1657,7 +1657,7 @@ fn validate_preflight(
                     )
                     .with_path(&svc.path)
                     .with_hint(format!(
-                        "Set them with `floo env set <KEY>=<value> --services {}` (or confirm they're already set server-side).",
+                        "Set them with `floo env set <KEY>=<value> --service {}` (or confirm they're already set server-side).",
                         svc.name
                     )),
                 );
@@ -2168,7 +2168,7 @@ fn generate_security_findings(
                                 PreflightFinding::warning(
                                     "SECRET_IN_WEB_SERVICE",
                                     format!(
-                                        "Secret-looking var '{}' in {}/{} — if this is a backend secret, remove it from the web service and set it on the api service: floo env set {}=<val> --services api",
+                                        "Secret-looking var '{}' in {}/{} — if this is a backend secret, remove it from the web service and set it on the api service: floo env set {}=<val> --service api",
                                         key, svc.name, env_filename, key
                                     ),
                                 )
