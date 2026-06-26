@@ -82,8 +82,11 @@ pub fn spend_cap_get() {
         process::exit(1);
     });
 
+    // Cap is cents-denominated; emit it as `spend_cap_cents` to match
+    // `billing usage` and every other *_cents field. One key per concept so
+    // agents never special-case `spend_cap` vs `spend_cap_cents` (#1161).
     let data = serde_json::json!({
-        "spend_cap": spend_cap,
+        "spend_cap_cents": spend_cap,
         "current_period_spend_cents": current_spend,
         "spend_cap_exceeded": exceeded,
     });
