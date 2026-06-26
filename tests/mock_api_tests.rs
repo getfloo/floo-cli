@@ -238,6 +238,55 @@ fn test_billing_spend_cap_get_json_uses_cents_key() {
 }
 
 #[test]
+fn test_billing_usage_period_scopes_derived_fields() {
+    // #1161: `--period` must scope every period-derived field. The org's
+    // always-current-month columns (current_period_spend_cents=9000,
+    // spend_cap_exceeded=false) must NOT leak into a `--period last_month`
+    // view — that view's spend and exceeded flag come from the period-scoped
+    // breakdown (total_cost_usd=120.0 -> 12000c, over the 10000c cap).
+    let mut server = Server::new();
+    let home = setup_config(&server);
+
+    let _org = server
+        .mock("GET", "/v1/orgs/me")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"id":"{TEST_ORG_ID}","name":"Test Org","slug":"test-org","plan":"pro","spend_cap":10000,"current_period_spend_cents":9000,"spend_cap_exceeded":false}}"#
+        ))
+        .create();
+
+    let _limits = server
+        .mock("GET", "/v1/billing/limits")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"plan":"pro","max_spend_cap_cents":20000}"#)
+        .create();
+
+    let _breakdown = server
+        .mock("GET", "/v1/billing/orgs/me/cost-breakdown")
+        .match_query(Matcher::UrlEncoded("period".into(), "last_month".into()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"period":{"start":"2026-05-01T00:00:00Z","end":"2026-06-01T00:00:00Z","label":"Last month"},"total_cost_usd":120.0,"included_cost_usd":5.0,"apps":[]}"#,
+        )
+        .create();
+
+    floo()
+        .args(["--json", "billing", "usage", "--period", "last_month"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        // Period-scoped spend from the breakdown (12000c), not the org's 9000c.
+        .stdout(predicate::str::contains(r#""period_spend_cents":12000"#))
+        // Period-scoped exceeded (12000 >= 10000 cap), not the org's current false.
+        .stdout(predicate::str::contains(r#""spend_cap_exceeded":true"#))
+        // The stale current-month key is gone from `usage`.
+        .stdout(predicate::str::contains("current_period_spend_cents").not());
+}
+
+#[test]
 fn test_apps_list_human() {
     let mut server = Server::new();
     let home = setup_config(&server);

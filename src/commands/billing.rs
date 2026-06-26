@@ -173,10 +173,18 @@ pub fn usage(period: &str) {
     };
 
     let plan = org.plan.as_deref().unwrap_or("free");
-    let current_spend = org.current_period_spend_cents.unwrap_or(0);
     let spend_cap = org.spend_cap;
-    let exceeded = org.spend_cap_exceeded.unwrap_or(false);
     let max_cap = limits.max_spend_cap_cents;
+
+    // Every period-derived field reads from the period-scoped breakdown — the
+    // authoritative spend for the requested `--period` — instead of the org's
+    // always-current-month `current_period_spend_cents` / `spend_cap_exceeded`
+    // columns. `total_cost_usd` is `org_usage_spend_cents(period) / 100`, so
+    // rounding back recovers the exact period cents and keeps `% of cap`, the
+    // progress bar, and `spend_cap_exceeded` consistent with the spend the
+    // command actually displays (#1161).
+    let period_spend_cents = (breakdown.total_cost_usd * 100.0).round() as u64;
+    let exceeded = matches!(spend_cap, Some(cap) if cap > 0 && period_spend_cents >= cap);
 
     let plan_price = match plan {
         "hobby" => "$5/mo",
@@ -190,7 +198,7 @@ pub fn usage(period: &str) {
         "plan": plan,
         "spend_cap_cents": spend_cap,
         "max_spend_cap_cents": max_cap,
-        "current_period_spend_cents": current_spend,
+        "period_spend_cents": period_spend_cents,
         "spend_cap_exceeded": exceeded,
         "period": period,
         "total_cost_usd": breakdown.total_cost_usd,
@@ -226,7 +234,7 @@ pub fn usage(period: &str) {
             };
             eprintln!("  Spend cap: ${:.2}/month{}", cents as f64 / 100.0, max_str);
 
-            let pct = ((current_spend as f64 / cents as f64) * 100.0).min(100.0);
+            let pct = ((period_spend_cents as f64 / cents as f64) * 100.0).min(100.0);
             let filled = (pct / 100.0 * 30.0).round() as usize;
             let empty = 30 - filled;
             eprintln!("  Usage: {:.0}% of cap", pct);
@@ -250,6 +258,13 @@ pub fn usage(period: &str) {
 
     if exceeded {
         eprintln!();
-        output::warn("Spend cap exceeded \u{2014} deploys are blocked.");
+        if period == "last_month" {
+            output::warn(&format!(
+                "Spend exceeded the cap in {}.",
+                breakdown.period.label
+            ));
+        } else {
+            output::warn("Spend cap exceeded \u{2014} deploys are blocked.");
+        }
     }
 }
