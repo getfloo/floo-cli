@@ -173,6 +173,10 @@ pub struct FailureRootCause {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Deploy {
     pub id: String,
+    #[serde(default)]
+    pub app_id: Option<String>,
+    #[serde(default)]
+    pub environment_id: Option<String>,
     pub status: Option<String>,
     pub url: Option<String>,
     pub build_logs: Option<String>,
@@ -182,7 +186,13 @@ pub struct Deploy {
     pub triggered_by: Option<String>,
     pub commit_sha: Option<String>,
     #[serde(default)]
+    pub github_ref: Option<String>,
+    #[serde(default)]
     pub environment_name: Option<String>,
+    #[serde(default)]
+    pub preview_slug: Option<String>,
+    #[serde(default)]
+    pub source_branch: Option<String>,
     #[serde(default)]
     pub failure_category: Option<String>,
     #[serde(default)]
@@ -447,6 +457,17 @@ pub struct PreviewEnvironment {
 pub struct PreviewEnvironmentListResponse {
     pub previews: Vec<PreviewEnvironment>,
     pub total: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CreatePreviewDeployRequest<'a> {
+    pub runtime: &'a str,
+    pub environment: &'a str,
+    pub branch: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit_sha: Option<&'a str>,
+    #[serde(rename = "ref", skip_serializing_if = "Option::is_none")]
+    pub ref_name: Option<&'a str>,
 }
 
 // --- Preflight ---

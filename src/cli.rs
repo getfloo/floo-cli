@@ -229,6 +229,24 @@ Note: To trigger a deploy, use `floo redeploy` or push to GitHub.
     )]
     Deploys(DeploysSubcommands),
 
+    /// Create and manage preview sandboxes for remote GitHub branches.
+    #[command(
+        name = "previews",
+        alias = "preview",
+        subcommand,
+        after_help = "\
+Examples:
+  floo previews up --app my-app --branch feat/foo --wait
+  floo previews list --app my-app --json
+  floo previews status --app my-app feat-foo-abcde
+  floo previews logs --app my-app feat-foo-abcde --follow
+  floo previews delete --app my-app feat-foo-abcde --yes
+
+Preview sandboxes deploy remote GitHub source only. Push your branch first;
+dirty local files are not uploaded."
+    )]
+    Previews(PreviewsSubcommands),
+
     /// Authenticate and manage your account.
     #[command(subcommand)]
     Auth(AuthCommands),
@@ -1211,6 +1229,85 @@ pub enum DeploysSubcommands {
 }
 
 #[derive(Subcommand)]
+pub enum PreviewsSubcommands {
+    /// Create or refresh a preview sandbox from a remote GitHub branch.
+    Up {
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Remote GitHub branch to deploy into an isolated preview.
+        #[arg(long)]
+        branch: String,
+
+        /// Wait for the returned deploy ID to reach a terminal state.
+        #[arg(long)]
+        wait: bool,
+
+        /// Runtime hint for the deploy request.
+        #[arg(long, default_value = "auto")]
+        runtime: String,
+
+        /// Exact remote commit SHA to deploy.
+        #[arg(long)]
+        commit_sha: Option<String>,
+
+        /// Remote git ref to record on the deploy.
+        #[arg(long = "ref")]
+        ref_name: Option<String>,
+    },
+
+    /// List active preview sandboxes for an app.
+    List {
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+
+    /// Show preview sandbox status.
+    Status {
+        /// Preview slug, source branch, preview URL, or unambiguous #PR.
+        preview: String,
+
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+
+    /// Show logs for the preview's latest deploy.
+    Logs {
+        /// Preview slug, source branch, preview URL, or unambiguous #PR.
+        preview: String,
+
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Follow deploy logs while the preview deploy is active.
+        #[arg(short, long)]
+        follow: bool,
+
+        /// Number of runtime log lines to fetch when not streaming deploy logs.
+        #[arg(long, default_value_t = 100)]
+        tail: u32,
+    },
+
+    /// Delete a preview sandbox and its preview-owned resources.
+    Delete {
+        /// Preview slug, source branch, preview URL, or unambiguous #PR.
+        preview: String,
+
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Skip the y/N prompt. Required in non-interactive contexts.
+        #[arg(long, alias = "force")]
+        yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum SkillsCommands {
     /// Install the floo agent skill file to a directory.
     Install {
@@ -1801,6 +1898,36 @@ pub fn run() {
                 deploy_id,
                 yes,
             } => commands::rollbacks::rollback(&app, &deploy_id, yes),
+        },
+        Commands::Previews(sub) => match sub {
+            PreviewsSubcommands::Up {
+                app,
+                branch,
+                wait,
+                runtime,
+                commit_sha,
+                ref_name,
+            } => commands::previews::up(
+                app.as_deref(),
+                &branch,
+                wait,
+                &runtime,
+                commit_sha.as_deref(),
+                ref_name.as_deref(),
+            ),
+            PreviewsSubcommands::List { app } => commands::previews::list(app.as_deref()),
+            PreviewsSubcommands::Status { preview, app } => {
+                commands::previews::status(app.as_deref(), &preview)
+            }
+            PreviewsSubcommands::Logs {
+                preview,
+                app,
+                follow,
+                tail,
+            } => commands::previews::logs(app.as_deref(), &preview, follow, tail),
+            PreviewsSubcommands::Delete { preview, app, yes } => {
+                commands::previews::delete(app.as_deref(), &preview, yes)
+            }
         },
         Commands::Auth(sub) => match sub {
             AuthCommands::Login { api_key, force } => {

@@ -815,6 +815,35 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn create_preview_deploy(
+        &self,
+        app_id: &str,
+        request: &CreatePreviewDeployRequest<'_>,
+    ) -> Result<Deploy, FlooApiError> {
+        let mut body = serde_json::json!({
+            "runtime": request.runtime,
+            "environment": request.environment,
+            "branch": request.branch,
+        });
+        if let Some(commit_sha) = request.commit_sha {
+            body["commit_sha"] = Value::String(commit_sha.to_string());
+        }
+        if let Some(ref_name) = request.ref_name {
+            body["ref"] = Value::String(ref_name.to_string());
+        }
+        let resp = self.post_json(&format!("/v1/apps/{app_id}/deploys"), &body)?;
+        self.handle_response(resp)
+    }
+
+    pub fn delete_preview(&self, app_id: &str, preview_slug: &str) -> Result<(), FlooApiError> {
+        let resp = self.delete(&format!("/v1/apps/{app_id}/previews/{preview_slug}"))?;
+        if resp.status().as_u16() == 204 {
+            return Ok(());
+        }
+        self.handle_response_value(resp)?;
+        Ok(())
+    }
+
     pub fn list_preview_database_branches(
         &self,
         app_id: &str,

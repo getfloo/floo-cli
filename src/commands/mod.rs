@@ -26,6 +26,7 @@ pub mod init;
 pub mod logs;
 pub mod notifications;
 pub mod orgs;
+pub mod previews;
 pub mod releases;
 pub mod reparo;
 pub mod rollbacks;
