@@ -216,6 +216,8 @@ mod tests {
             "db connections",
             "releases rollback",
             "deploys status",
+            "previews up",
+            "previews delete",
         ] {
             assert!(
                 paths.contains(real),

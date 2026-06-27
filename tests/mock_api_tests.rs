@@ -178,6 +178,26 @@ fn preview_detail_json(branches: &str) -> String {
     )
 }
 
+fn preview_deploy_json(status: &str) -> String {
+    format!(
+        r#"{{
+            "id":"deploy-preview-1",
+            "app_id":"{TEST_APP_ID}",
+            "status":"{status}",
+            "runtime":"nodejs",
+            "url":"https://my-app-preview-feat-db-abcde.on.getfloo.com",
+            "build_logs":null,
+            "triggered_by":"manual",
+            "commit_sha":"abc123",
+            "environment_id":"env-preview-1",
+            "environment_name":"preview",
+            "preview_slug":"feat-db-abcde",
+            "source_branch":"feat/db-branch",
+            "created_at":"2026-06-24T10:00:00Z"
+        }}"#
+    )
+}
+
 // ───────────────────────── Apps ─────────────────────────
 
 #[test]
@@ -2340,6 +2360,230 @@ fn test_db_branches_reset_with_yes_calls_preview_scoped_endpoint() {
         .stdout(predicate::str::contains(r#""scope":"preview""#))
         .stdout(predicate::str::contains(r#""database_branch":{"#))
         .stdout(predicate::str::contains("postgresql://").not());
+}
+
+#[test]
+fn test_previews_up_json_sends_preview_deploy_payload_and_returns_single_object() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _deploy = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
+        .match_body(Matcher::PartialJson(serde_json::json!({
+            "environment": "preview",
+            "branch": "feat/db-branch",
+            "runtime": "nodejs",
+            "commit_sha": "abc123",
+            "ref": "refs/heads/feat/db-branch"
+        })))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(preview_deploy_json("pending"))
+        .create();
+    let _preview = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(preview_detail_json(""))
+        .create();
+
+    let assert = floo()
+        .args([
+            "--json",
+            "previews",
+            "up",
+            "--app",
+            TEST_APP_NAME,
+            "--branch",
+            "feat/db-branch",
+            "--runtime",
+            "nodejs",
+            "--commit-sha",
+            "abc123",
+            "--ref",
+            "refs/heads/feat/db-branch",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(
+            r#""deploy_id":"deploy-preview-1""#,
+        ))
+        .stdout(predicate::str::contains(
+            r#""source_branch":"feat/db-branch""#,
+        ))
+        .stdout(predicate::str::contains(r#""dev_prod_untouched":true"#));
+
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert_eq!(
+        output.lines().count(),
+        1,
+        "non-streaming JSON must be one object"
+    );
+}
+
+#[test]
+fn test_previews_status_resolves_preview_url_identifier() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _preview = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(preview_detail_json(""))
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "previews",
+            "status",
+            "https://my-app-preview-feat-db-abcde.on.getfloo.com",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""environment_name":"preview""#))
+        .stdout(predicate::str::contains(
+            r#""deploy_id":"deploy-preview-1""#,
+        ))
+        .stdout(predicate::str::contains(
+            r#""url":"https://my-app-preview-feat-db-abcde.on.getfloo.com""#,
+        ));
+}
+
+#[test]
+fn test_previews_delete_uses_preview_teardown_endpoint() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _preview = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(preview_detail_json(""))
+        .create();
+    let _delete = server
+        .mock(
+            "DELETE",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde").as_str(),
+        )
+        .with_status(204)
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "previews",
+            "delete",
+            "feat-db-abcde",
+            "--app",
+            TEST_APP_NAME,
+            "--yes",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""deleted":true"#))
+        .stdout(predicate::str::contains(r#""scope":"preview""#))
+        .stdout(predicate::str::contains(r#""dev_prod_untouched":true"#));
+}
+
+#[test]
+fn test_previews_logs_reads_latest_preview_deploy_logs() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _preview = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(preview_detail_json(""))
+        .create();
+    let _logs = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/logs").as_str())
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("limit".into(), "100".into()),
+            Matcher::UrlEncoded("deployment".into(), "deploy-preview-1".into()),
+            Matcher::UrlEncoded("environment".into(), "preview".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"logs":[{"timestamp":"2026-06-24T10:02:00Z","severity":"INFO","message":"Preview booted","deployment_id":"deploy-preview-1","service_name":"web"}],"total":1,"app_name":"my-app"}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "previews",
+            "logs",
+            "feat-db-abcde",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            r#""deploy_id":"deploy-preview-1""#,
+        ))
+        .stdout(predicate::str::contains("Preview booted"));
+}
+
+#[test]
+fn test_previews_up_surfaces_preview_isolation_failure() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _deploy = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/deploys").as_str(),
+        )
+        .with_status(422)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"detail":{"code":"PREVIEW_MANAGED_SERVICE_ISOLATION_UNAVAILABLE","message":"Preview managed-service isolation is unavailable."}}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "previews",
+            "up",
+            "--app",
+            TEST_APP_NAME,
+            "--branch",
+            "feat/db-branch",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            "PREVIEW_MANAGED_SERVICE_ISOLATION_UNAVAILABLE",
+        ))
+        .stdout(predicate::str::contains(
+            "Preview managed-service isolation could not be provisioned",
+        ));
 }
 
 #[test]
