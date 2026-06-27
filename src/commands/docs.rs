@@ -37,6 +37,7 @@ never uploads code.
   floo docs express    — build and deploy an Express app on floo (end-to-end)
   floo docs templates  — copy-paste app structures (React+FastAPI, Next.js, etc.)
   floo docs services   — service types and managed services (alias: storage)
+  floo docs previews   — command-line preview sandboxes for remote branches
   floo docs config     — config file formats with examples (alias: app-toml)
   floo docs cron       — [cron.<name>] schema, schedules, and CLI surface
   floo docs deploy     — detailed deploy flow and runtime detection
@@ -324,6 +325,72 @@ All services share the same origin, so cookies and auth work without CORS.
   floo services add <type> --app <name>      — provision a managed service
   floo services remove <type> --app <name>   — permanently destroy (tier-3)
   floo services migrate --app <name>         — move legacy TOML → CLI state
+";
+
+const PREVIEWS: &str = "\
+Floo Preview Sandboxes
+
+Use `floo previews` when an agent needs an isolated, real floo deploy for a
+pushed feature branch before opening or relying on a pull request preview.
+
+## Source contract
+
+Preview sandboxes deploy remote GitHub source only:
+
+  git push origin feat/foo
+  floo previews up --app my-app --branch feat/foo --wait
+
+The CLI does not upload local dirty files or an archive from your checkout.
+Push the branch first, or pass a remote commit/ref when you need an exact
+remote revision.
+
+## Lifecycle commands
+
+  floo previews up --app my-app --branch feat/foo --wait --json
+  floo previews list --app my-app --json
+  floo previews status --app my-app feat/foo --json
+  floo previews logs --app my-app feat/foo --follow
+  floo previews delete --app my-app feat/foo --yes --json
+
+Preview identifiers can be an exact slug, a preview URL, the source branch,
+or `#123` when that PR number resolves to one preview. If the identifier is
+ambiguous, use the exact slug from `floo previews list`.
+
+## JSON contract
+
+Non-streaming commands print one JSON object. Automation can rely on:
+
+  app
+  preview.slug
+  source_branch
+  deploy_id
+  status
+  url
+  expires_at
+  database_branches
+  dev_prod_untouched: true
+
+`up --wait` watches the deploy returned by the create call and exits non-zero
+when that deploy fails.
+
+## Isolation and cleanup
+
+Preview sandboxes use the same managed-resource isolation as pull request
+previews. floo-managed Postgres, Redis, and Storage get preview-owned
+resources. If isolation cannot be provisioned, the command surfaces
+PREVIEW_MANAGED_SERVICE_ISOLATION_UNAVAILABLE instead of falling back to dev
+or prod credentials.
+
+`floo previews delete` tears down preview-owned Cloud Run services, managed
+resources, gateway routes, and env vars. Dev and prod are untouched.
+
+## Related commands
+
+  floo db branches list <preview> --app <name>
+  floo db branches show <preview> --app <name> --name default
+  floo db branches reset <preview> --app <name> --name default --yes
+
+Full guide: https://getfloo.com/docs/cli/previews
 ";
 
 const CONFIG: &str = "\
@@ -1708,6 +1775,7 @@ pub(crate) const TOPICS: &[(&str, &str)] = &[
     ("express", EXPRESS),
     ("templates", TEMPLATES),
     ("services", SERVICES),
+    ("previews", PREVIEWS),
     ("config", CONFIG),
     ("cron", CRON),
     ("deploy", DEPLOY),
@@ -1774,6 +1842,7 @@ mod tests {
         assert!(!OVERVIEW.is_empty());
         assert!(!QUICKSTART.is_empty());
         assert!(!SERVICES.is_empty());
+        assert!(!PREVIEWS.is_empty());
         assert!(!CONFIG.is_empty());
         assert!(!CRON.is_empty());
         assert!(!DEPLOY.is_empty());
@@ -1883,6 +1952,17 @@ mod tests {
     fn test_services_explains_routing() {
         assert!(SERVICES.contains("gateway strips the /api"));
         assert!(SERVICES.contains("fetch(\"/api/users\")"));
+    }
+
+    #[test]
+    fn test_previews_topic_documents_agent_sandbox_contract() {
+        assert!(OVERVIEW.contains("floo docs previews"));
+        assert!(PREVIEWS.contains("floo previews up"));
+        assert!(PREVIEWS.contains("remote GitHub source only"));
+        assert!(PREVIEWS.contains("dev_prod_untouched: true"));
+        assert!(PREVIEWS.contains("PREVIEW_MANAGED_SERVICE_ISOLATION_UNAVAILABLE"));
+        assert!(PREVIEWS.contains("floo previews delete"));
+        assert!(PREVIEWS.contains("getfloo.com/docs/cli/previews"));
     }
 
     #[test]
