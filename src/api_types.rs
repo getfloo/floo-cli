@@ -424,6 +424,38 @@ pub struct PreviewDatabaseBranchListResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewManagedResourceBranch {
+    pub id: String,
+    pub managed_service_id: Option<String>,
+    pub resource_type: String,
+    pub name: String,
+    pub resource_key: String,
+    pub source_environment: String,
+    pub preview_slug: String,
+    pub resource_status: String,
+    pub hydration_mode: String,
+    pub schema_name: Option<String>,
+    pub role_name: Option<String>,
+    pub base_schema_name: Option<String>,
+    pub base_role_name: Option<String>,
+    pub database_id: Option<String>,
+    pub bucket_name: Option<String>,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+    pub expires_at: Option<String>,
+    pub reset_eligible: bool,
+    pub reset_blocked_reason: Option<String>,
+    #[serde(default)]
+    pub dev_prod_untouched: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewManagedResourceBranchListResponse {
+    pub resources: Vec<PreviewManagedResourceBranch>,
+    pub total: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PreviewResource {
     pub id: String,
     #[serde(rename = "type")]
@@ -451,6 +483,8 @@ pub struct PreviewEnvironment {
     pub resources: Vec<PreviewResource>,
     #[serde(default)]
     pub database_branches: Vec<PreviewDatabaseBranch>,
+    #[serde(default)]
+    pub managed_resource_branches: Vec<PreviewManagedResourceBranch>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -882,6 +882,46 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn list_preview_managed_resource_branches(
+        &self,
+        app_id: &str,
+        preview_slug: &str,
+    ) -> Result<PreviewManagedResourceBranchListResponse, FlooApiError> {
+        let resp = self.get(&format!(
+            "/v1/apps/{app_id}/previews/{preview_slug}/resources"
+        ))?;
+        self.handle_response(resp)
+    }
+
+    pub fn get_preview_managed_resource_branch(
+        &self,
+        app_id: &str,
+        preview_slug: &str,
+        resource_key: &str,
+    ) -> Result<PreviewManagedResourceBranch, FlooApiError> {
+        let encoded_resource_key = resource_key.replace(':', "%3A");
+        let resp = self.get(&format!(
+            "/v1/apps/{app_id}/previews/{preview_slug}/resources/{encoded_resource_key}"
+        ))?;
+        self.handle_response(resp)
+    }
+
+    pub fn reset_preview_managed_resource_branch(
+        &self,
+        app_id: &str,
+        preview_slug: &str,
+        resource_key: &str,
+    ) -> Result<PreviewManagedResourceBranch, FlooApiError> {
+        let encoded_resource_key = resource_key.replace(':', "%3A");
+        let resp = self.post_json(
+            &format!(
+                "/v1/apps/{app_id}/previews/{preview_slug}/resources/{encoded_resource_key}/reset"
+            ),
+            &serde_json::json!({}),
+        )?;
+        self.handle_response(resp)
+    }
+
     // --- Preflight ---
 
     pub fn preflight(

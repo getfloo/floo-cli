@@ -140,7 +140,9 @@ fn preview_branch_json(name: &str, status: &str, reset_eligible: bool) -> String
         r#"{{
             "id":"resource-{name}",
             "managed_service_id":"ms-{name}",
+            "resource_type":"postgres",
             "name":"{name}",
+            "resource_key":"postgres:{name}",
             "source_environment":"dev",
             "preview_slug":"feat-db-abcde",
             "resource_status":"{status}",
@@ -149,11 +151,47 @@ fn preview_branch_json(name: &str, status: &str, reset_eligible: bool) -> String
             "role_name":"floo_app_default_preview_feat_db_abcde",
             "base_schema_name":"app_default_dev",
             "base_role_name":"floo_app_default_dev",
+            "database_id":null,
+            "bucket_name":null,
             "created_at":"2026-06-24T10:00:00Z",
             "updated_at":"2026-06-24T10:01:00Z",
             "expires_at":"2026-06-27T10:00:00Z",
             "reset_eligible":{reset_eligible},
-            "reset_blocked_reason":{blocked}
+            "reset_blocked_reason":{blocked},
+            "dev_prod_untouched":true
+        }}"#
+    )
+}
+
+fn preview_redis_branch_json(name: &str, status: &str, reset_eligible: bool) -> String {
+    let blocked = if reset_eligible {
+        "null".to_string()
+    } else {
+        r#""Preview Redis reset is not implemented.""#.to_string()
+    };
+    format!(
+        r#"{{
+            "id":"redis-resource-{name}",
+            "managed_service_id":"redis-ms-{name}",
+            "resource_type":"redis",
+            "name":"{name}",
+            "resource_key":"redis:{name}",
+            "source_environment":"dev",
+            "preview_slug":"feat-db-abcde",
+            "resource_status":"{status}",
+            "hydration_mode":"clone-dev",
+            "schema_name":null,
+            "role_name":null,
+            "base_schema_name":null,
+            "base_role_name":null,
+            "database_id":"preview-redis-{name}",
+            "bucket_name":null,
+            "created_at":"2026-06-24T10:00:00Z",
+            "updated_at":"2026-06-24T10:01:00Z",
+            "expires_at":"2026-06-27T10:00:00Z",
+            "reset_eligible":{reset_eligible},
+            "reset_blocked_reason":{blocked},
+            "dev_prod_untouched":true
         }}"#
     )
 }
@@ -173,7 +211,8 @@ fn preview_detail_json(branches: &str) -> String {
             "ttl_hours":72,
             "expires_at":"2026-06-27T10:00:00Z",
             "resources":[],
-            "database_branches":[{branches}]
+            "database_branches":[{branches}],
+            "managed_resource_branches":[{branches}]
         }}"#
     )
 }
@@ -2360,6 +2399,129 @@ fn test_db_branches_reset_with_yes_calls_preview_scoped_endpoint() {
         .stdout(predicate::str::contains(r#""scope":"preview""#))
         .stdout(predicate::str::contains(r#""database_branch":{"#))
         .stdout(predicate::str::contains("postgresql://").not());
+}
+
+#[test]
+fn test_preview_resources_list_json_returns_all_managed_resource_branches() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let postgres = preview_branch_json("default", "ready", true);
+    let redis = preview_redis_branch_json("cache", "ready", false);
+    let _preview = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(preview_detail_json(&format!("{postgres},{redis}")))
+        .create();
+    let _resources = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde/resources").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(r#"{{"resources":[{postgres},{redis}],"total":2}}"#))
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "previews",
+            "resources",
+            "list",
+            "feat-db-abcde",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("managed_resource_branches"))
+        .stdout(predicate::str::contains(
+            r#""resource_key":"postgres:default""#,
+        ))
+        .stdout(predicate::str::contains(r#""resource_key":"redis:cache""#))
+        .stdout(predicate::str::contains(
+            r#""database_id":"preview-redis-cache""#,
+        ))
+        .stdout(predicate::str::contains("postgresql://").not())
+        .stdout(predicate::str::contains("password").not());
+}
+
+#[test]
+fn test_preview_resources_reset_dry_run_and_yes_use_generic_endpoint() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    floo()
+        .args([
+            "--json",
+            "--dry-run",
+            "previews",
+            "resources",
+            "reset",
+            "feat-db-abcde",
+            "--app",
+            TEST_APP_NAME,
+            "--resource",
+            "redis:cache",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "preview_managed_resource_branch_reset",
+        ))
+        .stdout(predicate::str::contains(r#""resource_key":"redis:cache""#))
+        .stdout(predicate::str::contains(r#""dev_prod_untouched":true"#));
+
+    let _reset = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde/resources/redis%3Acache/reset")
+                .as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(preview_redis_branch_json("cache", "ready", true))
+        .create();
+    let _preview = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(preview_detail_json(&preview_redis_branch_json(
+            "cache", "ready", true,
+        )))
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "previews",
+            "resources",
+            "reset",
+            "feat-db-abcde",
+            "--app",
+            TEST_APP_NAME,
+            "--resource",
+            "redis:cache",
+            "--yes",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(r#""resource_key":"redis:cache""#))
+        .stdout(predicate::str::contains(r#""scope":"preview""#))
+        .stdout(predicate::str::contains(r#""dev_prod_untouched":true"#));
 }
 
 #[test]
