@@ -368,6 +368,7 @@ Non-streaming commands print one JSON object. Automation can rely on:
   url
   expires_at
   database_branches
+  managed_resource_branches
   dev_prod_untouched: true
 
 `up --wait` watches the deploy returned by the create call and exits non-zero
@@ -380,6 +381,16 @@ previews. floo-managed Postgres, Redis, and Storage get preview-owned
 resources. If isolation cannot be provisioned, the command surfaces
 PREVIEW_MANAGED_SERVICE_ISOLATION_UNAVAILABLE instead of falling back to dev
 or prod credentials.
+
+Preview managed-resource branches are visible through one command group:
+
+  floo previews resources list <preview> --app <name>
+  floo previews resources show <preview> --app <name> --resource redis:default
+  floo previews resources reset <preview> --app <name> --resource postgres:default --yes
+
+The resource key is shaped `type:name`, for example `postgres:default`,
+`redis:cache`, or `storage:uploads`. Reset is preview-scoped and fails closed
+with the API's named blocker when a provider cannot reset that resource yet.
 
 `floo previews delete` tears down preview-owned Cloud Run services, managed
 resources, gateway routes, and env vars. Dev and prod are untouched.
@@ -1960,6 +1971,8 @@ mod tests {
         assert!(PREVIEWS.contains("floo previews up"));
         assert!(PREVIEWS.contains("remote GitHub source only"));
         assert!(PREVIEWS.contains("dev_prod_untouched: true"));
+        assert!(PREVIEWS.contains("managed_resource_branches"));
+        assert!(PREVIEWS.contains("floo previews resources list"));
         assert!(PREVIEWS.contains("PREVIEW_MANAGED_SERVICE_ISOLATION_UNAVAILABLE"));
         assert!(PREVIEWS.contains("floo previews delete"));
         assert!(PREVIEWS.contains("getfloo.com/docs/cli/previews"));

@@ -256,6 +256,8 @@ fn recommended_permissions() -> (Vec<&'static str>, Vec<&'static str>) {
         "Bash(floo previews list:*)",
         "Bash(floo previews status:*)",
         "Bash(floo previews logs:*)",
+        "Bash(floo previews resources list:*)",
+        "Bash(floo previews resources show:*)",
         "Bash(floo env list:*)",
         "Bash(floo services list:*)",
         "Bash(floo services show:*)",
@@ -279,6 +281,7 @@ fn recommended_permissions() -> (Vec<&'static str>, Vec<&'static str>) {
         "Bash(floo deploy:*)",
         "Bash(floo previews up:*)",
         "Bash(floo previews delete:*)",
+        "Bash(floo previews resources reset:*)",
         "Bash(floo deploys rollback:*)",
         "Bash(floo init:*)",
         "Bash(floo env set:*)",
@@ -384,6 +387,8 @@ mod tests {
         assert!(read_only.contains(&"Bash(floo apps list:*)"));
         assert!(read_only.contains(&"Bash(floo logs:*)"));
         assert!(read_only.contains(&"Bash(floo previews status:*)"));
+        assert!(read_only.contains(&"Bash(floo previews resources list:*)"));
+        assert!(read_only.contains(&"Bash(floo previews resources show:*)"));
         assert!(read_only.contains(&"Bash(floo redeploy --dry-run:*)"));
         assert!(read_only.contains(&"Bash(floo docs:*)"));
         // Write commands should not be in read-only
@@ -396,6 +401,7 @@ mod tests {
         let (_, read_write) = recommended_permissions();
         assert!(read_write.contains(&"Bash(floo deploy:*)"));
         assert!(read_write.contains(&"Bash(floo previews up:*)"));
+        assert!(read_write.contains(&"Bash(floo previews resources reset:*)"));
         assert!(read_write.contains(&"Bash(floo env set:*)"));
         assert!(read_write.contains(&"Bash(floo apps delete:*)"));
         // Read-only commands should not be in read-write

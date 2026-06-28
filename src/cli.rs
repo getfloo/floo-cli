@@ -1305,6 +1305,70 @@ pub enum PreviewsSubcommands {
         #[arg(long, alias = "force")]
         yes: bool,
     },
+
+    /// Inspect and reset preview managed-resource branches.
+    #[command(subcommand)]
+    Resources(PreviewResourcesSubcommands),
+}
+
+#[derive(Subcommand)]
+pub enum PreviewResourcesSubcommands {
+    /// List preview-owned Postgres, Redis, and Storage branches.
+    #[command(after_help = "\
+Examples:
+  floo previews resources list feat-db-abcde --app my-app
+  floo previews resources list feat-db-abcde --app my-app --json")]
+    List {
+        /// Preview slug, source branch, preview URL, or unambiguous #PR.
+        preview: String,
+
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+
+    /// Show one preview managed-resource branch.
+    #[command(after_help = "\
+Examples:
+  floo previews resources show feat-db-abcde --app my-app --resource redis:default
+  floo previews resources show feat-db-abcde --app my-app --resource storage:uploads --json")]
+    Show {
+        /// Preview slug, source branch, preview URL, or unambiguous #PR.
+        preview: String,
+
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Resource key, shaped type:name, e.g. postgres:default or redis:cache.
+        #[arg(long)]
+        resource: String,
+    },
+
+    /// Reset one preview managed-resource branch.
+    #[command(after_help = "\
+Examples:
+  floo previews resources reset feat-db-abcde --app my-app --resource postgres:default --yes
+  floo previews resources reset feat-db-abcde --app my-app --resource redis:cache --dry-run --json
+
+Reset is preview-scoped. Dev and prod resources are not touched. Providers that
+do not yet support reset fail closed with the API's named reset blocker.")]
+    Reset {
+        /// Preview slug, source branch, preview URL, or unambiguous #PR.
+        preview: String,
+
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Resource key, shaped type:name, e.g. postgres:default or storage:uploads.
+        #[arg(long)]
+        resource: String,
+
+        /// Skip the y/N prompt. Required in non-interactive contexts.
+        #[arg(long, alias = "force")]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1721,6 +1785,7 @@ const DRY_RUN_SUPPORTED_COMMANDS: &[&str] = &[
     "db migrate",
     "db query",
     "db branches reset",
+    "previews resources reset",
 ];
 
 fn reject_unsupported_dry_run(command: &Commands) {
@@ -1928,6 +1993,22 @@ pub fn run() {
             PreviewsSubcommands::Delete { preview, app, yes } => {
                 commands::previews::delete(app.as_deref(), &preview, yes)
             }
+            PreviewsSubcommands::Resources(sub) => match sub {
+                PreviewResourcesSubcommands::List { preview, app } => {
+                    commands::previews::resources_list(app.as_deref(), &preview)
+                }
+                PreviewResourcesSubcommands::Show {
+                    preview,
+                    app,
+                    resource,
+                } => commands::previews::resources_show(app.as_deref(), &preview, &resource),
+                PreviewResourcesSubcommands::Reset {
+                    preview,
+                    app,
+                    resource,
+                    yes,
+                } => commands::previews::resources_reset(app.as_deref(), &preview, &resource, yes),
+            },
         },
         Commands::Auth(sub) => match sub {
             AuthCommands::Login { api_key, force } => {
@@ -2448,6 +2529,21 @@ mod tests {
                     "feat-db-abcde",
                     "--app",
                     "myapp",
+                    "--dry-run",
+                ],
+            ),
+            (
+                "previews resources reset",
+                &[
+                    "floo",
+                    "previews",
+                    "resources",
+                    "reset",
+                    "feat-db-abcde",
+                    "--app",
+                    "myapp",
+                    "--resource",
+                    "postgres:default",
                     "--dry-run",
                 ],
             ),
