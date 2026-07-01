@@ -9,6 +9,7 @@ use serde::Serialize;
 use crate::api_client::FlooClient;
 use crate::api_types::Deploy;
 use crate::config::load_config;
+use crate::deploy_status;
 use crate::detection::{detect_for_services, DetectionResult};
 use crate::errors::{ErrorCode, FlooApiError};
 use crate::output;
@@ -20,7 +21,6 @@ use crate::resolve::resolve_app;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 const POLL_TIMEOUT: Duration = Duration::from_secs(600); // 10 minutes
-pub(crate) const TERMINAL_STATUSES: &[&str] = &["live", "failed", "superseded", "cancelled"];
 
 #[derive(Debug, Serialize)]
 struct EnvInjectionPlan {
@@ -995,7 +995,7 @@ pub fn deploy(
     // Wait for deploy to complete via SSE streaming or polling
     let initial_status = deploy_data.status.as_deref().unwrap_or("");
 
-    if TERMINAL_STATUSES.contains(&initial_status) {
+    if deploy_status::is_terminal(initial_status) {
         // Phase 1: deploy already complete synchronously, skip streaming/polling
     } else if !output::is_json_mode() {
         // Phase 2 human mode: try SSE streaming, fall back to polling
@@ -1022,7 +1022,7 @@ pub fn deploy(
 
     let final_status = deploy_data.status.as_deref().unwrap_or("");
 
-    if final_status == "failed" {
+    if deploy_status::is_failure(final_status) {
         let build_logs = deploy_data.build_logs.as_deref().unwrap_or("");
         if !output::is_json_mode() && !build_logs.is_empty() && build_logs != "[no message content]"
         {
@@ -1180,7 +1180,7 @@ fn deploy_restart(
     };
 
     let initial_status = deploy_data.status.as_deref().unwrap_or("");
-    if !TERMINAL_STATUSES.contains(&initial_status) {
+    if !deploy_status::is_terminal(initial_status) {
         let deploy_id = deploy_data.id.clone();
         deploy_data = if !output::is_json_mode() {
             match stream_deploy(client, app_id, &deploy_id) {
@@ -1204,7 +1204,7 @@ fn deploy_restart(
     let final_status = deploy_data.status.as_deref().unwrap_or("");
     let url = deploy_data.url.as_deref().unwrap_or("(no URL)");
 
-    if final_status == "failed" {
+    if deploy_status::is_failure(final_status) {
         output::error_with_data(
             "Restart failed.",
             &ErrorCode::RestartFailed,
@@ -1321,7 +1321,7 @@ fn deploy_rebuild(
     // Wait for deploy to complete via SSE streaming or polling
     let initial_status = deploy_data.status.as_deref().unwrap_or("");
 
-    if TERMINAL_STATUSES.contains(&initial_status) {
+    if deploy_status::is_terminal(initial_status) {
         // Already complete
     } else if !output::is_json_mode() {
         let deploy_id = deploy_data.id.clone();
@@ -1345,7 +1345,7 @@ fn deploy_rebuild(
 
     let final_status = deploy_data.status.as_deref().unwrap_or("");
 
-    if final_status == "failed" {
+    if deploy_status::is_failure(final_status) {
         let build_logs = deploy_data.build_logs.as_deref().unwrap_or("");
         if !output::is_json_mode() && !build_logs.is_empty() && build_logs != "[no message content]"
         {
@@ -2652,7 +2652,7 @@ pub(crate) fn poll_deploy(client: &FlooClient, app_id: &str, initial_data: &Depl
     let mut last_log_len: usize = 0;
     let mut deploy_data = initial_data.clone();
 
-    while !TERMINAL_STATUSES.contains(&deploy_data.status.as_deref().unwrap_or("")) {
+    while !deploy_status::is_terminal(deploy_data.status.as_deref().unwrap_or("")) {
         if !output::is_json_mode() {
             let build_logs = deploy_data.build_logs.as_deref().unwrap_or("");
             if build_logs.len() > last_log_len {

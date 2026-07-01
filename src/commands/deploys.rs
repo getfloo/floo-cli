@@ -7,7 +7,8 @@ use colored::Colorize;
 
 use crate::api_client::FlooClient;
 use crate::api_types::Deploy;
-use crate::commands::deploy::{poll_deploy, stream_deploy, stream_deploy_json, TERMINAL_STATUSES};
+use crate::commands::deploy::{poll_deploy, stream_deploy, stream_deploy_json};
+use crate::deploy_status;
 use crate::errors::ErrorCode;
 use crate::output;
 
@@ -404,7 +405,7 @@ pub fn logs(deploy_id: Option<&str>, app: Option<&str>, follow: bool) {
     };
 
     let status = deploy.status.as_deref().unwrap_or("unknown");
-    let is_terminal = TERMINAL_STATUSES.contains(&status);
+    let is_terminal = deploy_status::is_terminal(status);
 
     // JSON mode
     if output::is_json_mode() {
@@ -413,7 +414,7 @@ pub fn logs(deploy_id: Option<&str>, app: Option<&str>, follow: bool) {
             match stream_deploy_json(&client, &app_id, &deploy.id) {
                 Ok(d) => {
                     let final_status = d.status.as_deref().unwrap_or("unknown");
-                    if final_status == "failed" {
+                    if deploy_status::is_failure(final_status) {
                         process::exit(1);
                     }
                     return;
@@ -425,7 +426,8 @@ pub fn logs(deploy_id: Option<&str>, app: Option<&str>, follow: bool) {
                         e.code
                     );
                     let final_deploy = poll_deploy(&client, &app_id, &deploy);
-                    let is_failed = final_deploy.status.as_deref() == Some("failed");
+                    let is_failed =
+                        deploy_status::is_failure(final_deploy.status.as_deref().unwrap_or(""));
                     output::success(
                         "Deploy logs retrieved.",
                         Some(serde_json::json!({
@@ -441,7 +443,7 @@ pub fn logs(deploy_id: Option<&str>, app: Option<&str>, follow: bool) {
                 }
             }
         }
-        let is_failed = deploy.status.as_deref() == Some("failed");
+        let is_failed = deploy_status::is_failure(deploy.status.as_deref().unwrap_or(""));
         output::success(
             "Deploy logs retrieved.",
             Some(serde_json::json!({
@@ -469,12 +471,12 @@ pub fn logs(deploy_id: Option<&str>, app: Option<&str>, follow: bool) {
             // Try SSE stream as fallback for missing logs
             match stream_deploy(&client, &app_id, &deploy.id) {
                 Ok(final_deploy) => {
-                    if final_deploy.status.as_deref() == Some("failed") {
+                    if deploy_status::is_failure(final_deploy.status.as_deref().unwrap_or("")) {
                         process::exit(1);
                     }
                 }
                 Err(e) => {
-                    let base_msg = if status == "failed" {
+                    let base_msg = if deploy_status::is_failure(status) {
                         "No build logs captured for this deploy."
                     } else {
                         "No build logs available."
@@ -698,7 +700,7 @@ pub fn watch(app: Option<&str>, commit: Option<&str>) {
     emit_deploy_found(&deploy, &app_name);
 
     let status = deploy.status.as_deref().unwrap_or("");
-    if TERMINAL_STATUSES.contains(&status) {
+    if deploy_status::is_terminal(status) {
         print_completed_deploy(&deploy);
         print_final_status(&deploy);
         return;
@@ -720,7 +722,7 @@ pub fn watch(app: Option<&str>, commit: Option<&str>) {
         // SSE stream may end before the deploy reaches a terminal state (e.g. connection
         // drop, server restart). If so, fall back to polling to wait for completion.
         let streamed_status = streamed.status.as_deref().unwrap_or("");
-        if !TERMINAL_STATUSES.contains(&streamed_status) {
+        if !deploy_status::is_terminal(streamed_status) {
             eprintln!("Stream ended in non-terminal state ({streamed_status}), falling back to polling...");
             poll_deploy(&client, &app_id, &streamed)
         } else {
@@ -731,7 +733,7 @@ pub fn watch(app: Option<&str>, commit: Option<&str>) {
             Ok(d) => {
                 // stream_deploy_json already emitted the "done" NDJSON event
                 let status = d.status.as_deref().unwrap_or("unknown");
-                if status == "failed" {
+                if deploy_status::is_failure(status) {
                     process::exit(1);
                 }
                 return;
@@ -856,44 +858,50 @@ fn print_final_status(deploy: &Deploy) {
             "status": status,
             "url": url,
         }));
-        if status == "failed" {
+        if deploy_status::is_failure(status) {
             process::exit(1);
         }
-    } else if status == "failed" {
-        output::error(
-            "Deploy failed.",
-            &ErrorCode::DeployFailed,
-            Some("Check build output above, or run `floo logs` for details."),
-        );
-        process::exit(1);
-    } else if status == "superseded" {
-        output::success(
-            "Deploy superseded by a newer deploy.",
-            Some(serde_json::json!({
-                "deploy": output::to_value(deploy),
-            })),
-        );
-    } else if status == "cancelled" {
-        output::success(
-            "Deploy cancelled: its target environment was removed before it ran.",
-            Some(serde_json::json!({
-                "deploy": output::to_value(deploy),
-            })),
-        );
-    } else if !TERMINAL_STATUSES.contains(&status) {
-        output::error(
-            &format!("Deploy ended in unexpected state: {status}"),
-            &ErrorCode::DeployFailed,
-            Some("Check deploy status with `floo deploys list --app <name>`."),
-        );
-        process::exit(1);
-    } else {
-        output::success(
-            &format!("Deploy {status}: {url}"),
-            Some(serde_json::json!({
-                "deploy": output::to_value(deploy),
-            })),
-        );
+        return;
+    }
+
+    // Human mode: report the terminal disposition. Matching on `classify` makes a
+    // newly-added terminal status a compile error here instead of silently falling
+    // through to the generic-success arm.
+    match deploy_status::classify(status) {
+        Some(deploy_status::Terminal::Failed) => {
+            output::error(
+                "Deploy failed.",
+                &ErrorCode::DeployFailed,
+                Some("Check build output above, or run `floo logs` for details."),
+            );
+            process::exit(1);
+        }
+        Some(deploy_status::Terminal::Superseded) => {
+            output::success(
+                "Deploy superseded by a newer deploy.",
+                Some(serde_json::json!({ "deploy": output::to_value(deploy) })),
+            );
+        }
+        Some(deploy_status::Terminal::Cancelled) => {
+            output::success(
+                "Deploy cancelled: its target environment was removed before it ran.",
+                Some(serde_json::json!({ "deploy": output::to_value(deploy) })),
+            );
+        }
+        Some(deploy_status::Terminal::Live) => {
+            output::success(
+                &format!("Deploy {status}: {url}"),
+                Some(serde_json::json!({ "deploy": output::to_value(deploy) })),
+            );
+        }
+        None => {
+            output::error(
+                &format!("Deploy ended in unexpected state: {status}"),
+                &ErrorCode::DeployFailed,
+                Some("Check deploy status with `floo deploys list --app <name>`."),
+            );
+            process::exit(1);
+        }
     }
 }
 
@@ -951,26 +959,6 @@ mod tests {
         assert!(!colored_status("deploying").is_empty());
         assert!(!colored_status("pending").is_empty());
         assert!(!colored_status("unknown").is_empty());
-    }
-
-    #[test]
-    fn test_superseded_is_terminal_status() {
-        // TERMINAL_STATUSES must include "superseded" so poll/stream loops exit
-        // when the platform marks a deploy as superseded. Before this was added,
-        // `floo deploys watch` would spin for POLL_TIMEOUT (10 min) on superseded
-        // deploys. See feedback 1748af72 (2026-04-24).
-        assert!(TERMINAL_STATUSES.contains(&"superseded"));
-        assert!(TERMINAL_STATUSES.contains(&"live"));
-        assert!(TERMINAL_STATUSES.contains(&"failed"));
-    }
-
-    #[test]
-    fn test_cancelled_is_terminal_status() {
-        // TERMINAL_STATUSES must include "cancelled" so poll/stream loops exit when
-        // the platform cancels a deploy — a PR-preview env torn down before the deploy
-        // could run terminates as "cancelled" (getfloo/floo#1354). Without it,
-        // `floo deploys watch` on a cancelled deploy would spin for POLL_TIMEOUT (10 min).
-        assert!(TERMINAL_STATUSES.contains(&"cancelled"));
     }
 
     #[test]

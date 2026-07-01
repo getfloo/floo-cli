@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 use crate::api_client::FlooClient;
+use crate::deploy_status;
 use crate::errors::ErrorCode;
 use crate::output;
 use crate::project_config;
@@ -431,7 +432,7 @@ pub fn set(
             .and_then(|v| v.as_str())
             .unwrap_or("(no URL)");
 
-        if final_status == "failed" {
+        if deploy_status::is_failure(final_status) {
             output::error_with_data(
                 "Restart failed.",
                 &ErrorCode::RestartFailed,
