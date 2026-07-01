@@ -20,7 +20,7 @@ use crate::resolve::resolve_app;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 const POLL_TIMEOUT: Duration = Duration::from_secs(600); // 10 minutes
-pub(crate) const TERMINAL_STATUSES: &[&str] = &["live", "failed", "superseded"];
+pub(crate) const TERMINAL_STATUSES: &[&str] = &["live", "failed", "superseded", "cancelled"];
 
 #[derive(Debug, Serialize)]
 struct EnvInjectionPlan {
@@ -1056,6 +1056,18 @@ pub fn deploy(
         return;
     }
 
+    if final_status == "cancelled" {
+        output::success(
+            "Deploy cancelled: its target environment was removed before it ran.",
+            Some(serde_json::json!({
+                "app": output::to_value(&app_data),
+                "deploy": output::to_value(&deploy_data),
+                "detection": detection.to_value(),
+            })),
+        );
+        return;
+    }
+
     let url = deploy_data.url.as_deref().unwrap_or("");
 
     if !output::is_json_mode() {
@@ -1216,6 +1228,17 @@ fn deploy_restart(
         return;
     }
 
+    if final_status == "cancelled" {
+        output::success(
+            "Restart cancelled: its target environment was removed before it ran.",
+            Some(serde_json::json!({
+                "app": output::to_value(app_data),
+                "deploy": output::to_value(&deploy_data),
+            })),
+        );
+        return;
+    }
+
     let env_display = deploy_data
         .environment_name
         .as_deref()
@@ -1347,6 +1370,17 @@ fn deploy_rebuild(
     if final_status == "superseded" {
         output::success(
             "Rebuild superseded by a newer deploy.",
+            Some(serde_json::json!({
+                "app": output::to_value(app_data),
+                "deploy": output::to_value(&deploy_data),
+            })),
+        );
+        return;
+    }
+
+    if final_status == "cancelled" {
+        output::success(
+            "Rebuild cancelled: its target environment was removed before it ran.",
             Some(serde_json::json!({
                 "app": output::to_value(app_data),
                 "deploy": output::to_value(&deploy_data),

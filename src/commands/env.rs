@@ -441,8 +441,15 @@ pub fn set(
             process::exit(1);
         }
 
+        // cancelled = the target env was torn down before the restart ran: a moot
+        // terminal (not a failure — exit 0), but don't claim it "Restarted".
+        let restart_msg = if final_status == "cancelled" {
+            "Restart cancelled: its target environment was removed before it ran.".to_string()
+        } else {
+            format!("Restarted {url}")
+        };
         output::success(
-            &format!("Restarted {url}"),
+            &restart_msg,
             Some(serde_json::json!({"env": last_env_result, "deploy": deploy_data})),
         );
     }
