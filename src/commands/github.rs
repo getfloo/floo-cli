@@ -264,6 +264,23 @@ pub fn connect(
                 })),
             );
         }
+        DeployOutcome::Cancelled { deploy } => {
+            output::success(
+                &format!(
+                    "Connected {name} to {repo}, but the deploy was cancelled \
+                     (its target environment was removed before it ran)."
+                ),
+                Some(serde_json::json!({
+                    "connected": true,
+                    "app": name,
+                    "repo": repo,
+                    "branch": connected_branch,
+                    "deployed": false,
+                    "deploy_status": "cancelled",
+                    "deploy": deploy,
+                })),
+            );
+        }
         DeployOutcome::Failed { deploy } => {
             output::error_with_data(
                 &format!("Connected {name} to {repo} but deploy failed."),
@@ -659,6 +676,9 @@ enum DeployOutcome {
     Superseded {
         deploy: serde_json::Value,
     },
+    Cancelled {
+        deploy: serde_json::Value,
+    },
     Failed {
         deploy: serde_json::Value,
     },
@@ -736,8 +756,14 @@ fn run_initial_deploy(
         DeployOutcome::Superseded {
             deploy: output::to_value(&deploy_data),
         }
+    } else if final_status == "cancelled" {
+        // Target env torn down before the deploy ran (getfloo/floo#1354) — a moot
+        // terminal like superseded, NOT a failure. Must not exit 1 / say "retry".
+        DeployOutcome::Cancelled {
+            deploy: output::to_value(&deploy_data),
+        }
     } else {
-        // Ambiguous status (timeout, cancelled, unknown) — report as failed
+        // Ambiguous status (timeout, unknown) — report as failed
         output::warn(&format!(
             "Deploy ended with unexpected status: {}",
             final_status

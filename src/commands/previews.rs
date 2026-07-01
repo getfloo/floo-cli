@@ -13,6 +13,14 @@ const POLL_INTERVAL: Duration = Duration::from_secs(2);
 const POLL_TIMEOUT: Duration = Duration::from_secs(600);
 const TERMINAL_STATUSES: &[&str] = &["live", "failed", "cancelled", "superseded"];
 
+/// Under `--wait`, only a genuinely FAILED preview deploy is a non-zero exit.
+/// `cancelled` (the target env was torn down before the deploy ran — the surface
+/// this status originates from, getfloo/floo#1354) and `superseded` are benign
+/// terminals: they exit 0, matching every other deploy-completion site in the CLI.
+fn preview_wait_is_failure(status: Option<&str>) -> bool {
+    status == Some("failed")
+}
+
 pub fn up(
     app_flag: Option<&str>,
     branch: &str,
@@ -97,7 +105,7 @@ pub fn up(
         preview.as_ref(),
     );
 
-    if wait && deploy.status.as_deref() != Some("live") {
+    if wait && preview_wait_is_failure(deploy.status.as_deref()) {
         process::exit(1);
     }
 }
@@ -839,5 +847,23 @@ fn preview_api_suggestion(code: &str) -> Option<&'static str> {
         ),
         "INVALID_PREVIEW_BRANCH" => Some("Push a valid remote GitHub branch and pass it with --branch."),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_preview_wait_only_failed_exits_nonzero() {
+        // Under `floo previews up --wait`, only a FAILED preview deploy is a
+        // non-zero exit. cancelled (target env torn down before the deploy ran —
+        // getfloo/floo#1354) and superseded are benign terminals → exit 0, matching
+        // every other deploy-completion site.
+        assert!(preview_wait_is_failure(Some("failed")));
+        assert!(!preview_wait_is_failure(Some("cancelled")));
+        assert!(!preview_wait_is_failure(Some("superseded")));
+        assert!(!preview_wait_is_failure(Some("live")));
+        assert!(!preview_wait_is_failure(None));
     }
 }

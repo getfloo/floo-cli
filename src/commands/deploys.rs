@@ -659,7 +659,9 @@ fn colored_status(status: &str) -> String {
     match status {
         "live" => status.green().bold().to_string(),
         "failed" => status.red().bold().to_string(),
-        "superseded" => status.dimmed().to_string(),
+        // superseded (a newer deploy replaced this) and cancelled (target env torn
+        // down before the deploy ran) are both moot terminals — dimmed, not error.
+        "superseded" | "cancelled" => status.dimmed().to_string(),
         "building" | "deploying" | "pending" => status.yellow().to_string(),
         _ => status.to_string(),
     }
@@ -871,6 +873,13 @@ fn print_final_status(deploy: &Deploy) {
                 "deploy": output::to_value(deploy),
             })),
         );
+    } else if status == "cancelled" {
+        output::success(
+            "Deploy cancelled: its target environment was removed before it ran.",
+            Some(serde_json::json!({
+                "deploy": output::to_value(deploy),
+            })),
+        );
     } else if !TERMINAL_STATUSES.contains(&status) {
         output::error(
             &format!("Deploy ended in unexpected state: {status}"),
@@ -953,6 +962,15 @@ mod tests {
         assert!(TERMINAL_STATUSES.contains(&"superseded"));
         assert!(TERMINAL_STATUSES.contains(&"live"));
         assert!(TERMINAL_STATUSES.contains(&"failed"));
+    }
+
+    #[test]
+    fn test_cancelled_is_terminal_status() {
+        // TERMINAL_STATUSES must include "cancelled" so poll/stream loops exit when
+        // the platform cancels a deploy — a PR-preview env torn down before the deploy
+        // could run terminates as "cancelled" (getfloo/floo#1354). Without it,
+        // `floo deploys watch` on a cancelled deploy would spin for POLL_TIMEOUT (10 min).
+        assert!(TERMINAL_STATUSES.contains(&"cancelled"));
     }
 
     #[test]
