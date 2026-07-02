@@ -599,6 +599,28 @@ Floo Config Files
     floo env list --service api
     floo env list --service web
 
+## Write-Only Secrets (--secret)
+
+  Mark a variable write-only so floo never returns its value in plaintext,
+  from any endpoint. Deploys still receive it.
+
+    floo env set STRIPE_KEY --stdin --secret     # value from stdin, write-only
+    floo env import .env.production --secret     # every imported var write-only
+
+  What write-only means:
+
+  - `env get` refuses with ENV_VAR_WRITE_ONLY (there is no reveal flag)
+  - `env list` shows the row as `******** (write-only)`
+  - Exports return `value: null` with `is_secret: true` for the row
+  - `floo dev` / `floo run` withhold it and print the withheld key names
+  - To change it: set a new value. To make it readable again: unset it,
+    then set a fresh value without --secret. A plain `env set` without the
+    flag keeps the write-only marker (it never silently downgrades).
+
+  Build-time vars (VITE_*, NEXT_PUBLIC_*, REACT_APP_*) refuse --secret:
+  their values are baked into the public JS bundle, so write-only would be
+  a false promise.
+
   Managed service env vars are generated at app scope, then attached to
   services by [services.<name>.env] managed:
 

@@ -176,7 +176,10 @@ floo env list --app my-app --json                      # list all vars
 floo env import .env --app my-app                      # import from file
 floo env remove SECRET --app my-app                    # remove a var
 floo env set KEY=VAL --app my-app --service backend   # target a specific service (multi-service apps)
+floo env set STRIPE_KEY --stdin --secret --app my-app  # write-only: floo never returns the value
 ```
+
+Write-only vars (`--secret`): `env get` refuses with `ENV_VAR_WRITE_ONLY`, `env list` shows `(write-only)`, exports return `value: null`, and `floo dev`/`floo run` withhold them (reported in `withheld_secret_keys`). Deploys still receive them. A later `env set` without the flag keeps the marker; to make a key readable again, unset it and set a fresh value. `run floo docs env` for the full contract.
 
 ### Logs and Debugging
 

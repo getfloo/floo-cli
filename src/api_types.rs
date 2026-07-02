@@ -249,6 +249,11 @@ pub struct EnvVar {
     // `None` = app-level var. Absent on `env get` responses (defaults to None).
     #[serde(default)]
     pub service_id: Option<String>,
+    // Write-only marker (#200 / getfloo/floo#1018): the API never returns this
+    // row's value in plaintext. Absent on `env get` responses (a write-only row
+    // refuses `get` with ENV_VAR_WRITE_ONLY before a body is ever built).
+    #[serde(default)]
+    pub is_secret: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -264,6 +269,8 @@ pub struct SetEnvVarResponse {
     pub service_id: Option<String>,
     pub key: String,
     pub masked_value: Option<String>,
+    #[serde(default)]
+    pub is_secret: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -722,6 +729,10 @@ pub struct DevSessionResponse {
     pub session_id: String,
     pub services: HashMap<String, HashMap<String, String>>,
     pub postgres_authorized: bool,
+    /// Keys withheld from the env maps because their rows are write-only
+    /// (the API also injects FLOO_WITHHELD_SECRET_KEYS into affected maps).
+    #[serde(default)]
+    pub withheld_secret_keys: Vec<String>,
 }
 
 // --- Cron Jobs ---

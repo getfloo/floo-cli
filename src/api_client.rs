@@ -560,12 +560,21 @@ impl FlooClient {
         value: &str,
         service_id: Option<&str>,
         env: &str,
+        is_secret: bool,
     ) -> Result<SetEnvVarResponse, FlooApiError> {
         let mut body = serde_json::json!({"key": key, "value": value});
         if let Some(sid) = service_id {
             body.as_object_mut()
                 .unwrap()
                 .insert("service_id".to_string(), Value::String(sid.to_string()));
+        }
+        // Sent only when true: omitting the flag preserves an existing row's
+        // write-only marker server-side (sticky), so a plain re-set never
+        // silently downgrades a secret.
+        if is_secret {
+            body.as_object_mut()
+                .unwrap()
+                .insert("is_secret".to_string(), Value::Bool(true));
         }
         let resp = self.post_json(&format!("/v1/apps/{app_id}/env?env={env}"), &body)?;
         self.handle_response(resp)
@@ -625,10 +634,17 @@ impl FlooClient {
         env_vars: &[(String, String)],
         service_id: Option<&str>,
         env: &str,
+        is_secret: bool,
     ) -> Result<Value, FlooApiError> {
         let vars: Vec<Value> = env_vars
             .iter()
-            .map(|(k, v)| serde_json::json!({"key": k, "value": v}))
+            .map(|(k, v)| {
+                if is_secret {
+                    serde_json::json!({"key": k, "value": v, "is_secret": true})
+                } else {
+                    serde_json::json!({"key": k, "value": v})
+                }
+            })
             .collect();
         let mut body = serde_json::json!({"env_vars": vars});
         if let Some(sid) = service_id {

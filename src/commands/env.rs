@@ -295,16 +295,39 @@ fn read_value_file(path: &Path) -> String {
 // Commands
 // ---------------------------------------------------------------------------
 
+/// Value cell for list tables: the fixed mask, with an explicit write-only
+/// marker so a user knows reveal/get will refuse rather than return it.
+fn masked_cell(ev: &crate::api_types::EnvVar) -> String {
+    let base = ev.masked_value.as_deref().unwrap_or("-");
+    if ev.is_secret {
+        format!("{base} (write-only)")
+    } else {
+        base.to_string()
+    }
+}
+
+/// Where `env set` reads the value from. `--stdin` and `--value-file` are
+/// mutually exclusive in clap; this enum makes the invalid pair unrepresentable
+/// past the CLI boundary.
+pub enum ValueSource<'a> {
+    /// Value inline in the `KEY=VALUE` positional.
+    Inline,
+    /// Value from stdin (`--stdin`).
+    Stdin,
+    /// Value from a file (`--value-file PATH`).
+    File(&'a Path),
+}
+
 pub fn set(
     key_value: &str,
     app_flag: Option<&str>,
     service_names: &[String],
     restart: bool,
     env: &str,
-    read_stdin: bool,
-    value_file: Option<&Path>,
+    value_source: &ValueSource,
+    secret: bool,
 ) {
-    let from_side_channel = read_stdin || value_file.is_some();
+    let from_side_channel = !matches!(value_source, ValueSource::Inline);
 
     // Resolve the key. With `--stdin` / `--value-file` the positional is the
     // bare KEY and the value arrives off the command line, keeping secrets out
@@ -337,14 +360,14 @@ pub fn set(
         let target = app_flag.unwrap_or("(reads from config)");
         let scope = format_env_scope(service_names, env);
         let restart_clause = if restart { " and restart" } else { "" };
-        let source = if read_stdin {
-            " (value from stdin)"
-        } else if value_file.is_some() {
-            " (value from file)"
-        } else {
-            ""
+        let source = match value_source {
+            ValueSource::Stdin => " (value from stdin)",
+            ValueSource::File(_) => " (value from file)",
+            ValueSource::Inline => "",
         };
-        let preview = format!("Would set {key} on {target}{scope}{restart_clause}{source}.");
+        let secret_clause = if secret { " as write-only" } else { "" };
+        let preview =
+            format!("Would set {key}{secret_clause} on {target}{scope}{restart_clause}{source}.");
         output::dry_run_preview(
             &preview,
             serde_json::json!({
@@ -354,7 +377,12 @@ pub fn set(
                 "services": service_names,
                 "env": env,
                 "will_restart": restart,
-                "value_source": if read_stdin { "stdin" } else if value_file.is_some() { "file" } else { "inline" },
+                "is_secret": secret,
+                "value_source": match value_source {
+                    ValueSource::Stdin => "stdin",
+                    ValueSource::File(_) => "file",
+                    ValueSource::Inline => "inline",
+                },
             }),
         );
         return;
@@ -371,23 +399,26 @@ pub fn set(
     // interactive `--stdin` on EOF — or consume a secret file/FIFO — for a
     // logged-out user or a multi-service app with no `--services`, then error
     // anyway (codex #1152). Dry-run already returned above without reading.
-    let value: String = if read_stdin {
-        read_stdin_value()
-    } else if let Some(path) = value_file {
-        read_value_file(path)
-    } else {
-        key_value.split_once('=').unwrap().1.to_string()
+    let value: String = match value_source {
+        ValueSource::Stdin => read_stdin_value(),
+        ValueSource::File(path) => read_value_file(path),
+        ValueSource::Inline => key_value.split_once('=').unwrap().1.to_string(),
     };
 
     let mut last_env_result = serde_json::Value::Null;
     for (service_id, service_name) in &targets {
-        match client.set_env_var(&app_id, &key, &value, service_id.as_deref(), env) {
+        match client.set_env_var(&app_id, &key, &value, service_id.as_deref(), env, secret) {
             Ok(result) => {
                 let target = format_target(&app_name, service_name.as_deref());
                 last_env_result = output::to_value(&result);
                 if !restart || !output::is_json_mode() {
+                    let marker = if result.is_secret {
+                        " (write-only)"
+                    } else {
+                        ""
+                    };
                     output::success(
-                        &format!("Set {key} on {target}."),
+                        &format!("Set {key}{marker} on {target}."),
                         Some(output::to_value(&result)),
                     );
                 }
@@ -494,12 +525,7 @@ pub fn list(app_flag: Option<&str>, service_names: &[String], env: &str) {
         let rows: Vec<Vec<String>> = result
             .env_vars
             .iter()
-            .map(|ev| {
-                vec![
-                    ev.key.clone(),
-                    ev.masked_value.as_deref().unwrap_or("-").to_string(),
-                ]
-            })
+            .map(|ev| vec![ev.key.clone(), masked_cell(ev)])
             .collect();
 
         output::table(&["Key", "Value"], &rows, Some(output::to_value(&result)));
@@ -549,12 +575,7 @@ fn list_all_services(client: &FlooClient, app_id: &str, app_name: &str, env: &st
         let rows: Vec<Vec<String>> = result
             .env_vars
             .iter()
-            .map(|ev| {
-                vec![
-                    ev.key.clone(),
-                    ev.masked_value.as_deref().unwrap_or("-").to_string(),
-                ]
-            })
+            .map(|ev| vec![ev.key.clone(), masked_cell(ev)])
             .collect();
         output::table(&["Key", "Value"], &rows, Some(output::to_value(&result)));
         return;
@@ -578,7 +599,7 @@ fn list_all_services(client: &FlooClient, app_id: &str, app_name: &str, env: &st
             vec![
                 ev.key.clone(),
                 service_name(&ev.service_id),
-                ev.masked_value.as_deref().unwrap_or("-").to_string(),
+                masked_cell(ev),
             ]
         })
         .collect();
@@ -642,7 +663,20 @@ pub fn get(key: &str, app_flag: Option<&str>, service_flag: Option<&str>, env: &
     let result = match client.get_env_var(&app_id, &key, service_id.as_deref(), env) {
         Ok(r) => r,
         Err(e) => {
-            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            // A write-only row refuses reads by design; point at the two
+            // recovery paths instead of leaving a bare API error.
+            let suggestion = if e.code == "ENV_VAR_WRITE_ONLY" {
+                Some(format!(
+                    "Set a new value with `floo env set {key}=<value>` or remove it with `floo env unset {key}`."
+                ))
+            } else {
+                None
+            };
+            output::error(
+                &e.message,
+                &ErrorCode::from_api(&e.code),
+                suggestion.as_deref(),
+            );
             process::exit(1);
         }
     };
@@ -686,6 +720,7 @@ pub fn import_vars(
     app_flag: Option<&str>,
     service_names: &[String],
     env: &str,
+    secret: bool,
 ) {
     let cwd = super::read_cwd_or_exit();
 
@@ -735,7 +770,8 @@ pub fn import_vars(
             .unwrap_or_else(|| "(reads from config)".to_string());
         let scope = format_env_scope(service_names, env);
         let preview = format!(
-            "Would import {count} variable(s) from {} to {target}{scope}.\nKeys: {}",
+            "Would import {count} variable(s){} from {} to {target}{scope}.\nKeys: {}",
+            if secret { " as write-only" } else { "" },
             env_file_path.display(),
             keys.join(", "),
         );
@@ -746,6 +782,7 @@ pub fn import_vars(
                 "file": env_file_path.display().to_string(),
                 "app": target,
                 "services": service_names,
+                "is_secret": secret,
                 "env": env,
                 "keys": keys,
                 "count": count,
@@ -772,11 +809,12 @@ pub fn import_vars(
     let targets = resolve_service_ids(&client, &app_id, &app_name, service_names);
 
     for (service_id, service_name) in &targets {
-        match client.import_env_vars(&app_id, &vars, service_id.as_deref(), env) {
+        match client.import_env_vars(&app_id, &vars, service_id.as_deref(), env, secret) {
             Ok(result) => {
                 let target = format_target(&app_name, service_name.as_deref());
+                let marker = if secret { " as write-only" } else { "" };
                 output::success(
-                    &format!("Imported {count} variable(s) to {target}."),
+                    &format!("Imported {count} variable(s){marker} to {target}."),
                     Some(result),
                 );
             }
@@ -792,7 +830,7 @@ pub fn import_vars(
     }
 }
 
-pub fn import_all_services(app_flag: Option<&str>, env: &str) {
+pub fn import_all_services(app_flag: Option<&str>, env: &str, secret: bool) {
     super::require_auth();
 
     let cwd = super::read_cwd_or_exit();
@@ -920,11 +958,12 @@ pub fn import_all_services(app_flag: Option<&str>, env: &str) {
             process::exit(1);
         }
 
-        match client.import_env_vars(&app_id, &vars, service_id, env) {
+        match client.import_env_vars(&app_id, &vars, service_id, env, secret) {
             Ok(result) => {
                 let target = format!("{app_name}/{svc_name}");
+                let marker = if secret { " as write-only" } else { "" };
                 output::success(
-                    &format!("Imported {count} variable(s) to {target}."),
+                    &format!("Imported {count} variable(s){marker} to {target}."),
                     Some(result),
                 );
                 total_imported += count;
@@ -960,6 +999,35 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    fn env_var(is_secret: bool, masked: Option<&str>) -> crate::api_types::EnvVar {
+        crate::api_types::EnvVar {
+            key: "K".to_string(),
+            value: None,
+            masked_value: masked.map(String::from),
+            service_id: None,
+            is_secret,
+        }
+    }
+
+    #[test]
+    fn test_masked_cell_plain_row_is_bare_mask() {
+        assert_eq!(masked_cell(&env_var(false, Some("********"))), "********");
+    }
+
+    #[test]
+    fn test_masked_cell_write_only_row_is_marked() {
+        assert_eq!(
+            masked_cell(&env_var(true, Some("********"))),
+            "******** (write-only)"
+        );
+    }
+
+    #[test]
+    fn test_masked_cell_missing_mask_falls_back_to_dash() {
+        assert_eq!(masked_cell(&env_var(false, None)), "-");
+        assert_eq!(masked_cell(&env_var(true, None)), "- (write-only)");
+    }
 
     fn write_env_file(dir: &TempDir, name: &str, content: &str) -> std::path::PathBuf {
         let path = dir.path().join(name);
