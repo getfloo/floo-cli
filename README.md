@@ -113,9 +113,7 @@ Contributions are welcome! Please:
 2. Create a feature branch (`git checkout -b feat/my-feature`)
 3. Run tests and lint before committing:
    ```bash
-   cargo test
-   cargo clippy -- -D warnings
-   cargo fmt --check
+   ./scripts/test
    ```
 4. Use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, etc.)
 5. Open a pull request

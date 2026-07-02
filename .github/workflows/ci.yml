@@ -5,6 +5,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Suspected trigger for the corrupt test-harness class (floo-cli#204) is
+  # incremental-compilation state; CI gains nothing from incremental (the
+  # target/ cache would otherwise preserve a corrupt artifact forever).
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   test:
@@ -25,8 +29,8 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Check installer syntax
-        run: bash -n install.sh
+      - name: Check script syntax
+        run: bash -n install.sh && bash -n scripts/test
 
       - name: Run installer script tests
         run: bash tests/install_script_test.sh
@@ -34,14 +38,14 @@ jobs:
       - name: Run installer script e2e
         run: bash tests/install_script_e2e.sh
 
-      - name: Run tests
-        run: cargo test
+      - name: Run test-harness guard tests
+        run: bash tests/test_script_test.sh
 
-      - name: Run clippy
-        run: cargo clippy -- -D warnings
-
-      - name: Check formatting
-        run: cargo fmt --check
+      # fmt + clippy + cargo test via the canonical entry point, which also
+      # self-heals the corrupt-harness artifact class (floo-cli#204) that the
+      # target/ cache would otherwise pin across runs.
+      - name: Run fmt, clippy, and tests
+        run: ./scripts/test
 
   coverage:
     runs-on: ubuntu-latest

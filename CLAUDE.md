@@ -12,7 +12,9 @@ cargo build                      # Debug build
 cargo build --release            # Release build (~2MB static binary)
 
 # Test
-cargo test                       # All tests (unit + integration)
+./scripts/test                   # Canonical: fmt --check + clippy + all tests,
+                                 # with the corrupt-harness guard (#204)
+cargo test                       # All tests only (unit + integration)
 
 # Lint & format
 cargo clippy -- -D warnings      # Lint (deny all warnings)
@@ -81,7 +83,7 @@ Packs source into `.tar.gz`, respects `.flooignore`. 500MB size limit.
 ## Key Conventions
 
 - Rust 2021 edition, **cargo** for build/deps, **clap** derive for CLI
-- Lint: **clippy** (`-D warnings`). Format: **cargo fmt**. Test: **cargo test**
+- Lint: **clippy** (`-D warnings`). Format: **cargo fmt**. Test: **`./scripts/test`** (canonical entry point; wraps fmt + clippy + `cargo test` and self-heals the #204 corrupt-harness artifact class)
 - No `println!` — use `output` module functions
 - No `unwrap()` in production paths — use `?` operator
 - No `unsafe` without documented justification
