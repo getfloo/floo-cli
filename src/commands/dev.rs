@@ -305,26 +305,46 @@ pub fn dev(args: DevArgs) {
 
     let session_id = session.session_id.clone();
 
-    // --- Print status messages ---
-    output::info(
-        &format!("Dev session started for {} ({})", app_name, session_id),
-        None,
-    );
-
-    if session.postgres_authorized {
+    // --- Print status messages (human only) ---
+    // `output::info` in JSON mode writes {"success":true,"data":null} to
+    // stdout; unguarded, these status lines would emit stray JSON objects
+    // before the real payload and break single-object parsing (run.rs already
+    // gates its identical block; this brings dev in line).
+    if !output::is_json_mode() {
         output::info(
-            "  Postgres: your IP is authorized for direct connections",
+            &format!("Dev session started for {} ({})", app_name, session_id),
             None,
         );
-    }
 
-    // Check if redis env vars were provided for any service
-    let has_redis = session
-        .services
-        .values()
-        .any(|env_map| env_map.keys().any(|k| k.starts_with("REDIS_")));
-    if has_redis {
-        output::info("  Redis: connection env vars injected", None);
+        if session.postgres_authorized {
+            output::info(
+                "  Postgres: your IP is authorized for direct connections",
+                None,
+            );
+        }
+
+        if !session.withheld_secret_keys.is_empty() {
+            output::info(
+                &format!(
+                    "  Write-only secrets withheld (floo never returns their values): {}",
+                    session.withheld_secret_keys.join(", ")
+                ),
+                None,
+            );
+            output::info(
+                "  Set them in your local shell if the app needs them.",
+                None,
+            );
+        }
+
+        // Check if redis env vars were provided for any service
+        let has_redis = session
+            .services
+            .values()
+            .any(|env_map| env_map.keys().any(|k| k.starts_with("REDIS_")));
+        if has_redis {
+            output::info("  Redis: connection env vars injected", None);
+        }
     }
 
     // --- Start fixture-user proxies (accounts-mode + --fixture-user) ---
@@ -405,6 +425,7 @@ pub fn dev(args: DevArgs) {
                 "session_id": session_id,
                 "app": app_name,
                 "postgres_authorized": session.postgres_authorized,
+                "withheld_secret_keys": session.withheld_secret_keys,
                 "services": json_services,
             }
         }));

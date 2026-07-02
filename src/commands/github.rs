@@ -3,6 +3,7 @@ use std::process;
 use std::time::{Duration, Instant};
 
 use crate::api_types::GitHubSetupStatus;
+use crate::deploy_status::{self, Terminal};
 use crate::detection::detect;
 use crate::errors::{ErrorCode, FlooApiError};
 use crate::output;
@@ -260,6 +261,23 @@ pub fn connect(
                     "branch": connected_branch,
                     "deployed": false,
                     "deploy_status": "superseded",
+                    "deploy": deploy,
+                })),
+            );
+        }
+        DeployOutcome::Cancelled { deploy } => {
+            output::success(
+                &format!(
+                    "Connected {name} to {repo}, but the deploy was cancelled \
+                     (its target environment was removed before it ran)."
+                ),
+                Some(serde_json::json!({
+                    "connected": true,
+                    "app": name,
+                    "repo": repo,
+                    "branch": connected_branch,
+                    "deployed": false,
+                    "deploy_status": "cancelled",
                     "deploy": deploy,
                 })),
             );
@@ -659,6 +677,9 @@ enum DeployOutcome {
     Superseded {
         deploy: serde_json::Value,
     },
+    Cancelled {
+        deploy: serde_json::Value,
+    },
     Failed {
         deploy: serde_json::Value,
     },
@@ -699,7 +720,7 @@ fn run_initial_deploy(
 
     let initial_status = deploy_data.status.as_deref().unwrap_or("");
 
-    if !super::deploy::TERMINAL_STATUSES.contains(&initial_status) {
+    if !deploy_status::is_terminal(initial_status) {
         if deploy_data.id.is_empty() {
             return DeployOutcome::Failed {
                 deploy: serde_json::json!({"error": "Deploy missing 'id' in response"}),
@@ -722,28 +743,38 @@ fn run_initial_deploy(
 
     let final_status = deploy_data.status.as_deref().unwrap_or("");
 
-    if final_status == "failed" {
-        DeployOutcome::Failed {
+    // Matching on `classify` makes a newly-added terminal status a compile error
+    // here instead of silently falling into the `None` → failed arm.
+    match deploy_status::classify(final_status) {
+        Some(Terminal::Failed) => DeployOutcome::Failed {
             deploy: output::to_value(&deploy_data),
+        },
+        Some(Terminal::Live) => {
+            let url = deploy_data.url.as_deref().unwrap_or("").to_string();
+            DeployOutcome::Live {
+                url,
+                deploy: output::to_value(&deploy_data),
+            }
         }
-    } else if final_status == "live" {
-        let url = deploy_data.url.as_deref().unwrap_or("").to_string();
-        DeployOutcome::Live {
-            url,
+        Some(Terminal::Superseded) => DeployOutcome::Superseded {
             deploy: output::to_value(&deploy_data),
+        },
+        Some(Terminal::Cancelled) => {
+            // Target env torn down before the deploy ran (getfloo/floo#1354) — a moot
+            // terminal like superseded, NOT a failure. Must not exit 1 / say "retry".
+            DeployOutcome::Cancelled {
+                deploy: output::to_value(&deploy_data),
+            }
         }
-    } else if final_status == "superseded" {
-        DeployOutcome::Superseded {
-            deploy: output::to_value(&deploy_data),
-        }
-    } else {
-        // Ambiguous status (timeout, cancelled, unknown) — report as failed
-        output::warn(&format!(
-            "Deploy ended with unexpected status: {}",
-            final_status
-        ));
-        DeployOutcome::Failed {
-            deploy: output::to_value(&deploy_data),
+        None => {
+            // Ambiguous status (timeout, unknown) — report as failed.
+            output::warn(&format!(
+                "Deploy ended with unexpected status: {}",
+                final_status
+            ));
+            DeployOutcome::Failed {
+                deploy: output::to_value(&deploy_data),
+            }
         }
     }
 }

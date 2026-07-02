@@ -17,9 +17,9 @@ fn check_services_flag(client: &FlooClient, app_id: &str, services: Option<&str>
 
     if result.services.len() > 1 && services.is_none() {
         output::error(
-            "Multiple services found. Specify --services.",
+            "Multiple services found. Specify --service.",
             &ErrorCode::MultipleServicesNoTarget,
-            Some("Use --services <name> to target a specific service."),
+            Some("Use --service <name> to target a specific service."),
         );
         process::exit(1);
     }
@@ -88,12 +88,11 @@ pub fn add(hostname: &str, app: Option<&str>, services: Option<&str>) {
     }
 }
 
-pub fn list(app: Option<&str>, services: Option<&str>) {
+pub fn list(app: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);
 
     let (app_id, app_name) = super::resolve_app_from_config(&client, app);
-    check_services_flag(&client, &app_id, services);
 
     let result = match client.list_domains(&app_id) {
         Ok(r) => r,
@@ -168,7 +167,7 @@ pub fn verify(hostname: &str, app: Option<&str>) {
     }
 }
 
-pub fn remove(hostname: &str, app: Option<&str>, services: Option<&str>, yes: bool) {
+pub fn remove(hostname: &str, app: Option<&str>, yes: bool) {
     use crate::confirm::{confirm_tier2, ConfirmOutcome, RiskMetadata, Tier};
 
     if output::is_dry_run_mode() {
@@ -181,7 +180,6 @@ pub fn remove(hostname: &str, app: Option<&str>, services: Option<&str>, yes: bo
                 "action": "domain_remove",
                 "hostname": hostname,
                 "app": app,
-                "service": services,
                 "destructive": risk.destructive,
                 "data_loss": risk.data_loss,
                 "tier": risk.tier,
@@ -194,7 +192,6 @@ pub fn remove(hostname: &str, app: Option<&str>, services: Option<&str>, yes: bo
     let client = super::init_client(None);
 
     let (app_id, app_name) = super::resolve_app_from_config(&client, app);
-    check_services_flag(&client, &app_id, services);
 
     match confirm_tier2("Remove domain", &format!("{hostname} from {app_name}"), yes) {
         ConfirmOutcome::Proceed => {}

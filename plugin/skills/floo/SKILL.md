@@ -130,7 +130,7 @@ floo env set DB_URL=... --app my-app --restart         # set and restart
 floo env list --app my-app --json                      # list all vars
 floo env import .env --app my-app                      # import from file
 floo env remove SECRET --app my-app                    # remove a var
-floo env set KEY=VAL --app my-app --services backend   # target a specific service (multi-service apps)
+floo env set KEY=VAL --app my-app --service backend   # target a specific service (multi-service apps)
 ```
 
 ### Logs and Debugging
@@ -150,14 +150,14 @@ floo deploy logs <deploy-id> --app my-app          # build logs
 floo deploy watch --app my-app                     # stream progress
 floo deploy rollback my-app <deploy-id>            # rollback
 floo redeploy --app my-app                         # force redeploy
-floo redeploy --services api --app my-app          # redeploy specific service
+floo redeploy --service api --app my-app          # redeploy specific service
 ```
 
 ### Custom Domains
 
 ```bash
 floo domains add app.example.com --app my-app                       # single-service app
-floo domains add app.example.com --app my-app --services frontend   # target a specific service (multi-service)
+floo domains add app.example.com --app my-app --service frontend   # target a specific service (multi-service)
 floo domains list --app my-app
 ```
 

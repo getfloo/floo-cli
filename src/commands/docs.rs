@@ -36,12 +36,13 @@ never uploads code.
   floo docs django     — build and deploy a Django app on floo (end-to-end)
   floo docs express    — build and deploy an Express app on floo (end-to-end)
   floo docs templates  — copy-paste app structures (React+FastAPI, Next.js, etc.)
-  floo docs services   — service types and managed services
-  floo docs storage    — managed Storage restore commands
-  floo docs config     — config file formats with examples
+  floo docs services   — service types and managed services (alias: storage)
+  floo docs previews   — command-line preview sandboxes for remote branches
+  floo docs config     — config file formats with examples (alias: app-toml)
   floo docs cron       — [cron.<name>] schema, schedules, and CLI surface
   floo docs deploy     — detailed deploy flow and runtime detection
   floo docs auth       — add user authentication to your app
+  floo docs notifications — control which emails floo sends you
   floo docs feedback   — report bugs, friction, or feature requests
   floo --help          — all available commands
   floo <command> --help — details for a specific command
@@ -163,7 +164,7 @@ deployable. Floo distinguishes two kinds by how they are authored:
 The split matters: removing a line from floo.app.toml that deleted a
 database would be catastrophic, so managed services are never coupled to
 config-file edits. Destruction is always an explicit CLI command with
-confirmation. See also: floo docs state-model.
+confirmation.
 
 ## App Services (your code)
 
@@ -197,7 +198,14 @@ confirmation. See also: floo docs state-model.
   lock file or in your repo:
     postgres → DATABASE_URL + PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD
     redis    → REDIS_URL
-    storage  → STORAGE_BUCKET + STORAGE_URL (use STORAGE_URL for signed URLs)
+    storage  → STORAGE_BUCKET (read/write via the GCS SDK over ADC)
+
+  Your app reaches storage with the native GCS SDK (Rails Active Storage
+  `:google` in proxy mode). floo runs your container as a service account
+  with read/write on the bucket, so ADC just works — no key file, no
+  project id. STORAGE_URL is a floo operator endpoint, not your app's
+  runtime path, and S3-compatible SDKs are not supported.
+  Full guide: https://getfloo.com/docs/guides/cloud-storage
 
   Managed Storage buckets keep noncurrent object versions for 30 days.
   To recover an overwritten or deleted object:
@@ -211,7 +219,17 @@ confirmation. See also: floo docs state-model.
   Postgres ships with pgvector enabled. The `vector` type resolves
   unqualified: use it in migrations and queries with no CREATE EXTENSION
   and no schema prefix. Rails (`t.vector`), Django, SQLAlchemy, and Prisma
-  all emit the bare type. Full guide: https://docs.getfloo.com/guides/databases
+  all emit the bare type. Full guide: https://getfloo.com/docs/guides/databases
+
+  Preview database branches are preview-owned managed Postgres branches.
+  Inspect them from the terminal:
+
+    floo db branches list <preview-slug> --app <name>
+    floo db branches show <preview-slug> --app <name> --name default
+    floo db branches reset <preview-slug> --app <name> --yes
+
+  Reset drops and recreates only the preview branch. Dev and prod databases
+  are untouched, and JSON output never includes plaintext credentials.
 
   In multi-service apps, attach those credentials per service:
     [services.api.env]
@@ -307,6 +325,83 @@ All services share the same origin, so cookies and auth work without CORS.
   floo services add <type> --app <name>      — provision a managed service
   floo services remove <type> --app <name>   — permanently destroy (tier-3)
   floo services migrate --app <name>         — move legacy TOML → CLI state
+";
+
+const PREVIEWS: &str = "\
+Floo Preview Sandboxes
+
+Use `floo previews` when an agent needs an isolated, real floo deploy for a
+pushed feature branch before opening or relying on a pull request preview.
+
+## Source contract
+
+Preview sandboxes deploy remote GitHub source only:
+
+  git push origin feat/foo
+  floo previews up --app my-app --branch feat/foo --wait
+
+The CLI does not upload local dirty files or an archive from your checkout.
+Push the branch first, or pass a remote commit/ref when you need an exact
+remote revision.
+
+## Lifecycle commands
+
+  floo previews up --app my-app --branch feat/foo --wait --json
+  floo previews list --app my-app --json
+  floo previews status --app my-app feat/foo --json
+  floo previews logs --app my-app feat/foo --follow
+  floo previews delete --app my-app feat/foo --yes --json
+
+Preview identifiers can be an exact slug, a preview URL, the source branch,
+or `#123` when that PR number resolves to one preview. If the identifier is
+ambiguous, use the exact slug from `floo previews list`.
+
+## JSON contract
+
+Non-streaming commands print one JSON object. Automation can rely on:
+
+  app
+  preview.slug
+  source_branch
+  deploy_id
+  status
+  url
+  expires_at
+  database_branches
+  managed_resource_branches
+  dev_prod_untouched: true
+
+`up --wait` watches the deploy returned by the create call and exits non-zero
+when that deploy fails.
+
+## Isolation and cleanup
+
+Preview sandboxes use the same managed-resource isolation as pull request
+previews. floo-managed Postgres, Redis, and Storage get preview-owned
+resources. If isolation cannot be provisioned, the command surfaces
+PREVIEW_MANAGED_SERVICE_ISOLATION_UNAVAILABLE instead of falling back to dev
+or prod credentials.
+
+Preview managed-resource branches are visible through one command group:
+
+  floo previews resources list <preview> --app <name>
+  floo previews resources show <preview> --app <name> --resource redis:default
+  floo previews resources reset <preview> --app <name> --resource postgres:default --yes
+
+The resource key is shaped `type:name`, for example `postgres:default`,
+`redis:cache`, or `storage:uploads`. Reset is preview-scoped and fails closed
+with the API's named blocker when a provider cannot reset that resource yet.
+
+`floo previews delete` tears down preview-owned Cloud Run services, managed
+resources, gateway routes, and env vars. Dev and prod are untouched.
+
+## Related commands
+
+  floo db branches list <preview> --app <name>
+  floo db branches show <preview> --app <name> --name default
+  floo db branches reset <preview> --app <name> --name default --yes
+
+Full guide: https://getfloo.com/docs/cli/previews
 ";
 
 const CONFIG: &str = "\
@@ -475,14 +570,14 @@ Floo Config Files
   Env vars are scoped per service. In multi-service apps, you MUST specify
   which service receives the variable:
 
-    floo env set DATABASE_URL=postgres://... --services api
-    floo env set REDIS_URL=redis://... --services api,worker
+    floo env set DATABASE_URL=postgres://... --service api
+    floo env set REDIS_URL=redis://... --service api --service worker
 
   Scoping rules:
 
   - Single-service app: env vars go to the only service (no flag needed)
   - Multi-service app with 1 service: auto-targets that service
-  - Multi-service app with 2+ services: --services is REQUIRED
+  - Multi-service app with 2+ services: --service is REQUIRED
 
   SECURITY: Secrets set on a frontend service (web, dashboard) end up in
   the container runtime. Build-time vars (VITE_*, NEXT_PUBLIC_*, REACT_APP_*)
@@ -492,17 +587,39 @@ Floo Config Files
   Recommended pattern for multi-service apps:
 
     # Backend secrets — api/worker only
-    floo env set DATABASE_URL=postgres://... --services api
-    floo env set LINEAR_API_KEY=lin_... --services api
-    floo env set REDIS_URL=redis://... --services api,worker
+    floo env set DATABASE_URL=postgres://... --service api
+    floo env set LINEAR_API_KEY=lin_... --service api
+    floo env set REDIS_URL=redis://... --service api --service worker
 
     # Frontend config — web only (public, not secret)
-    floo env set VITE_API_URL=https://my-app.getfloo.com/api --services web
+    floo env set VITE_API_URL=https://my-app.getfloo.com/api --service web
 
   List env vars per service:
 
-    floo env list --services api
-    floo env list --services web
+    floo env list --service api
+    floo env list --service web
+
+## Write-Only Secrets (--secret)
+
+  Mark a variable write-only so floo never returns its value in plaintext,
+  from any endpoint. Deploys still receive it.
+
+    floo env set STRIPE_KEY --stdin --secret     # value from stdin, write-only
+    floo env import .env.production --secret     # every imported var write-only
+
+  What write-only means:
+
+  - `env get` refuses with ENV_VAR_WRITE_ONLY (there is no reveal flag)
+  - `env list` shows the row as `******** (write-only)`
+  - Exports return `value: null` with `is_secret: true` for the row
+  - `floo dev` / `floo run` withhold it and print the withheld key names
+  - To change it: set a new value. To make it readable again: unset it,
+    then set a fresh value without --secret. A plain `env set` without the
+    flag keeps the write-only marker (it never silently downgrades).
+
+  Build-time vars (VITE_*, NEXT_PUBLIC_*, REACT_APP_*) refuse --secret:
+  their values are baked into the public JS bundle, so write-only would be
+  a false promise.
 
   Managed service env vars are generated at app scope, then attached to
   services by [services.<name>.env] managed:
@@ -553,7 +670,7 @@ Floo Deploy Flow
   Use `floo redeploy` when you need to redeploy without a code change
   (e.g., after updating env vars):
 
-    floo env set API_KEY=new-value --app myapp --services api
+    floo env set API_KEY=new-value --app myapp --service api
     floo redeploy --app myapp
 
 ## First Deploy
@@ -596,23 +713,40 @@ Floo Deploy Flow
   floo preflight                   — validate config, detect runtimes, check readiness
   floo preflight --json            — structured output for agents
 
-  JSON includes env_injection_plan: per-service managed attachments, generated
-  env keys (DATABASE_URL + PG*, REDIS_URL, STORAGE_BUCKET/STORAGE_URL),
-  required keys, optional keys, and whether the app is in explicit or legacy
-  implicit mode.
+  Preflight FAILS (exit 1, valid=false) on configs that can't build or run:
+  a service path that doesn't exist, a [cron.*] with an invalid schedule, a
+  cron job whose service doesn't exist (multi-service apps). It WARNS (exit 0,
+  but not a clean green) on things it can't fully verify locally: a
+  migrate_command with no reachable database, a required env var not injected
+  or present in a local env file. Server-side `floo env set` vars and external
+  databases are invisible to local preflight, which is why those warn.
+
+  JSON shape:
+    data.valid           — false iff any finding has severity \"error\"
+    data.findings[]      — every advisory, typed: {severity (error|warning|
+                           info), code, message, path?, hint?}. Filter by
+                           severity/code instead of screen-scraping prose.
+    data.env_injection_plan — per-service managed attachments, generated env
+                           keys (DATABASE_URL + PG*, REDIS_URL, STORAGE_*),
+                           required/optional keys, explicit vs implicit mode.
+    data.cron[]          — declared [cron.*] entries (name, schedule, command,
+                           service, timeout).
+    contains_secrets     — top-level marker, true when a secret-shaped var is
+                           found in a web service's env file (it may ship to
+                           the browser). Harnesses can refuse the payload.
 
 ## Redeploy Options
 
   floo redeploy --app <name>       — redeploy with fresh env vars (no rebuild)
   floo redeploy --app <name> --rebuild  — force a full rebuild from latest commit
   floo redeploy [path]             — full redeploy from local project directory
-  floo redeploy --services <name>  — redeploy specific services only
+  floo redeploy --service <name>  — redeploy specific services only
   floo redeploy --sync-env         — re-sync env vars from env_file before redeploying
   floo redeploy --rebuild --skip-migrations  — hotfix path: bypass MIGRATE step
 
 ## Deploy History
 
-  floo deploys list --app <name>    — list past deploys
+  floo deploys list --app <name>    — list past deploys without build logs
   floo deploys logs <id> --app <n>  — build logs for a specific deploy
   floo deploys watch --app <name>   — stream deploy progress in real-time
   floo deploys rollback <app> <id>  — rollback to a previous deploy
@@ -749,7 +883,7 @@ curl testing or scripts, send the headers yourself:
        -H \"X-Floo-User-Id: dev-user-1\" \\
        http://localhost:3000/dashboard
 
-Full docs: https://docs.getfloo.com/guides/app-auth
+Full docs: https://getfloo.com/docs/guides/app-auth
 ";
 
 const FEEDBACK: &str = "\
@@ -786,6 +920,37 @@ the CLI. Feedback is routed to the Floo team in real-time.
   Use --context to attach extra detail (error output, steps to reproduce):
 
   floo feedback --category bug \"deploy fails\" --context \"error: no Dockerfile found\"
+";
+
+const NOTIFICATIONS: &str = "\
+Email Notifications — control which emails floo sends you
+
+floo emails you about things that happen to your apps. You choose which
+categories land in your inbox; account and security messages always send.
+
+## List your settings
+
+  floo notifications list
+  floo notifications list --json     (machine-readable, for agents)
+
+Shows every category, whether it is on or off, and what it covers.
+
+## Turn a category on or off
+
+  floo notifications set deploy_success on    Email me on every successful deploy
+  floo notifications set deploy_success off   Stop those (this is the default)
+  floo notifications set billing off          Stop spend-cap warning emails
+
+## Categories
+
+  Run `floo notifications list` to see the current categories and their state.
+  deploy_success is OFF by default (it is the noisy one); the rest are ON.
+
+## Notes
+
+  Preferences are per-user and account-wide — they apply to your inbox, not to a
+  single app. Always-send emails (invites, verification, security approvals,
+  and destructive-action warnings) are not configurable.
 ";
 
 const HOWTO: &str = "\
@@ -869,7 +1034,7 @@ Floo — Golden Path
 
   For multi-service apps, target a specific service:
 
-  floo domains add api.example.com --app my-app --services api
+  floo domains add api.example.com --app my-app --service api
 
 ## How to Roll Back
 
@@ -880,6 +1045,8 @@ Floo — Golden Path
 
   floo logs query --app my-app --since 1h --error
   floo logs tail --app my-app --env prod
+  floo logs query --app my-app --service web        # one service (multi-service apps)
+  floo logs query --app my-app --cron nightly-report # a specific cron job's output
   floo logs query --app my-app --deployment latest --json
   floo logs query --app my-app --json --limit 100 --cursor \"$NEXT_CURSOR\"
   floo deploys logs <deploy-id> --app my-app
@@ -985,7 +1152,7 @@ Floo Templates — Copy-Paste App Structures
   3. floo preflight                            # validate both services
   4. git push origin main                      # push to GitHub first
   5. floo apps github connect owner/my-app     # triggers first deploy
-  6. floo env set DATABASE_URL=<url> --services api  # managed postgres auto-sets this
+  6. floo env set DATABASE_URL=<url> --service api  # managed postgres auto-sets this
   7. floo apps show my-app                     # get your URL
 
 ### Local Development (two terminals)
@@ -1004,11 +1171,11 @@ Floo Templates — Copy-Paste App Structures
 ### Env Vars
 
   Backend secrets (api service only):
-    floo env set DATABASE_URL=postgres://... --services api
-    floo env set SECRET_KEY=... --services api
+    floo env set DATABASE_URL=postgres://... --service api
+    floo env set SECRET_KEY=... --service api
 
   Frontend config (web service only, public — baked into JS bundle):
-    floo env set VITE_API_URL=/api --services web
+    floo env set VITE_API_URL=/api --service web
 
   SECURITY: Never set backend secrets on the web service.
   Build-time vars (VITE_*, NEXT_PUBLIC_*) are visible to end users.
@@ -1098,7 +1265,7 @@ end-to-end in a real Rails / Next.js / Django / etc. project.
 If you know which capability you need, jump to the capability guide. If
 you're starting a new project, start with the stack guide.
 
-Full guides: https://docs.getfloo.com/build/
+Full guides: https://getfloo.com/docs/build/
 ";
 
 const RAILS: &str = "\
@@ -1235,7 +1402,7 @@ Add the CNAME shown in the output at your DNS provider.
   - asset compilation runs in the Dockerfile (RAILS_SERVE_STATIC_FILES=1)
   - Rails 7+ force_ssl works correctly behind floo's edge (X-Forwarded-Proto)
 
-Full guide with complete Ruby code: https://docs.getfloo.com/build/rails
+Full guide with complete Ruby code: https://getfloo.com/docs/build/rails
 ";
 
 const NEXTJS: &str = "\
@@ -1309,7 +1476,7 @@ Then in a Server Component or Route Handler:
   - output: \"standalone\" in next.config.js
   - Never expose tokens to client components
 
-Full guide with complete TypeScript code: https://docs.getfloo.com/build/nextjs
+Full guide with complete TypeScript code: https://getfloo.com/docs/build/nextjs
 ";
 
 const FASTAPI: &str = "\
@@ -1382,7 +1549,7 @@ Then a FastAPI dependency:
   - Don't mix asyncpg and psycopg2 — pick one
   - X-Forwarded-Proto: build absolute URLs from forwarded scheme
 
-Full guide with complete Python code: https://docs.getfloo.com/build/fastapi
+Full guide with complete Python code: https://getfloo.com/docs/build/fastapi
 ";
 
 const DJANGO: &str = "\
@@ -1475,7 +1642,7 @@ headers with HTTP_ and uppercases them):
   - DJANGO_SECRET_KEY must be set or sessions can be forged
   - SECURE_PROXY_SSL_HEADER required for is_secure() to work behind floo
 
-Full guide with complete Python code: https://docs.getfloo.com/build/django
+Full guide with complete Python code: https://getfloo.com/docs/build/django
 ";
 
 const EXPRESS: &str = "\
@@ -1549,7 +1716,7 @@ won't get set behind floo's edge.
   - SESSION_SECRET required for cookie-session
   - For server-side sessions: floo services add redis + connect-redis
 
-Full guide with complete JavaScript code: https://docs.getfloo.com/build/express
+Full guide with complete JavaScript code: https://getfloo.com/docs/build/express
 ";
 
 const CRON: &str = "\
@@ -1624,31 +1791,44 @@ deploy (added, updated, or removed to match config).
   https://getfloo.com/docs/reference/config-spec   — full [cron.<name>] schema reference
 ";
 
-const TOPICS: &[(&str, &str)] = &[
-    ("quickstart", QUICKSTART),
+// Canonical docs topics, in the order the overview lists them. This table is
+// the single source of truth for which `floo docs` topics exist: the overview
+// listing, the `floo docs --help` block, and every `floo docs <topic>`
+// cross-reference are all pinned back to it by tests in this module (and the
+// `--help` block by a test in `cli.rs`). Add a topic here and those tests fail
+// until the overview and `--help` list it too.
+pub(crate) const TOPICS: &[(&str, &str)] = &[
     ("golden-path", HOWTO),
+    ("quickstart", QUICKSTART),
     ("build", BUILD),
     ("nextjs", NEXTJS),
     ("rails", RAILS),
     ("fastapi", FASTAPI),
     ("django", DJANGO),
     ("express", EXPRESS),
+    ("templates", TEMPLATES),
     ("services", SERVICES),
-    ("storage", SERVICES),
+    ("previews", PREVIEWS),
     ("config", CONFIG),
-    ("app-toml", CONFIG), // alias — agents can run `floo docs app-toml` after `floo init`
     ("cron", CRON),
     ("deploy", DEPLOY),
     ("auth", AUTH),
+    ("notifications", NOTIFICATIONS),
     ("feedback", FEEDBACK),
-    ("templates", TEMPLATES),
 ];
+
+// Convenience aliases. An agent types the concrete noun it already has — a
+// managed-service name (`storage`) or a config filename (`app-toml`) — and
+// lands on the canonical topic instead of hitting "Unknown docs topic". Each
+// alias resolves to a TOPICS name and is surfaced in the overview so it stays
+// discoverable; both invariants are pinned by tests in this module.
+pub(crate) const ALIASES: &[(&str, &str)] = &[("storage", "services"), ("app-toml", "config")];
 
 pub fn docs(topic: Option<&str>) {
     let (topic_name, content) = match topic {
         None => ("overview", OVERVIEW),
-        Some(t) => match TOPICS.iter().find(|(name, _)| *name == t) {
-            Some((name, content)) => (*name, *content),
+        Some(t) => match resolve_topic(t) {
+            Some(resolved) => resolved,
             None => {
                 let available: Vec<&str> = TOPICS.iter().map(|(n, _)| *n).collect();
                 output::error(
@@ -1674,6 +1854,18 @@ pub fn docs(topic: Option<&str>) {
     }
 }
 
+/// Resolve a requested topic name to its `(canonical_name, content)`. Accepts
+/// both canonical topics and convenience aliases; an alias resolves to the
+/// canonical topic's name and content, so `floo docs storage` and
+/// `floo docs services` are indistinguishable downstream.
+fn resolve_topic(t: &str) -> Option<(&'static str, &'static str)> {
+    if let Some(entry) = TOPICS.iter().find(|(name, _)| *name == t) {
+        return Some(*entry);
+    }
+    let target = ALIASES.iter().find(|(alias, _)| *alias == t)?.1;
+    TOPICS.iter().find(|(name, _)| *name == target).copied()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1683,6 +1875,7 @@ mod tests {
         assert!(!OVERVIEW.is_empty());
         assert!(!QUICKSTART.is_empty());
         assert!(!SERVICES.is_empty());
+        assert!(!PREVIEWS.is_empty());
         assert!(!CONFIG.is_empty());
         assert!(!CRON.is_empty());
         assert!(!DEPLOY.is_empty());
@@ -1795,13 +1988,26 @@ mod tests {
     }
 
     #[test]
+    fn test_previews_topic_documents_agent_sandbox_contract() {
+        assert!(OVERVIEW.contains("floo docs previews"));
+        assert!(PREVIEWS.contains("floo previews up"));
+        assert!(PREVIEWS.contains("remote GitHub source only"));
+        assert!(PREVIEWS.contains("dev_prod_untouched: true"));
+        assert!(PREVIEWS.contains("managed_resource_branches"));
+        assert!(PREVIEWS.contains("floo previews resources list"));
+        assert!(PREVIEWS.contains("PREVIEW_MANAGED_SERVICE_ISOLATION_UNAVAILABLE"));
+        assert!(PREVIEWS.contains("floo previews delete"));
+        assert!(PREVIEWS.contains("getfloo.com/docs/cli/previews"));
+    }
+
+    #[test]
     fn test_build_topic_lists_stack_guides() {
         assert!(BUILD.contains("floo docs nextjs"));
         assert!(BUILD.contains("floo docs rails"));
         assert!(BUILD.contains("floo docs fastapi"));
         assert!(BUILD.contains("floo docs django"));
         assert!(BUILD.contains("floo docs express"));
-        assert!(BUILD.contains("docs.getfloo.com/build/"));
+        assert!(BUILD.contains("getfloo.com/docs/build"));
     }
 
     #[test]
@@ -1857,7 +2063,7 @@ mod tests {
             );
             assert!(content.contains("floo dev"), "{stack}: missing 'floo dev'");
             assert!(
-                content.contains("docs.getfloo.com/build/"),
+                content.contains("getfloo.com/docs/build"),
                 "{stack}: missing link to full guide"
             );
         }
@@ -1902,5 +2108,75 @@ mod tests {
                 "{stack}: leaked 'Hosted app OAuth'"
             );
         }
+    }
+
+    /// Every `floo docs <topic>` mention across the overview and every topic
+    /// body must resolve to a real topic or alias. The dead
+    /// `floo docs state-model` cross-reference (#1159) is exactly what this
+    /// pins — the whole class, not just that one instance.
+    #[test]
+    fn test_every_floo_docs_cross_reference_resolves() {
+        let valid: std::collections::HashSet<&str> = TOPICS
+            .iter()
+            .map(|(n, _)| *n)
+            .chain(ALIASES.iter().map(|(a, _)| *a))
+            .collect();
+        let re = regex::Regex::new(r"floo docs ([a-z][a-z-]*)").unwrap();
+        let mut bodies: Vec<&str> = TOPICS.iter().map(|(_, c)| *c).collect();
+        bodies.push(OVERVIEW);
+        for body in bodies {
+            for cap in re.captures_iter(body) {
+                let referenced = cap.get(1).unwrap().as_str();
+                assert!(
+                    valid.contains(referenced),
+                    "cross-reference `floo docs {referenced}` has no matching topic or alias",
+                );
+            }
+        }
+    }
+
+    /// Every canonical topic must be listed in the overview so an agent reading
+    /// `floo docs` can discover all of them. `notifications` was invisible here
+    /// before #1159.
+    #[test]
+    fn test_overview_lists_every_canonical_topic() {
+        for (name, _) in TOPICS {
+            assert!(
+                OVERVIEW.contains(&format!("floo docs {name}")),
+                "overview is missing `floo docs {name}`",
+            );
+        }
+    }
+
+    /// Every alias must resolve to a real canonical topic, must not shadow a
+    /// canonical name, and must be surfaced in the overview so it stays
+    /// discoverable rather than being a hidden duplicate (#1159).
+    #[test]
+    fn test_every_alias_resolves_to_canonical_topic() {
+        for (alias, target) in ALIASES {
+            assert!(
+                TOPICS.iter().any(|(n, _)| n == target),
+                "alias `{alias}` points at unknown canonical topic `{target}`",
+            );
+            assert!(
+                !TOPICS.iter().any(|(n, _)| n == alias),
+                "alias `{alias}` collides with a canonical topic name",
+            );
+            assert!(
+                OVERVIEW.contains(alias),
+                "alias `{alias}` is not surfaced in the overview",
+            );
+        }
+    }
+
+    /// Dispatching an alias returns the canonical topic's name and content; an
+    /// unknown topic returns None so the caller shows the available-topics hint.
+    #[test]
+    fn test_alias_dispatch_resolves_to_canonical() {
+        assert_eq!(resolve_topic("storage"), Some(("services", SERVICES)));
+        assert_eq!(resolve_topic("app-toml"), Some(("config", CONFIG)));
+        assert_eq!(resolve_topic("services"), Some(("services", SERVICES)));
+        assert!(resolve_topic("state-model").is_none());
+        assert!(resolve_topic("definitely-not-a-topic").is_none());
     }
 }

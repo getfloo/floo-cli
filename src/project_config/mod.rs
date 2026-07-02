@@ -6,7 +6,7 @@ mod service_config;
 pub const SERVICE_CONFIG_FILE: &str = "floo.service.toml";
 pub const APP_CONFIG_FILE: &str = "floo.app.toml";
 pub const LEGACY_CONFIG_FILE: &str = "floo.toml";
-const SCHEMA_URL: &str = "https://getfloo.com/docs/floo-toml";
+const SCHEMA_URL: &str = "https://getfloo.com/docs/reference/config-spec";
 const MAX_WALK_UP_LEVELS: usize = 20;
 
 /// Convert a `toml::de::Error` from project-config parsing into a FlooError

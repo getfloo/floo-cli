@@ -78,6 +78,41 @@ pub fn set_role(user_id: &str, role: &str) {
     }
 }
 
+pub fn invite(email: &str, role: &str) {
+    // `role` is constrained to admin/member/viewer by clap's value_parser, so
+    // no manual validation is needed here.
+    super::require_auth();
+    let client = super::init_client(None);
+
+    let org = match client.get_org_me() {
+        Ok(o) => o,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+    let org_name = org.name.as_deref().unwrap_or("your org");
+
+    match client.create_org_invite(&org.id, email, role) {
+        Ok(result) => {
+            if output::is_json_mode() {
+                output::success("", Some(output::to_value(&result)));
+            } else {
+                output::success(
+                    &format!("Invited {email} to {org_name} as {}.", result.role),
+                    None,
+                );
+                output::info(&format!("  Invite link: {}", result.invite_url), None);
+                output::info("  An invite email was also sent.", None);
+            }
+        }
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    }
+}
+
 pub fn switch(org_slug: &str) {
     super::require_auth();
     let client = super::init_client(None);

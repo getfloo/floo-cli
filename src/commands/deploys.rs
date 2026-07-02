@@ -7,7 +7,8 @@ use colored::Colorize;
 
 use crate::api_client::FlooClient;
 use crate::api_types::Deploy;
-use crate::commands::deploy::{poll_deploy, stream_deploy, stream_deploy_json, TERMINAL_STATUSES};
+use crate::commands::deploy::{poll_deploy, stream_deploy, stream_deploy_json};
+use crate::deploy_status;
 use crate::errors::ErrorCode;
 use crate::output;
 
@@ -95,11 +96,20 @@ pub fn status(app: Option<&str>, deploy_id: Option<&str>) {
         "commit": commit_short,
         "status": deploy_status,
         "app_status": app_status,
+        "status_semantics": {
+            "status": "deploy_attempt",
+            "app_status": "currently_serving_app",
+        },
         "url": gateway_url,
         "image_built": image_built,
         "service_ready": service_ready,
         "host_bound": host_bound,
+        "failure_reason": failure_reason(&deploy),
+        "failing_stage": failure_stage(&deploy),
         "created_at": deploy.created_at,
+        "started_at": deploy.started_at,
+        "finished_at": deploy.finished_at,
+        "duration_ms": deploy.duration_ms,
         "next_command": next_command,
     });
 
@@ -111,10 +121,10 @@ pub fn status(app: Option<&str>, deploy_id: Option<&str>) {
     let header = format!("{} ({})", app_name, deploy.id);
     output::bold_line(&header);
     output::dim_line(&format!(
-        "  status:        {}",
+        "  status:        {} (deploy attempt)",
         colored_status(deploy_status)
     ));
-    output::dim_line(&format!("  app_status:    {}", app_status));
+    output::dim_line(&format!("  app_status:    {} (current app)", app_status));
     output::dim_line(&format!(
         "  commit:        {}",
         commit_short.unwrap_or("\u{2014}")
@@ -126,6 +136,14 @@ pub fn status(app: Option<&str>, deploy_id: Option<&str>) {
     output::dim_line(&format!("  image_built:   {}", image_built));
     output::dim_line(&format!("  service_ready: {}", service_ready));
     output::dim_line(&format!("  host_bound:    {}", host_bound));
+    output::dim_line(&format!(
+        "  duration:      {}",
+        format_duration_ms(deploy.duration_ms)
+    ));
+    if let Some(reason) = failure_reason(&deploy) {
+        let stage = failure_stage(&deploy).unwrap_or("unknown");
+        output::dim_line(&format!("  failure:       {stage}: {reason}"));
+    }
     output::dim_line(&format!("  next_command:  {}", next_command));
 }
 
@@ -144,13 +162,46 @@ fn derive_next_command(deploy_status: &str, host_bound: bool) -> &'static str {
     }
 }
 
-pub fn list(app: Option<&str>) {
+fn deploy_list_payload(result: &crate::api_types::ListDeploysResponse) -> serde_json::Value {
+    let deploys: Vec<serde_json::Value> = result
+        .deploys
+        .iter()
+        .map(|d| {
+            serde_json::json!({
+                "id": &d.id,
+                "status": &d.status,
+                "url": &d.url,
+                "runtime": &d.runtime,
+                "created_at": &d.created_at,
+                "started_at": &d.started_at,
+                "finished_at": &d.finished_at,
+                "duration_ms": &d.duration_ms,
+                "failure_reason": failure_reason(d),
+                "failing_stage": failure_stage(d),
+                "triggered_by": &d.triggered_by,
+                "commit_sha": &d.commit_sha,
+                "environment_name": &d.environment_name,
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "deploys": deploys,
+        "total": result.total,
+        "page": result.page,
+        "per_page": result.per_page,
+        "limit": result.limit,
+        "next_cursor": result.next_cursor,
+        "has_more": result.has_more,
+    })
+}
+
+pub fn list(app: Option<&str>, limit: u32, cursor: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);
 
     let (app_id, _app_name) = super::resolve_app_from_config(&client, app);
 
-    let result = match client.list_deploys(&app_id) {
+    let result = match client.list_deploys_paginated(&app_id, limit, cursor) {
         Ok(r) => r,
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
@@ -160,10 +211,7 @@ pub fn list(app: Option<&str>) {
 
     if result.deploys.is_empty() {
         if output::is_json_mode() {
-            output::success(
-                "No deploys found.",
-                Some(serde_json::json!({"deploys": []})),
-            );
+            output::success("No deploys found.", Some(deploy_list_payload(&result)));
         } else {
             output::info("No deploys found.", None);
         }
@@ -183,13 +231,22 @@ pub fn list(app: Option<&str>) {
             let status = d.status.as_deref().unwrap_or("-");
             let env = d.environment_name.as_deref().unwrap_or("\u{2014}");
             let created = d.created_at.as_deref().unwrap_or("-");
+            let duration = format_duration_ms(d.duration_ms);
+            let failure = failure_reason(d)
+                .map(|reason| {
+                    let stage = failure_stage(d).unwrap_or("unknown");
+                    truncate_text(&format!("{stage}: {reason}"), 64)
+                })
+                .unwrap_or_else(|| "\u{2014}".to_string());
             vec![
                 short_id,
                 colored_status(status),
                 env.to_string(),
                 d.triggered_by.as_deref().unwrap_or("\u{2014}").to_string(),
                 commit.to_string(),
+                duration,
                 relative_time(created),
+                failure,
             ]
         })
         .collect();
@@ -201,17 +258,78 @@ pub fn list(app: Option<&str>) {
             "Env",
             "Triggered By",
             "Commit",
+            "Duration",
             "Created",
+            "Failure",
         ],
         &rows,
-        Some(output::to_value(&result)),
+        Some(deploy_list_payload(&result)),
     );
+    if let Some(next_cursor) = result.next_cursor.as_deref() {
+        let app_arg = app.map(|name| format!(" --app {name}")).unwrap_or_default();
+        output::dim_line(&format!(
+            "More deploys available. Next: floo deploys list{app_arg} --limit {} --cursor {next_cursor}",
+            result.limit.unwrap_or(limit)
+        ));
+    }
 }
 
 /// Check if a log string is meaningful (not empty or placeholder text).
 fn is_real_log(logs: &str) -> bool {
     let trimmed = logs.trim();
     !trimmed.is_empty() && trimmed != "[no message content]"
+}
+
+fn failure_stage(deploy: &Deploy) -> Option<&str> {
+    deploy
+        .failing_stage
+        .as_deref()
+        .or(deploy.failure_stage.as_deref())
+        .or(deploy
+            .failure_root_cause
+            .as_ref()
+            .and_then(|cause| cause.stage.as_deref()))
+        .or(deploy.failure_step.as_deref())
+}
+
+fn failure_reason(deploy: &Deploy) -> Option<&str> {
+    deploy
+        .failure_reason
+        .as_deref()
+        .or(deploy
+            .failure_root_cause
+            .as_ref()
+            .and_then(|cause| cause.reason.as_deref()))
+        .or(deploy.failure_message.as_deref())
+}
+
+fn format_duration_ms(duration_ms: Option<i64>) -> String {
+    let Some(duration_ms) = duration_ms else {
+        return "\u{2014}".to_string();
+    };
+    if duration_ms < 1000 {
+        return format!("{duration_ms}ms");
+    }
+    let total_seconds = duration_ms / 1000;
+    let minutes = total_seconds / 60;
+    let seconds = total_seconds % 60;
+    if minutes > 0 {
+        format!("{minutes}m {seconds}s")
+    } else {
+        format!("{seconds}s")
+    }
+}
+
+fn truncate_text(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    let mut truncated = value
+        .chars()
+        .take(max_chars.saturating_sub(1))
+        .collect::<String>();
+    truncated.push('\u{2026}');
+    truncated
 }
 
 /// Print deploy metadata header to stderr.
@@ -233,6 +351,14 @@ fn print_deploy_header(deploy: &Deploy) {
     output::dim_line(&format!("  Commit:  {commit}"));
     output::dim_line(&format!("  By:      {triggered_by}"));
     output::dim_line(&format!("  Created: {created}"));
+    output::dim_line(&format!(
+        "  Duration: {}",
+        format_duration_ms(deploy.duration_ms)
+    ));
+    if let Some(reason) = failure_reason(deploy) {
+        let stage = failure_stage(deploy).unwrap_or("unknown");
+        output::dim_line(&format!("  Failure: {stage}: {reason}"));
+    }
     output::dim_line("");
 }
 
@@ -279,7 +405,7 @@ pub fn logs(deploy_id: Option<&str>, app: Option<&str>, follow: bool) {
     };
 
     let status = deploy.status.as_deref().unwrap_or("unknown");
-    let is_terminal = TERMINAL_STATUSES.contains(&status);
+    let is_terminal = deploy_status::is_terminal(status);
 
     // JSON mode
     if output::is_json_mode() {
@@ -288,7 +414,7 @@ pub fn logs(deploy_id: Option<&str>, app: Option<&str>, follow: bool) {
             match stream_deploy_json(&client, &app_id, &deploy.id) {
                 Ok(d) => {
                     let final_status = d.status.as_deref().unwrap_or("unknown");
-                    if final_status == "failed" {
+                    if deploy_status::is_failure(final_status) {
                         process::exit(1);
                     }
                     return;
@@ -300,7 +426,8 @@ pub fn logs(deploy_id: Option<&str>, app: Option<&str>, follow: bool) {
                         e.code
                     );
                     let final_deploy = poll_deploy(&client, &app_id, &deploy);
-                    let is_failed = final_deploy.status.as_deref() == Some("failed");
+                    let is_failed =
+                        deploy_status::is_failure(final_deploy.status.as_deref().unwrap_or(""));
                     output::success(
                         "Deploy logs retrieved.",
                         Some(serde_json::json!({
@@ -316,7 +443,7 @@ pub fn logs(deploy_id: Option<&str>, app: Option<&str>, follow: bool) {
                 }
             }
         }
-        let is_failed = deploy.status.as_deref() == Some("failed");
+        let is_failed = deploy_status::is_failure(deploy.status.as_deref().unwrap_or(""));
         output::success(
             "Deploy logs retrieved.",
             Some(serde_json::json!({
@@ -344,12 +471,12 @@ pub fn logs(deploy_id: Option<&str>, app: Option<&str>, follow: bool) {
             // Try SSE stream as fallback for missing logs
             match stream_deploy(&client, &app_id, &deploy.id) {
                 Ok(final_deploy) => {
-                    if final_deploy.status.as_deref() == Some("failed") {
+                    if deploy_status::is_failure(final_deploy.status.as_deref().unwrap_or("")) {
                         process::exit(1);
                     }
                 }
                 Err(e) => {
-                    let base_msg = if status == "failed" {
+                    let base_msg = if deploy_status::is_failure(status) {
                         "No build logs captured for this deploy."
                     } else {
                         "No build logs available."
@@ -534,7 +661,9 @@ fn colored_status(status: &str) -> String {
     match status {
         "live" => status.green().bold().to_string(),
         "failed" => status.red().bold().to_string(),
-        "superseded" => status.dimmed().to_string(),
+        // superseded (a newer deploy replaced this) and cancelled (target env torn
+        // down before the deploy ran) are both moot terminals — dimmed, not error.
+        "superseded" | "cancelled" => status.dimmed().to_string(),
         "building" | "deploying" | "pending" => status.yellow().to_string(),
         _ => status.to_string(),
     }
@@ -571,7 +700,7 @@ pub fn watch(app: Option<&str>, commit: Option<&str>) {
     emit_deploy_found(&deploy, &app_name);
 
     let status = deploy.status.as_deref().unwrap_or("");
-    if TERMINAL_STATUSES.contains(&status) {
+    if deploy_status::is_terminal(status) {
         print_completed_deploy(&deploy);
         print_final_status(&deploy);
         return;
@@ -593,7 +722,7 @@ pub fn watch(app: Option<&str>, commit: Option<&str>) {
         // SSE stream may end before the deploy reaches a terminal state (e.g. connection
         // drop, server restart). If so, fall back to polling to wait for completion.
         let streamed_status = streamed.status.as_deref().unwrap_or("");
-        if !TERMINAL_STATUSES.contains(&streamed_status) {
+        if !deploy_status::is_terminal(streamed_status) {
             eprintln!("Stream ended in non-terminal state ({streamed_status}), falling back to polling...");
             poll_deploy(&client, &app_id, &streamed)
         } else {
@@ -604,7 +733,7 @@ pub fn watch(app: Option<&str>, commit: Option<&str>) {
             Ok(d) => {
                 // stream_deploy_json already emitted the "done" NDJSON event
                 let status = d.status.as_deref().unwrap_or("unknown");
-                if status == "failed" {
+                if deploy_status::is_failure(status) {
                     process::exit(1);
                 }
                 return;
@@ -729,37 +858,50 @@ fn print_final_status(deploy: &Deploy) {
             "status": status,
             "url": url,
         }));
-        if status == "failed" {
+        if deploy_status::is_failure(status) {
             process::exit(1);
         }
-    } else if status == "failed" {
-        output::error(
-            "Deploy failed.",
-            &ErrorCode::DeployFailed,
-            Some("Check build output above, or run `floo logs` for details."),
-        );
-        process::exit(1);
-    } else if status == "superseded" {
-        output::success(
-            "Deploy superseded by a newer deploy.",
-            Some(serde_json::json!({
-                "deploy": output::to_value(deploy),
-            })),
-        );
-    } else if !TERMINAL_STATUSES.contains(&status) {
-        output::error(
-            &format!("Deploy ended in unexpected state: {status}"),
-            &ErrorCode::DeployFailed,
-            Some("Check deploy status with `floo deploys list --app <name>`."),
-        );
-        process::exit(1);
-    } else {
-        output::success(
-            &format!("Deploy {status}: {url}"),
-            Some(serde_json::json!({
-                "deploy": output::to_value(deploy),
-            })),
-        );
+        return;
+    }
+
+    // Human mode: report the terminal disposition. Matching on `classify` makes a
+    // newly-added terminal status a compile error here instead of silently falling
+    // through to the generic-success arm.
+    match deploy_status::classify(status) {
+        Some(deploy_status::Terminal::Failed) => {
+            output::error(
+                "Deploy failed.",
+                &ErrorCode::DeployFailed,
+                Some("Check build output above, or run `floo logs` for details."),
+            );
+            process::exit(1);
+        }
+        Some(deploy_status::Terminal::Superseded) => {
+            output::success(
+                "Deploy superseded by a newer deploy.",
+                Some(serde_json::json!({ "deploy": output::to_value(deploy) })),
+            );
+        }
+        Some(deploy_status::Terminal::Cancelled) => {
+            output::success(
+                "Deploy cancelled: its target environment was removed before it ran.",
+                Some(serde_json::json!({ "deploy": output::to_value(deploy) })),
+            );
+        }
+        Some(deploy_status::Terminal::Live) => {
+            output::success(
+                &format!("Deploy {status}: {url}"),
+                Some(serde_json::json!({ "deploy": output::to_value(deploy) })),
+            );
+        }
+        None => {
+            output::error(
+                &format!("Deploy ended in unexpected state: {status}"),
+                &ErrorCode::DeployFailed,
+                Some("Check deploy status with `floo deploys list --app <name>`."),
+            );
+            process::exit(1);
+        }
     }
 }
 
@@ -817,17 +959,6 @@ mod tests {
         assert!(!colored_status("deploying").is_empty());
         assert!(!colored_status("pending").is_empty());
         assert!(!colored_status("unknown").is_empty());
-    }
-
-    #[test]
-    fn test_superseded_is_terminal_status() {
-        // TERMINAL_STATUSES must include "superseded" so poll/stream loops exit
-        // when the platform marks a deploy as superseded. Before this was added,
-        // `floo deploys watch` would spin for POLL_TIMEOUT (10 min) on superseded
-        // deploys. See feedback 1748af72 (2026-04-24).
-        assert!(TERMINAL_STATUSES.contains(&"superseded"));
-        assert!(TERMINAL_STATUSES.contains(&"live"));
-        assert!(TERMINAL_STATUSES.contains(&"failed"));
     }
 
     #[test]

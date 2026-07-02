@@ -109,6 +109,19 @@ pub fn run(service: &str, app_flag: Option<String>, command: Vec<String>) {
                 None,
             );
         }
+        if !session.withheld_secret_keys.is_empty() {
+            output::info(
+                &format!(
+                    "  Write-only secrets withheld (floo never returns their values): {}",
+                    session.withheld_secret_keys.join(", ")
+                ),
+                None,
+            );
+            output::info(
+                "  Set them in your local shell if the app needs them.",
+                None,
+            );
+        }
         eprintln!();
     }
 
@@ -154,6 +167,7 @@ pub fn run(service: &str, app_flag: Option<String>, command: Vec<String>) {
                 "exit_code": exit_code,
                 "session_id": session_id,
                 "postgres_authorized": session.postgres_authorized,
+                "withheld_secret_keys": session.withheld_secret_keys,
             }
         }));
     }

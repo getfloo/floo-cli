@@ -113,6 +113,18 @@ pub struct MemberRoleResponse {
     pub role: String,
 }
 
+/// Response from creating an org invite. `invite_url` is a one-time link and is
+/// treated as secret-shaped by the redactor (see `redact::SECRET_FIELD_NAMES`),
+/// so it is redacted in `--json` output unless `--reveal-secrets` is passed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateInviteResponse {
+    pub email: String,
+    pub role: String,
+    pub status: String,
+    pub invite_url: String,
+    pub expires_at: String,
+}
+
 // --- App ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -147,8 +159,24 @@ pub struct ListAppsResponse {
 // --- Deploy ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FailureRootCause {
+    pub stage: Option<String>,
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub details: Option<serde_json::Value>,
+    #[serde(default)]
+    pub first_failure_at: Option<String>,
+    #[serde(default)]
+    pub root_cause_event_excerpt: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Deploy {
     pub id: String,
+    #[serde(default)]
+    pub app_id: Option<String>,
+    #[serde(default)]
+    pub environment_id: Option<String>,
     pub status: Option<String>,
     pub url: Option<String>,
     pub build_logs: Option<String>,
@@ -158,7 +186,33 @@ pub struct Deploy {
     pub triggered_by: Option<String>,
     pub commit_sha: Option<String>,
     #[serde(default)]
+    pub github_ref: Option<String>,
+    #[serde(default)]
     pub environment_name: Option<String>,
+    #[serde(default)]
+    pub preview_slug: Option<String>,
+    #[serde(default)]
+    pub source_branch: Option<String>,
+    #[serde(default)]
+    pub failure_category: Option<String>,
+    #[serde(default)]
+    pub failure_message: Option<String>,
+    #[serde(default)]
+    pub failure_step: Option<String>,
+    #[serde(default)]
+    pub failure_root_cause: Option<FailureRootCause>,
+    #[serde(default)]
+    pub failure_reason: Option<String>,
+    #[serde(default)]
+    pub failure_stage: Option<String>,
+    #[serde(default)]
+    pub failing_stage: Option<String>,
+    #[serde(default)]
+    pub started_at: Option<String>,
+    #[serde(default)]
+    pub finished_at: Option<String>,
+    #[serde(default)]
+    pub duration_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -169,6 +223,18 @@ pub struct AppPasswordResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListDeploysResponse {
     pub deploys: Vec<Deploy>,
+    #[serde(default)]
+    pub total: Option<u64>,
+    #[serde(default)]
+    pub page: Option<u32>,
+    #[serde(default)]
+    pub per_page: Option<u32>,
+    #[serde(default)]
+    pub limit: Option<u32>,
+    #[serde(default)]
+    pub next_cursor: Option<String>,
+    #[serde(default)]
+    pub has_more: bool,
 }
 
 // --- Env Var ---
@@ -183,6 +249,11 @@ pub struct EnvVar {
     // `None` = app-level var. Absent on `env get` responses (defaults to None).
     #[serde(default)]
     pub service_id: Option<String>,
+    // Write-only marker (#200 / getfloo/floo#1018): the API never returns this
+    // row's value in plaintext. Absent on `env get` responses (a write-only row
+    // refuses `get` with ENV_VAR_WRITE_ONLY before a body is ever built).
+    #[serde(default)]
+    pub is_secret: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -198,6 +269,8 @@ pub struct SetEnvVarResponse {
     pub service_id: Option<String>,
     pub key: String,
     pub masked_value: Option<String>,
+    #[serde(default)]
+    pub is_secret: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -327,6 +400,115 @@ pub struct ManagedPostgresBackupsResponse {
 pub struct ManagedPostgresRestoreResponse {
     pub backup: ManagedPostgresBackup,
     pub restored_at: String,
+}
+
+// --- Preview database branches ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewDatabaseBranch {
+    pub id: Option<String>,
+    pub managed_service_id: Option<String>,
+    pub name: String,
+    pub source_environment: String,
+    pub preview_slug: String,
+    pub resource_status: String,
+    pub hydration_mode: String,
+    pub schema_name: Option<String>,
+    pub role_name: Option<String>,
+    pub base_schema_name: Option<String>,
+    pub base_role_name: Option<String>,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+    pub expires_at: Option<String>,
+    pub reset_eligible: bool,
+    pub reset_blocked_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewDatabaseBranchListResponse {
+    pub database_branches: Vec<PreviewDatabaseBranch>,
+    pub total: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewManagedResourceBranch {
+    pub id: String,
+    pub managed_service_id: Option<String>,
+    pub resource_type: String,
+    pub name: String,
+    pub resource_key: String,
+    pub source_environment: String,
+    pub preview_slug: String,
+    pub resource_status: String,
+    pub hydration_mode: String,
+    pub schema_name: Option<String>,
+    pub role_name: Option<String>,
+    pub base_schema_name: Option<String>,
+    pub base_role_name: Option<String>,
+    pub database_id: Option<String>,
+    pub bucket_name: Option<String>,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+    pub expires_at: Option<String>,
+    pub reset_eligible: bool,
+    pub reset_blocked_reason: Option<String>,
+    #[serde(default)]
+    pub dev_prod_untouched: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewManagedResourceBranchListResponse {
+    pub resources: Vec<PreviewManagedResourceBranch>,
+    pub total: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewResource {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub resource_type: String,
+    pub name: String,
+    pub status: String,
+    pub external_resource_id: Option<String>,
+    pub expires_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewEnvironment {
+    pub id: String,
+    pub app_id: String,
+    pub slug: String,
+    pub source_branch: Option<String>,
+    pub pr_number: Option<u32>,
+    pub url: Option<String>,
+    pub latest_deploy_id: Option<String>,
+    pub latest_deploy_status: Option<String>,
+    pub latest_commit_sha: Option<String>,
+    pub ttl_hours: Option<u32>,
+    pub expires_at: Option<String>,
+    #[serde(default)]
+    pub resources: Vec<PreviewResource>,
+    #[serde(default)]
+    pub database_branches: Vec<PreviewDatabaseBranch>,
+    #[serde(default)]
+    pub managed_resource_branches: Vec<PreviewManagedResourceBranch>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewEnvironmentListResponse {
+    pub previews: Vec<PreviewEnvironment>,
+    pub total: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CreatePreviewDeployRequest<'a> {
+    pub runtime: &'a str,
+    pub environment: &'a str,
+    pub branch: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit_sha: Option<&'a str>,
+    #[serde(rename = "ref", skip_serializing_if = "Option::is_none")]
+    pub ref_name: Option<&'a str>,
 }
 
 // --- Preflight ---
@@ -547,6 +729,10 @@ pub struct DevSessionResponse {
     pub session_id: String,
     pub services: HashMap<String, HashMap<String, String>>,
     pub postgres_authorized: bool,
+    /// Keys withheld from the env maps because their rows are write-only
+    /// (the API also injects FLOO_WITHHELD_SECRET_KEYS into affected maps).
+    #[serde(default)]
+    pub withheld_secret_keys: Vec<String>,
 }
 
 // --- Cron Jobs ---
@@ -623,6 +809,14 @@ pub struct AccountsDoctorResponse {
     pub requested: AccountsDoctorRequested,
     pub serving: Vec<AccountsDoctorRoute>,
     pub latest_deploy: Option<AccountsDoctorLatestDeploy>,
+    /// Single health verdict (#1156). `Option` + `#[serde(default)]` so a
+    /// response from an API predating this field deserializes as `None` instead
+    /// of erroring. The command does not trust the incoming value: it derives
+    /// the verdict from `drift` (the evidence it renders) and canonicalizes it
+    /// back onto this field, so the emitted body always carries a definitive
+    /// bool that agrees with both the drift list and the exit code.
+    #[serde(default)]
+    pub drift_detected: Option<bool>,
     pub drift: Vec<AccountsDoctorDrift>,
 }
 
@@ -636,6 +830,12 @@ pub struct AnalyticsSummary {
     pub avg_latency_ms: Option<i64>,
     pub p95_latency_ms: Option<i64>,
     pub unique_users: Option<i64>,
+    // Requests the gateway answered without proxying to the backend (rejections
+    // + gateway-owned endpoints). Explains why latency is measured over fewer
+    // requests than total. `#[serde(default)]` keeps the CLI working against an
+    // API that predates the field (None = unknown).
+    #[serde(default)]
+    pub gateway_handled_requests: Option<i64>,
     pub status_code_breakdown: Option<HashMap<String, i64>>,
     pub total_apps_with_traffic: Option<i64>,
 }
@@ -680,4 +880,21 @@ pub struct AppAnalyticsEntry {
     pub total_errors: i64,
     pub error_rate: f64,
     pub avg_latency_ms: Option<i64>,
+}
+
+// --- Notification preferences ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationPreference {
+    pub category: String,
+    pub label: String,
+    pub description: String,
+    pub enabled: bool,
+    // True while inheriting the system default; false once the user has chosen.
+    pub is_default: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationPreferencesResponse {
+    pub preferences: Vec<NotificationPreference>,
 }

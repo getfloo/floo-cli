@@ -258,20 +258,20 @@ For server-side code (Node.js, Python), use `API_URL` or `WEB_URL` from `process
 
 ## Env Var Scoping in Multi-Service Apps
 
-In multi-service apps, env vars are scoped per service. You MUST specify `--services` when setting variables:
+In multi-service apps, env vars are scoped per service. You MUST specify `--service` when setting variables:
 
 ```bash
 # Backend secrets — target api/worker only
-floo env set DATABASE_URL=postgres://... --services api
-floo env set API_SECRET=sk_... --services api,worker
+floo env set DATABASE_URL=postgres://... --service api
+floo env set API_SECRET=sk_... --service api --service worker
 
 # Frontend config — target web only (public values only)
-floo env set VITE_API_URL=https://app.getfloo.com/api --services web
+floo env set VITE_API_URL=https://app.getfloo.com/api --service web
 ```
 
 **CRITICAL:** Never set backend secrets (`DATABASE_URL`, API keys, tokens) on frontend services. Build-time variables (`VITE_*`, `NEXT_PUBLIC_*`, `REACT_APP_*`) are baked into the JS bundle and visible to end users.
 
-Managed service env vars (`DATABASE_URL`, `REDIS_URL`, `STORAGE_BUCKET`) are provisioned at app scope (available to all services). If your app has a frontend service that should NOT see these, use `--services` to set them on specific backend services instead.
+Managed service env vars (`DATABASE_URL`, `REDIS_URL`, `STORAGE_BUCKET`) are provisioned at app scope (available to all services). If your app has a frontend service that should NOT see these, use `--service` to set them on specific backend services instead.
 
 ## General Rules
 

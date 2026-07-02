@@ -253,7 +253,12 @@ fn lowercase_field_is_secret(name: &str) -> bool {
     SECRET_FIELD_NAMES.iter().any(|n| *n == lower)
 }
 
-fn env_var_key_is_secret(name: &str) -> bool {
+/// Whether an env-var name is secret-bearing, by the SAME rule the `--json`
+/// redaction boundary uses (UPPER_SNAKE_CASE, a secret token, not on the
+/// allowlist). Exposed so preflight's web-secret scan flags exactly what the
+/// redactor would redact — no parallel heuristic that drifts (e.g. one that
+/// flags the allowlisted `PUBLIC_KEY`).
+pub fn env_var_key_is_secret(name: &str) -> bool {
     if name.is_empty() {
         return false;
     }

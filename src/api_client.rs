@@ -238,6 +238,23 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn get_notification_preferences(
+        &self,
+    ) -> Result<NotificationPreferencesResponse, FlooApiError> {
+        let resp = self.get("/v1/notification-preferences")?;
+        self.handle_response(resp)
+    }
+
+    pub fn set_notification_preference(
+        &self,
+        category: &str,
+        enabled: bool,
+    ) -> Result<NotificationPreferencesResponse, FlooApiError> {
+        let body = serde_json::json!({ "category": category, "enabled": enabled });
+        let resp = self.patch_json("/v1/notification-preferences", &body)?;
+        self.handle_response(resp)
+    }
+
     pub fn update_member_role(
         &self,
         org_id: &str,
@@ -246,6 +263,17 @@ impl FlooClient {
     ) -> Result<MemberRoleResponse, FlooApiError> {
         let body = serde_json::json!({"role": role});
         let resp = self.patch_json(&format!("/v1/orgs/{org_id}/members/{user_id}"), &body)?;
+        self.handle_response(resp)
+    }
+
+    pub fn create_org_invite(
+        &self,
+        org_id: &str,
+        email: &str,
+        role: &str,
+    ) -> Result<CreateInviteResponse, FlooApiError> {
+        let body = serde_json::json!({"email": email, "role": role});
+        let resp = self.post_json(&format!("/v1/orgs/{org_id}/invites"), &body)?;
         self.handle_response(resp)
     }
 
@@ -405,7 +433,32 @@ impl FlooClient {
     }
 
     pub fn list_deploys(&self, app_id: &str) -> Result<ListDeploysResponse, FlooApiError> {
-        let resp = self.get(&format!("/v1/apps/{app_id}/deploys"))?;
+        let resp = self.get_with_query(
+            &format!("/v1/apps/{app_id}/deploys"),
+            &[("include_build_logs", "false")],
+        )?;
+        self.handle_response(resp)
+    }
+
+    pub fn list_deploys_paginated(
+        &self,
+        app_id: &str,
+        limit: u32,
+        cursor: Option<&str>,
+    ) -> Result<ListDeploysResponse, FlooApiError> {
+        let limit_value = limit.to_string();
+        let mut owned_query: Vec<(&str, String)> = vec![
+            ("include_build_logs", "false".to_string()),
+            ("limit", limit_value),
+        ];
+        if let Some(cursor) = cursor {
+            owned_query.push(("cursor", cursor.to_string()));
+        }
+        let query: Vec<(&str, &str)> = owned_query
+            .iter()
+            .map(|(key, value)| (*key, value.as_str()))
+            .collect();
+        let resp = self.get_with_query(&format!("/v1/apps/{app_id}/deploys"), &query)?;
         self.handle_response(resp)
     }
 
@@ -507,12 +560,21 @@ impl FlooClient {
         value: &str,
         service_id: Option<&str>,
         env: &str,
+        is_secret: bool,
     ) -> Result<SetEnvVarResponse, FlooApiError> {
         let mut body = serde_json::json!({"key": key, "value": value});
         if let Some(sid) = service_id {
             body.as_object_mut()
                 .unwrap()
                 .insert("service_id".to_string(), Value::String(sid.to_string()));
+        }
+        // Sent only when true: omitting the flag preserves an existing row's
+        // write-only marker server-side (sticky), so a plain re-set never
+        // silently downgrades a secret.
+        if is_secret {
+            body.as_object_mut()
+                .unwrap()
+                .insert("is_secret".to_string(), Value::Bool(true));
         }
         let resp = self.post_json(&format!("/v1/apps/{app_id}/env?env={env}"), &body)?;
         self.handle_response(resp)
@@ -572,10 +634,17 @@ impl FlooClient {
         env_vars: &[(String, String)],
         service_id: Option<&str>,
         env: &str,
+        is_secret: bool,
     ) -> Result<Value, FlooApiError> {
         let vars: Vec<Value> = env_vars
             .iter()
-            .map(|(k, v)| serde_json::json!({"key": k, "value": v}))
+            .map(|(k, v)| {
+                if is_secret {
+                    serde_json::json!({"key": k, "value": v, "is_secret": true})
+                } else {
+                    serde_json::json!({"key": k, "value": v})
+                }
+            })
             .collect();
         let mut body = serde_json::json!({"env_vars": vars});
         if let Some(sid) = service_id {
@@ -743,6 +812,132 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    // --- Preview database branches ---
+
+    pub fn list_previews(
+        &self,
+        app_id: &str,
+    ) -> Result<PreviewEnvironmentListResponse, FlooApiError> {
+        let resp = self.get(&format!("/v1/apps/{app_id}/previews"))?;
+        self.handle_response(resp)
+    }
+
+    pub fn get_preview(
+        &self,
+        app_id: &str,
+        preview_slug: &str,
+    ) -> Result<PreviewEnvironment, FlooApiError> {
+        let resp = self.get(&format!("/v1/apps/{app_id}/previews/{preview_slug}"))?;
+        self.handle_response(resp)
+    }
+
+    pub fn create_preview_deploy(
+        &self,
+        app_id: &str,
+        request: &CreatePreviewDeployRequest<'_>,
+    ) -> Result<Deploy, FlooApiError> {
+        let mut body = serde_json::json!({
+            "runtime": request.runtime,
+            "environment": request.environment,
+            "branch": request.branch,
+        });
+        if let Some(commit_sha) = request.commit_sha {
+            body["commit_sha"] = Value::String(commit_sha.to_string());
+        }
+        if let Some(ref_name) = request.ref_name {
+            body["ref"] = Value::String(ref_name.to_string());
+        }
+        let resp = self.post_json(&format!("/v1/apps/{app_id}/deploys"), &body)?;
+        self.handle_response(resp)
+    }
+
+    pub fn delete_preview(&self, app_id: &str, preview_slug: &str) -> Result<(), FlooApiError> {
+        let resp = self.delete(&format!("/v1/apps/{app_id}/previews/{preview_slug}"))?;
+        if resp.status().as_u16() == 204 {
+            return Ok(());
+        }
+        self.handle_response_value(resp)?;
+        Ok(())
+    }
+
+    pub fn list_preview_database_branches(
+        &self,
+        app_id: &str,
+        preview_slug: &str,
+    ) -> Result<PreviewDatabaseBranchListResponse, FlooApiError> {
+        let resp = self.get(&format!(
+            "/v1/apps/{app_id}/previews/{preview_slug}/database-branches"
+        ))?;
+        self.handle_response(resp)
+    }
+
+    pub fn get_preview_database_branch(
+        &self,
+        app_id: &str,
+        preview_slug: &str,
+        branch_name: &str,
+    ) -> Result<PreviewDatabaseBranch, FlooApiError> {
+        let resp = self.get(&format!(
+            "/v1/apps/{app_id}/previews/{preview_slug}/database-branches/{branch_name}"
+        ))?;
+        self.handle_response(resp)
+    }
+
+    pub fn reset_preview_database_branch(
+        &self,
+        app_id: &str,
+        preview_slug: &str,
+        branch_name: &str,
+    ) -> Result<PreviewDatabaseBranch, FlooApiError> {
+        let resp = self.post_json(
+            &format!(
+                "/v1/apps/{app_id}/previews/{preview_slug}/database-branches/{branch_name}/reset"
+            ),
+            &serde_json::json!({}),
+        )?;
+        self.handle_response(resp)
+    }
+
+    pub fn list_preview_managed_resource_branches(
+        &self,
+        app_id: &str,
+        preview_slug: &str,
+    ) -> Result<PreviewManagedResourceBranchListResponse, FlooApiError> {
+        let resp = self.get(&format!(
+            "/v1/apps/{app_id}/previews/{preview_slug}/resources"
+        ))?;
+        self.handle_response(resp)
+    }
+
+    pub fn get_preview_managed_resource_branch(
+        &self,
+        app_id: &str,
+        preview_slug: &str,
+        resource_key: &str,
+    ) -> Result<PreviewManagedResourceBranch, FlooApiError> {
+        let encoded_resource_key = resource_key.replace(':', "%3A");
+        let resp = self.get(&format!(
+            "/v1/apps/{app_id}/previews/{preview_slug}/resources/{encoded_resource_key}"
+        ))?;
+        self.handle_response(resp)
+    }
+
+    pub fn reset_preview_managed_resource_branch(
+        &self,
+        app_id: &str,
+        preview_slug: &str,
+        resource_key: &str,
+    ) -> Result<PreviewManagedResourceBranch, FlooApiError> {
+        let encoded_resource_key = resource_key.replace(':', "%3A");
+        let resp = self.post_json(
+            &format!(
+                "/v1/apps/{app_id}/previews/{preview_slug}/resources/{encoded_resource_key}/reset"
+            ),
+            &serde_json::json!({}),
+        )?;
+        self.handle_response(resp)
+    }
+
     // --- Preflight ---
 
     pub fn preflight(
@@ -834,6 +1029,7 @@ impl FlooClient {
         since: Option<&str>,
         severity: Option<&str>,
         service: Option<&str>,
+        cron: Option<&str>,
         search: Option<&str>,
         deployment: Option<&str>,
         environment: Option<&str>,
@@ -849,6 +1045,9 @@ impl FlooClient {
         }
         if let Some(svc) = service {
             params.push(("service", svc));
+        }
+        if let Some(c) = cron {
+            params.push(("cron", c));
         }
         if let Some(q) = search {
             params.push(("search", q));

@@ -16,13 +16,25 @@ pub fn accounts(app_flag: Option<&str>) {
     let client = super::init_client(None);
     let (app_id, _app_name) = super::resolve_app_from_config(&client, app_flag);
 
-    let result = match client.diagnose_accounts(&app_id) {
+    let mut result = match client.diagnose_accounts(&app_id) {
         Ok(r) => r,
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
+
+    // Single health verdict, derived from the `drift` list this command renders
+    // as evidence — so the verdict can never contradict its own evidence (the
+    // bug class #1156 fights). Deriving from the list rather than trusting the
+    // API's standalone `drift_detected` bit keeps the CLI internally coherent
+    // even against an inconsistent API: the exit code, the JSON body, and the
+    // human "No drift detected." header all key off the same `drift` list. The
+    // API field (`drift_detected == bool(drift)` by contract) still serves
+    // direct-API consumers; here we canonicalize it onto the response so the
+    // emitted body always carries a definitive value.
+    let drift_detected = !result.drift.is_empty();
+    result.drift_detected = Some(drift_detected);
 
     if output::is_json_mode() {
         // Agents read the structured response directly; rendering decisions
@@ -31,18 +43,14 @@ pub fn accounts(app_flag: Option<&str>) {
             "Accounts doctor diagnosis.",
             Some(output::to_value(&result)),
         );
-        // Exit non-zero when drift was found so scripted agents can branch
-        // on `floo doctor accounts --json` exit code without parsing the
-        // body. Same convention as `preflight` and `db migrate --dry-run`.
-        if !result.drift.is_empty() {
-            process::exit(1);
-        }
-        return;
+    } else {
+        render_human(&result);
     }
 
-    render_human(&result);
-
-    if !result.drift.is_empty() {
+    // Exit non-zero iff drift was detected so scripted agents can branch on the
+    // `floo doctor accounts --json` exit code without parsing the body. Same
+    // convention as `preflight` and `db migrate --dry-run`.
+    if drift_detected {
         process::exit(1);
     }
 }

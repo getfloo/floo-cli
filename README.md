@@ -122,9 +122,9 @@ Contributions are welcome! Please:
 
 ## Documentation
 
-- [Getting Started](https://docs.getfloo.com)
-- [CLI Reference](https://docs.getfloo.com/cli)
-- [API Reference](https://docs.getfloo.com/api)
+- [Getting Started](https://getfloo.com/docs/introduction)
+- [CLI Reference](https://getfloo.com/docs/cli/overview)
+- [Configuration Reference](https://getfloo.com/docs/reference/config-spec)
 
 ## License
 

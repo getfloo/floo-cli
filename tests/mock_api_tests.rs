@@ -130,21 +130,111 @@ fn mock_services_single(server: &mut Server) -> Mock {
         .create()
 }
 
-/// Mock two user-managed services (api + web).
-fn mock_services_multi(server: &mut Server) -> Mock {
-    server
-        .mock(
-            "GET",
-            format!("/v1/apps/{TEST_APP_ID}/services").as_str(),
-        )
-        .match_query(Matcher::AllOf(vec![
-            Matcher::UrlEncoded("page".into(), "1".into()),
-            Matcher::UrlEncoded("per_page".into(), "100".into()),
-        ]))
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(r#"{"services":[{"id":"svc-api-1","name":"api","type":"api","status":"live","cloud_run_url":"https://api.floo.app","port":8000},{"id":"svc-web-1","name":"web","type":"web","status":"live","cloud_run_url":"https://web.floo.app","port":3000}]}"#)
-        .create()
+fn preview_branch_json(name: &str, status: &str, reset_eligible: bool) -> String {
+    let blocked = if reset_eligible {
+        "null".to_string()
+    } else {
+        r#""latest deploy is building""#.to_string()
+    };
+    format!(
+        r#"{{
+            "id":"resource-{name}",
+            "managed_service_id":"ms-{name}",
+            "resource_type":"postgres",
+            "name":"{name}",
+            "resource_key":"postgres:{name}",
+            "source_environment":"dev",
+            "preview_slug":"feat-db-abcde",
+            "resource_status":"{status}",
+            "hydration_mode":"clone-dev",
+            "schema_name":"app_default_preview_feat_db_abcde",
+            "role_name":"floo_app_default_preview_feat_db_abcde",
+            "base_schema_name":"app_default_dev",
+            "base_role_name":"floo_app_default_dev",
+            "database_id":null,
+            "bucket_name":null,
+            "created_at":"2026-06-24T10:00:00Z",
+            "updated_at":"2026-06-24T10:01:00Z",
+            "expires_at":"2026-06-27T10:00:00Z",
+            "reset_eligible":{reset_eligible},
+            "reset_blocked_reason":{blocked},
+            "dev_prod_untouched":true
+        }}"#
+    )
+}
+
+fn preview_redis_branch_json(name: &str, status: &str, reset_eligible: bool) -> String {
+    let blocked = if reset_eligible {
+        "null".to_string()
+    } else {
+        r#""Preview Redis reset is not implemented.""#.to_string()
+    };
+    format!(
+        r#"{{
+            "id":"redis-resource-{name}",
+            "managed_service_id":"redis-ms-{name}",
+            "resource_type":"redis",
+            "name":"{name}",
+            "resource_key":"redis:{name}",
+            "source_environment":"dev",
+            "preview_slug":"feat-db-abcde",
+            "resource_status":"{status}",
+            "hydration_mode":"clone-dev",
+            "schema_name":null,
+            "role_name":null,
+            "base_schema_name":null,
+            "base_role_name":null,
+            "database_id":"preview-redis-{name}",
+            "bucket_name":null,
+            "created_at":"2026-06-24T10:00:00Z",
+            "updated_at":"2026-06-24T10:01:00Z",
+            "expires_at":"2026-06-27T10:00:00Z",
+            "reset_eligible":{reset_eligible},
+            "reset_blocked_reason":{blocked},
+            "dev_prod_untouched":true
+        }}"#
+    )
+}
+
+fn preview_detail_json(branches: &str) -> String {
+    format!(
+        r#"{{
+            "id":"env-preview-1",
+            "app_id":"{TEST_APP_ID}",
+            "slug":"feat-db-abcde",
+            "source_branch":"feat/db-branch",
+            "pr_number":42,
+            "url":"https://my-app-preview-feat-db-abcde.on.getfloo.com",
+            "latest_deploy_id":"deploy-preview-1",
+            "latest_deploy_status":"live",
+            "latest_commit_sha":"abc123",
+            "ttl_hours":72,
+            "expires_at":"2026-06-27T10:00:00Z",
+            "resources":[],
+            "database_branches":[{branches}],
+            "managed_resource_branches":[{branches}]
+        }}"#
+    )
+}
+
+fn preview_deploy_json(status: &str) -> String {
+    format!(
+        r#"{{
+            "id":"deploy-preview-1",
+            "app_id":"{TEST_APP_ID}",
+            "status":"{status}",
+            "runtime":"nodejs",
+            "url":"https://my-app-preview-feat-db-abcde.on.getfloo.com",
+            "build_logs":null,
+            "triggered_by":"manual",
+            "commit_sha":"abc123",
+            "environment_id":"env-preview-1",
+            "environment_name":"preview",
+            "preview_slug":"feat-db-abcde",
+            "source_branch":"feat/db-branch",
+            "created_at":"2026-06-24T10:00:00Z"
+        }}"#
+    )
 }
 
 // ───────────────────────── Apps ─────────────────────────
@@ -174,6 +264,126 @@ fn test_apps_list_json() {
         .stdout(predicate::str::contains(r#""apps":[{"#))
         .stdout(predicate::str::contains(TEST_APP_NAME))
         .stdout(predicate::str::contains(TEST_ORG_ID));
+}
+
+#[test]
+fn test_billing_spend_cap_get_json_uses_cents_key() {
+    // #1161: `spend-cap get` emits the cap as `spend_cap_cents`, consistent
+    // with `billing usage` and every other *_cents field. The bare `spend_cap`
+    // key that drifted between the two commands is gone.
+    let mut server = Server::new();
+    let home = setup_config(&server);
+
+    let _m = server
+        .mock("GET", "/v1/orgs/me")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"id":"{TEST_ORG_ID}","name":"Test Org","slug":"test-org","spend_cap":5000,"current_period_spend_cents":1200,"spend_cap_exceeded":false}}"#
+        ))
+        .create();
+
+    floo()
+        .args(["--json", "billing", "spend-cap", "get"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""spend_cap_cents":5000"#))
+        .stdout(predicate::str::contains(
+            r#""current_period_spend_cents":1200"#,
+        ))
+        // The drifted bare key (`"spend_cap":`) must not reappear.
+        .stdout(predicate::str::contains(r#""spend_cap":"#).not());
+}
+
+#[test]
+fn test_billing_usage_period_scopes_derived_fields() {
+    // #1161: `--period` must scope every period-derived field. The org's
+    // always-current-month columns (current_period_spend_cents=9000,
+    // spend_cap_exceeded=false) must NOT leak into a `--period last_month`
+    // view — that view's spend and exceeded flag come from the period-scoped
+    // breakdown (total_cost_usd=120.0 -> 12000c, over the 10000c cap).
+    let mut server = Server::new();
+    let home = setup_config(&server);
+
+    let _org = server
+        .mock("GET", "/v1/orgs/me")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"id":"{TEST_ORG_ID}","name":"Test Org","slug":"test-org","plan":"pro","spend_cap":10000,"current_period_spend_cents":9000,"spend_cap_exceeded":false}}"#
+        ))
+        .create();
+
+    let _limits = server
+        .mock("GET", "/v1/billing/limits")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"plan":"pro","max_spend_cap_cents":20000}"#)
+        .create();
+
+    let _breakdown = server
+        .mock("GET", "/v1/billing/orgs/me/cost-breakdown")
+        .match_query(Matcher::UrlEncoded("period".into(), "last_month".into()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"period":{"start":"2026-05-01T00:00:00Z","end":"2026-06-01T00:00:00Z","label":"Last month"},"total_cost_usd":120.0,"included_cost_usd":5.0,"apps":[]}"#,
+        )
+        .create();
+
+    floo()
+        .args(["--json", "billing", "usage", "--period", "last_month"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        // Period-scoped spend from the breakdown (12000c), not the org's 9000c.
+        .stdout(predicate::str::contains(r#""period_spend_cents":12000"#))
+        // Period-scoped exceeded (12000 >= 10000 cap), not the org's current false.
+        .stdout(predicate::str::contains(r#""spend_cap_exceeded":true"#))
+        // The stale current-month key is gone from `usage`.
+        .stdout(predicate::str::contains("current_period_spend_cents").not());
+}
+
+#[test]
+fn test_orgs_invite_json_assigns_role_and_redacts_url() {
+    // #1161: `orgs invite` resolves the current org, POSTs email + role in one
+    // step, and returns a one-time invite_url that is secret-shaped (redacted
+    // in JSON, never printed raw).
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _org = mock_org_me(&mut server);
+
+    let _invite = server
+        .mock("POST", format!("/v1/orgs/{TEST_ORG_ID}/invites").as_str())
+        .match_body(Matcher::PartialJson(serde_json::json!({
+            "email": "alice@example.com",
+            "role": "admin",
+        })))
+        .with_status(201)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"id":"inv-1","org_id":"org-uuid-5678","email":"alice@example.com","role":"admin","status":"pending","invited_by_id":"u-1","expires_at":"2026-07-01T00:00:00Z","created_at":"2026-06-26T00:00:00Z","invite_url":"https://app.getfloo.com/invite/secret-token-xyz"}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "orgs",
+            "invite",
+            "alice@example.com",
+            "--role",
+            "admin",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(r#""role":"admin""#))
+        // The one-time invite_url is secret-shaped: redacted, never raw.
+        .stdout(predicate::str::contains("secret-token-xyz").not())
+        .stdout(predicate::str::contains("contains_secrets"));
 }
 
 #[test]
@@ -1169,26 +1379,14 @@ fn test_domains_remove_json_with_yes_flag() {
 }
 
 #[test]
-fn test_domains_list_multi_service_requires_services_flag() {
+fn test_domains_list_is_app_level_on_multi_service() {
+    // #1161: custom domains are app/ingress-level, so `domains list` lists
+    // every domain on the app and never demands a service target — even on a
+    // multi-service app. It does not resolve services at all (no /services
+    // call is mocked here, and the command must still succeed).
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
-    let _services = mock_services_multi(&mut server);
-
-    floo()
-        .args(["--json", "domains", "list", "--app", TEST_APP_NAME])
-        .env("HOME", home.path())
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains("MULTIPLE_SERVICES_NO_TARGET"));
-}
-
-#[test]
-fn test_domains_list_multi_service_with_services_flag() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let _resolve = mock_resolve_app(&mut server);
-    let _services = mock_services_multi(&mut server);
 
     let _m_list = server
         .mock(
@@ -1201,15 +1399,7 @@ fn test_domains_list_multi_service_with_services_flag() {
         .create();
 
     floo()
-        .args([
-            "--json",
-            "domains",
-            "list",
-            "--app",
-            TEST_APP_NAME,
-            "--services",
-            "api",
-        ])
+        .args(["--json", "domains", "list", "--app", TEST_APP_NAME])
         .env("HOME", home.path())
         .assert()
         .success()
@@ -1394,10 +1584,14 @@ fn test_deploy_list_json() {
             "GET",
             format!("/v1/apps/{TEST_APP_ID}/deploys").as_str(),
         )
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("include_build_logs".into(), "false".into()),
+            Matcher::UrlEncoded("limit".into(), "20".into()),
+        ]))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
-            r#"{"deploys":[{"id":"deploy-123","status":"live","runtime":"nodejs","created_at":"2024-01-01T00:00:00Z"}]}"#,
+            r#"{"deploys":[{"id":"deploy-123","status":"live","runtime":"nodejs","created_at":"2024-01-01T00:00:00Z","started_at":"2024-01-01T00:00:00Z","finished_at":"2024-01-01T00:02:00Z","duration_ms":120000,"failure_reason":null,"failing_stage":null,"build_logs":"massive-build-log"}],"total":1,"page":1,"per_page":20,"limit":20,"next_cursor":"cursor-next","has_more":true}"#,
         )
         .create();
 
@@ -1408,7 +1602,54 @@ fn test_deploy_list_json() {
         .success()
         .stdout(predicate::str::contains(r#""success":true"#))
         .stdout(predicate::str::contains("deploys"))
-        .stdout(predicate::str::contains("deploy-123"));
+        .stdout(predicate::str::contains("deploy-123"))
+        .stdout(predicate::str::contains(r#""duration_ms":120000"#))
+        .stdout(predicate::str::contains(r#""next_cursor":"cursor-next""#))
+        .stdout(predicate::str::contains(r#""has_more":true"#))
+        .stdout(predicate::str::contains("build_logs").not())
+        .stdout(predicate::str::contains("massive-build-log").not());
+}
+
+#[test]
+fn test_deploy_list_json_sends_cursor_and_limit() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _m_list = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/deploys").as_str(),
+        )
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("include_build_logs".into(), "false".into()),
+            Matcher::UrlEncoded("limit".into(), "2".into()),
+            Matcher::UrlEncoded("cursor".into(), "cursor-1".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"deploys":[],"total":5,"page":2,"per_page":2,"limit":2,"next_cursor":"cursor-2","has_more":true}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "deploys",
+            "list",
+            "--app",
+            TEST_APP_NAME,
+            "--limit",
+            "2",
+            "--cursor",
+            "cursor-1",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""limit":2"#))
+        .stdout(predicate::str::contains(r#""next_cursor":"cursor-2""#));
 }
 
 #[test]
@@ -1608,6 +1849,37 @@ fn test_logs_human() {
         .stderr(predicate::str::contains("App:"))
         .stderr(predicate::str::contains(TEST_APP_NAME))
         .stderr(predicate::str::contains("Server started"));
+}
+
+#[test]
+fn test_logs_human_cron_rows_show_cron_prefix_even_when_filtered() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _m_logs = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/logs").as_str(),
+        )
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("limit".into(), "100".into()),
+            Matcher::UrlEncoded("cron".into(), "knowledge-sync".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"logs":[{"timestamp":"2024-01-01T00:00:00Z","severity":"DEFAULT","message":"sync complete","service_name":null,"cron_job_name":"knowledge-sync"}],"app_name":"my-app"}"#,
+        )
+        .create();
+
+    floo()
+        .args(["logs", "--app", TEST_APP_NAME, "--cron", "knowledge-sync"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("[cron:knowledge-sync]"))
+        .stderr(predicate::str::contains("sync complete"));
 }
 
 #[test]
@@ -1904,6 +2176,576 @@ fn test_services_list_json_returns_both_app_and_managed_services() {
         .stdout(predicate::str::contains("managed_services"))
         .stdout(predicate::str::contains("web"))
         .stdout(predicate::str::contains("postgres"));
+}
+
+#[test]
+fn test_db_branches_list_json_returns_preview_context_and_branch_contract() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let branch = preview_branch_json("default", "ready", true);
+    let _preview = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(preview_detail_json(&branch))
+        .create();
+    let _branches = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde/database-branches").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(r#"{{"database_branches":[{branch}],"total":1}}"#))
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "db",
+            "branches",
+            "list",
+            "feat-db-abcde",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""environment_name":"preview""#))
+        .stdout(predicate::str::contains(r#""source_environment":"dev""#))
+        .stdout(predicate::str::contains(r#""hydration_mode":"clone-dev""#))
+        .stdout(predicate::str::contains(r#""resource_status":"ready""#))
+        .stdout(predicate::str::contains(
+            "app_default_preview_feat_db_abcde",
+        ))
+        .stdout(predicate::str::contains("postgresql://").not())
+        .stdout(predicate::str::contains("password").not());
+}
+
+#[test]
+fn test_db_branches_list_empty_state_names_missing_managed_postgres() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _preview = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(preview_detail_json(""))
+        .create();
+    let _branches = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde/database-branches").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"database_branches":[],"total":0}"#)
+        .create();
+
+    floo()
+        .args([
+            "db",
+            "branches",
+            "list",
+            "feat-db-abcde",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "This preview has no managed Postgres attachment",
+        ));
+}
+
+#[test]
+fn test_db_branches_show_surfaces_branch_not_found_code() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _branch = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde/database-branches/analytics")
+                .as_str(),
+        )
+        .with_status(404)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"detail":{"code":"PREVIEW_DATABASE_BRANCH_NOT_FOUND","message":"Preview database branch not found."}}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "db",
+            "branches",
+            "show",
+            "feat-db-abcde",
+            "--name",
+            "analytics",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            "PREVIEW_DATABASE_BRANCH_NOT_FOUND",
+        ));
+}
+
+#[test]
+fn test_db_branches_source_branch_identifier_reports_ambiguous_preview() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let branch = preview_branch_json("default", "ready", true);
+    let preview_a = preview_detail_json(&branch);
+    let preview_b = preview_a.replace("feat-db-abcde", "feat-db-f00ba");
+    let _previews = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/previews").as_str())
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"previews":[{preview_a},{preview_b}],"total":2}}"#
+        ))
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "db",
+            "branches",
+            "list",
+            "feat/db-branch",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("AMBIGUOUS_PREVIEW_IDENTIFIER"));
+}
+
+#[test]
+fn test_db_branches_reset_refuses_without_confirmation_in_json_mode() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    floo()
+        .args([
+            "--json",
+            "db",
+            "branches",
+            "reset",
+            "feat-db-abcde",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("CONFIRMATION_REQUIRED"))
+        .stdout(predicate::str::contains("dev/prod untouched"))
+        .stdout(predicate::str::contains("--yes"));
+}
+
+#[test]
+fn test_db_branches_reset_with_yes_calls_preview_scoped_endpoint() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _reset = server
+        .mock(
+            "POST",
+            format!(
+                "/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde/database-branches/default/reset"
+            )
+            .as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(preview_branch_json("default", "ready", true))
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "db",
+            "branches",
+            "reset",
+            "feat-db-abcde",
+            "--app",
+            TEST_APP_NAME,
+            "--yes",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""dev_prod_untouched":true"#))
+        .stdout(predicate::str::contains(r#""scope":"preview""#))
+        .stdout(predicate::str::contains(r#""database_branch":{"#))
+        .stdout(predicate::str::contains("postgresql://").not());
+}
+
+#[test]
+fn test_preview_resources_list_json_returns_all_managed_resource_branches() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let postgres = preview_branch_json("default", "ready", true);
+    let redis = preview_redis_branch_json("cache", "ready", false);
+    let _preview = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(preview_detail_json(&format!("{postgres},{redis}")))
+        .create();
+    let _resources = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde/resources").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(r#"{{"resources":[{postgres},{redis}],"total":2}}"#))
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "previews",
+            "resources",
+            "list",
+            "feat-db-abcde",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("managed_resource_branches"))
+        .stdout(predicate::str::contains(
+            r#""resource_key":"postgres:default""#,
+        ))
+        .stdout(predicate::str::contains(r#""resource_key":"redis:cache""#))
+        .stdout(predicate::str::contains(
+            r#""database_id":"preview-redis-cache""#,
+        ))
+        .stdout(predicate::str::contains("postgresql://").not())
+        .stdout(predicate::str::contains("password").not());
+}
+
+#[test]
+fn test_preview_resources_reset_dry_run_and_yes_use_generic_endpoint() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    floo()
+        .args([
+            "--json",
+            "--dry-run",
+            "previews",
+            "resources",
+            "reset",
+            "feat-db-abcde",
+            "--app",
+            TEST_APP_NAME,
+            "--resource",
+            "redis:cache",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "preview_managed_resource_branch_reset",
+        ))
+        .stdout(predicate::str::contains(r#""resource_key":"redis:cache""#))
+        .stdout(predicate::str::contains(r#""dev_prod_untouched":true"#));
+
+    let _reset = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde/resources/redis%3Acache/reset")
+                .as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(preview_redis_branch_json("cache", "ready", true))
+        .create();
+    let _preview = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(preview_detail_json(&preview_redis_branch_json(
+            "cache", "ready", true,
+        )))
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "previews",
+            "resources",
+            "reset",
+            "feat-db-abcde",
+            "--app",
+            TEST_APP_NAME,
+            "--resource",
+            "redis:cache",
+            "--yes",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(r#""resource_key":"redis:cache""#))
+        .stdout(predicate::str::contains(r#""scope":"preview""#))
+        .stdout(predicate::str::contains(r#""dev_prod_untouched":true"#));
+}
+
+#[test]
+fn test_previews_up_json_sends_preview_deploy_payload_and_returns_single_object() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _deploy = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
+        .match_body(Matcher::PartialJson(serde_json::json!({
+            "environment": "preview",
+            "branch": "feat/db-branch",
+            "runtime": "nodejs",
+            "commit_sha": "abc123",
+            "ref": "refs/heads/feat/db-branch"
+        })))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(preview_deploy_json("pending"))
+        .create();
+    let _preview = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(preview_detail_json(""))
+        .create();
+
+    let assert = floo()
+        .args([
+            "--json",
+            "previews",
+            "up",
+            "--app",
+            TEST_APP_NAME,
+            "--branch",
+            "feat/db-branch",
+            "--runtime",
+            "nodejs",
+            "--commit-sha",
+            "abc123",
+            "--ref",
+            "refs/heads/feat/db-branch",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(
+            r#""deploy_id":"deploy-preview-1""#,
+        ))
+        .stdout(predicate::str::contains(
+            r#""source_branch":"feat/db-branch""#,
+        ))
+        .stdout(predicate::str::contains(r#""dev_prod_untouched":true"#));
+
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert_eq!(
+        output.lines().count(),
+        1,
+        "non-streaming JSON must be one object"
+    );
+}
+
+#[test]
+fn test_previews_status_resolves_preview_url_identifier() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _preview = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(preview_detail_json(""))
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "previews",
+            "status",
+            "https://my-app-preview-feat-db-abcde.on.getfloo.com",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""environment_name":"preview""#))
+        .stdout(predicate::str::contains(
+            r#""deploy_id":"deploy-preview-1""#,
+        ))
+        .stdout(predicate::str::contains(
+            r#""url":"https://my-app-preview-feat-db-abcde.on.getfloo.com""#,
+        ));
+}
+
+#[test]
+fn test_previews_delete_uses_preview_teardown_endpoint() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _preview = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(preview_detail_json(""))
+        .create();
+    let _delete = server
+        .mock(
+            "DELETE",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde").as_str(),
+        )
+        .with_status(204)
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "previews",
+            "delete",
+            "feat-db-abcde",
+            "--app",
+            TEST_APP_NAME,
+            "--yes",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""deleted":true"#))
+        .stdout(predicate::str::contains(r#""scope":"preview""#))
+        .stdout(predicate::str::contains(r#""dev_prod_untouched":true"#));
+}
+
+#[test]
+fn test_previews_logs_reads_latest_preview_deploy_logs() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _preview = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(preview_detail_json(""))
+        .create();
+    let _logs = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/logs").as_str())
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("limit".into(), "100".into()),
+            Matcher::UrlEncoded("deployment".into(), "deploy-preview-1".into()),
+            Matcher::UrlEncoded("environment".into(), "preview".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"logs":[{"timestamp":"2026-06-24T10:02:00Z","severity":"INFO","message":"Preview booted","deployment_id":"deploy-preview-1","service_name":"web"}],"total":1,"app_name":"my-app"}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "previews",
+            "logs",
+            "feat-db-abcde",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            r#""deploy_id":"deploy-preview-1""#,
+        ))
+        .stdout(predicate::str::contains("Preview booted"));
+}
+
+#[test]
+fn test_previews_up_surfaces_preview_isolation_failure() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _deploy = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/deploys").as_str(),
+        )
+        .with_status(422)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"detail":{"code":"PREVIEW_MANAGED_SERVICE_ISOLATION_UNAVAILABLE","message":"Preview managed-service isolation is unavailable."}}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "previews",
+            "up",
+            "--app",
+            TEST_APP_NAME,
+            "--branch",
+            "feat/db-branch",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            "PREVIEW_MANAGED_SERVICE_ISOLATION_UNAVAILABLE",
+        ))
+        .stdout(predicate::str::contains(
+            "Preview managed-service isolation could not be provisioned",
+        ));
 }
 
 #[test]
@@ -2455,6 +3297,10 @@ fn test_deploy_list_from_config() {
             "GET",
             format!("/v1/apps/{TEST_APP_ID}/deploys").as_str(),
         )
+        .match_query(Matcher::UrlEncoded(
+            "include_build_logs".into(),
+            "false".into(),
+        ))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(r#"{"deploys":[{"id":"deploy-123","status":"live","runtime":"nodejs","created_at":"2024-01-01T00:00:00Z"}]}"#)
@@ -3781,4 +4627,150 @@ fn test_db_query_json_passthrough_exposes_contract() {
         .stdout(predicate::str::contains(r#""success":true"#))
         .stdout(predicate::str::contains(r#""columns":["id","email"]"#))
         .stdout(predicate::str::contains("alice@example.com"));
+}
+
+const NOTIF_PREFS_DEFAULTS: &str = r#"{"preferences":[{"category":"deploy_success","label":"Deploy succeeded","description":"When a deploy finishes successfully.","enabled":false,"is_default":true},{"category":"billing","label":"Spend cap warnings","description":"When your org approaches its spend cap.","enabled":true,"is_default":true}]}"#;
+
+#[test]
+fn test_notifications_list_json() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+
+    let _m = server
+        .mock("GET", "/v1/notification-preferences")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(NOTIF_PREFS_DEFAULTS)
+        .create();
+
+    floo()
+        .args(["--json", "notifications", "list"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains("deploy_success"))
+        .stdout(predicate::str::contains(r#""enabled":false"#));
+}
+
+#[test]
+fn test_notifications_list_human_shows_category_and_label() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+
+    let _m = server
+        .mock("GET", "/v1/notification-preferences")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(NOTIF_PREFS_DEFAULTS)
+        .create();
+
+    floo()
+        .args(["notifications", "list"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("deploy_success"))
+        .stderr(predicate::str::contains("Deploy succeeded"));
+}
+
+#[test]
+fn test_notifications_set_json() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+
+    let _m = server
+        .mock("PATCH", "/v1/notification-preferences")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"preferences":[{"category":"deploy_success","label":"Deploy succeeded","description":"d","enabled":true,"is_default":false}]}"#,
+        )
+        .create();
+
+    floo()
+        .args(["--json", "notifications", "set", "deploy_success", "on"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(r#""enabled":true"#));
+}
+
+// ───────────────────────── Doctor (#1156) ─────────────────────────
+
+/// Mock GET /v1/apps/{id}/doctor/accounts with a caller-supplied body so each
+/// test controls the drift list and (optional) drift_detected field.
+fn mock_doctor_accounts(server: &mut Server, body: &str) -> Mock {
+    server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/doctor/accounts").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(body)
+        .create()
+}
+
+fn doctor_body(drift_detected_field: &str, drift_items: &str) -> String {
+    format!(
+        r#"{{"app_id":"{TEST_APP_ID}","app_name":"{TEST_APP_NAME}","requested":{{"access_mode":"accounts","access_policy":"invite","allowed_domains":[]}},"serving":[],"latest_deploy":null{drift_detected_field},"drift":[{drift_items}]}}"#
+    )
+}
+
+const DRIFT_ITEM: &str =
+    r#"{"kind":"access_mode_drift","summary":"gateway serves public","likely_fix":null}"#;
+
+#[test]
+fn test_doctor_accounts_json_no_drift_exits_zero() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _doctor = mock_doctor_accounts(&mut server, &doctor_body(r#","drift_detected":false"#, ""));
+
+    floo()
+        .args(["--json", "doctor", "accounts", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success() // exit 0 ⇔ drift_detected:false
+        .stdout(predicate::str::contains(r#""drift_detected":false"#));
+}
+
+#[test]
+fn test_doctor_accounts_json_drift_exits_one_and_body_agrees() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _doctor = mock_doctor_accounts(
+        &mut server,
+        &doctor_body(r#","drift_detected":true"#, DRIFT_ITEM),
+    );
+
+    // Exit code (1) and the body verdict (drift_detected:true) agree — the
+    // core #1156 contract: an agent branching on either reaches the same answer.
+    floo()
+        .args(["--json", "doctor", "accounts", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(r#""drift_detected":true"#))
+        .stdout(predicate::str::contains("access_mode_drift"));
+}
+
+#[test]
+fn test_doctor_accounts_json_old_api_no_field_derives_from_drift_list() {
+    // An API predating drift_detected omits the field; the CLI derives the
+    // verdict from the drift list and still emits a definitive bool + exit 1.
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _doctor = mock_doctor_accounts(&mut server, &doctor_body("", DRIFT_ITEM));
+
+    floo()
+        .args(["--json", "doctor", "accounts", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(r#""drift_detected":true"#));
 }

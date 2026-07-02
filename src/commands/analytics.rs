@@ -57,6 +57,22 @@ fn org_analytics(client: &crate::api_client::FlooClient, period: &str) {
     render_org_analytics(period, &data);
 }
 
+/// Print the gateway-handled count when present and non-zero. These requests
+/// (rejections + gateway-owned /__floo/* endpoints) never reached the customer
+/// backend, so they are excluded from the latency lines below — surfacing the
+/// count is what makes "100% errors, 0ms latency" legible (#1155 finding #4).
+fn render_gateway_handled(handled: Option<i64>, label_width: usize) {
+    if let Some(n) = handled {
+        if n > 0 {
+            eprintln!(
+                "  {:label_width$}{:>10}   (not proxied to backend; excluded from latency)",
+                "Gateway-handled",
+                format_number(n),
+            );
+        }
+    }
+}
+
 fn render_app_analytics(name: &str, period: &str, data: &AppAnalyticsResponse) {
     let summary = &data.summary;
     let total_requests = summary.total_requests;
@@ -73,6 +89,7 @@ fn render_app_analytics(name: &str, period: &str, data: &AppAnalyticsResponse) {
         format_number(total_errors),
         error_rate * 100.0
     );
+    render_gateway_handled(summary.gateway_handled_requests, 14);
 
     if let Some(avg) = summary.avg_latency_ms {
         eprintln!("  {:14}{:>10}", "Avg Latency", format!("{}ms", avg));
@@ -127,6 +144,7 @@ fn render_org_analytics(period: &str, data: &AppAnalyticsResponse) {
         "Apps w/ Traffic",
         format_number(apps_with_traffic)
     );
+    render_gateway_handled(summary.gateway_handled_requests, 18);
 
     // Org-level latency mirrors the per-app surface (request-weighted avg,
     // max of per-app p95s). Free-tier orgs see no latency line because the

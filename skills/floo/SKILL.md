@@ -175,8 +175,11 @@ floo env set DB_URL=... --app my-app --restart         # set and restart
 floo env list --app my-app --json                      # list all vars
 floo env import .env --app my-app                      # import from file
 floo env remove SECRET --app my-app                    # remove a var
-floo env set KEY=VAL --app my-app --services backend   # target a specific service (multi-service apps)
+floo env set KEY=VAL --app my-app --service backend   # target a specific service (multi-service apps)
+floo env set STRIPE_KEY --stdin --secret --app my-app  # write-only: floo never returns the value
 ```
+
+Write-only vars (`--secret`): `env get` refuses with `ENV_VAR_WRITE_ONLY`, `env list` shows `(write-only)`, exports return `value: null`, and `floo dev`/`floo run` withhold them (reported in `withheld_secret_keys`). Deploys still receive them. A later `env set` without the flag keeps the marker; to make a key readable again, unset it and set a fresh value. `run floo docs env` for the full contract.
 
 ### Logs and Debugging
 
@@ -185,6 +188,8 @@ floo logs --app my-app                             # last 100 lines
 floo logs --app my-app --since 1h --error          # errors in last hour
 floo logs --app my-app --live                      # stream real-time
 floo logs --app my-app --search "panic" --json     # search + JSON
+floo logs --app my-app --service web              # one service (multi-service apps)
+floo logs --app my-app --cron nightly-report       # a specific cron job's output
 ```
 
 ### Preflight and Redeploy
@@ -194,7 +199,7 @@ floo preflight                                     # audit declared vs deployed 
 floo preflight --json                              # structured plan for agents
 floo redeploy --app my-app                         # force redeploy (after env var changes)
 floo redeploy --restart --app my-app               # restart without rebuilding
-floo redeploy --services api --app my-app          # redeploy specific service
+floo redeploy --service api --app my-app          # redeploy specific service
 floo redeploy --preflight --app my-app             # preview redeploy without executing
 ```
 
@@ -237,7 +242,7 @@ Adding a custom domain is a three-step process:
 1. **Add the domain** — registers it with floo and returns CNAME instructions:
    ```bash
    floo domains add app.example.com --app my-app
-   # multi-service: floo domains add app.example.com --app my-app --services frontend
+   # multi-service: floo domains add app.example.com --app my-app --service frontend
    ```
 
 2. **Add a CNAME record** at the user's DNS provider (Cloudflare, Route 53, etc):
