@@ -2860,7 +2860,10 @@ pub(crate) fn sync_env_vars_if_needed(
             );
         }
 
-        if let Err(e) = client.import_env_vars(app_id, &vars, Some(svc_id), "dev") {
+        // `false` = omit the write-only flag: env-file values come from the
+        // repo (public by definition) and sticky semantics preserve any
+        // existing write-only marker server-side.
+        if let Err(e) = client.import_env_vars(app_id, &vars, Some(svc_id), "dev", false) {
             output::warn(&format!(
                 "Failed to import env vars for service '{svc_name}': {}",
                 e.message

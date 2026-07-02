@@ -770,6 +770,12 @@ pub enum EnvCommands {
         /// Read the value from a file. A single trailing newline is stripped.
         #[arg(long, value_name = "PATH", conflicts_with = "stdin")]
         value_file: Option<PathBuf>,
+
+        /// Mark the variable write-only: floo never returns its value.
+        /// Deploys still receive it. To change it, set a new value or unset it.
+        /// Omitting the flag on a later set keeps an existing write-only marker.
+        #[arg(long)]
+        secret: bool,
     },
 
     /// List environment variables for an app.
@@ -855,6 +861,11 @@ pub enum EnvCommands {
         /// Import env vars for all services using their configured env_file paths.
         #[arg(long)]
         all: bool,
+
+        /// Mark every imported variable write-only: floo never returns their
+        /// values. Deploys still receive them.
+        #[arg(long)]
+        secret: bool,
 
         /// Environment: dev or prod.
         #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
@@ -2083,15 +2094,25 @@ pub fn run() {
                 env,
                 stdin,
                 value_file,
-            } => commands::env::set(
-                &key_value,
-                app.as_deref(),
-                &services,
-                restart,
-                &env,
-                stdin,
-                value_file.as_deref(),
-            ),
+                secret,
+            } => {
+                let value_source = if stdin {
+                    commands::env::ValueSource::Stdin
+                } else if let Some(ref path) = value_file {
+                    commands::env::ValueSource::File(path)
+                } else {
+                    commands::env::ValueSource::Inline
+                };
+                commands::env::set(
+                    &key_value,
+                    app.as_deref(),
+                    &services,
+                    restart,
+                    &env,
+                    &value_source,
+                    secret,
+                )
+            }
             EnvCommands::List { app, services, env } => {
                 commands::env::list(app.as_deref(), &services, &env)
             }
@@ -2112,12 +2133,19 @@ pub fn run() {
                 app,
                 services,
                 all,
+                secret,
                 env,
             } => {
                 if all {
-                    commands::env::import_all_services(app.as_deref(), &env);
+                    commands::env::import_all_services(app.as_deref(), &env, secret);
                 } else {
-                    commands::env::import_vars(file.as_deref(), app.as_deref(), &services, &env);
+                    commands::env::import_vars(
+                        file.as_deref(),
+                        app.as_deref(),
+                        &services,
+                        &env,
+                        secret,
+                    );
                 }
             }
         },

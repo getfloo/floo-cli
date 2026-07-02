@@ -318,6 +318,20 @@ pub fn dev(args: DevArgs) {
         );
     }
 
+    if !session.withheld_secret_keys.is_empty() {
+        output::info(
+            &format!(
+                "  Write-only secrets withheld (floo never returns their values): {}",
+                session.withheld_secret_keys.join(", ")
+            ),
+            None,
+        );
+        output::info(
+            "  Set them in your local shell if the app needs them.",
+            None,
+        );
+    }
+
     // Check if redis env vars were provided for any service
     let has_redis = session
         .services
@@ -405,6 +419,7 @@ pub fn dev(args: DevArgs) {
                 "session_id": session_id,
                 "app": app_name,
                 "postgres_authorized": session.postgres_authorized,
+                "withheld_secret_keys": session.withheld_secret_keys,
                 "services": json_services,
             }
         }));

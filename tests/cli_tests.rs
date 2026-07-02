@@ -2167,6 +2167,67 @@ fn test_dry_run_env_set() {
 }
 
 #[test]
+fn test_dry_run_env_set_secret_flag() {
+    // --secret flows into the dry-run payload (is_secret) and the human
+    // preview says "as write-only" so the operator sees the marker before
+    // committing to it.
+    floo()
+        .args([
+            "--json",
+            "--dry-run",
+            "env",
+            "set",
+            "KEY=value",
+            "--secret",
+            "--app",
+            "test",
+        ])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""is_secret":true"#));
+
+    floo()
+        .args([
+            "--dry-run",
+            "env",
+            "set",
+            "KEY=value",
+            "--secret",
+            "--app",
+            "test",
+        ])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Would set KEY as write-only on test",
+        ));
+}
+
+#[test]
+fn test_env_import_accepts_secret_flag() {
+    // `env import --secret` is a valid invocation; the dry-run preview
+    // resolves the file, so give it a real one.
+    let dir = tempfile::tempdir().unwrap();
+    let env_file = dir.path().join(".env");
+    std::fs::write(&env_file, "A_KEY=one\n").unwrap();
+    floo()
+        .args([
+            "--dry-run",
+            "env",
+            "import",
+            env_file.to_str().unwrap(),
+            "--app",
+            "test",
+            "--secret",
+        ])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .success();
+}
+
+#[test]
 fn test_dry_run_env_set_human_has_preview() {
     floo()
         .args(["--dry-run", "env", "set", "KEY=value", "--app", "test"])
