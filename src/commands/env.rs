@@ -770,7 +770,8 @@ pub fn import_vars(
             .unwrap_or_else(|| "(reads from config)".to_string());
         let scope = format_env_scope(service_names, env);
         let preview = format!(
-            "Would import {count} variable(s) from {} to {target}{scope}.\nKeys: {}",
+            "Would import {count} variable(s){} from {} to {target}{scope}.\nKeys: {}",
+            if secret { " as write-only" } else { "" },
             env_file_path.display(),
             keys.join(", "),
         );
@@ -781,6 +782,7 @@ pub fn import_vars(
                 "file": env_file_path.display().to_string(),
                 "app": target,
                 "services": service_names,
+                "is_secret": secret,
                 "env": env,
                 "keys": keys,
                 "count": count,
@@ -959,8 +961,9 @@ pub fn import_all_services(app_flag: Option<&str>, env: &str, secret: bool) {
         match client.import_env_vars(&app_id, &vars, service_id, env, secret) {
             Ok(result) => {
                 let target = format!("{app_name}/{svc_name}");
+                let marker = if secret { " as write-only" } else { "" };
                 output::success(
-                    &format!("Imported {count} variable(s) to {target}."),
+                    &format!("Imported {count} variable(s){marker} to {target}."),
                     Some(result),
                 );
                 total_imported += count;
