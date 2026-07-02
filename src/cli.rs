@@ -407,7 +407,7 @@ pub struct LogsOptions {
     #[arg(short, long)]
     error: bool,
 
-    /// Minimum severity level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
+    /// Minimum severity level (DEFAULT, DEBUG, INFO, WARNING, ERROR, CRITICAL).
     #[arg(long)]
     severity: Option<String>,
 
