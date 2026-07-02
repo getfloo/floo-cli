@@ -4774,3 +4774,183 @@ fn test_doctor_accounts_json_old_api_no_field_derives_from_drift_list() {
         .code(1)
         .stdout(predicate::str::contains(r#""drift_detected":true"#));
 }
+
+// --- env multi-target JSON contract (#203) ---
+//
+// One invocation emits exactly ONE JSON object on stdout. The per-service
+// loops used to print one object per target, breaking `... --json | jq`.
+
+/// Mock GET /v1/apps/{id}/services with two services (api, worker).
+fn mock_services_two(server: &mut Server) -> Mock {
+    server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/services").as_str())
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"services":[
+                {"id":"svc-api-1","name":"api","type":"api","status":"live"},
+                {"id":"svc-worker-1","name":"worker","type":"worker","status":"live"}
+            ]}"#,
+        )
+        .create()
+}
+
+/// Assert stdout is exactly one JSON object and return it parsed.
+fn parse_single_json_object(stdout: &[u8]) -> serde_json::Value {
+    let text = String::from_utf8_lossy(stdout);
+    let trimmed = text.trim();
+    serde_json::from_str::<serde_json::Value>(trimmed)
+        .unwrap_or_else(|e| panic!("stdout is not exactly one JSON object ({e}):\n{trimmed}"))
+}
+
+#[test]
+fn test_env_list_json_two_services_single_object_deduped() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_services_two(&mut server);
+
+    // Each per-service read includes the app-level row; the merged payload
+    // must contain it exactly once (dedupe by key + service_id).
+    let _env_api = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/env").as_str())
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("env".into(), "dev".into()),
+            Matcher::UrlEncoded("service_id".into(), "svc-api-1".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"env_vars":[
+                {"key":"SHARED","masked_value":"********","service_id":null,"is_secret":false},
+                {"key":"API_ONLY","masked_value":"********","service_id":"svc-api-1","is_secret":false}
+            ],"total":2}"#,
+        )
+        .create();
+    let _env_worker = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/env").as_str())
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("env".into(), "dev".into()),
+            Matcher::UrlEncoded("service_id".into(), "svc-worker-1".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"env_vars":[
+                {"key":"SHARED","masked_value":"********","service_id":null,"is_secret":false},
+                {"key":"WORKER_ONLY","masked_value":"********","service_id":"svc-worker-1","is_secret":true}
+            ],"total":2}"#,
+        )
+        .create();
+
+    let output = floo()
+        .args([
+            "--json",
+            "env",
+            "list",
+            "--app",
+            TEST_APP_NAME,
+            "--service",
+            "api",
+            "--service",
+            "worker",
+        ])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let json = parse_single_json_object(&output.stdout);
+    assert_eq!(json["success"], true);
+    let vars = json["data"]["env_vars"].as_array().expect("env_vars array");
+    let keys: Vec<&str> = vars.iter().map(|v| v["key"].as_str().unwrap()).collect();
+    assert_eq!(keys, vec!["SHARED", "API_ONLY", "WORKER_ONLY"]);
+}
+
+#[test]
+fn test_env_set_json_two_services_single_object() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_services_two(&mut server);
+
+    let set_body = |svc: &str| {
+        format!(
+            r#"{{"id":"ev-{svc}","app_id":"{TEST_APP_ID}","environment_id":"env-1","service_id":"{svc}","key":"K","masked_value":"********","is_secret":false,"created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-01T00:00:00Z"}}"#
+        )
+    };
+    let _set = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/env").as_str())
+        .match_query(Matcher::UrlEncoded("env".into(), "dev".into()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(set_body("svc"))
+        .expect(2)
+        .create();
+
+    let output = floo()
+        .args([
+            "--json",
+            "env",
+            "set",
+            "K=v",
+            "--app",
+            TEST_APP_NAME,
+            "--service",
+            "api,worker",
+        ])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let json = parse_single_json_object(&output.stdout);
+    assert_eq!(json["success"], true);
+    let results = json["data"]["results"].as_array().expect("results array");
+    assert_eq!(results.len(), 2);
+}
+
+#[test]
+fn test_env_unset_json_two_services_single_object() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_services_two(&mut server);
+
+    let _del = server
+        .mock(
+            "DELETE",
+            Matcher::Regex(format!("^/v1/apps/{TEST_APP_ID}/env/K($|\\?)")),
+        )
+        .with_status(204)
+        .expect(2)
+        .create();
+
+    let output = floo()
+        .args([
+            "--json",
+            "env",
+            "unset",
+            "K",
+            "--app",
+            TEST_APP_NAME,
+            "--service",
+            "api,worker",
+        ])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let json = parse_single_json_object(&output.stdout);
+    assert_eq!(json["success"], true);
+    assert_eq!(json["data"]["key"], "K");
+    assert_eq!(
+        json["data"]["removed_from"].as_array().map(|a| a.len()),
+        Some(2)
+    );
+}

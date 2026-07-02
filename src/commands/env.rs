@@ -1,7 +1,9 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process;
 
 use crate::api_client::FlooClient;
+use crate::api_types::ListEnvVarsResponse;
 use crate::deploy_status;
 use crate::errors::ErrorCode;
 use crate::output;
@@ -405,22 +407,19 @@ pub fn set(
         ValueSource::Inline => key_value.split_once('=').unwrap().1.to_string(),
     };
 
-    let mut last_env_result = serde_json::Value::Null;
+    let mut results: Vec<serde_json::Value> = Vec::new();
     for (service_id, service_name) in &targets {
         match client.set_env_var(&app_id, &key, &value, service_id.as_deref(), env, secret) {
             Ok(result) => {
                 let target = format_target(&app_name, service_name.as_deref());
-                last_env_result = output::to_value(&result);
-                if !restart || !output::is_json_mode() {
-                    let marker = if result.is_secret {
-                        " (write-only)"
-                    } else {
-                        ""
-                    };
-                    output::success(
-                        &format!("Set {key}{marker} on {target}."),
-                        Some(output::to_value(&result)),
-                    );
+                let marker = if result.is_secret {
+                    " (write-only)"
+                } else {
+                    ""
+                };
+                results.push(output::to_value(&result));
+                if !output::is_json_mode() {
+                    output::success(&format!("Set {key}{marker} on {target}."), None);
                 }
             }
             Err(e) => {
@@ -428,6 +427,19 @@ pub fn set(
                 process::exit(1);
             }
         }
+    }
+
+    // One invocation, one JSON object (#203): the per-target loop above only
+    // prints in human mode; JSON aggregates here. A single target keeps the
+    // bare-object shape existing consumers parse; multiple targets nest under
+    // "results". The --restart path emits its own combined object below.
+    if output::is_json_mode() && !restart {
+        let data = if results.len() == 1 {
+            results.remove(0)
+        } else {
+            serde_json::json!({"results": results})
+        };
+        output::success(&format!("Set {key}."), Some(data));
     }
 
     if !restart && !output::is_json_mode() {
@@ -463,12 +475,19 @@ pub fn set(
             .and_then(|v| v.as_str())
             .unwrap_or("(no URL)");
 
+        // Multi-target restarts previously reported only the LAST target's
+        // env result; carry all of them (single target keeps the bare shape).
+        let env_payload = if results.len() == 1 {
+            results.remove(0)
+        } else {
+            serde_json::Value::Array(results)
+        };
         if deploy_status::is_failure(final_status) {
             output::error_with_data(
                 "Restart failed.",
                 &ErrorCode::RestartFailed,
                 Some("Run `floo logs` for details."),
-                Some(serde_json::json!({"env": last_env_result, "deploy": deploy_data})),
+                Some(serde_json::json!({"env": env_payload, "deploy": deploy_data})),
             );
             process::exit(1);
         }
@@ -482,7 +501,7 @@ pub fn set(
         };
         output::success(
             &restart_msg,
-            Some(serde_json::json!({"env": last_env_result, "deploy": deploy_data})),
+            Some(serde_json::json!({"env": env_payload, "deploy": deploy_data})),
         );
     }
 }
@@ -502,6 +521,40 @@ pub fn list(app_flag: Option<&str>, service_names: &[String], env: &str) {
     }
 
     let targets = resolve_service_ids(&client, &app_id, &app_name, service_names);
+
+    if output::is_json_mode() {
+        // One invocation, one JSON object (#203): aggregate every target's
+        // rows instead of emitting one payload per service. App-level rows
+        // appear in each per-service read, so dedupe by (key, service_id) —
+        // the API's own uniqueness boundary. Shape stays {"env_vars": [...]},
+        // identical to the single-target payload.
+        let mut seen: HashSet<(String, Option<String>)> = HashSet::new();
+        let mut merged = ListEnvVarsResponse {
+            env_vars: Vec::new(),
+        };
+        for (service_id, _) in &targets {
+            let result = match client.list_env_vars(&app_id, service_id.as_deref(), env) {
+                Ok(r) => r,
+                Err(e) => {
+                    output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                    process::exit(1);
+                }
+            };
+            for ev in result.env_vars {
+                if seen.insert((ev.key.clone(), ev.service_id.clone())) {
+                    merged.env_vars.push(ev);
+                }
+            }
+        }
+        let msg = if merged.env_vars.is_empty() {
+            "No env vars.".to_string()
+        } else {
+            format!("{} env var(s).", merged.env_vars.len())
+        };
+        output::success(&msg, Some(output::to_value(&merged)));
+        return;
+    }
+
     for (service_id, service_name) in &targets {
         let result = match client.list_env_vars(&app_id, service_id.as_deref(), env) {
             Ok(r) => r,
@@ -514,11 +567,7 @@ pub fn list(app_flag: Option<&str>, service_names: &[String], env: &str) {
         let target = format_target(&app_name, service_name.as_deref());
 
         if result.env_vars.is_empty() {
-            if output::is_json_mode() {
-                output::success("No env vars.", Some(serde_json::json!({"env_vars": []})));
-            } else {
-                output::info(&format!("No environment variables set on {target}."), None);
-            }
+            output::info(&format!("No environment variables set on {target}."), None);
             continue;
         }
 
@@ -637,6 +686,7 @@ pub fn remove(key: &str, app_flag: Option<&str>, service_names: &[String], env: 
     let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
     let targets = resolve_service_ids(&client, &app_id, &app_name, service_names);
 
+    let mut removed_from: Vec<String> = Vec::new();
     for (service_id, service_name) in &targets {
         if let Err(e) = client.delete_env_var(&app_id, &key, service_id.as_deref(), env) {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
@@ -644,10 +694,22 @@ pub fn remove(key: &str, app_flag: Option<&str>, service_names: &[String], env: 
         }
 
         let target = format_target(&app_name, service_name.as_deref());
-        output::success(
-            &format!("Removed {key} from {target}."),
-            Some(serde_json::json!({"key": key})),
-        );
+        if output::is_json_mode() {
+            removed_from.push(target);
+        } else {
+            output::success(&format!("Removed {key} from {target}."), None);
+        }
+    }
+
+    // One invocation, one JSON object (#203). Single target keeps the bare
+    // {"key": ...} shape; multiple targets add where the key was removed from.
+    if output::is_json_mode() {
+        let data = if removed_from.len() == 1 {
+            serde_json::json!({"key": key})
+        } else {
+            serde_json::json!({"key": key, "removed_from": removed_from})
+        };
+        output::success(&format!("Removed {key}."), Some(data));
     }
 }
 
@@ -808,15 +870,20 @@ pub fn import_vars(
 
     let targets = resolve_service_ids(&client, &app_id, &app_name, service_names);
 
+    let marker = if secret { " as write-only" } else { "" };
+    let mut results: Vec<serde_json::Value> = Vec::new();
     for (service_id, service_name) in &targets {
         match client.import_env_vars(&app_id, &vars, service_id.as_deref(), env, secret) {
             Ok(result) => {
                 let target = format_target(&app_name, service_name.as_deref());
-                let marker = if secret { " as write-only" } else { "" };
-                output::success(
-                    &format!("Imported {count} variable(s){marker} to {target}."),
-                    Some(result),
-                );
+                if output::is_json_mode() {
+                    results.push(result);
+                } else {
+                    output::success(
+                        &format!("Imported {count} variable(s){marker} to {target}."),
+                        None,
+                    );
+                }
             }
             Err(e) => {
                 output::error(&e.message, &ErrorCode::from_api(&e.code), None);
@@ -825,7 +892,20 @@ pub fn import_vars(
         }
     }
 
-    if !output::is_json_mode() {
+    // One invocation, one JSON object (#203). Single target keeps the bare
+    // API-result shape; multiple targets nest under "results" (each row
+    // already carries its service_id).
+    if output::is_json_mode() {
+        let data = if results.len() == 1 {
+            results.remove(0)
+        } else {
+            serde_json::json!({"results": results})
+        };
+        output::success(
+            &format!("Imported {count} variable(s){marker}."),
+            Some(data),
+        );
+    } else {
         output::info(DEPLOY_HINT, None);
     }
 }
@@ -935,6 +1015,7 @@ pub fn import_all_services(app_flag: Option<&str>, env: &str, secret: bool) {
 
     let mut total_imported: usize = 0;
     let mut services_imported: usize = 0;
+    let mut results: Vec<serde_json::Value> = Vec::new();
 
     for (svc_name, env_path) in &env_file_entries {
         let vars = parse_env_file(env_path);
@@ -962,10 +1043,14 @@ pub fn import_all_services(app_flag: Option<&str>, env: &str, secret: bool) {
             Ok(result) => {
                 let target = format!("{app_name}/{svc_name}");
                 let marker = if secret { " as write-only" } else { "" };
-                output::success(
-                    &format!("Imported {count} variable(s){marker} to {target}."),
-                    Some(result),
-                );
+                if output::is_json_mode() {
+                    results.push(serde_json::json!({"service": svc_name, "result": result}));
+                } else {
+                    output::success(
+                        &format!("Imported {count} variable(s){marker} to {target}."),
+                        None,
+                    );
+                }
                 total_imported += count;
                 services_imported += 1;
             }
@@ -976,7 +1061,19 @@ pub fn import_all_services(app_flag: Option<&str>, env: &str, secret: bool) {
         }
     }
 
-    if !output::is_json_mode() {
+    // One invocation, one JSON object (#203).
+    if output::is_json_mode() {
+        output::success(
+            &format!(
+                "Imported {total_imported} variable(s) across {services_imported} service(s)."
+            ),
+            Some(serde_json::json!({
+                "total_imported": total_imported,
+                "services_imported": services_imported,
+                "results": results,
+            })),
+        );
+    } else {
         if services_imported > 1 {
             output::info(
                 &format!(
