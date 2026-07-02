@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# scripts/test — canonical test entry point for floo-cli.
+#
+# Runs fmt --check, clippy (-D warnings), and cargo test, in that order, and
+# exits nonzero on the first failing phase. Extra args are forwarded to
+# `cargo test`.
+#
+# Corrupt-harness guard (floo-cli#204): rarely, after heavy incremental
+# churn, a bin's unittest binary ends up executing the REAL clap main()
+# instead of the libtest harness — it prints the CLI usage banner and exits 2
+# before any assertion runs. The failure is environmental (a stale build
+# artifact; `cargo clean` always clears it) and would otherwise persist
+# forever in CI via the target/ cache. On that exact two-part signature
+# ("test exited abnormally" from cargo AND the CLI's own "Usage: floo"
+# banner in the captured output) this script cleans the package's artifacts
+# and retries ONCE. A normal test failure never matches the signature pair
+# and is never retried; a persistent corrupt harness still fails loudly on
+# the second run. Worst case for a false match (a failing integration test
+# that itself printed the usage banner AND died abnormally): one redundant
+# retry, then the genuine failure surfaces.
+set -u
+
+# Test seam: tests/test_script_test.sh points this at a shim.
+CARGO="${FLOO_TEST_CARGO:-cargo}"
+
+log="$(mktemp)"
+trap 'rm -f "$log"' EXIT
+
+run_tests() {
+    # No pipe here on purpose: a pipe reports the downstream command's exit
+    # code, which is how masked failures ship (2026-07-02 daily log).
+    "$CARGO" test "$@" >"$log" 2>&1
+    local status=$?
+    cat "$log"
+    return "$status"
+}
+
+is_corrupt_harness() {
+    grep -q 'test exited abnormally' "$log" && grep -q 'Usage: floo' "$log"
+}
+
+"$CARGO" fmt --check || exit 1
+"$CARGO" clippy --all-targets -- -D warnings || exit 1
+
+run_tests "$@"
+status=$?
+if [ "$status" -eq 0 ]; then
+    exit 0
+fi
+if is_corrupt_harness; then
+    echo "warning: corrupt test-harness binary detected (floo-cli#204);" \
+        "cleaning package artifacts and retrying once" >&2
+    "$CARGO" clean -p floo
+    run_tests "$@"
+    exit $?
+fi
+exit "$status"
