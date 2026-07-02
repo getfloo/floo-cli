@@ -169,15 +169,11 @@ fn walk(value: &mut Value, reveal: bool) -> bool {
             }
             found
         }
-        Value::String(s) => {
-            if value_looks_credential(s) {
-                if !reveal {
-                    *value = Value::String(REDACTED_PLACEHOLDER.into());
-                }
-                true
-            } else {
-                false
+        Value::String(s) if value_looks_credential(s) => {
+            if !reveal {
+                *s = REDACTED_PLACEHOLDER.into();
             }
+            true
         }
         _ => false,
     }
