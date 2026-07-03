@@ -338,6 +338,19 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn list_edge_routes(
+        &self,
+        app_id: &str,
+        environment: Option<&str>,
+    ) -> Result<EdgeRouteListResponse, FlooApiError> {
+        let mut path = format!("/v1/apps/{app_id}/edge/routes");
+        if let Some(env) = environment {
+            path.push_str(&format!("?environment_name={env}"));
+        }
+        let resp = self.get(&path)?;
+        self.handle_response(resp)
+    }
+
     pub fn delete_app(&self, app_id: &str) -> Result<(), FlooApiError> {
         let resp = self.delete(&format!("/v1/apps/{app_id}"))?;
         if resp.status().as_u16() == 204 {

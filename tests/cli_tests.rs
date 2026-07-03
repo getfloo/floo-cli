@@ -325,6 +325,16 @@ fn test_services_help() {
 }
 
 #[test]
+fn test_edge_routes_help() {
+    floo()
+        .args(["edge", "routes", "list", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("List the effective route table"))
+        .stdout(predicate::str::contains("--env"));
+}
+
+#[test]
 fn test_deploy_help() {
     floo()
         .args(["deploys", "--help"])

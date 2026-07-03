@@ -156,6 +156,35 @@ pub struct ListAppsResponse {
     pub total: Option<u64>,
 }
 
+// --- Edge ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EdgeRoute {
+    pub id: String,
+    pub host: String,
+    pub path_prefix: String,
+    pub environment_id: Option<String>,
+    pub environment_name: Option<String>,
+    pub environment_slug: Option<String>,
+    pub service_id: Option<String>,
+    pub service_name: Option<String>,
+    pub service_type: Option<String>,
+    pub access_mode: String,
+    pub api_key_enabled: bool,
+    pub required_scope: Option<String>,
+    pub source: String,
+    pub source_of_truth: String,
+    pub propagation_status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EdgeRouteListResponse {
+    pub routes: Vec<EdgeRoute>,
+    pub total: u64,
+}
+
 // --- Deploy ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

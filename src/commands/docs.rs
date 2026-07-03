@@ -37,6 +37,7 @@ never uploads code.
   floo docs express    — build and deploy an Express app on floo (end-to-end)
   floo docs templates  — copy-paste app structures (React+FastAPI, Next.js, etc.)
   floo docs services   — service types and managed services (alias: storage)
+  floo docs edge       — inspect edge routes, services, and access policy
   floo docs previews   — command-line preview sandboxes for remote branches
   floo docs config     — config file formats with examples (alias: app-toml)
   floo docs cron       — [cron.<name>] schema, schedules, and CLI surface
@@ -325,6 +326,40 @@ All services share the same origin, so cookies and auth work without CORS.
   floo services add <type> --app <name>      — provision a managed service
   floo services remove <type> --app <name>   — permanently destroy (tier-3)
   floo services migrate --app <name>         — move legacy TOML → CLI state
+";
+
+const EDGE: &str = "\
+Floo Edge Routes
+
+Inspect the route table floo's edge is serving for an app. Use this when a
+host, path, target service, access mode, or custom domain does not behave the
+way you expected.
+
+## List routes
+
+  floo edge routes list --app my-app
+  floo edge routes list --app my-app --env prod
+  floo edge routes list --app my-app --env preview --json
+
+The route table shows:
+
+  host              Customer-facing floo host or custom domain
+  path_prefix       Path prefix matched by the gateway
+  environment       dev, prod, preview, or unscoped legacy route
+  service           Target app service name and type
+  policy            Effective access mode and app API-key requirement
+  source            deploy, custom_domain, toml, or system
+  source_of_truth   gateway_routes
+
+JSON output is stable for agents:
+
+  floo edge routes list --app my-app --env prod --json 2>/dev/null |
+    jq '.data.routes[] | {host, path_prefix, access_mode, api_key_enabled, required_scope}'
+
+The output deliberately omits raw Cloud Run backend URLs. Treat floo hosts and
+custom domains as the public contract.
+
+Full reference: https://getfloo.com/docs/cli/edge
 ";
 
 const PREVIEWS: &str = "\
@@ -1808,6 +1843,7 @@ pub(crate) const TOPICS: &[(&str, &str)] = &[
     ("express", EXPRESS),
     ("templates", TEMPLATES),
     ("services", SERVICES),
+    ("edge", EDGE),
     ("previews", PREVIEWS),
     ("config", CONFIG),
     ("cron", CRON),
