@@ -130,6 +130,10 @@ fn mock_services_single(server: &mut Server) -> Mock {
         .create()
 }
 
+fn edge_routes_json() -> &'static str {
+    r#"{"routes":[{"id":"route-1","host":"my-app.on.getfloo.com","path_prefix":"/","environment_id":"env-prod","environment_name":"prod","environment_slug":"prod","service_id":"svc-web-1","service_name":"web","service_type":"web","access_mode":"accounts","api_key_enabled":true,"required_scope":"app:read","source":"deploy","source_of_truth":"gateway_routes","propagation_status":"unknown","created_at":"2026-07-03T10:00:00Z","updated_at":"2026-07-03T10:05:00Z"}],"total":1}"#
+}
+
 fn preview_branch_json(name: &str, status: &str, reset_eligible: bool) -> String {
     let blocked = if reset_eligible {
         "null".to_string()
@@ -2813,6 +2817,76 @@ fn test_services_list_empty_when_no_services_of_either_kind() {
         .stdout(predicate::str::contains(r#""success":true"#))
         .stdout(predicate::str::contains(r#""app_services":[]"#))
         .stdout(predicate::str::contains(r#""managed_services":[]"#));
+}
+
+#[test]
+fn test_edge_routes_list_json_uses_customer_safe_endpoint() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _routes = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/edge/routes").as_str(),
+        )
+        .match_query(Matcher::UrlEncoded(
+            "environment_name".into(),
+            "prod".into(),
+        ))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(edge_routes_json())
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "edge",
+            "routes",
+            "list",
+            "--app",
+            TEST_APP_NAME,
+            "--env",
+            "prod",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(
+            r#""host":"my-app.on.getfloo.com""#,
+        ))
+        .stdout(predicate::str::contains(
+            r#""source_of_truth":"gateway_routes""#,
+        ))
+        .stdout(predicate::str::contains(r#""required_scope":"app:read""#))
+        .stdout(predicate::str::contains("raw-backend").not());
+}
+
+#[test]
+fn test_edge_routes_list_human_renders_route_table() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _routes = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/edge/routes").as_str(),
+        )
+        .match_query(Matcher::Missing)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(edge_routes_json())
+        .create();
+
+    floo()
+        .args(["edge", "routes", "list", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("my-app.on.getfloo.com"))
+        .stderr(predicate::str::contains("accounts + key:app:read"))
+        .stderr(predicate::str::contains("web (web)"));
 }
 
 #[test]

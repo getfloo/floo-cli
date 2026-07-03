@@ -19,6 +19,7 @@ pub mod dev;
 pub mod docs;
 pub mod doctor;
 pub mod domains;
+pub mod edge;
 pub mod env;
 pub mod feedback;
 pub mod github;

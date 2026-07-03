@@ -309,6 +309,16 @@ Run `floo notifications list` to see the available categories."
     #[command(subcommand)]
     Domains(DomainsCommands),
 
+    /// Inspect edge routing and access policy for an app.
+    #[command(
+        subcommand,
+        after_help = "\
+Examples:
+  floo edge routes list --app my-app
+  floo edge routes list --app my-app --env prod --json"
+    )]
+    Edge(EdgeCommands),
+
     /// Manage releases and promote to prod.
     #[command(subcommand)]
     Releases(ReleasesCommands),
@@ -361,7 +371,7 @@ Examples:
     /// full list of topics with one-line descriptions.
     #[command(after_help = "\
 Topics: golden-path, quickstart, build, nextjs, rails, fastapi, django,
-express, templates, services, previews, config, cron, deploy, auth,
+express, templates, services, edge, previews, config, cron, deploy, auth,
 notifications, feedback.
 Aliases: storage -> services, app-toml -> config.
 Run `floo docs` (no topic) for a one-line description of each topic.")]
@@ -886,6 +896,34 @@ pub enum NotificationsCommands {
         /// Whether to receive this category.
         #[arg(value_parser = ["on", "off"])]
         value: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum EdgeCommands {
+    /// Inspect effective edge routes.
+    #[command(subcommand)]
+    Routes(EdgeRoutesCommands),
+}
+
+#[derive(Subcommand)]
+pub enum EdgeRoutesCommands {
+    /// List the effective route table for an app.
+    #[command(after_help = "\
+Examples:
+  floo edge routes list --app my-app
+  floo edge routes list --app my-app --env prod --json
+
+Shows the customer-safe route table served by floo's edge: host, path,
+environment, target service, access policy, source, and freshness marker.")]
+    List {
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Environment filter: dev, prod, or preview. Omit to list all routes.
+        #[arg(long, value_parser = ["dev", "prod", "preview"])]
+        env: Option<String>,
     },
 }
 
@@ -2189,6 +2227,14 @@ pub fn run() {
             ServicesCommands::Migrate { app, path } => {
                 commands::services::migrate(app.as_deref(), &path)
             }
+        },
+
+        Commands::Edge(sub) => match sub {
+            EdgeCommands::Routes(routes_sub) => match routes_sub {
+                EdgeRoutesCommands::List { app, env } => {
+                    commands::edge::list_routes(app.as_deref(), env.as_deref())
+                }
+            },
         },
 
         Commands::Storage(sub) => match sub {

@@ -67,6 +67,9 @@ floo env list --app my-app
 # Custom domains
 floo domains add app.example.com --app my-app
 floo domains list --app my-app
+
+# Edge routes
+floo edge routes list --app my-app --json
 ```
 
 All commands are invoked with the production alias: `floo`.
