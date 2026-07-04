@@ -730,10 +730,14 @@ fn run_initial_deploy(
 
         if !output::is_json_mode() {
             match super::deploy::stream_deploy(client, app_id, &deploy_id) {
-                Ok(d) => deploy_data = d,
+                // Unsettled, this site INVERTED the #208 race: classify(None)
+                // on a raced "deploying" reported a healthy first deploy as
+                // FAILED with a  hint — the onboarding surface.
+                Ok(d) => deploy_data = super::deploy::settle_to_terminal(client, app_id, d),
                 Err(_) => deploy_data = super::deploy::poll_deploy(client, app_id, &deploy_data),
             }
         } else {
+            // stream_deploy_json settles internally before emitting done (#208).
             match super::deploy::stream_deploy_json(client, app_id, &deploy_id) {
                 Ok(d) => deploy_data = d,
                 Err(_) => deploy_data = super::deploy::poll_deploy(client, app_id, &deploy_data),

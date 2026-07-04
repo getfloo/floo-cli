@@ -2616,13 +2616,10 @@ pub(crate) fn stream_deploy_json(
                     }
                 }
                 "done" => {
-                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data_buf) {
-                        let status = parsed.get("status").and_then(|v| v.as_str()).unwrap_or("");
-                        let url = parsed.get("url").and_then(|v| v.as_str()).unwrap_or("");
-                        output::print_json(
-                            &serde_json::json!({"event": "done", "status": status, "url": url}),
-                        );
-                    }
+                    // The server's done payload can carry the raced non-terminal
+                    // status (#208). Emission moved below the loop: the done
+                    // event is built from the SETTLED deploy, so agents never
+                    // see "done" with status=deploying.
                     break;
                 }
                 "error" => {
@@ -2642,10 +2639,19 @@ pub(crate) fn stream_deploy_json(
         }
     }
 
-    client.get_deploy(app_id, deploy_id)
+    // Settle BEFORE the done event exists anywhere: the stream closes when
+    // the executor job exits, racing the worker's LIVE commit (#208). One
+    // emission point, always terminal — also covers streams that EOF without
+    // a server done event (previously: no done event at all).
+    let final_deploy = settle_to_terminal(client, app_id, client.get_deploy(app_id, deploy_id)?);
+    output::print_json(&serde_json::json!({
+        "event": "done",
+        "status": final_deploy.status.as_deref().unwrap_or(""),
+        "url": final_deploy.url.as_deref().unwrap_or(""),
+    }));
+    Ok(final_deploy)
 }
 
-/// Poll the deploy endpoint until it reaches a terminal status.
 /// Settle a stream-returned deploy to a TERMINAL status before anyone acts
 /// on it. The SSE stream closes when the executor job exits, which can race
 /// the worker's LIVE commit by seconds — a successful deploy briefly reads
@@ -2663,6 +2669,7 @@ pub(crate) fn settle_to_terminal(client: &FlooClient, app_id: &str, streamed: De
     poll_deploy(client, app_id, &streamed)
 }
 
+/// Poll the deploy endpoint until it reaches a terminal status.
 pub(crate) fn poll_deploy(client: &FlooClient, app_id: &str, initial_data: &Deploy) -> Deploy {
     let deploy_id = initial_data.id.clone();
     let poll_start = Instant::now();
