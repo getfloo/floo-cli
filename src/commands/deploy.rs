@@ -2643,7 +2643,20 @@ pub(crate) fn stream_deploy_json(
     // the executor job exits, racing the worker's LIVE commit (#208). One
     // emission point, always terminal — also covers streams that EOF without
     // a server done event (previously: no done event at all).
-    let final_deploy = settle_to_terminal(client, app_id, client.get_deploy(app_id, deploy_id)?);
+    //
+    // Retry the post-stream read once: a transient blip here would otherwise
+    // return Err before the done event is emitted while the caller's poll
+    // fallback still succeeds — an NDJSON stream with no done on a green
+    // deploy (codex #208 round 3). A persistent failure still returns Err,
+    // and the caller's poll exits loudly.
+    let fetched = match client.get_deploy(app_id, deploy_id) {
+        Ok(d) => d,
+        Err(_) => {
+            thread::sleep(POLL_INTERVAL);
+            client.get_deploy(app_id, deploy_id)?
+        }
+    };
+    let final_deploy = settle_to_terminal(client, app_id, fetched);
     output::print_json(&serde_json::json!({
         "event": "done",
         "status": final_deploy.status.as_deref().unwrap_or(""),
