@@ -1001,7 +1001,7 @@ pub fn deploy(
         // Phase 2 human mode: try SSE streaming, fall back to polling
         let deploy_id = deploy_data.id.clone();
         match stream_deploy(&client, &app_id, &deploy_id) {
-            Ok(final_data) => deploy_data = final_data,
+            Ok(final_data) => deploy_data = settle_to_terminal(&client, &app_id, final_data),
             Err(e) => {
                 // SSE failed — fall back to polling
                 eprintln!(
@@ -1184,7 +1184,7 @@ fn deploy_restart(
         let deploy_id = deploy_data.id.clone();
         deploy_data = if !output::is_json_mode() {
             match stream_deploy(client, app_id, &deploy_id) {
-                Ok(d) => d,
+                Ok(d) => settle_to_terminal(client, app_id, d),
                 Err(e) => {
                     eprintln!(
                         "Stream unavailable ({}), falling back to polling...",
@@ -1326,7 +1326,7 @@ fn deploy_rebuild(
     } else if !output::is_json_mode() {
         let deploy_id = deploy_data.id.clone();
         match stream_deploy(client, app_id, &deploy_id) {
-            Ok(final_data) => deploy_data = final_data,
+            Ok(final_data) => deploy_data = settle_to_terminal(client, app_id, final_data),
             Err(e) => {
                 eprintln!(
                     "Stream unavailable ({}), falling back to polling...",
@@ -2646,6 +2646,23 @@ pub(crate) fn stream_deploy_json(
 }
 
 /// Poll the deploy endpoint until it reaches a terminal status.
+/// Settle a stream-returned deploy to a TERMINAL status before anyone acts
+/// on it. The SSE stream closes when the executor job exits, which can race
+/// the worker's LIVE commit by seconds — a successful deploy briefly reads
+/// status=deploying at stream end (floo-cli#208: reported as "Deploy ended in
+/// unexpected state: deploying" on a healthy rollout). Every stream consumer
+/// funnels through here; only the watch command had this fallback before.
+pub(crate) fn settle_to_terminal(client: &FlooClient, app_id: &str, streamed: Deploy) -> Deploy {
+    let status = streamed.status.as_deref().unwrap_or("");
+    if deploy_status::is_terminal(status) {
+        return streamed;
+    }
+    if !output::is_json_mode() {
+        eprintln!("Stream ended in non-terminal state ({status}), falling back to polling...");
+    }
+    poll_deploy(client, app_id, &streamed)
+}
+
 pub(crate) fn poll_deploy(client: &FlooClient, app_id: &str, initial_data: &Deploy) -> Deploy {
     let deploy_id = initial_data.id.clone();
     let poll_start = Instant::now();
@@ -2979,6 +2996,58 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    fn mock_client(url: &str) -> FlooClient {
+        FlooClient::new(Some(crate::config::FlooConfig {
+            api_key: Some("floo_test123".to_string()),
+            api_url: url.to_string(),
+            ..Default::default()
+        }))
+        .unwrap()
+    }
+
+    fn deploy_with_status(status: &str) -> Deploy {
+        serde_json::from_str::<Deploy>(&format!(
+            r#"{{"id":"dep-1","status":"{status}","created_at":"2024-01-01T00:00:00Z"}}"#
+        ))
+        .unwrap()
+    }
+
+    // floo-cli#208: the SSE stream closes when the executor job exits, which
+    // races the worker's LIVE commit — the post-stream read can say
+    // "deploying" on a deploy that is seconds from LIVE. settle_to_terminal
+    // must POLL that to terminal, never hand a non-terminal deploy to the
+    // final-status printers (which exit 1 with "unexpected state").
+    #[test]
+    fn settle_to_terminal_polls_a_non_terminal_stream_result() {
+        let mut server = mockito::Server::new();
+        let m = server
+            .mock("GET", "/v1/apps/app-1/deploys/dep-1")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"id":"dep-1","status":"live","url":"https://x.floo.app","created_at":"2024-01-01T00:00:00Z"}"#)
+            .expect(1)
+            .create();
+
+        let client = mock_client(&server.url());
+        let settled = settle_to_terminal(&client, "app-1", deploy_with_status("deploying"));
+
+        assert_eq!(settled.status.as_deref(), Some("live"));
+        m.assert();
+    }
+
+    #[test]
+    fn settle_to_terminal_passes_terminal_results_through_without_http() {
+        let mut server = mockito::Server::new();
+        let m = server.mock("GET", mockito::Matcher::Any).expect(0).create();
+
+        let client = mock_client(&server.url());
+        for status in ["live", "failed", "superseded"] {
+            let settled = settle_to_terminal(&client, "app-1", deploy_with_status(status));
+            assert_eq!(settled.status.as_deref(), Some(status));
+        }
+        m.assert();
+    }
 
     fn write_lock(dir: &Path, body: &str) {
         let lock_dir = dir.join(".floo");
