@@ -7,7 +7,7 @@ use colored::Colorize;
 
 use crate::api_client::FlooClient;
 use crate::api_types::Deploy;
-use crate::commands::deploy::{poll_deploy, stream_deploy, stream_deploy_json};
+use crate::commands::deploy::{poll_deploy, settle_to_terminal, stream_deploy, stream_deploy_json};
 use crate::deploy_status;
 use crate::errors::ErrorCode;
 use crate::output;
@@ -471,6 +471,7 @@ pub fn logs(deploy_id: Option<&str>, app: Option<&str>, follow: bool) {
             // Try SSE stream as fallback for missing logs
             match stream_deploy(&client, &app_id, &deploy.id) {
                 Ok(final_deploy) => {
+                    let final_deploy = settle_to_terminal(&client, &app_id, final_deploy);
                     if deploy_status::is_failure(final_deploy.status.as_deref().unwrap_or("")) {
                         process::exit(1);
                     }
@@ -491,7 +492,7 @@ pub fn logs(deploy_id: Option<&str>, app: Option<&str>, follow: bool) {
     } else if follow {
         // Active deploy + --follow: stream live
         let final_deploy = match stream_deploy(&client, &app_id, &deploy.id) {
-            Ok(d) => d,
+            Ok(d) => settle_to_terminal(&client, &app_id, d),
             Err(e) => {
                 output::warn(&format!(
                     "Stream unavailable ({}), falling back to polling...",
@@ -709,8 +710,10 @@ pub fn watch(app: Option<&str>, commit: Option<&str>) {
     // Stream the active deploy
     let deploy_id = deploy.id.clone();
     let final_deploy = if !output::is_json_mode() {
-        let streamed = match stream_deploy(&client, &app_id, &deploy_id) {
-            Ok(d) => d,
+        match stream_deploy(&client, &app_id, &deploy_id) {
+            // settle_to_terminal owns the stream-ends-non-terminal race for
+            // EVERY stream consumer now — this inline fallback moved there.
+            Ok(d) => settle_to_terminal(&client, &app_id, d),
             Err(e) => {
                 eprintln!(
                     "Stream unavailable ({}), falling back to polling...",
@@ -718,15 +721,6 @@ pub fn watch(app: Option<&str>, commit: Option<&str>) {
                 );
                 poll_deploy(&client, &app_id, &deploy)
             }
-        };
-        // SSE stream may end before the deploy reaches a terminal state (e.g. connection
-        // drop, server restart). If so, fall back to polling to wait for completion.
-        let streamed_status = streamed.status.as_deref().unwrap_or("");
-        if !deploy_status::is_terminal(streamed_status) {
-            eprintln!("Stream ended in non-terminal state ({streamed_status}), falling back to polling...");
-            poll_deploy(&client, &app_id, &streamed)
-        } else {
-            streamed
         }
     } else {
         match stream_deploy_json(&client, &app_id, &deploy_id) {
