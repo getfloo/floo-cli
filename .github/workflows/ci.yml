@@ -6,10 +6,13 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Superseded runs on the same PR are wasted minutes — cancel them. Push runs
-# on main are never cancelled (each merge gets its full verdict).
+# Superseded runs on the same PR are wasted minutes — cancel them. Non-PR
+# runs (push to main, dispatch) get a unique group per run so no verdict is
+# ever cancelled: with a shared group, GitHub keeps at most one running plus
+# one pending run, so a third rapid merge would silently drop a pending main
+# verdict even with cancel-in-progress off (codex review, #210).
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
