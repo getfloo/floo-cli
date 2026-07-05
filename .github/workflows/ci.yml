@@ -1,7 +1,19 @@
 name: CI
 
 on:
+  pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
+
+# Superseded runs on the same PR are wasted minutes — cancel them. Non-PR
+# runs (push to main, dispatch) get a unique group per run so no verdict is
+# ever cancelled: with a shared group, GitHub keeps at most one running plus
+# one pending run, so a third rapid merge would silently drop a pending main
+# verdict even with cancel-in-progress off (codex review, #210).
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -13,6 +25,7 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v5
@@ -47,8 +60,14 @@ jobs:
       - name: Run fmt, clippy, and tests
         run: ./scripts/test
 
+  # Informational, not a merge gate: tarpaulin (compiled from source each run)
+  # is too slow for the PR lane, so it tracks coverage on merges only. Keeping
+  # it out of pr-check's `needs` is deliberate — see the speed targets in the
+  # monorepo's docs/knowledge/domains/testing.md.
   coverage:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v5
 
@@ -69,3 +88,19 @@ jobs:
 
       - name: Run coverage
         run: cargo tarpaulin --out stdout --skip-clean
+
+  # Aggregated status for branch protection — the ONE required context, same
+  # name and role as the monorepo's pr-check.yml summary job, so
+  # scripts/ops/configure-branch-protection.sh (in getfloo/floo) protects both
+  # repos with the same required-check list. To add a merge gate, add the job
+  # to `needs:` and its result to the assertion — the context name never
+  # changes. `coverage` is intentionally absent (informational lane, above).
+  pr-check:
+    runs-on: ubuntu-latest
+    needs: [test]
+    if: always()
+    steps:
+      - name: report
+        run: |
+          echo "test: ${{ needs.test.result }}"
+          [ "${{ needs.test.result }}" = "success" ]
