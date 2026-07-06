@@ -146,6 +146,12 @@ pub(crate) fn validate_domain_blocks(
 pub struct AuthSection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub access_policy: Option<String>,
+    /// Deprecated (getfloo/floo#1458): the ACCOUNTS-mode email allowlist is
+    /// operational access data managed via the dashboard/API (`floo`'s
+    /// `/allowed-domains`), not config-as-code. The deploy no longer applies
+    /// this field. It is kept only so an existing manifest still parses under
+    /// `deny_unknown_fields`; new manifests should omit it and manage domains in
+    /// the dashboard. `access_policy = "domain"` no longer requires it here.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allowed_domains: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -167,21 +173,9 @@ impl AuthSection {
                     "Set access_policy to one of \"invite\", \"domain\", or \"open\".".to_string(),
                 ));
             }
-            if policy == "domain" {
-                let has_domains = self
-                    .allowed_domains
-                    .as_ref()
-                    .map(|d| !d.is_empty())
-                    .unwrap_or(false);
-                if !has_domains {
-                    return Err(FlooError::with_suggestion(
-                        ErrorCode::InvalidProjectConfig,
-                        "[auth] allowed_domains is required when access_policy = \"domain\"."
-                            .to_string(),
-                        "Add allowed_domains = [\"example.com\"] to [auth], or change access_policy.".to_string(),
-                    ));
-                }
-            }
+            // access_policy = "domain" no longer requires allowed_domains in the
+            // manifest: the email allowlist is operational, managed via the
+            // dashboard/API, not config-as-code (getfloo/floo#1458).
         }
         Ok(())
     }
@@ -1491,7 +1485,11 @@ access_policy = "unknown"
     }
 
     #[test]
-    fn test_load_app_config_rejects_domain_policy_without_domains() {
+    fn test_load_app_config_domain_policy_without_domains_ok() {
+        // access_policy = "domain" no longer requires allowed_domains in the
+        // manifest (getfloo/floo#1458): the email allowlist is operational,
+        // managed via the dashboard/API, so a manifest may declare the policy
+        // and manage the domain list off-repo.
         let dir = TempDir::new().unwrap();
         fs::write(
             dir.path().join(super::super::APP_CONFIG_FILE),
@@ -1506,9 +1504,10 @@ access_policy = "domain"
         )
         .unwrap();
 
-        let err = load_app_config(dir.path()).unwrap_err();
-        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
-        assert!(err.message.contains("allowed_domains"));
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        let auth = config.auth.unwrap();
+        assert_eq!(auth.access_policy.as_deref(), Some("domain"));
+        assert!(auth.allowed_domains.is_none());
     }
 
     #[test]
