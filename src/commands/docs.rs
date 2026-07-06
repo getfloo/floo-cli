@@ -37,7 +37,7 @@ never uploads code.
   floo docs express    — build and deploy an Express app on floo (end-to-end)
   floo docs templates  — copy-paste app structures (React+FastAPI, Next.js, etc.)
   floo docs services   — service types and managed services (alias: storage)
-  floo docs edge       — inspect edge routes, services, and access policy
+  floo docs edge       — edge routes, the IP/CIDR firewall, enforcement order
   floo docs previews   — command-line preview sandboxes for remote branches
   floo docs config     — config file formats with examples (alias: app-toml)
   floo docs cron       — [cron.<name>] schema, schedules, and CLI surface
@@ -358,6 +358,47 @@ JSON output is stable for agents:
 
 The output deliberately omits raw Cloud Run backend URLs. Treat floo hosts and
 custom domains as the public contract.
+
+## Edge policy (IP/CIDR firewall, Team plan)
+
+An ordered allow/deny rule list per app + environment, enforced at floo's
+edge BEFORE the request body is read and before any managed auth. Rules are
+evaluated top to bottom; first match wins; the default action applies when
+no rule matches. Previews inherit the dev policy.
+
+  # Office-only allowlist (everything else denied):
+  floo edge policy set --env prod --rule allow:203.0.113.0/24 --default-action deny
+
+  # Block one abusive network, allow everyone else:
+  floo edge policy set --env prod --rule deny:198.51.100.0/24 --default-action allow
+
+  floo edge policy get --env prod --json
+  floo edge policy clear --env prod --yes
+
+Also configurable in floo.app.toml (config wins on the next deploy):
+
+  [edge]
+  default_action = \"deny\"
+
+  [[edge.rules]]
+  action = \"allow\"
+  cidr = \"203.0.113.0/24\"
+
+  [environments.prod.edge]   # per-env override
+
+Denied requests get 403 {\"code\":\"EDGE_POLICY_DENIED\"}; denial counts appear
+in `floo analytics` as the rejection breakdown.
+
+## Enforcement order
+
+Requests pass gates in this order — an earlier denial short-circuits:
+
+  1. Cloud provider edge (TLS, volumetric DDoS)   [floo-managed]
+  2. Edge policy (this firewall)                  [yours]
+  3. Managed auth (access_mode, app API keys)     [yours]
+  4. Your app
+
+The edge policy cannot see or bypass auth; auth never runs for a denied IP.
 
 Full reference: https://getfloo.com/docs/cli/edge
 ";

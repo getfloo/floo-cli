@@ -5417,3 +5417,48 @@ fn test_edge_policy_set_ipv6_rule_parses_on_first_colon() {
         .success()
         .stdout(predicate::str::contains(r#""cidr":"2001:db8::/32""#));
 }
+
+#[test]
+fn test_analytics_renders_rejection_breakdown() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _m = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/analytics").as_str(),
+        )
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"app_id":"app-123","period":"7d","summary":{"total_requests":100,"total_errors":42,"error_rate":0.42,"avg_latency_ms":10,"p95_latency_ms":20,"unique_users":3,"gateway_handled_requests":42,"status_code_breakdown":{"2xx":58,"4xx":42},"rejection_breakdown":{"edge_policy":42},"total_apps_with_traffic":null},"time_series":[],"top_users":[]}"#,
+        )
+        .create();
+
+    // Human render surfaces the firewall's denial count.
+    floo()
+        .args(["analytics", "--app", TEST_APP_NAME, "--period", "7d"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Gateway Rejections"))
+        .stderr(predicate::str::contains("edge_policy"));
+
+    // JSON passes the field through untouched for agents.
+    floo()
+        .args([
+            "--json",
+            "analytics",
+            "--app",
+            TEST_APP_NAME,
+            "--period",
+            "7d",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            r#""rejection_breakdown":{"edge_policy":42}"#,
+        ));
+}
