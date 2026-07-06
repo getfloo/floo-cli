@@ -66,8 +66,6 @@ pub struct AppFileConfig {
     pub edge: Option<EdgeSection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resources: Option<ResourceConfig>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reparo: Option<ReparoConfig>,
     #[serde(default)]
     pub services: HashMap<String, AppServiceEntry>,
     #[serde(default)]
@@ -75,21 +73,6 @@ pub struct AppFileConfig {
     /// Scheduled cron jobs declared as `[cron.<name>]` sections.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub cron: HashMap<String, CronJobConfig>,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
-#[serde(deny_unknown_fields)]
-pub struct ReparoConfig {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mode: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error_threshold: Option<i32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cooldown_minutes: Option<i32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub auto_deploy: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub webhook_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
@@ -999,7 +982,6 @@ type = "mysql"
             managed: HashMap::new(),
             edge: None,
             resources: None,
-            reparo: None,
             cron: HashMap::new(),
             services: HashMap::new(),
             environments: HashMap::new(),
@@ -1628,6 +1610,34 @@ name = "my-app"
 
         let config = load_app_config(dir.path()).unwrap().unwrap();
         assert!(config.github.is_none());
+    }
+
+    #[test]
+    fn test_load_app_config_ignores_removed_reparo_section() {
+        // `[reparo]` was a dead config surface: the CLI parsed it and sent it on
+        // deploy, but the API always dropped it (reparo config lives at
+        // `PUT /reparo/config` only). The section was removed (getfloo/floo#1461).
+        // `AppFileConfig` is not `deny_unknown_fields`, so an existing manifest
+        // that still carries `[reparo]` must keep parsing (the block is ignored),
+        // not fail — this test pins that so a future `deny_unknown_fields` can't
+        // silently turn old manifests into a hard error.
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[reparo]
+mode = "webhook"
+error_threshold = 5
+webhook_url = "https://example.com/hook"
+"#,
+        )
+        .unwrap();
+
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        assert_eq!(config.app.name, "my-app");
     }
 
     #[test]

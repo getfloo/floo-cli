@@ -377,7 +377,6 @@ impl FlooClient {
         access_mode: Option<&str>,
         agent_mode: Option<&str>,
         auth_redirect_uris: Option<&[String]>,
-        reparo_config: Option<&crate::project_config::ReparoConfig>,
         cron_jobs: Option<&[crate::project_config::CronJobEntry]>,
         github_config: Option<&crate::project_config::GitHubConfig>,
         skip_migrations: bool,
@@ -412,15 +411,6 @@ impl FlooClient {
                     0,
                     "SERIALIZATION_ERROR",
                     format!("Failed to serialize auth_redirect_uris: {e}"),
-                )
-            })?;
-        }
-        if let Some(reparo) = reparo_config {
-            body["reparo_config"] = serde_json::to_value(reparo).map_err(|e| {
-                FlooApiError::new(
-                    0,
-                    "SERIALIZATION_ERROR",
-                    format!("Failed to serialize reparo_config: {e}"),
                 )
             })?;
         }
