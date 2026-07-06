@@ -5173,6 +5173,44 @@ fn test_edge_policy_check_admitted_by_rule() {
 }
 
 #[test]
+fn test_edge_policy_check_matches_bare_ip_rule() {
+    // codex #1456: a bare-IP rule (gateway treats as /32) must match — check
+    // must not disagree with the gateway on an un-normalized stored rule.
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _m = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/environments/prod/edge-policy").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"id":"pol-8","app_id":"app-123","environment":"prod","rules":[{"action":"allow","cidr":"203.0.113.7"}],"default_action":"deny","enabled":true,"created_at":"2026-07-05T10:00:00Z","updated_at":"2026-07-05T10:00:00Z"}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "edge",
+            "policy",
+            "check",
+            "203.0.113.7",
+            "--app",
+            TEST_APP_NAME,
+            "--env",
+            "prod",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""admitted":true"#))
+        .stdout(predicate::str::contains(r#""reason":"rule_match""#));
+}
+
+#[test]
 fn test_edge_policy_check_denied_by_default() {
     let mut server = Server::new();
     let home = setup_config(&server);

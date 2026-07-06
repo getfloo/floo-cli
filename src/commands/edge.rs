@@ -1,7 +1,7 @@
 use std::net::IpAddr;
 use std::process;
 
-use ipnet::IpNet;
+use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 
 use crate::api_types::{EdgePolicyRule, EdgeRoute};
 use crate::errors::ErrorCode;
@@ -152,7 +152,7 @@ pub fn policy_get(app: Option<&str>, env: &str) {
 fn admits(ip: IpAddr, rules: &[EdgePolicyRule], default_allow: bool) -> (bool, Option<usize>) {
     let ip = normalize_ip(ip);
     for (i, rule) in rules.iter().enumerate() {
-        if let Ok(net) = rule.cidr.parse::<IpNet>() {
+        if let Some(net) = parse_rule_cidr(&rule.cidr) {
             // IpNet::contains returns false on version mismatch, matching the
             // gateway's explicit `address.version == network.version` guard.
             if net.contains(&ip) {
@@ -161,6 +161,21 @@ fn admits(ip: IpAddr, rules: &[EdgePolicyRule], default_allow: bool) -> (bool, O
         }
     }
     (default_allow, None)
+}
+
+/// Parse a stored rule CIDR, normalizing a bare IP to a host network (/32 or
+/// /128) — the gateway's `ipaddress.ip_network(strict=False)` accepts bare
+/// IPs, so `check` must too or it would disagree with enforcement on a rule
+/// that reached the DB un-normalized. Genuinely unparseable input is skipped.
+fn parse_rule_cidr(cidr: &str) -> Option<IpNet> {
+    if let Ok(net) = cidr.parse::<IpNet>() {
+        return Some(net);
+    }
+    match cidr.parse::<IpAddr>() {
+        Ok(IpAddr::V4(v4)) => Ipv4Net::new(v4, 32).ok().map(IpNet::V4),
+        Ok(IpAddr::V6(v6)) => Ipv6Net::new(v6, 128).ok().map(IpNet::V6),
+        Err(_) => None,
+    }
 }
 
 /// An IPv4-mapped IPv6 address (`::ffff:a.b.c.d`) evaluates as its IPv4 form,
