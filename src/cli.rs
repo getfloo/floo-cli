@@ -1912,6 +1912,8 @@ const DRY_RUN_SUPPORTED_COMMANDS: &[&str] = &[
     "apps delete",
     "domains add",
     "domains remove",
+    "edge policy set",
+    "edge policy clear",
     "cron run",
     "deploys rollback",
     "db migrate",
@@ -2671,6 +2673,32 @@ mod tests {
             (
                 "domains add",
                 &["floo", "domains", "add", "x.com", "--dry-run"],
+            ),
+            (
+                "edge policy set",
+                &[
+                    "floo",
+                    "edge",
+                    "policy",
+                    "set",
+                    "--env",
+                    "prod",
+                    "--rule",
+                    "allow:10.0.0.0/8",
+                    "--dry-run",
+                ],
+            ),
+            (
+                "edge policy clear",
+                &[
+                    "floo",
+                    "edge",
+                    "policy",
+                    "clear",
+                    "--env",
+                    "prod",
+                    "--dry-run",
+                ],
             ),
             (
                 "domains remove",

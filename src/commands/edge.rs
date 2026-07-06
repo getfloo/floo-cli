@@ -194,6 +194,26 @@ pub fn policy_set(
         process::exit(1);
     }
 
+    if output::is_dry_run_mode() {
+        let target = app.unwrap_or("(reads from config)");
+        output::dry_run_preview(
+            &format!(
+                "Would replace the {env} edge policy on {target}: {} rule(s), default {default_action}{}.",
+                parsed.len(),
+                if disabled { ", stored disabled" } else { "" }
+            ),
+            serde_json::json!({
+                "action": "edge_policy_set",
+                "app": app,
+                "environment": env,
+                "rules": parsed,
+                "default_action": default_action,
+                "enabled": !disabled,
+            }),
+        );
+        return;
+    }
+
     super::require_auth();
     let client = super::init_client(None);
     let (app_id, app_name) = super::resolve_app_from_config(&client, app);

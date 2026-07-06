@@ -5283,3 +5283,137 @@ fn test_edge_policy_clear_json_with_yes_flag() {
         .stdout(predicate::str::contains(r#""success":true"#))
         .stdout(predicate::str::contains(r#""tier":2"#));
 }
+
+#[test]
+fn test_edge_policy_set_dry_run_never_calls_the_api() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    // No PUT mock — a real mutation under --dry-run would 501 and fail loudly.
+    floo()
+        .args([
+            "--json",
+            "--dry-run",
+            "edge",
+            "policy",
+            "set",
+            "--app",
+            TEST_APP_NAME,
+            "--env",
+            "prod",
+            "--rule",
+            "allow:203.0.113.0/24",
+            "--default-action",
+            "deny",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""action":"edge_policy_set""#))
+        .stdout(predicate::str::contains(r#""enabled":true"#));
+}
+
+#[test]
+fn test_edge_policy_clear_dry_run_never_calls_the_api() {
+    let server = Server::new();
+    let home = setup_config(&server);
+
+    // No resolve/DELETE mocks — the preview must not touch the network.
+    floo()
+        .args([
+            "--json",
+            "--dry-run",
+            "edge",
+            "policy",
+            "clear",
+            "--app",
+            TEST_APP_NAME,
+            "--env",
+            "prod",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""action":"edge_policy_clear""#))
+        .stdout(predicate::str::contains(r#""tier":2"#));
+}
+
+#[test]
+fn test_edge_policy_set_disabled_sends_enabled_false() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _m = server
+        .mock(
+            "PUT",
+            format!("/v1/apps/{TEST_APP_ID}/environments/dev/edge-policy").as_str(),
+        )
+        .match_body(Matcher::PartialJsonString(r#"{"enabled":false}"#.into()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"id":"pol-3","app_id":"app-123","environment":"dev","rules":[{"action":"deny","cidr":"10.0.0.0/8"}],"default_action":"allow","enabled":false,"created_at":"2026-07-05T10:00:00Z","updated_at":"2026-07-05T10:00:00Z"}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "edge",
+            "policy",
+            "set",
+            "--app",
+            TEST_APP_NAME,
+            "--env",
+            "dev",
+            "--rule",
+            "deny:10.0.0.0/8",
+            "--disabled",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""enabled":false"#));
+}
+
+#[test]
+fn test_edge_policy_set_ipv6_rule_parses_on_first_colon() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _m = server
+        .mock(
+            "PUT",
+            format!("/v1/apps/{TEST_APP_ID}/environments/prod/edge-policy").as_str(),
+        )
+        .match_body(Matcher::PartialJsonString(
+            r#"{"rules":[{"action":"allow","cidr":"2001:db8::/32"}]}"#.into(),
+        ))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"id":"pol-4","app_id":"app-123","environment":"prod","rules":[{"action":"allow","cidr":"2001:db8::/32"}],"default_action":"deny","enabled":true,"created_at":"2026-07-05T10:00:00Z","updated_at":"2026-07-05T10:00:00Z"}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "edge",
+            "policy",
+            "set",
+            "--app",
+            TEST_APP_NAME,
+            "--env",
+            "prod",
+            "--rule",
+            "allow:2001:db8::/32",
+            "--default-action",
+            "deny",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""cidr":"2001:db8::/32""#));
+}
