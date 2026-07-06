@@ -60,6 +60,10 @@ pub struct AppFileConfig {
     /// Custom domains declared as `[domains."<hostname>"]` blocks (config-as-code).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub domains: HashMap<String, DomainBlock>,
+    /// The app-level `[edge]` IP/CIDR firewall (#1358); per-env override in
+    /// `[environments.<env>.edge]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge: Option<EdgeSection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resources: Option<ResourceConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -205,6 +209,67 @@ impl AuthSection {
 pub struct AppEnvironmentOverrides {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub access_mode: Option<AppAccessMode>,
+    /// Per-env edge policy override: `[environments.<env>.edge]` (#1358).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge: Option<EdgeSection>,
+}
+
+/// The `[edge]` IP/CIDR firewall section (#1358). Mirrors the API's
+/// config-as-code shape so a file the server accepts parses locally too;
+/// full CIDR syntax is validated server-side (one authority) — the CLI
+/// checks shape only.
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EdgeSection {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rules: Vec<EdgeRuleEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_action: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EdgeRuleEntry {
+    pub action: String,
+    pub cidr: String,
+}
+
+impl EdgeSection {
+    pub(crate) fn validate(&self, where_label: &str) -> Result<(), FlooError> {
+        for rule in &self.rules {
+            if rule.action != "allow" && rule.action != "deny" {
+                return Err(FlooError::with_suggestion(
+                    ErrorCode::InvalidProjectConfig,
+                    format!(
+                        "{where_label} rule has action '{}' — must be 'allow' or 'deny'.",
+                        rule.action
+                    ),
+                    "Each [[edge.rules]] entry is { action = \"allow\"|\"deny\", cidr = \"...\" }.",
+                ));
+            }
+            if rule.cidr.trim().is_empty() {
+                return Err(FlooError::with_suggestion(
+                    ErrorCode::InvalidProjectConfig,
+                    format!("{where_label} rule is missing a cidr."),
+                    "Each [[edge.rules]] entry is { action = \"allow\"|\"deny\", cidr = \"...\" }.",
+                ));
+            }
+        }
+        if let Some(ref default) = self.default_action {
+            if default != "allow" && default != "deny" {
+                return Err(FlooError::with_suggestion(
+                    ErrorCode::InvalidProjectConfig,
+                    format!(
+                        "{where_label} default_action is '{default}' — must be 'allow' or 'deny'."
+                    ),
+                    "Use default_action = \"allow\" or \"deny\".",
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq)]
@@ -415,6 +480,14 @@ fn validate_app_config(config: &AppFileConfig) -> Result<(), FlooError> {
     if let Some(ref auth) = config.auth {
         auth.validate()?;
     }
+    if let Some(ref edge) = config.edge {
+        edge.validate("[edge]")?;
+    }
+    for (env_name, overrides) in &config.environments {
+        if let Some(ref edge) = overrides.edge {
+            edge.validate(&format!("[environments.{env_name}.edge]"))?;
+        }
+    }
     validate_managed_blocks(config)?;
     validate_domain_blocks(&config.domains)?;
     validate_worker_command_collision(config)?;
@@ -583,6 +656,63 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn test_load_app_config_with_edge_policy() {
+        // codex #1358 PR 3 P2: the server accepts [edge] +
+        // [environments.<env>.edge]; the CLI parser must too, or a repo
+        // using config-as-code breaks every CLI command that reads config.
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[edge]
+default_action = "deny"
+
+[[edge.rules]]
+action = "allow"
+cidr = "203.0.113.0/24"
+
+[environments.prod.edge]
+default_action = "allow"
+
+[[environments.prod.edge.rules]]
+action = "deny"
+cidr = "198.51.100.0/24"
+"#,
+        )
+        .unwrap();
+
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        let edge = config.edge.as_ref().unwrap();
+        assert_eq!(edge.default_action.as_deref(), Some("deny"));
+        assert_eq!(edge.rules[0].cidr, "203.0.113.0/24");
+        let prod_edge = config.environments["prod"].edge.as_ref().unwrap();
+        assert_eq!(prod_edge.rules[0].action, "deny");
+    }
+
+    #[test]
+    fn test_load_app_config_rejects_bad_edge_action() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[[edge.rules]]
+action = "permit"
+cidr = "10.0.0.0/8"
+"#,
+        )
+        .unwrap();
+
+        let err = load_app_config(dir.path()).unwrap_err();
+        assert!(err.message.contains("'permit'"), "got: {}", err.message);
+    }
 
     #[test]
     fn test_load_app_config_minimal() {
@@ -867,6 +997,7 @@ type = "mysql"
             redis: None,
             storage: None,
             managed: HashMap::new(),
+            edge: None,
             resources: None,
             reparo: None,
             cron: HashMap::new(),

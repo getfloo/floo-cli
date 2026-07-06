@@ -440,6 +440,7 @@ ingress = "public"
                 dev_command: None,
                 migrate_command: None,
             },
+            edge: None,
             resources: None,
             env: None,
         };
@@ -537,6 +538,7 @@ ingress = "public"
             redis: None,
             storage: None,
             managed: HashMap::new(),
+            edge: None,
             resources: None,
             reparo: None,
             services: services_map,
@@ -590,6 +592,7 @@ ingress = "public"
                 dev_command: None,
                 migrate_command: None,
             },
+            edge: None,
             resources: None,
             env: None,
         };
@@ -640,6 +643,7 @@ ingress = "public"
             redis: None,
             storage: None,
             managed: HashMap::new(),
+            edge: None,
             resources: None,
             reparo: None,
             services: services_map,
@@ -688,6 +692,7 @@ ingress = "public"
                 dev_command: None,
                 migrate_command: None,
             },
+            edge: None,
             resources: None,
             env: None,
         };
@@ -706,6 +711,7 @@ ingress = "public"
             redis: Some(ManagedServiceSection { tier: None }),
             storage: None,
             managed: HashMap::new(),
+            edge: None,
             resources: None,
             reparo: None,
             services: HashMap::new(),
@@ -772,6 +778,7 @@ ingress = "public"
             redis: None,
             storage: None,
             managed: HashMap::new(),
+            edge: None,
             resources: None,
             reparo: None,
             services: services_map,
@@ -841,6 +848,7 @@ ingress = "public"
             redis: None,
             storage: None,
             managed: HashMap::new(),
+            edge: None,
             resources: None,
             reparo: None,
             services: services_map,
@@ -884,6 +892,7 @@ ingress = "public"
                 dev_command: None,
                 migrate_command: None,
             },
+            edge: None,
             resources: None,
             env: None,
         };
@@ -934,6 +943,7 @@ ingress = "public"
             redis: None,
             storage: None,
             managed: HashMap::new(),
+            edge: None,
             resources: None,
             reparo: None,
             services: services_map,
@@ -972,6 +982,7 @@ ingress = "public"
             redis: None,
             storage: None,
             managed: HashMap::new(),
+            edge: None,
             resources: None,
             reparo: None,
             services: HashMap::new(),
@@ -1040,6 +1051,7 @@ ingress = "public"
             redis: None,
             storage: None,
             managed: HashMap::new(),
+            edge: None,
             resources: None,
             reparo: None,
             services: services_map,
@@ -1200,6 +1212,7 @@ ingress = "public"
                 dev_command: None,
                 migrate_command: None,
             },
+            edge: None,
             resources: None,
             env: None,
         };
@@ -1241,6 +1254,7 @@ ingress = "public"
             redis: None,
             storage: None,
             managed: HashMap::new(),
+            edge: None,
             resources: None,
             reparo: None,
             services: services_map,
@@ -1357,6 +1371,7 @@ ingress = "internal"
             redis: None,
             storage: None,
             managed: HashMap::new(),
+            edge: None,
             resources: None,
             reparo: None,
             services: services_map,
@@ -1435,6 +1450,7 @@ domain = "svc.example.com"
             redis: None,
             storage: None,
             managed: HashMap::new(),
+            edge: None,
             resources: None,
             reparo: None,
             services: services_map,
@@ -1514,6 +1530,7 @@ domain = "svc.example.com"
             redis: None,
             storage: None,
             managed: HashMap::new(),
+            edge: None,
             resources: None,
             reparo: None,
             services: services_map,
@@ -1605,6 +1622,7 @@ domain = "svc.example.com"
             redis: None,
             storage: None,
             managed: HashMap::new(),
+            edge: None,
             resources: None,
             reparo: None,
             services: services_map,
@@ -1668,6 +1686,7 @@ domain = "svc.example.com"
         );
 
         let app_config = AppFileConfig {
+            edge: None,
             domains: Default::default(),
             app: AppFileAppSection {
                 name: "my-app".to_string(),
@@ -1757,6 +1776,7 @@ domain = "svc.example.com"
             redis: None,
             storage: None,
             managed: HashMap::new(),
+            edge: None,
             resources: None,
             reparo: None,
             services: services_map,
@@ -1845,6 +1865,7 @@ domain = "svc.example.com"
             redis: None,
             storage: None,
             managed: HashMap::new(),
+            edge: None,
             resources: None,
             reparo: None,
             services: services_map,
@@ -1873,6 +1894,7 @@ domain = "svc.example.com"
         let dir = TempDir::new().unwrap();
 
         let svc_file = ServiceFileConfig {
+            edge: None,
             domains: Default::default(),
             app: ServiceFileAppSection {
                 name: "my-app".to_string(),
@@ -1934,6 +1956,7 @@ domain = "svc.example.com"
             redis: Some(ManagedServiceSection { tier: None }),
             storage: None,
             managed: HashMap::new(),
+            edge: None,
             resources: None,
             reparo: None,
             services: {
@@ -1998,6 +2021,7 @@ domain = "svc.example.com"
             redis: None,
             storage: None,
             managed: HashMap::new(),
+            edge: None,
             resources: None,
             reparo: None,
             services: {

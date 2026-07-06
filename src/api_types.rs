@@ -185,6 +185,24 @@ pub struct EdgeRouteListResponse {
     pub total: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EdgePolicyRule {
+    pub action: String,
+    pub cidr: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EdgePolicyData {
+    pub id: String,
+    pub app_id: String,
+    pub environment: String,
+    pub rules: Vec<EdgePolicyRule>,
+    pub default_action: String,
+    pub enabled: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 // --- Deploy ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
