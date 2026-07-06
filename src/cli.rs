@@ -904,6 +904,89 @@ pub enum EdgeCommands {
     /// Inspect effective edge routes.
     #[command(subcommand)]
     Routes(EdgeRoutesCommands),
+
+    /// Manage the app's IP/CIDR firewall (edge policy).
+    #[command(subcommand)]
+    Policy(EdgePolicyCommands),
+}
+
+#[derive(Subcommand)]
+pub enum EdgePolicyCommands {
+    /// Show the edge policy for an environment.
+    #[command(after_help = "Examples:
+  floo edge policy get --env prod
+  floo edge policy get --app my-app --env dev --json
+
+Shows the ordered allow/deny rules, the default action, and whether the
+policy is enabled. Previews inherit the dev policy automatically.")]
+    Get {
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Environment: dev or prod. Previews inherit dev.
+        #[arg(long, value_parser = ["dev", "prod"])]
+        env: String,
+    },
+
+    /// Create or replace the edge policy for an environment.
+    #[command(after_help = "Examples:
+  # Office-only allowlist (everything else is denied):
+  floo edge policy set --env prod --rule allow:203.0.113.0/24 --default-action deny
+
+  # Block one abusive network, allow everyone else:
+  floo edge policy set --env prod --rule deny:198.51.100.0/24 --default-action allow
+
+  # Multiple rules — first match wins, top to bottom:
+  floo edge policy set --env prod \
+    --rule allow:203.0.113.7/32 --rule deny:203.0.113.0/24 --default-action allow
+
+Rules are evaluated in the order given; the default action applies when no
+rule matches. IPv4 and IPv6 CIDRs are accepted; bare IPs mean /32 (or /128).
+Replaces any existing policy for the environment. Requires the Team plan.
+Also configurable in floo.app.toml under [edge] — config wins on deploy.")]
+    Set {
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Environment: dev or prod. Previews inherit dev.
+        #[arg(long, value_parser = ["dev", "prod"])]
+        env: String,
+
+        /// Ordered rule as <allow|deny>:<CIDR>. Repeatable; first match wins.
+        #[arg(long = "rule", value_name = "ACTION:CIDR")]
+        rule: Vec<String>,
+
+        /// Action when no rule matches.
+        #[arg(long, default_value = "allow", value_parser = ["allow", "deny"])]
+        default_action: String,
+
+        /// Store the policy without enforcing it.
+        #[arg(long)]
+        disabled: bool,
+    },
+
+    /// Remove the edge policy for an environment (opens traffic back up).
+    #[command(after_help = "Examples:
+  floo edge policy clear --env prod --yes
+
+Deletes the policy entirely — all IPs are admitted again (subject to the
+app's auth). To keep the rules but stop enforcing them, use
+'floo edge policy set ... --disabled' instead.")]
+    Clear {
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Environment: dev or prod.
+        #[arg(long, value_parser = ["dev", "prod"])]
+        env: String,
+
+        /// Skip the confirmation prompt.
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2233,6 +2316,27 @@ pub fn run() {
             EdgeCommands::Routes(routes_sub) => match routes_sub {
                 EdgeRoutesCommands::List { app, env } => {
                     commands::edge::list_routes(app.as_deref(), env.as_deref())
+                }
+            },
+            EdgeCommands::Policy(policy_sub) => match policy_sub {
+                EdgePolicyCommands::Get { app, env } => {
+                    commands::edge::policy_get(app.as_deref(), &env)
+                }
+                EdgePolicyCommands::Set {
+                    app,
+                    env,
+                    rule,
+                    default_action,
+                    disabled,
+                } => commands::edge::policy_set(
+                    app.as_deref(),
+                    &env,
+                    &rule,
+                    &default_action,
+                    disabled,
+                ),
+                EdgePolicyCommands::Clear { app, env, yes } => {
+                    commands::edge::policy_clear(app.as_deref(), &env, yes)
                 }
             },
         },
