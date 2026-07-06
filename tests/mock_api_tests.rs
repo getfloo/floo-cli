@@ -5137,223 +5137,57 @@ fn test_edge_policy_get_not_found_is_a_valid_state() {
 }
 
 #[test]
-fn test_edge_policy_set_json() {
+fn test_edge_policy_check_admitted_by_rule() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
     let _m = server
         .mock(
-            "PUT",
+            "GET",
             format!("/v1/apps/{TEST_APP_ID}/environments/prod/edge-policy").as_str(),
         )
-        .match_body(Matcher::JsonString(
-            r#"{"rules":[{"action":"allow","cidr":"203.0.113.0/24"},{"action":"deny","cidr":"198.51.100.0/24"}],"default_action":"deny","enabled":true}"#.into(),
-        ))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(edge_policy_json())
         .create();
 
+    // edge_policy_json: allow 203.0.113.0/24, deny 198.51.100.0/24, default deny.
     floo()
         .args([
             "--json",
             "edge",
             "policy",
-            "set",
+            "check",
+            "203.0.113.7",
             "--app",
             TEST_APP_NAME,
             "--env",
             "prod",
-            "--rule",
-            "allow:203.0.113.0/24",
-            "--rule",
-            "deny:198.51.100.0/24",
-            "--default-action",
-            "deny",
         ])
         .env("HOME", home.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains(r#""success":true"#))
-        .stdout(predicate::str::contains(r#""enabled":true"#));
+        .stdout(predicate::str::contains(r#""admitted":true"#))
+        .stdout(predicate::str::contains(r#""reason":"rule_match""#))
+        .stdout(predicate::str::contains(r#""cidr":"203.0.113.0/24""#));
 }
 
 #[test]
-fn test_edge_policy_set_rejects_malformed_rule_locally() {
-    let server = Server::new();
-    let home = setup_config(&server);
-
-    // No API mocks — the parse error must fail before any HTTP call.
-    floo()
-        .args([
-            "--json",
-            "edge",
-            "policy",
-            "set",
-            "--app",
-            TEST_APP_NAME,
-            "--env",
-            "prod",
-            "--rule",
-            "permit:10.0.0.0/8",
-        ])
-        .env("HOME", home.path())
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains("INVALID_FORMAT"))
-        .stdout(predicate::str::contains("permit"));
-}
-
-#[test]
-fn test_edge_policy_set_refuses_no_op_allow_all() {
-    let server = Server::new();
-    let home = setup_config(&server);
-
-    // Zero rules + default allow admits everything — same as no policy. Refuse.
-    floo()
-        .args([
-            "--json",
-            "edge",
-            "policy",
-            "set",
-            "--app",
-            TEST_APP_NAME,
-            "--env",
-            "prod",
-        ])
-        .env("HOME", home.path())
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains("INVALID_FORMAT"))
-        .stdout(predicate::str::contains("admits everything"));
-}
-
-#[test]
-fn test_edge_policy_clear_refuses_without_yes_flag_in_json_mode() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let _resolve = mock_resolve_app(&mut server);
-
-    // No DELETE mock — command must refuse before reaching that endpoint.
-    floo()
-        .args([
-            "--json",
-            "edge",
-            "policy",
-            "clear",
-            "--app",
-            TEST_APP_NAME,
-            "--env",
-            "prod",
-        ])
-        .env("HOME", home.path())
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains("CONFIRMATION_REQUIRED"));
-}
-
-#[test]
-fn test_edge_policy_clear_json_with_yes_flag() {
+fn test_edge_policy_check_matches_bare_ip_rule() {
+    // codex #1456: a bare-IP rule (gateway treats as /32) must match — check
+    // must not disagree with the gateway on an un-normalized stored rule.
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
     let _m = server
         .mock(
-            "DELETE",
+            "GET",
             format!("/v1/apps/{TEST_APP_ID}/environments/prod/edge-policy").as_str(),
         )
-        .with_status(204)
-        .create();
-
-    floo()
-        .args([
-            "--json",
-            "edge",
-            "policy",
-            "clear",
-            "--app",
-            TEST_APP_NAME,
-            "--env",
-            "prod",
-            "--yes",
-        ])
-        .env("HOME", home.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""success":true"#))
-        .stdout(predicate::str::contains(r#""tier":2"#));
-}
-
-#[test]
-fn test_edge_policy_set_dry_run_never_calls_the_api() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let _resolve = mock_resolve_app(&mut server);
-
-    // No PUT mock — a real mutation under --dry-run would 501 and fail loudly.
-    floo()
-        .args([
-            "--json",
-            "--dry-run",
-            "edge",
-            "policy",
-            "set",
-            "--app",
-            TEST_APP_NAME,
-            "--env",
-            "prod",
-            "--rule",
-            "allow:203.0.113.0/24",
-            "--default-action",
-            "deny",
-        ])
-        .env("HOME", home.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""action":"edge_policy_set""#))
-        .stdout(predicate::str::contains(r#""enabled":true"#));
-}
-
-#[test]
-fn test_edge_policy_clear_dry_run_never_calls_the_api() {
-    let server = Server::new();
-    let home = setup_config(&server);
-
-    // No resolve/DELETE mocks — the preview must not touch the network.
-    floo()
-        .args([
-            "--json",
-            "--dry-run",
-            "edge",
-            "policy",
-            "clear",
-            "--app",
-            TEST_APP_NAME,
-            "--env",
-            "prod",
-        ])
-        .env("HOME", home.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""action":"edge_policy_clear""#))
-        .stdout(predicate::str::contains(r#""tier":2"#));
-}
-
-#[test]
-fn test_edge_policy_set_disabled_sends_enabled_false() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let _resolve = mock_resolve_app(&mut server);
-    let _m = server
-        .mock(
-            "PUT",
-            format!("/v1/apps/{TEST_APP_ID}/environments/dev/edge-policy").as_str(),
-        )
-        .match_body(Matcher::PartialJsonString(r#"{"enabled":false}"#.into()))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
-            r#"{"id":"pol-3","app_id":"app-123","environment":"dev","rules":[{"action":"deny","cidr":"10.0.0.0/8"}],"default_action":"allow","enabled":false,"created_at":"2026-07-05T10:00:00Z","updated_at":"2026-07-05T10:00:00Z"}"#,
+            r#"{"id":"pol-8","app_id":"app-123","environment":"prod","rules":[{"action":"allow","cidr":"203.0.113.7"}],"default_action":"deny","enabled":true,"created_at":"2026-07-05T10:00:00Z","updated_at":"2026-07-05T10:00:00Z"}"#,
         )
         .create();
 
@@ -5362,38 +5196,68 @@ fn test_edge_policy_set_disabled_sends_enabled_false() {
             "--json",
             "edge",
             "policy",
-            "set",
+            "check",
+            "203.0.113.7",
             "--app",
             TEST_APP_NAME,
             "--env",
-            "dev",
-            "--rule",
-            "deny:10.0.0.0/8",
-            "--disabled",
+            "prod",
         ])
         .env("HOME", home.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains(r#""enabled":false"#));
+        .stdout(predicate::str::contains(r#""admitted":true"#))
+        .stdout(predicate::str::contains(r#""reason":"rule_match""#));
 }
 
 #[test]
-fn test_edge_policy_set_ipv6_rule_parses_on_first_colon() {
+fn test_edge_policy_check_denied_by_default() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
     let _m = server
         .mock(
-            "PUT",
+            "GET",
             format!("/v1/apps/{TEST_APP_ID}/environments/prod/edge-policy").as_str(),
         )
-        .match_body(Matcher::PartialJsonString(
-            r#"{"rules":[{"action":"allow","cidr":"2001:db8::/32"}]}"#.into(),
-        ))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(edge_policy_json())
+        .create();
+
+    // 10.0.0.1 matches no rule -> default deny.
+    floo()
+        .args([
+            "edge",
+            "policy",
+            "check",
+            "10.0.0.1",
+            "--app",
+            TEST_APP_NAME,
+            "--env",
+            "prod",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("DENIED"))
+        .stderr(predicate::str::contains("default deny"));
+}
+
+#[test]
+fn test_edge_policy_check_ipv6_first_match() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _m = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/environments/prod/edge-policy").as_str(),
+        )
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
-            r#"{"id":"pol-4","app_id":"app-123","environment":"prod","rules":[{"action":"allow","cidr":"2001:db8::/32"}],"default_action":"deny","enabled":true,"created_at":"2026-07-05T10:00:00Z","updated_at":"2026-07-05T10:00:00Z"}"#,
+            r#"{"id":"pol-6","app_id":"app-123","environment":"prod","rules":[{"action":"allow","cidr":"2001:db8::/32"}],"default_action":"deny","enabled":true,"created_at":"2026-07-05T10:00:00Z","updated_at":"2026-07-05T10:00:00Z"}"#,
         )
         .create();
 
@@ -5402,20 +5266,113 @@ fn test_edge_policy_set_ipv6_rule_parses_on_first_colon() {
             "--json",
             "edge",
             "policy",
-            "set",
+            "check",
+            "2001:db8::1",
             "--app",
             TEST_APP_NAME,
             "--env",
             "prod",
-            "--rule",
-            "allow:2001:db8::/32",
-            "--default-action",
-            "deny",
         ])
         .env("HOME", home.path())
         .assert()
         .success()
+        .stdout(predicate::str::contains(r#""admitted":true"#))
         .stdout(predicate::str::contains(r#""cidr":"2001:db8::/32""#));
+}
+
+#[test]
+fn test_edge_policy_check_no_policy_admits_all() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _m = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/environments/prod/edge-policy").as_str(),
+        )
+        .with_status(404)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":{"code":"EDGE_POLICY_NOT_FOUND","message":"No edge policy."}}"#)
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "edge",
+            "policy",
+            "check",
+            "1.2.3.4",
+            "--app",
+            TEST_APP_NAME,
+            "--env",
+            "prod",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""admitted":true"#))
+        .stdout(predicate::str::contains(r#""reason":"no_policy""#));
+}
+
+#[test]
+fn test_edge_policy_check_disabled_admits_all() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _m = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/environments/prod/edge-policy").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"id":"pol-7","app_id":"app-123","environment":"prod","rules":[{"action":"deny","cidr":"0.0.0.0/0"}],"default_action":"deny","enabled":false,"created_at":"2026-07-05T10:00:00Z","updated_at":"2026-07-05T10:00:00Z"}"#,
+        )
+        .create();
+
+    // Even a deny-all policy admits when disabled (not enforced).
+    floo()
+        .args([
+            "--json",
+            "edge",
+            "policy",
+            "check",
+            "1.2.3.4",
+            "--app",
+            TEST_APP_NAME,
+            "--env",
+            "prod",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""admitted":true"#))
+        .stdout(predicate::str::contains(r#""reason":"policy_disabled""#));
+}
+
+#[test]
+fn test_edge_policy_check_rejects_bad_ip_locally() {
+    let server = Server::new();
+    let home = setup_config(&server);
+
+    // No API mocks — a malformed IP fails before any auth/HTTP.
+    floo()
+        .args([
+            "--json",
+            "edge",
+            "policy",
+            "check",
+            "not-an-ip",
+            "--app",
+            TEST_APP_NAME,
+            "--env",
+            "prod",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("INVALID_FORMAT"));
 }
 
 #[test]

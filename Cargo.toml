@@ -27,6 +27,7 @@ path = "src/main.rs"
 [dependencies]
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
+ipnet = "2"
 colored = "2"
 comfy-table = "7"
 indicatif = "0.18"

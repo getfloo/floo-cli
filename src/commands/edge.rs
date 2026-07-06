@@ -1,6 +1,9 @@
+use std::net::IpAddr;
 use std::process;
 
-use crate::api_types::EdgeRoute;
+use ipnet::{IpNet, Ipv4Net, Ipv6Net};
+
+use crate::api_types::{EdgePolicyRule, EdgeRoute};
 use crate::errors::ErrorCode;
 use crate::output;
 
@@ -141,165 +144,126 @@ pub fn policy_get(app: Option<&str>, env: &str) {
     );
 }
 
-/// Parse `--rule allow:203.0.113.0/24` into an API rule. CIDR syntax is
-/// validated server-side (one validation authority); the CLI only splits
-/// the action prefix so typos fail fast with a local message.
-fn parse_rule_arg(raw: &str) -> Result<crate::api_types::EdgePolicyRule, String> {
-    let Some((action, cidr)) = raw.split_once(':') else {
-        return Err(format!(
-            "rule '{raw}' must be <allow|deny>:<CIDR>, e.g. allow:203.0.113.0/24"
-        ));
-    };
-    if action != "allow" && action != "deny" {
-        return Err(format!(
-            "rule '{raw}' has action '{action}' — must be 'allow' or 'deny'"
-        ));
-    }
-    if cidr.is_empty() {
-        return Err(format!("rule '{raw}' is missing a CIDR after the ':'"));
-    }
-    Ok(crate::api_types::EdgePolicyRule {
-        action: action.to_string(),
-        cidr: cidr.to_string(),
-    })
-}
-
-pub fn policy_set(
-    app: Option<&str>,
-    env: &str,
-    rules: &[String],
-    default_action: &str,
-    disabled: bool,
-) {
-    let mut parsed = Vec::with_capacity(rules.len());
-    for raw in rules {
-        match parse_rule_arg(raw) {
-            Ok(rule) => parsed.push(rule),
-            Err(msg) => {
-                output::error(
-                    &msg,
-                    &ErrorCode::InvalidFormat,
-                    Some("Rules are <allow|deny>:<CIDR>, evaluated in order; first match wins."),
-                );
-                process::exit(1);
+/// Mirror of the gateway's `CompiledEdgePolicy.admits` (gateway/app/edge_policy.py):
+/// ordered first-match CIDR containment, version-matched, else the default action.
+/// Returns (admitted, matched_rule_index). The gateway is the authoritative
+/// enforcer; this is a read-only preview, so a rule whose CIDR fails to parse
+/// (server-validated, so vanishingly rare) is skipped rather than erroring.
+fn admits(ip: IpAddr, rules: &[EdgePolicyRule], default_allow: bool) -> (bool, Option<usize>) {
+    let ip = normalize_ip(ip);
+    for (i, rule) in rules.iter().enumerate() {
+        if let Some(net) = parse_rule_cidr(&rule.cidr) {
+            // IpNet::contains returns false on version mismatch, matching the
+            // gateway's explicit `address.version == network.version` guard.
+            if net.contains(&ip) {
+                return (rule.action == "allow", Some(i));
             }
         }
     }
-    if parsed.is_empty() && default_action == "allow" {
-        output::error(
-            "This policy has no rules and default-action allow — it admits everything, same as no policy.",
-            &ErrorCode::InvalidFormat,
-            Some("Add at least one --rule, use --default-action deny, or run 'floo edge policy clear'."),
-        );
-        process::exit(1);
-    }
+    (default_allow, None)
+}
 
-    if output::is_dry_run_mode() {
-        let target = app.unwrap_or("(reads from config)");
-        output::dry_run_preview(
-            &format!(
-                "Would replace the {env} edge policy on {target}: {} rule(s), default {default_action}{}.",
-                parsed.len(),
-                if disabled { ", stored disabled" } else { "" }
-            ),
-            serde_json::json!({
-                "action": "edge_policy_set",
-                "app": app,
-                "environment": env,
-                "rules": parsed,
-                "default_action": default_action,
-                "enabled": !disabled,
-            }),
-        );
-        return;
+/// Parse a stored rule CIDR, normalizing a bare IP to a host network (/32 or
+/// /128) — the gateway's `ipaddress.ip_network(strict=False)` accepts bare
+/// IPs, so `check` must too or it would disagree with enforcement on a rule
+/// that reached the DB un-normalized. Genuinely unparseable input is skipped.
+fn parse_rule_cidr(cidr: &str) -> Option<IpNet> {
+    if let Ok(net) = cidr.parse::<IpNet>() {
+        return Some(net);
     }
+    match cidr.parse::<IpAddr>() {
+        Ok(IpAddr::V4(v4)) => Ipv4Net::new(v4, 32).ok().map(IpNet::V4),
+        Ok(IpAddr::V6(v6)) => Ipv6Net::new(v6, 128).ok().map(IpNet::V6),
+        Err(_) => None,
+    }
+}
+
+/// An IPv4-mapped IPv6 address (`::ffff:a.b.c.d`) evaluates as its IPv4 form,
+/// matching the gateway's `_parse_client_ip`.
+fn normalize_ip(ip: IpAddr) -> IpAddr {
+    if let IpAddr::V6(v6) = ip {
+        if let Some(v4) = v6.to_ipv4_mapped() {
+            return IpAddr::V4(v4);
+        }
+    }
+    ip
+}
+
+pub fn policy_check(ip_str: &str, app: Option<&str>, env: &str) {
+    let ip: IpAddr = match ip_str.parse() {
+        Ok(ip) => ip,
+        Err(_) => {
+            output::error(
+                &format!("'{ip_str}' is not a valid IP address."),
+                &ErrorCode::InvalidFormat,
+                Some("Pass an IPv4 or IPv6 address, e.g. 203.0.113.7 or 2001:db8::1."),
+            );
+            process::exit(1);
+        }
+    };
 
     super::require_auth();
     let client = super::init_client(None);
     let (app_id, app_name) = super::resolve_app_from_config(&client, app);
 
-    let policy = match client.set_edge_policy(&app_id, env, &parsed, default_action, !disabled) {
-        Ok(p) => p,
+    let policy = match client.get_edge_policy(&app_id, env) {
+        Ok(p) => Some(p),
+        Err(e) if e.code == "EDGE_POLICY_NOT_FOUND" => None,
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
 
-    let note = if disabled {
-        " (stored DISABLED — not enforced)"
-    } else {
-        ""
+    // No policy, or a stored-but-disabled policy, admits every IP (the gateway
+    // only enforces an enabled policy).
+    let (admitted, matched_idx, enforced) = match &policy {
+        None => (true, None, false),
+        Some(p) if !p.enabled => (true, None, false),
+        Some(p) => {
+            let (a, m) = admits(ip, &p.rules, p.default_action == "allow");
+            (a, m, true)
+        }
     };
-    output::success(
-        &format!(
-            "Edge policy set for {app_name} in {env}: {} rule(s), default {}{note}.",
-            policy.rules.len(),
-            policy.default_action
-        ),
-        Some(output::to_value(&policy)),
-    );
-}
+    let matched_rule = matched_idx.and_then(|i| policy.as_ref().map(|p| &p.rules[i]));
 
-pub fn policy_clear(app: Option<&str>, env: &str, yes: bool) {
-    use crate::confirm::{confirm_tier2, ConfirmOutcome, RiskMetadata, Tier};
-
-    if output::is_dry_run_mode() {
-        let risk: RiskMetadata = Tier::Two.into();
-        let target = app.unwrap_or("(reads from config)");
-        output::dry_run_preview(
-            &format!("Would remove the {env} edge policy from {target} — all IPs admitted again."),
-            serde_json::json!({
-                "action": "edge_policy_clear",
-                "app": app,
+    if output::is_json_mode() {
+        let reason = if !enforced {
+            if policy.is_none() {
+                "no_policy"
+            } else {
+                "policy_disabled"
+            }
+        } else if matched_rule.is_some() {
+            "rule_match"
+        } else {
+            "default_action"
+        };
+        output::success(
+            &format!("Edge policy check for {app_name} in {env}."),
+            Some(serde_json::json!({
+                "ip": ip_str,
                 "environment": env,
-                "destructive": risk.destructive,
-                "data_loss": risk.data_loss,
-                "tier": risk.tier,
-            }),
+                "admitted": admitted,
+                "enforced": enforced,
+                "matched_rule": matched_rule,
+                "reason": reason,
+            })),
         );
         return;
     }
 
-    super::require_auth();
-    let client = super::init_client(None);
-    let (app_id, app_name) = super::resolve_app_from_config(&client, app);
-
-    match confirm_tier2(
-        "Remove edge policy",
-        &format!("the {env} IP firewall for {app_name} (all IPs admitted again)"),
-        yes,
-    ) {
-        ConfirmOutcome::Proceed => {}
-        ConfirmOutcome::Aborted => {
-            if !output::is_json_mode() {
-                output::info("Cancelled — edge policy unchanged.", None);
-            }
-            process::exit(0);
+    let verdict = if admitted { "ADMITTED" } else { "DENIED" };
+    let detail = match (&policy, matched_rule) {
+        (None, _) => "no edge policy, all IPs admitted".to_string(),
+        (Some(p), _) if !p.enabled => {
+            "policy is disabled (not enforced), all IPs admitted".to_string()
         }
-        ConfirmOutcome::Refused { suggestion } => {
-            crate::confirm::exit_refused(
-                &format!(
-                    "Refusing to remove the {env} edge policy for {app_name} without explicit confirmation."
-                ),
-                &suggestion,
-            );
-        }
-    }
-
-    if let Err(e) = client.delete_edge_policy(&app_id, env) {
-        output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-        process::exit(1);
-    }
-
-    let risk: RiskMetadata = Tier::Two.into();
-    output::success(
-        &format!("Edge policy removed for {app_name} in {env} — all IPs admitted again."),
-        Some(serde_json::json!({
-            "environment": env,
-            "destructive": risk.destructive,
-            "data_loss": risk.data_loss,
-            "tier": risk.tier,
-        })),
+        (Some(_), Some(rule)) => format!("matched rule {} {}", rule.action, rule.cidr),
+        (Some(p), None) => format!("no rule matched, default {}", p.default_action),
+    };
+    output::info(
+        &format!("{ip_str} in {app_name}/{env}: {verdict} ({detail})."),
+        None,
     );
 }
