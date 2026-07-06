@@ -884,6 +884,11 @@ pub struct AnalyticsSummary {
     #[serde(default)]
     pub gateway_handled_requests: Option<i64>,
     pub status_code_breakdown: Option<HashMap<String, i64>>,
+    // {rejection_reason: count} over gateway-rejected requests (#1358), e.g.
+    // {"edge_policy": 42}. `default` keeps the CLI working against an API
+    // that predates the field.
+    #[serde(default)]
+    pub rejection_breakdown: Option<HashMap<String, i64>>,
     pub total_apps_with_traffic: Option<i64>,
 }
 

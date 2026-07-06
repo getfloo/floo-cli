@@ -109,6 +109,18 @@ fn render_app_analytics(name: &str, period: &str, data: &AppAnalyticsResponse) {
         }
     }
 
+    if let Some(rejections) = &summary.rejection_breakdown {
+        if !rejections.is_empty() {
+            eprintln!();
+            eprintln!("Gateway Rejections");
+            let mut rows: Vec<(&String, &i64)> = rejections.iter().collect();
+            rows.sort_by(|a, b| b.1.cmp(a.1));
+            for (reason, count) in rows {
+                eprintln!("  {:14}{:>10}", reason, format_number(*count));
+            }
+        }
+    }
+
     if !data.time_series.is_empty() {
         eprintln!();
         eprintln!("Traffic");
@@ -162,6 +174,18 @@ fn render_org_analytics(period: &str, data: &AppAnalyticsResponse) {
             eprintln!();
             eprintln!("Status Codes");
             render_status_code_chart(breakdown, total_requests);
+        }
+    }
+
+    if let Some(rejections) = &summary.rejection_breakdown {
+        if !rejections.is_empty() {
+            eprintln!();
+            eprintln!("Gateway Rejections");
+            let mut rows: Vec<(&String, &i64)> = rejections.iter().collect();
+            rows.sort_by(|a, b| b.1.cmp(a.1));
+            for (reason, count) in rows {
+                eprintln!("  {:14}{:>10}", reason, format_number(*count));
+            }
         }
     }
 
