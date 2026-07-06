@@ -71,9 +71,9 @@ floo domains list --app my-app
 # Edge routes
 floo edge routes list --app my-app --json
 
-# Edge policy (IP/CIDR firewall, Team plan)
-floo edge policy set --env prod --rule allow:203.0.113.0/24 --default-action deny
+# Edge policy (IP/CIDR firewall, Team plan) — configured in floo.app.toml [edge], read via CLI
 floo edge policy get --env prod
+floo edge policy check 203.0.113.7 --env prod
 ```
 
 All commands are invoked with the production alias: `floo`.

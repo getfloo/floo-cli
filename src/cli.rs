@@ -918,7 +918,10 @@ pub enum EdgePolicyCommands {
   floo edge policy get --app my-app --env dev --json
 
 Shows the ordered allow/deny rules, the default action, and whether the
-policy is enabled. Previews inherit the dev policy automatically.")]
+policy is enabled. Previews inherit the dev policy automatically.
+
+The edge policy is configured in floo.app.toml under [edge] and applied on
+deploy — this command (and 'check') are read-only. See 'floo docs edge'.")]
     Get {
         /// App name or ID (reads from config if omitted).
         #[arg(short, long)]
@@ -929,23 +932,19 @@ policy is enabled. Previews inherit the dev policy automatically.")]
         env: String,
     },
 
-    /// Create or replace the edge policy for an environment.
+    /// Check whether an IP would be admitted by the edge policy.
     #[command(after_help = "Examples:
-  # Office-only allowlist (everything else is denied):
-  floo edge policy set --env prod --rule allow:203.0.113.0/24 --default-action deny
+  floo edge policy check 203.0.113.7 --env prod
+  floo edge policy check 2001:db8::1 --env dev --json
 
-  # Block one abusive network, allow everyone else:
-  floo edge policy set --env prod --rule deny:198.51.100.0/24 --default-action allow
+Evaluates the IP against the live policy (first-match rules, then the default
+action) and prints admitted/denied plus the matching rule. Read-only — the
+gateway is the authoritative enforcer; this mirrors its logic for debugging.
+To CHANGE the policy, edit floo.app.toml [edge] and deploy.")]
+    Check {
+        /// The client IP to test (IPv4 or IPv6).
+        ip: String,
 
-  # Multiple rules — first match wins, top to bottom:
-  floo edge policy set --env prod \
-    --rule allow:203.0.113.7/32 --rule deny:203.0.113.0/24 --default-action allow
-
-Rules are evaluated in the order given; the default action applies when no
-rule matches. IPv4 and IPv6 CIDRs are accepted; bare IPs mean /32 (or /128).
-Replaces any existing policy for the environment. Requires the Team plan.
-Also configurable in floo.app.toml under [edge] — config wins on deploy.")]
-    Set {
         /// App name or ID (reads from config if omitted).
         #[arg(short, long)]
         app: Option<String>,
@@ -953,39 +952,6 @@ Also configurable in floo.app.toml under [edge] — config wins on deploy.")]
         /// Environment: dev or prod. Previews inherit dev.
         #[arg(long, value_parser = ["dev", "prod"])]
         env: String,
-
-        /// Ordered rule as <allow|deny>:<CIDR>. Repeatable; first match wins.
-        #[arg(long = "rule", value_name = "ACTION:CIDR")]
-        rule: Vec<String>,
-
-        /// Action when no rule matches.
-        #[arg(long, default_value = "allow", value_parser = ["allow", "deny"])]
-        default_action: String,
-
-        /// Store the policy without enforcing it.
-        #[arg(long)]
-        disabled: bool,
-    },
-
-    /// Remove the edge policy for an environment (opens traffic back up).
-    #[command(after_help = "Examples:
-  floo edge policy clear --env prod --yes
-
-Deletes the policy entirely — all IPs are admitted again (subject to the
-app's auth). To keep the rules but stop enforcing them, use
-'floo edge policy set ... --disabled' instead.")]
-    Clear {
-        /// App name or ID (reads from config if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-
-        /// Environment: dev or prod.
-        #[arg(long, value_parser = ["dev", "prod"])]
-        env: String,
-
-        /// Skip the confirmation prompt.
-        #[arg(long)]
-        yes: bool,
     },
 }
 
@@ -1912,8 +1878,6 @@ const DRY_RUN_SUPPORTED_COMMANDS: &[&str] = &[
     "apps delete",
     "domains add",
     "domains remove",
-    "edge policy set",
-    "edge policy clear",
     "cron run",
     "deploys rollback",
     "db migrate",
@@ -2324,21 +2288,8 @@ pub fn run() {
                 EdgePolicyCommands::Get { app, env } => {
                     commands::edge::policy_get(app.as_deref(), &env)
                 }
-                EdgePolicyCommands::Set {
-                    app,
-                    env,
-                    rule,
-                    default_action,
-                    disabled,
-                } => commands::edge::policy_set(
-                    app.as_deref(),
-                    &env,
-                    &rule,
-                    &default_action,
-                    disabled,
-                ),
-                EdgePolicyCommands::Clear { app, env, yes } => {
-                    commands::edge::policy_clear(app.as_deref(), &env, yes)
+                EdgePolicyCommands::Check { ip, app, env } => {
+                    commands::edge::policy_check(&ip, app.as_deref(), &env)
                 }
             },
         },
@@ -2673,32 +2624,6 @@ mod tests {
             (
                 "domains add",
                 &["floo", "domains", "add", "x.com", "--dry-run"],
-            ),
-            (
-                "edge policy set",
-                &[
-                    "floo",
-                    "edge",
-                    "policy",
-                    "set",
-                    "--env",
-                    "prod",
-                    "--rule",
-                    "allow:10.0.0.0/8",
-                    "--dry-run",
-                ],
-            ),
-            (
-                "edge policy clear",
-                &[
-                    "floo",
-                    "edge",
-                    "policy",
-                    "clear",
-                    "--env",
-                    "prod",
-                    "--dry-run",
-                ],
             ),
             (
                 "domains remove",

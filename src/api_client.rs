@@ -156,16 +156,6 @@ impl FlooClient {
             .map_err(|e| FlooApiError::new(0, "CONNECTION_ERROR", e.to_string()))
     }
 
-    fn put_json(
-        &self,
-        path: &str,
-        body: &Value,
-    ) -> Result<reqwest::blocking::Response, FlooApiError> {
-        let req = self.apply_headers(self.client.put(self.url(path)).json(body));
-        req.send()
-            .map_err(|e| FlooApiError::new(0, "CONNECTION_ERROR", e.to_string()))
-    }
-
     fn delete(&self, path: &str) -> Result<reqwest::blocking::Response, FlooApiError> {
         let req = self.apply_headers(self.client.delete(self.url(path)));
         req.send()
@@ -364,35 +354,6 @@ impl FlooClient {
     pub fn get_edge_policy(&self, app_id: &str, env: &str) -> Result<EdgePolicyData, FlooApiError> {
         let resp = self.get(&format!("/v1/apps/{app_id}/environments/{env}/edge-policy"))?;
         self.handle_response(resp)
-    }
-
-    pub fn set_edge_policy(
-        &self,
-        app_id: &str,
-        env: &str,
-        rules: &[EdgePolicyRule],
-        default_action: &str,
-        enabled: bool,
-    ) -> Result<EdgePolicyData, FlooApiError> {
-        let body = serde_json::json!({
-            "rules": rules,
-            "default_action": default_action,
-            "enabled": enabled,
-        });
-        let resp = self.put_json(
-            &format!("/v1/apps/{app_id}/environments/{env}/edge-policy"),
-            &body,
-        )?;
-        self.handle_response(resp)
-    }
-
-    pub fn delete_edge_policy(&self, app_id: &str, env: &str) -> Result<(), FlooApiError> {
-        let resp = self.delete(&format!("/v1/apps/{app_id}/environments/{env}/edge-policy"))?;
-        if resp.status().as_u16() == 204 {
-            return Ok(());
-        }
-        self.handle_response_value(resp)?;
-        Ok(())
     }
 
     pub fn delete_app(&self, app_id: &str) -> Result<(), FlooApiError> {

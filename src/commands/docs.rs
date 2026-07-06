@@ -366,25 +366,23 @@ edge BEFORE the request body is read and before any managed auth. Rules are
 evaluated top to bottom; first match wins; the default action applies when
 no rule matches. Previews inherit the dev policy.
 
-  # Office-only allowlist (everything else denied):
-  floo edge policy set --env prod --rule allow:203.0.113.0/24 --default-action deny
+The firewall is configured as code in floo.app.toml and applied on deploy —
+that is the single source of truth (version-controlled, reviewable, auditable).
+The CLI is read-only.
 
-  # Block one abusive network, allow everyone else:
-  floo edge policy set --env prod --rule deny:198.51.100.0/24 --default-action allow
-
-  floo edge policy get --env prod --json
-  floo edge policy clear --env prod --yes
-
-Also configurable in floo.app.toml (config wins on the next deploy):
-
-  [edge]
+  [edge]                       # office-only allowlist: deny everything else
   default_action = \"deny\"
 
   [[edge.rules]]
   action = \"allow\"
   cidr = \"203.0.113.0/24\"
 
-  [environments.prod.edge]   # per-env override
+  [environments.prod.edge]     # per-env override (previews inherit dev)
+
+Change the firewall by editing floo.app.toml and deploying. Read it with:
+
+  floo edge policy get --env prod --json
+  floo edge policy check 203.0.113.7 --env prod   # would this IP be admitted?
 
 Denied requests get 403 {\"code\":\"EDGE_POLICY_DENIED\"}; denial counts appear
 in `floo analytics` as the rejection breakdown.
