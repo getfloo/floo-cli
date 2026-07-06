@@ -930,9 +930,6 @@ pub fn deploy(
         .and_then(|c| c.auth.as_ref())
         .and_then(|auth| auth.redirect_uris.clone());
 
-    // Extract reparo config from [reparo] toml section
-    let reparo_config = resolved.app_config.as_ref().and_then(|c| c.reparo.as_ref());
-
     // Extract cron job definitions from [cron] toml section
     let cron_entries: Vec<crate::project_config::CronJobEntry> = resolved
         .app_config
@@ -970,7 +967,6 @@ pub fn deploy(
         access_mode.as_ref().map(|m| m.as_str()),
         agent_mode.as_ref().map(|m| m.as_str()),
         auth_redirect_uris.as_deref(),
-        reparo_config,
         cron_jobs_arg,
         github_config,
         skip_migrations,

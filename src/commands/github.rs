@@ -701,7 +701,6 @@ fn run_initial_deploy(
         None,  // access_mode
         None,  // agent_mode
         None,  // auth_redirect_uris
-        None,  // reparo_config
         None,  // cron_jobs
         None,  // github_config
         false, // skip_migrations — initial deploy from `floo apps github connect` always runs migrations

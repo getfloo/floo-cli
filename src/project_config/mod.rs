@@ -50,7 +50,7 @@ fn extract_unknown_field(msg: &str) -> Option<&str> {
 pub use app_config::AppServiceType;
 pub use app_config::{
     load_app_config, write_app_config_with_header, AppAccessMode, AppAgentMode, AppFileAppSection,
-    AppFileConfig, AppServiceEntry, GitHubConfig, ReparoConfig,
+    AppFileConfig, AppServiceEntry, GitHubConfig,
 };
 pub use discover::{
     discover_managed_services, discover_services, filter_services, ManagedServiceDeclaration,
