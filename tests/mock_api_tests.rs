@@ -5462,3 +5462,27 @@ fn test_analytics_renders_rejection_breakdown() {
             r#""rejection_breakdown":{"edge_policy":42}"#,
         ));
 }
+
+#[test]
+fn test_org_analytics_renders_rejection_breakdown() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _m = server
+        .mock("GET", "/v1/orgs/analytics")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"app_id":null,"period":"7d","summary":{"total_requests":100,"total_errors":42,"error_rate":0.42,"avg_latency_ms":10,"p95_latency_ms":20,"unique_users":null,"gateway_handled_requests":42,"status_code_breakdown":{"2xx":58,"4xx":42},"rejection_breakdown":{"edge_policy":42},"total_apps_with_traffic":1},"time_series":[],"top_users":[]}"#,
+        )
+        .create();
+
+    // The org render path shares the section — pin it independently.
+    floo()
+        .args(["analytics", "--period", "7d"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Gateway Rejections"))
+        .stderr(predicate::str::contains("edge_policy"));
+}
