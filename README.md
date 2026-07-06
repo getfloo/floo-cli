@@ -117,13 +117,19 @@ cargo build
 Contributions are welcome! Please:
 
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feat/my-feature`)
-3. Run tests and lint before committing:
+2. Install the git hooks once (a pre-push gate runs `./scripts/test` on Rust changes):
+   ```bash
+   ./scripts/install-hooks.sh
+   ```
+3. Create a feature branch (`git checkout -b feat/my-feature`)
+4. Run tests and lint before committing:
    ```bash
    ./scripts/test
    ```
-4. Use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, etc.)
-5. Open a pull request
+5. Use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, etc.)
+6. Open a pull request
+
+The pre-push hook blocks a push whose Rust changes fail `./scripts/test`; bypass an individual push with `git push --no-verify` when you're deferring to CI.
 
 ## Documentation
 

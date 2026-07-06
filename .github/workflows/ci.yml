@@ -43,7 +43,7 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Check script syntax
-        run: bash -n install.sh && bash -n scripts/test
+        run: bash -n install.sh && bash -n scripts/test && bash -n .githooks/pre-push && bash -n scripts/install-hooks.sh
 
       - name: Run installer script tests
         run: bash tests/install_script_test.sh
@@ -53,6 +53,9 @@ jobs:
 
       - name: Run test-harness guard tests
         run: bash tests/test_script_test.sh
+
+      - name: Run pre-push hook tests
+        run: bash tests/pre_push_hook_test.sh
 
       # fmt + clippy + cargo test via the canonical entry point, which also
       # self-heals the corrupt-harness artifact class (floo-cli#204) that the

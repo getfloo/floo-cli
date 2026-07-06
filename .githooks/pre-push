@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# pre-push — floo-cli local test gate (getfloo/floo-cli#217).
+#
+# Runs the canonical suite (./scripts/test: fmt --check, clippy -D warnings,
+# cargo test) before a push that changes Rust code, and blocks on failure. This
+# is the fast-feedback gate that catches breakage before a CI round. It is fully
+# self-contained — no dependency on the private floo monorepo — so it works for
+# external contributors and anyone working directly in floo-cli.
+#
+# Internal note: monorepo-driven CLI work (via floo's scripts/floo-cli-worktree.sh)
+# is ALSO gated from the monorepo session (getfloo/floo#1448); this hook is the
+# repo-local complement for everyone else. The two are independent.
+#
+# Install: ./scripts/install-hooks.sh (sets core.hooksPath = .githooks).
+# Bypass:  git push --no-verify   (use when you trust CI to catch it).
+#
+# Only Rust/build changes trigger the suite; docs/config/CI/script-only pushes
+# skip it. Branch deletions and up-to-date pushes are no-ops.
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+ZERO='0000000000000000000000000000000000000000'
+
+# Collect the changed-file set across every ref being pushed (stdin lines:
+# <local ref> <local sha> <remote ref> <remote sha>).
+changed=""
+force_test=0
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  [ "$local_sha" = "$ZERO" ] && continue          # branch deletion — nothing to test
+  if [ "$remote_sha" = "$ZERO" ]; then
+    # New branch on the remote: diff against origin/main when we have it.
+    if git rev-parse --verify -q origin/main >/dev/null 2>&1; then
+      range="origin/main..$local_sha"
+    else
+      range=""                                     # unknown base → force a run below
+    fi
+  else
+    range="$remote_sha..$local_sha"
+  fi
+  if [ -z "$range" ]; then
+    force_test=1                                   # brand-new branch, no base → gate
+    continue
+  fi
+  # --no-renames so a Rust file renamed AWAY (src/x.rs -> src/x.bak) still shows
+  # the old .rs path and gates. If the range can't be diffed at all (e.g. a
+  # force-push from a stale clone whose remote_sha isn't in our object DB, which
+  # errors with "bad object"), FAIL CLOSED — run the suite rather than skip it on
+  # an empty result.
+  if diff_out=$(git diff --name-only --no-renames "$range" 2>/dev/null); then
+    changed+="$diff_out"$'\n'
+  else
+    force_test=1
+  fi
+done
+
+# Does the push touch Rust/build files? (Everything else — docs, .github, scripts,
+# .githooks, *.md, *.toml that isn't Cargo.toml — is a no-op for the test suite.)
+# An unresolvable/new range already forced needs_test above.
+needs_test="$force_test"
+if [ "$needs_test" -eq 0 ]; then
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    # *.rs covers build.rs; Cargo.toml/Cargo.lock cover dependency + manifest edits.
+    case "$f" in
+      *.rs|Cargo.toml|Cargo.lock) needs_test=1; break ;;
+    esac
+  done <<EOF
+$changed
+EOF
+fi
+
+if [ "$needs_test" -eq 0 ]; then
+  exit 0
+fi
+
+echo "pre-push: Rust changes detected — running ./scripts/test (bypass: git push --no-verify)" >&2
+if ! ./scripts/test; then
+  echo "" >&2
+  echo "pre-push: ./scripts/test failed — push blocked. Fix the failures, or push with" >&2
+  echo "          --no-verify if you are intentionally deferring to CI." >&2
+  exit 1
+fi
