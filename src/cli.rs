@@ -371,7 +371,7 @@ Examples:
     /// full list of topics with one-line descriptions.
     #[command(after_help = "\
 Topics: golden-path, quickstart, build, nextjs, rails, fastapi, django,
-express, templates, services, edge, previews, config, cron, deploy, auth,
+express, templates, services, edge, egress, previews, config, cron, deploy, auth,
 notifications, feedback.
 Aliases: storage -> services, app-toml -> config.
 Run `floo docs` (no topic) for a one-line description of each topic.")]
