@@ -8,6 +8,82 @@ use crate::config::{load_config, FlooConfig};
 use crate::errors::FlooApiError;
 use crate::project_config::ServiceConfig;
 
+/// Build the JSON request body for `POST /v1/apps/{id}/deploys`.
+///
+/// Pure (no I/O) so the wire contract is unit-testable. The one non-obvious
+/// rule it encodes: preview settings (`preview_environments` /
+/// `preview_ttl_hours`) are **config-only** — the API reads them server-side
+/// from the deploy tarball's `[github]` section and rejects a deploy body that
+/// carries either field (getfloo/floo#1460). The CLI parses those keys into
+/// `GitHubConfig` for validation and round-trip, but must never echo them into
+/// this body; doing so was the getfloo/floo-cli#220 `422`. `deploy_on_push`
+/// remains a live body field.
+#[allow(clippy::too_many_arguments)]
+fn build_deploy_body(
+    runtime: &str,
+    framework: Option<&str>,
+    services: Option<&[ServiceConfig]>,
+    access_mode: Option<&str>,
+    agent_mode: Option<&str>,
+    auth_redirect_uris: Option<&[String]>,
+    cron_jobs: Option<&[crate::project_config::CronJobEntry]>,
+    github_config: Option<&crate::project_config::GitHubConfig>,
+    skip_migrations: bool,
+) -> Result<Value, FlooApiError> {
+    let mut body = serde_json::json!({
+        "runtime": runtime,
+    });
+    if skip_migrations {
+        body["skip_migrations"] = Value::Bool(true);
+    }
+    if let Some(fw) = framework {
+        body["framework"] = Value::String(fw.to_string());
+    }
+    if let Some(svcs) = services {
+        body["services"] = serde_json::to_value(svcs).map_err(|e| {
+            FlooApiError::new(
+                0,
+                "SERIALIZATION_ERROR",
+                format!("Failed to serialize services: {e}"),
+            )
+        })?;
+    }
+    if let Some(mode) = access_mode {
+        body["access_mode"] = Value::String(mode.to_string());
+    }
+    if let Some(mode) = agent_mode {
+        body["agent_mode"] = Value::String(mode.to_string());
+    }
+    if let Some(uris) = auth_redirect_uris {
+        body["auth_redirect_uris"] = serde_json::to_value(uris).map_err(|e| {
+            FlooApiError::new(
+                0,
+                "SERIALIZATION_ERROR",
+                format!("Failed to serialize auth_redirect_uris: {e}"),
+            )
+        })?;
+    }
+    if let Some(crons) = cron_jobs {
+        if !crons.is_empty() {
+            body["cron_jobs"] = serde_json::to_value(crons).map_err(|e| {
+                FlooApiError::new(
+                    0,
+                    "SERIALIZATION_ERROR",
+                    format!("Failed to serialize cron_jobs: {e}"),
+                )
+            })?;
+        }
+    }
+    if let Some(gh) = github_config {
+        if let Some(v) = gh.deploy_on_push {
+            body["deploy_on_push"] = Value::Bool(v);
+        }
+        // preview_environments / preview_ttl_hours are intentionally NOT sent —
+        // see the doc comment above (getfloo/floo#1460, getfloo/floo-cli#220).
+    }
+    Ok(body)
+}
+
 pub struct FlooClient {
     client: Client,
     base_url: String,
@@ -381,61 +457,17 @@ impl FlooClient {
         github_config: Option<&crate::project_config::GitHubConfig>,
         skip_migrations: bool,
     ) -> Result<Deploy, FlooApiError> {
-        let mut body = serde_json::json!({
-            "runtime": runtime,
-        });
-        if skip_migrations {
-            body["skip_migrations"] = Value::Bool(true);
-        }
-        if let Some(fw) = framework {
-            body["framework"] = Value::String(fw.to_string());
-        }
-        if let Some(svcs) = services {
-            body["services"] = serde_json::to_value(svcs).map_err(|e| {
-                FlooApiError::new(
-                    0,
-                    "SERIALIZATION_ERROR",
-                    format!("Failed to serialize services: {e}"),
-                )
-            })?;
-        }
-        if let Some(mode) = access_mode {
-            body["access_mode"] = Value::String(mode.to_string());
-        }
-        if let Some(mode) = agent_mode {
-            body["agent_mode"] = Value::String(mode.to_string());
-        }
-        if let Some(uris) = auth_redirect_uris {
-            body["auth_redirect_uris"] = serde_json::to_value(uris).map_err(|e| {
-                FlooApiError::new(
-                    0,
-                    "SERIALIZATION_ERROR",
-                    format!("Failed to serialize auth_redirect_uris: {e}"),
-                )
-            })?;
-        }
-        if let Some(crons) = cron_jobs {
-            if !crons.is_empty() {
-                body["cron_jobs"] = serde_json::to_value(crons).map_err(|e| {
-                    FlooApiError::new(
-                        0,
-                        "SERIALIZATION_ERROR",
-                        format!("Failed to serialize cron_jobs: {e}"),
-                    )
-                })?;
-            }
-        }
-        if let Some(gh) = github_config {
-            if let Some(v) = gh.deploy_on_push {
-                body["deploy_on_push"] = Value::Bool(v);
-            }
-            if let Some(v) = gh.preview_environments {
-                body["preview_environments"] = Value::Bool(v);
-            }
-            if let Some(v) = gh.preview_ttl_hours {
-                body["preview_ttl_hours"] = Value::Number(v.into());
-            }
-        }
+        let body = build_deploy_body(
+            runtime,
+            framework,
+            services,
+            access_mode,
+            agent_mode,
+            auth_redirect_uris,
+            cron_jobs,
+            github_config,
+            skip_migrations,
+        )?;
         let resp = self.post_json(&format!("/v1/apps/{app_id}/deploys"), &body)?;
         self.handle_response(resp)
     }
@@ -1335,5 +1367,99 @@ impl FlooClient {
         let resp = self.post_json("/v1/feedback", &body)?;
         self.handle_response_value(resp)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project_config::GitHubConfig;
+
+    #[test]
+    fn build_deploy_body_omits_config_only_preview_fields() {
+        // A floo.app.toml [github] block declaring preview settings parses into
+        // GitHubConfig, but those fields are config-only (read server-side from
+        // the tarball). The deploy body must carry deploy_on_push yet NEVER the
+        // preview_* fields, which the API 422-rejects (getfloo/floo-cli#220).
+        let gh = GitHubConfig {
+            deploy_on_push: Some(true),
+            preview_environments: Some(true),
+            preview_ttl_hours: Some(48),
+        };
+        let body = build_deploy_body(
+            "nodejs",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&gh),
+            false,
+        )
+        .expect("body builds");
+        let obj = body.as_object().expect("body is a JSON object");
+
+        assert_eq!(obj.get("deploy_on_push"), Some(&Value::Bool(true)));
+        assert!(
+            !obj.contains_key("preview_environments"),
+            "deploy body must not carry config-only preview_environments: {body}"
+        );
+        assert!(
+            !obj.contains_key("preview_ttl_hours"),
+            "deploy body must not carry config-only preview_ttl_hours: {body}"
+        );
+    }
+
+    #[test]
+    fn build_deploy_body_omits_preview_fields_when_only_preview_declared() {
+        // Even when preview_* are the ONLY [github] keys (no deploy_on_push),
+        // neither leaks into the body, and no deploy_on_push key is invented.
+        let gh = GitHubConfig {
+            deploy_on_push: None,
+            preview_environments: Some(true),
+            preview_ttl_hours: Some(24),
+        };
+        let body = build_deploy_body(
+            "python",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&gh),
+            false,
+        )
+        .expect("body builds");
+        let obj = body.as_object().expect("body is a JSON object");
+
+        assert!(!obj.contains_key("preview_environments"), "{body}");
+        assert!(!obj.contains_key("preview_ttl_hours"), "{body}");
+        assert!(!obj.contains_key("deploy_on_push"), "{body}");
+    }
+
+    #[test]
+    fn build_deploy_body_sends_deploy_on_push_false() {
+        // deploy_on_push is a live body field and is sent even when false, so a
+        // caller cannot mistake "omitted" for "disabled".
+        let gh = GitHubConfig {
+            deploy_on_push: Some(false),
+            preview_environments: None,
+            preview_ttl_hours: None,
+        };
+        let body = build_deploy_body(
+            "nodejs",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&gh),
+            false,
+        )
+        .expect("body builds");
+        assert_eq!(body.get("deploy_on_push"), Some(&Value::Bool(false)));
     }
 }
