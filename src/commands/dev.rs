@@ -305,6 +305,33 @@ pub fn dev(args: DevArgs) {
 
     let session_id = session.session_id.clone();
 
+    // --- Confirm Postgres reachability before handing off ---
+    //
+    // `postgres_authorized` means the API's Cloud SQL patch was ACCEPTED, not
+    // that the rule is in effect (Cloud SQL applies it asynchronously). Starting
+    // the developer's services now would race that apply and surface as a
+    // connection refused/timeout inside their app. So we ask the only
+    // authoritative source: can this machine open a socket to the instance?
+    //
+    // Runs outside the human-only block below because JSON mode reports it too.
+    let postgres_ready = if session.postgres_authorized {
+        let spinner = if output::is_json_mode() {
+            None
+        } else {
+            Some(output::Spinner::new(
+                "Waiting for Postgres authorization to take effect...",
+            ))
+        };
+        let outcome =
+            crate::postgres_ready::verify(&session.services, crate::postgres_ready::DEFAULT_BUDGET);
+        if let Some(s) = spinner {
+            s.finish();
+        }
+        outcome
+    } else {
+        None
+    };
+
     // --- Print status messages (human only) ---
     // `output::info` in JSON mode writes {"success":true,"data":null} to
     // stdout; unguarded, these status lines would emit stray JSON objects
@@ -316,11 +343,33 @@ pub fn dev(args: DevArgs) {
             None,
         );
 
-        if session.postgres_authorized {
-            output::info(
-                "  Postgres: your IP is authorized for direct connections",
-                None,
-            );
+        match &postgres_ready {
+            Some(crate::postgres_ready::Readiness::Authorized { waited }) => {
+                output::info(
+                    &format!(
+                        "  Postgres: your IP is authorized for direct connections (verified in {:.0}s)",
+                        waited.as_secs_f32()
+                    ),
+                    None,
+                );
+            }
+            Some(crate::postgres_ready::Readiness::TimedOut { waited }) => {
+                output::warn(&format!(
+                    "  Postgres: authorization was accepted but the database was still \
+unreachable after {:.0}s. Starting anyway — direct connections may fail until \
+Cloud SQL finishes applying it.",
+                    waited.as_secs_f32()
+                ));
+            }
+            // Accepted, but the session carries no direct-Postgres endpoint to
+            // probe (no managed Postgres, or no rewrite). Nothing to claim.
+            None if session.postgres_authorized => {
+                output::info(
+                    "  Postgres: your IP is authorized for direct connections",
+                    None,
+                );
+            }
+            None => {}
         }
 
         if !session.withheld_secret_keys.is_empty() {
@@ -425,6 +474,15 @@ pub fn dev(args: DevArgs) {
                 "session_id": session_id,
                 "app": app_name,
                 "postgres_authorized": session.postgres_authorized,
+                // Whether a TCP connection to Postgres actually succeeded.
+                // `postgres_authorized` only says the Cloud SQL patch was accepted;
+                // this says the rule is in effect. null when there was nothing to
+                // verify (no direct-Postgres endpoint in this session).
+                "postgres_reachable": match &postgres_ready {
+                    Some(crate::postgres_ready::Readiness::Authorized { .. }) => serde_json::Value::Bool(true),
+                    Some(crate::postgres_ready::Readiness::TimedOut { .. }) => serde_json::Value::Bool(false),
+                    None => serde_json::Value::Null,
+                },
                 "withheld_secret_keys": session.withheld_secret_keys,
                 "services": json_services,
             }

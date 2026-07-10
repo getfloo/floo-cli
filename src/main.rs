@@ -12,6 +12,7 @@ mod dockerfile;
 mod errors;
 mod names;
 mod output;
+mod postgres_ready;
 mod project_config;
 mod redact;
 mod resolve;
