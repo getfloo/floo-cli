@@ -390,6 +390,43 @@ pub struct ManagedServiceDetail {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OperationApprovalResponse {
+    pub id: String,
+    pub org_id: String,
+    pub app_id: String,
+    pub environment: String,
+    pub operation_id: String,
+    pub resource_type: String,
+    pub resource_id: String,
+    pub resource_name: String,
+    pub status: String,
+    pub tier: u8,
+    pub destructive: bool,
+    pub data_loss: bool,
+    pub blast_radius: OperationBlastRadius,
+    pub plan_fingerprint: String,
+    pub requested_by_user_id: String,
+    pub requested_at: String,
+    pub expires_at: Option<String>,
+    pub decided_by_user_id: Option<String>,
+    pub decided_at: Option<String>,
+    pub authorized_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub decision_note: Option<String>,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub dashboard_url: String,
+    pub next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OperationBlastRadius {
+    pub provider_resources: u32,
+    pub credential_carriers: u32,
+    pub backup_artifacts: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageObjectVersion {
     pub object_path: String,
     pub generation: String,

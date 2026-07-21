@@ -4338,7 +4338,7 @@ fn test_services_remove_refuses_without_confirmation_flag_in_json_mode() {
 }
 
 #[test]
-fn test_services_remove_with_explicit_flag_destroys_and_updates_lock() {
+fn test_services_remove_with_explicit_flag_returns_approval_and_preserves_lock() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
@@ -4360,7 +4360,25 @@ fn test_services_remove_with_explicit_flag_destroys_and_updates_lock() {
             "DELETE",
             format!("/v1/apps/{TEST_APP_ID}/managed-services/ms-1").as_str(),
         )
-        .with_status(204)
+        .with_status(202)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{
+                "id":"approval-1","org_id":"org-1","app_id":"app-uuid-1234",
+                "environment":"all",
+                "operation_id":"managed_service.destroy","resource_type":"managed_service",
+                "resource_id":"ms-1","resource_name":"default","status":"pending",
+                "tier":3,"destructive":true,"data_loss":true,
+                "blast_radius":{"provider_resources":2,"credential_carriers":2,"backup_artifacts":0},
+                "plan_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "requested_by_user_id":"user-1",
+                "requested_at":"2026-07-21T00:00:00Z","expires_at":"2026-07-28T00:00:00Z",
+                "decided_by_user_id":null,"decided_at":null,"authorized_at":null,
+                "completed_at":null,"decision_note":null,"error_code":null,"error_message":null,
+                "dashboard_url":"https://app.getfloo.com/apps/app-uuid-1234/operation-approvals/approval-1",
+                "next_action":"open_dashboard"
+            }"#,
+        )
         .create();
 
     let project = TempDir::new().unwrap();
@@ -4378,7 +4396,7 @@ fn test_services_remove_with_explicit_flag_destroys_and_updates_lock() {
     )
     .unwrap();
 
-    floo()
+    let assert = floo()
         .args([
             "--json",
             "services",
@@ -4391,16 +4409,52 @@ fn test_services_remove_with_explicit_flag_destroys_and_updates_lock() {
         .env("HOME", home.path())
         .current_dir(project.path())
         .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""success":true"#))
-        .stdout(predicate::str::contains(r#""destructive":true"#))
-        .stdout(predicate::str::contains(r#""data_loss":true"#))
-        .stdout(predicate::str::contains(r#""tier":3"#));
+        .success();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("stdout must be one JSON envelope");
+    assert_eq!(envelope["success"], serde_json::Value::Bool(true));
+    assert_eq!(
+        envelope["data"],
+        serde_json::json!({
+            "id": "approval-1",
+            "org_id": "org-1",
+            "app_id": "app-uuid-1234",
+            "environment": "all",
+            "operation_id": "managed_service.destroy",
+            "resource_type": "managed_service",
+            "resource_id": "ms-1",
+            "resource_name": "default",
+            "status": "pending",
+            "tier": 3,
+            "destructive": true,
+            "data_loss": true,
+            "blast_radius": {
+                "provider_resources": 2,
+                "credential_carriers": 2,
+                "backup_artifacts": 0
+            },
+            "plan_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "requested_by_user_id": "user-1",
+            "requested_at": "2026-07-21T00:00:00Z",
+            "expires_at": "2026-07-28T00:00:00Z",
+            "decided_by_user_id": null,
+            "decided_at": null,
+            "authorized_at": null,
+            "completed_at": null,
+            "decision_note": null,
+            "error_code": null,
+            "error_message": null,
+            "dashboard_url": "https://app.getfloo.com/apps/app-uuid-1234/operation-approvals/approval-1",
+            "next_action": "open_dashboard"
+        })
+    );
 
     let lock = std::fs::read_to_string(project.path().join(".floo").join("services.lock")).unwrap();
     assert!(
-        !lock.contains(r#""postgres""#),
-        "lock file should no longer have the postgres entry, got: {lock}"
+        lock.contains(r#""postgres""#),
+        "lock file must retain the service until execution completes, got: {lock}"
     );
 }
 

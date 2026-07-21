@@ -748,13 +748,9 @@ impl FlooClient {
         &self,
         app_id: &str,
         service_id: &str,
-    ) -> Result<(), FlooApiError> {
+    ) -> Result<OperationApprovalResponse, FlooApiError> {
         let resp = self.delete(&format!("/v1/apps/{app_id}/managed-services/{service_id}"))?;
-        let status = resp.status().as_u16();
-        if status >= 400 {
-            return Err(self.handle_error(resp));
-        }
-        Ok(())
+        self.handle_response(resp)
     }
 
     pub fn list_storage_object_versions(

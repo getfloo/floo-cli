@@ -41,7 +41,7 @@ Every primitive on floo belongs on one of two surfaces. Knowing which applies pr
 - **Stateless resources live in TOML** — Cloud Run services, gateway routes, cron jobs, build args, health checks, resource limits. Recoverable from code; removal from TOML is declarative and safe.
 - **Stateful resources live in the CLI** — managed Postgres/Redis/Storage, env vars, custom domains, API keys. Hold data or credentials; removal is an explicit command with confirmation, never a TOML edit.
 
-**Deploy never destroys a stateful resource, regardless of TOML contents.** Removing `[postgres]` from `floo.app.toml` does NOT deprovision your database — it produces a preflight warning pointing you to `floo services remove postgres`.
+**Deploy never destroys a stateful resource, regardless of TOML contents.** Removing `[postgres]` from `floo.app.toml` does NOT deprovision your database. `floo services remove postgres` proposes an exact deletion plan that a different org admin must approve in the dashboard.
 
 Legacy `[postgres]`/`[redis]`/`[storage]` sections in `floo.app.toml` are deprecated. They continue to auto-provision on first deploy during the transition window, but new apps should use `floo services add <type>` directly.
 
@@ -205,7 +205,7 @@ floo redeploy --preflight --app my-app             # preview redeploy without ex
 
 ### Managed services (postgres, redis, storage)
 
-Managed services are **stateful** — they carry data and outlive deploys. Provision them with `floo services add` or declare them in `floo.app.toml` via `[managed.<name>]`; either way a deploy creates what's declared-but-missing and **never destroys**. Destroying a database is always an explicit `floo services remove` — never a config side effect.
+Managed services are **stateful** — they carry data and outlive deploys. Provision them with `floo services add` or declare them in `floo.app.toml` via `[managed.<name>]`; either way a deploy creates what's declared-but-missing and **never destroys**. `floo services remove` proposes the exact deletion, and a different org admin approves it in the dashboard before provider mutation.
 
 ```bash
 floo services list --app my-app                    # see everything (app services + managed)
@@ -220,7 +220,7 @@ Commands that destroy state follow a tiered confirmation model:
 
 - **Tier 1 (reversible, no data):** `env remove`, scaling. Idempotent; no prompt.
 - **Tier 2 (destructive but recoverable from code):** `domains remove`, `deploy rollback`. `y/N` prompt, `--yes` to skip.
-- **Tier 3 (unrecoverable data loss):** `apps delete`, `services remove <managed>`, `orgs delete`. Typed-name confirmation, or `--yes-i-know-this-destroys-data` to skip in automation. Never a plain `--yes`.
+- **Tier 3 (unrecoverable data loss):** `apps delete`, `services remove <managed>`, `orgs delete`. Typed-name confirmation, or `--yes-i-know-this-destroys-data` to skip in automation. Never a plain `--yes`. Managed-service deletion additionally requires approval from a different human org admin.
 
 Every destructive command's `--json` output includes `destructive: true, data_loss: true|false, tier: N` so agents can reason about risk from the contract, not the prompt text.
 

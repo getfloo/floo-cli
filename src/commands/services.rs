@@ -299,7 +299,7 @@ pub fn add(service_type: &str, app: Option<&str>, tier: &str, name: &str) {
 ///   reflex. A script using this flag must have user authorization for the
 ///   specific resource (per the skill rule).
 pub fn remove(service_type: &str, app: Option<&str>, name: &str, confirmed: bool) {
-    use crate::confirm::{confirm_tier3, ConfirmOutcome, RiskMetadata, Tier};
+    use crate::confirm::{confirm_tier3, ConfirmOutcome};
 
     super::require_auth();
     let client = super::init_client(None);
@@ -333,7 +333,7 @@ pub fn remove(service_type: &str, app: Option<&str>, name: &str, confirmed: bool
     };
 
     let mut preamble = vec![
-        format!("\u{26a0} You are about to permanently destroy the following managed service:"),
+        format!("\u{26a0} You are about to request permanent deletion of this managed service:"),
         format!("    app:   {app_name}"),
         format!("    type:  {service_type}"),
         format!("    name:  {name}"),
@@ -357,44 +357,51 @@ pub fn remove(service_type: &str, app: Option<&str>, name: &str, confirmed: bool
         ConfirmOutcome::Refused { suggestion } => {
             crate::confirm::exit_refused(
                 &format!(
-                    "Refusing to destroy managed {service_type} '{name}' on {app_name} without explicit confirmation."
+                    "Refusing to request deletion of managed {service_type} '{name}' on {app_name} without explicit confirmation."
                 ),
                 &suggestion,
             );
         }
     }
 
-    if let Err(e) = client.delete_managed_service(&app_id, &target.id) {
-        output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-        process::exit(1);
+    let approval = match client.delete_managed_service(&app_id, &target.id) {
+        Ok(approval) => approval,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+
+    if approval.status == "completed" {
+        if let Err(e) = crate::services_lock::record_remove(service_type, name) {
+            output::warn(&format!(
+                "Destroyed {service_type}/{name} on {app_name}, but failed to update .floo/services.lock: {e}."
+            ));
+        }
     }
 
-    if let Err(e) = crate::services_lock::record_remove(service_type, name) {
-        output::warn(&format!(
-            "Destroyed {service_type}/{name} on {app_name}, but failed to update .floo/services.lock: {e}."
-        ));
-    }
-
-    let risk: RiskMetadata = Tier::Three.into();
     if output::is_json_mode() {
         output::success(
-            &format!("Destroyed managed {service_type}/{name} on {app_name}"),
-            Some(serde_json::json!({
-                "type": service_type,
-                "name": name,
-                "app": app_name,
-                "destructive": risk.destructive,
-                "data_loss": risk.data_loss,
-                "tier": risk.tier,
-            })),
+            &format!("Managed service deletion is {}", approval.status),
+            Some(output::to_value(&approval)),
         );
         return;
     }
 
-    output::info(
-        &format!("\u{2713} Destroyed managed {service_type}/{name} on {app_name}."),
-        None,
-    );
+    if approval.status == "completed" {
+        output::info(
+            &format!("\u{2713} Destroyed managed {service_type}/{name} on {app_name}."),
+            None,
+        );
+    } else {
+        output::info(
+            &format!(
+                "Deletion is {}. A different org admin must review it in the dashboard:\n{}",
+                approval.status, approval.dashboard_url
+            ),
+            None,
+        );
+    }
 }
 
 /// One-shot migration from legacy `[postgres]`/`[redis]`/`[storage]` TOML
