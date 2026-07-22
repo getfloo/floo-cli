@@ -405,6 +405,10 @@ pub struct OperationApprovalResponse {
     pub resource_type: String,
     pub resource_id: String,
     pub resource_name: String,
+    #[serde(default)]
+    pub service_type: String,
+    #[serde(default)]
+    pub provider_resource_ids: Vec<String>,
     pub status: String,
     pub tier: u8,
     pub destructive: bool,
