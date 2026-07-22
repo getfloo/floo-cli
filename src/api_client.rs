@@ -744,26 +744,24 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
-    pub fn delete_managed_service(
+    pub fn request_managed_service_destroy(
         &self,
         app_id: &str,
         service_id: &str,
-    ) -> Result<Option<OperationApprovalResponse>, FlooApiError> {
-        let path = format!("/v1/apps/{app_id}/managed-services/{service_id}");
-        let req = self.apply_headers(
-            self.client
-                .delete(self.url(&path))
-                .header("X-Floo-Operation-Approval", "v1"),
-        );
-        let resp = req
-            .send()
-            .map_err(|e| FlooApiError::new(0, "CONNECTION_ERROR", e.to_string()))?;
-        if resp.status().as_u16() == 204 {
-            // Compatibility with an older API during the ordered rollout. That
-            // API completed deletion synchronously and returned no body.
-            return Ok(None);
-        }
-        self.handle_response(resp).map(Some)
+    ) -> Result<OperationApprovalResponse, FlooApiError> {
+        let body = OperationApprovalProposalRequest {
+            operation_id: "managed_service.destroy",
+            resource_id: service_id,
+        };
+        let value = serde_json::to_value(body).map_err(|e| {
+            FlooApiError::new(
+                500,
+                "SERIALIZE_ERROR",
+                format!("Failed to serialize operation approval proposal: {e}"),
+            )
+        })?;
+        let resp = self.post_json(&format!("/v1/apps/{app_id}/operation-approvals"), &value)?;
+        self.handle_response(resp)
     }
 
     pub fn list_storage_object_versions(

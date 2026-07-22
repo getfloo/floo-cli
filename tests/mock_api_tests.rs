@@ -4312,7 +4312,7 @@ fn test_services_remove_refuses_without_confirmation_flag_in_json_mode() {
         )
         .create();
 
-    // No mock for DELETE — the command must refuse before reaching that endpoint.
+    // No proposal mock: the command must refuse before reaching that endpoint.
     let project = TempDir::new().unwrap();
     std::fs::write(
         project.path().join("floo.app.toml"),
@@ -4355,12 +4355,18 @@ fn test_services_remove_with_explicit_flag_returns_approval_and_preserves_lock()
         )
         .create();
 
-    let _m_delete = server
+    let _m_propose = server
         .mock(
-            "DELETE",
-            format!("/v1/apps/{TEST_APP_ID}/managed-services/ms-1").as_str(),
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/operation-approvals").as_str(),
         )
-        .match_header("x-floo-operation-approval", "v1")
+        .match_body(Matcher::JsonString(
+            serde_json::json!({
+                "operation_id": "managed_service.destroy",
+                "resource_id": "ms-1"
+            })
+            .to_string(),
+        ))
         .with_status(202)
         .with_header("content-type", "application/json")
         .with_body(
@@ -4460,7 +4466,7 @@ fn test_services_remove_with_explicit_flag_returns_approval_and_preserves_lock()
 }
 
 #[test]
-fn test_services_remove_handles_legacy_synchronous_delete_during_rollout() {
+fn test_services_remove_fails_closed_against_api_without_proposal_endpoint() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
@@ -4475,13 +4481,21 @@ fn test_services_remove_handles_legacy_synchronous_delete_during_rollout() {
             r#"{"managed_services":[{"id":"ms-1","app_id":"app-uuid-1234","type":"postgres","name":"default","status":"ready","env_var_keys":["DATABASE_URL"],"created_at":null,"updated_at":null}],"total":1}"#,
         )
         .create();
-    let _m_delete = server
+    let _m_propose = server
         .mock(
-            "DELETE",
-            format!("/v1/apps/{TEST_APP_ID}/managed-services/ms-1").as_str(),
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/operation-approvals").as_str(),
         )
-        .match_header("x-floo-operation-approval", "v1")
-        .with_status(204)
+        .match_body(Matcher::JsonString(
+            serde_json::json!({
+                "operation_id": "managed_service.destroy",
+                "resource_id": "ms-1"
+            })
+            .to_string(),
+        ))
+        .with_status(404)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":{"code":"NOT_FOUND","message":"Not found"}}"#)
         .create();
     let project = TempDir::new().unwrap();
     std::fs::write(
@@ -4510,14 +4524,13 @@ fn test_services_remove_handles_legacy_synchronous_delete_during_rollout() {
         .env("HOME", home.path())
         .current_dir(project.path())
         .assert()
-        .success();
+        .failure();
 
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
     let envelope: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
-    assert_eq!(envelope["success"], true);
-    assert_eq!(envelope["data"]["type"], "postgres");
+    assert_eq!(envelope["success"], false);
     let lock = std::fs::read_to_string(project.path().join(".floo").join("services.lock")).unwrap();
-    assert!(!lock.contains(r#""postgres""#));
+    assert!(lock.contains(r#""postgres""#));
 }
 
 #[test]

@@ -389,6 +389,12 @@ pub struct ManagedServiceDetail {
     pub updated_at: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct OperationApprovalProposalRequest<'a> {
+    pub operation_id: &'a str,
+    pub resource_id: &'a str,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationApprovalResponse {
     pub id: String,
