@@ -299,7 +299,7 @@ pub fn add(service_type: &str, app: Option<&str>, tier: &str, name: &str) {
 ///   reflex. A script using this flag must have user authorization for the
 ///   specific resource (per the skill rule).
 pub fn remove(service_type: &str, app: Option<&str>, name: &str, confirmed: bool) {
-    use crate::confirm::{confirm_tier3, ConfirmOutcome};
+    use crate::confirm::{confirm_tier3, ConfirmOutcome, RiskMetadata, Tier};
 
     super::require_auth();
     let client = super::init_client(None);
@@ -365,7 +365,34 @@ pub fn remove(service_type: &str, app: Option<&str>, name: &str, confirmed: bool
     }
 
     let approval = match client.delete_managed_service(&app_id, &target.id) {
-        Ok(approval) => approval,
+        Ok(Some(approval)) => approval,
+        Ok(None) => {
+            if let Err(e) = crate::services_lock::record_remove(service_type, name) {
+                output::warn(&format!(
+                    "Destroyed {service_type}/{name} on {app_name}, but failed to update .floo/services.lock: {e}."
+                ));
+            }
+            if output::is_json_mode() {
+                let risk: RiskMetadata = Tier::Three.into();
+                output::success(
+                    &format!("Destroyed managed {service_type}/{name} on {app_name}"),
+                    Some(serde_json::json!({
+                        "type": service_type,
+                        "name": name,
+                        "app": app_name,
+                        "destructive": risk.destructive,
+                        "data_loss": risk.data_loss,
+                        "tier": risk.tier,
+                    })),
+                );
+            } else {
+                output::info(
+                    &format!("\u{2713} Destroyed managed {service_type}/{name} on {app_name}."),
+                    None,
+                );
+            }
+            return;
+        }
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);

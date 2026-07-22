@@ -748,9 +748,22 @@ impl FlooClient {
         &self,
         app_id: &str,
         service_id: &str,
-    ) -> Result<OperationApprovalResponse, FlooApiError> {
-        let resp = self.delete(&format!("/v1/apps/{app_id}/managed-services/{service_id}"))?;
-        self.handle_response(resp)
+    ) -> Result<Option<OperationApprovalResponse>, FlooApiError> {
+        let path = format!("/v1/apps/{app_id}/managed-services/{service_id}");
+        let req = self.apply_headers(
+            self.client
+                .delete(self.url(&path))
+                .header("X-Floo-Operation-Approval", "v1"),
+        );
+        let resp = req
+            .send()
+            .map_err(|e| FlooApiError::new(0, "CONNECTION_ERROR", e.to_string()))?;
+        if resp.status().as_u16() == 204 {
+            // Compatibility with an older API during the ordered rollout. That
+            // API completed deletion synchronously and returned no body.
+            return Ok(None);
+        }
+        self.handle_response(resp).map(Some)
     }
 
     pub fn list_storage_object_versions(

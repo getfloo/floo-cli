@@ -4360,6 +4360,7 @@ fn test_services_remove_with_explicit_flag_returns_approval_and_preserves_lock()
             "DELETE",
             format!("/v1/apps/{TEST_APP_ID}/managed-services/ms-1").as_str(),
         )
+        .match_header("x-floo-operation-approval", "v1")
         .with_status(202)
         .with_header("content-type", "application/json")
         .with_body(
@@ -4456,6 +4457,67 @@ fn test_services_remove_with_explicit_flag_returns_approval_and_preserves_lock()
         lock.contains(r#""postgres""#),
         "lock file must retain the service until execution completes, got: {lock}"
     );
+}
+
+#[test]
+fn test_services_remove_handles_legacy_synchronous_delete_during_rollout() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _m_list = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"managed_services":[{"id":"ms-1","app_id":"app-uuid-1234","type":"postgres","name":"default","status":"ready","env_var_keys":["DATABASE_URL"],"created_at":null,"updated_at":null}],"total":1}"#,
+        )
+        .create();
+    let _m_delete = server
+        .mock(
+            "DELETE",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services/ms-1").as_str(),
+        )
+        .match_header("x-floo-operation-approval", "v1")
+        .with_status(204)
+        .create();
+    let project = TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        format!("[app]\nname = \"{TEST_APP_NAME}\"\n"),
+    )
+    .unwrap();
+    std::fs::create_dir_all(project.path().join(".floo")).unwrap();
+    std::fs::write(
+        project.path().join(".floo").join("services.lock"),
+        r#"{"version":1,"managed_services":[{"type":"postgres","name":"default","status":"ready","created_at":null}]}
+"#,
+    )
+    .unwrap();
+
+    let assert = floo()
+        .args([
+            "--json",
+            "services",
+            "remove",
+            "postgres",
+            "--app",
+            TEST_APP_NAME,
+            "--yes-i-know-this-destroys-data",
+        ])
+        .env("HOME", home.path())
+        .current_dir(project.path())
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(envelope["success"], true);
+    assert_eq!(envelope["data"]["type"], "postgres");
+    let lock = std::fs::read_to_string(project.path().join(".floo").join("services.lock")).unwrap();
+    assert!(!lock.contains(r#""postgres""#));
 }
 
 #[test]
