@@ -393,7 +393,7 @@ pub fn remove(service_type: &str, app: Option<&str>, name: &str, confirmed: bool
         ConfirmOutcome::Proceed => {}
         ConfirmOutcome::Aborted => {
             if !output::is_json_mode() {
-                output::info("Aborted \u{2014} nothing was destroyed.", None);
+                output::info("Aborted \u{2014} no approval was requested.", None);
             }
             process::exit(1);
         }

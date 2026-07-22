@@ -191,10 +191,11 @@ confirmation.
   floo services remove postgres --app <name>      # request tier-3 deletion approval
   floo services migrate --app <name>              # convert legacy TOML to CLI-managed
 
-  On success, `floo services add/remove` updates .floo/services.lock
-  (commit this file) so PR reviewers see managed-service state changes
-  in `git diff` alongside code changes. The lock file is a record of
-  state, not a source — platform is the source of truth.
+  On success, `floo services add` updates .floo/services.lock. A remove
+  request leaves the lock unchanged while human approval and deletion are
+  pending, then reconciles it after the platform reports the service absent.
+  Commit the lock file so PR reviewers see managed-service state changes in
+  `git diff`. The lock is a record of state, not a source of truth.
 
   Connection credentials are injected at runtime, never stored in the
   lock file or in your repo:
