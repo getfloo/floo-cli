@@ -411,7 +411,7 @@ pub struct OperationApprovalResponse {
     pub data_loss: bool,
     pub blast_radius: OperationBlastRadius,
     pub plan_fingerprint: String,
-    pub requested_by_user_id: String,
+    pub requested_by_user_id: Option<String>,
     pub requested_at: String,
     pub expires_at: Option<String>,
     pub decided_by_user_id: Option<String>,

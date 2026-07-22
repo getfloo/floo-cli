@@ -41,7 +41,7 @@ Every primitive on floo belongs on one of two surfaces. Knowing which applies pr
 - **Stateless resources live in TOML** — Cloud Run services, gateway routes, cron jobs, build args, health checks, resource limits. Recoverable from code; removal from TOML is declarative and safe.
 - **Stateful resources live in the CLI** — managed Postgres/Redis/Storage, env vars, custom domains, API keys. Hold data or credentials; removal is an explicit command with confirmation, never a TOML edit.
 
-**Deploy never destroys a stateful resource, regardless of TOML contents.** Removing `[postgres]` from `floo.app.toml` does NOT deprovision your database. `floo services remove postgres` proposes an exact deletion plan that a different org admin must approve in the dashboard.
+**Deploy never destroys a stateful resource, regardless of TOML contents.** Removing `[postgres]` from `floo.app.toml` does NOT deprovision your database. `floo services remove postgres` proposes an exact deletion plan that a different org admin must approve in the dashboard. After approval completes, rerun the remove command to reconcile `.floo/services.lock` from the API's authoritative absence.
 
 Legacy `[postgres]`/`[redis]`/`[storage]` sections in `floo.app.toml` are deprecated. They continue to auto-provision on first deploy during the transition window, but new apps should use `floo services add <type>` directly.
 

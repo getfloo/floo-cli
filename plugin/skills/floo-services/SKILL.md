@@ -279,6 +279,6 @@ Managed service env vars (`DATABASE_URL`, `REDIS_URL`, `STORAGE_BUCKET`) are pro
 - Use `floo env list --app my-app` to see what's provisioned
 - Use `floo services list --app my-app` to see service status and tiers
 - `floo services remove <type> --app my-app` creates or resumes an exact tier-3 approval request; it does not delete anything before a different human org admin approves it
-- Poll the returned approval object until `status` is `completed`; retain `.floo/services.lock` while the request is pending, executing, failed, or unknown
+- Retain `.floo/services.lock` while the request is pending, executing, failed, or unknown. After dashboard approval completes, rerun the same remove command; authoritative API absence reconciles the matching stale lock entry without another destructive confirmation
 - Managed services are per-environment — dev and prod have separate instances
 - For local development, set the same env var names in your `.env` file pointing to local services

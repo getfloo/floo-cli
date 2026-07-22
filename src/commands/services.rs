@@ -323,6 +323,49 @@ pub fn remove(service_type: &str, app: Option<&str>, name: &str, confirmed: bool
     let target = match target {
         Some(t) => t,
         None => {
+            match crate::services_lock::contains_for_app(&app_name, service_type, name) {
+                Ok(true) => {
+                    if let Err(e) = crate::services_lock::record_remove(service_type, name) {
+                        output::error(
+                            &format!(
+                                "Managed {service_type}/{name} is absent on {app_name}, but the local lock could not be updated: {e}."
+                            ),
+                            &ErrorCode::ConfigError,
+                            None,
+                        );
+                        process::exit(1);
+                    }
+                    if output::is_json_mode() {
+                        output::success(
+                            &format!("Managed {service_type}/{name} is absent"),
+                            Some(serde_json::json!({
+                                "type": service_type,
+                                "name": name,
+                                "app": app_name,
+                                "status": "absent",
+                                "lock_updated": true,
+                            })),
+                        );
+                    } else {
+                        output::info(
+                            &format!(
+                                "\u{2713} Managed {service_type}/{name} is absent on {app_name}; removed its stale .floo/services.lock entry."
+                            ),
+                            None,
+                        );
+                    }
+                    return;
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    output::error(
+                        &format!("Could not read .floo/services.lock: {e}."),
+                        &ErrorCode::ConfigError,
+                        None,
+                    );
+                    process::exit(1);
+                }
+            }
             output::error(
                 &format!("No managed {service_type} named '{name}' on {app_name}."),
                 &ErrorCode::ManagedServiceNotFound,
@@ -396,7 +439,7 @@ pub fn remove(service_type: &str, app: Option<&str>, name: &str, confirmed: bool
     } else {
         output::info(
             &format!(
-                "Deletion is {}. A different org admin must review it in the dashboard:\n{}",
+                "Deletion is {}. A different org admin must review it in the dashboard:\n{}\nAfter approval, rerun this remove command to reconcile .floo/services.lock.",
                 approval.status, approval.dashboard_url
             ),
             None,
