@@ -395,6 +395,11 @@ pub struct OperationApprovalProposalRequest<'a> {
     pub resource_id: &'a str,
 }
 
+#[derive(Debug, Serialize)]
+pub struct AppDeleteProposalRequest<'a> {
+    pub operation_id: &'a str,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationApprovalResponse {
     pub id: String,
@@ -434,6 +439,10 @@ pub struct OperationBlastRadius {
     pub provider_resources: u32,
     pub credential_carriers: u32,
     pub backup_artifacts: u32,
+    #[serde(default)]
+    pub platform_records: u32,
+    #[serde(default)]
+    pub identities: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

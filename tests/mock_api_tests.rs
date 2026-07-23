@@ -38,6 +38,24 @@ fn app_json() -> String {
     )
 }
 
+fn app_delete_approval_json() -> &'static str {
+    r#"{
+        "id":"approval-app-1","org_id":"org-uuid-5678","app_id":"app-uuid-1234",
+        "environment":"all","operation_id":"app.delete","resource_type":"app",
+        "resource_id":"app-uuid-1234","resource_name":"my-app","service_type":"app",
+        "provider_resource_ids":[],"status":"pending","tier":3,"destructive":true,
+        "data_loss":true,"blast_radius":{"provider_resources":0,"credential_carriers":0,
+        "backup_artifacts":0,"platform_records":12,"identities":1},
+        "plan_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "requested_by_user_id":null,"requested_at":"2026-07-21T00:00:00Z",
+        "expires_at":"2026-07-28T00:00:00Z","decided_by_user_id":null,"decided_at":null,
+        "authorized_at":null,"completed_at":null,"decision_note":null,"error_code":null,
+        "error_message":null,
+        "dashboard_url":"https://app.getfloo.com/apps/app-uuid-1234/operation-approvals/approval-app-1",
+        "next_action":"open_dashboard"
+    }"#
+}
+
 /// Org JSON fixture for org lookup mocks.
 fn org_json() -> String {
     format!(
@@ -533,8 +551,16 @@ fn test_apps_delete_json_with_explicit_flag() {
     let _resolve = mock_resolve_app(&mut server);
 
     let _m_delete = server
-        .mock("DELETE", format!("/v1/apps/{TEST_APP_ID}").as_str())
-        .with_status(204)
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/operation-approvals").as_str(),
+        )
+        .match_body(Matcher::JsonString(
+            serde_json::json!({"operation_id": "app.delete"}).to_string(),
+        ))
+        .with_status(202)
+        .with_header("content-type", "application/json")
+        .with_body(app_delete_approval_json())
         .create();
 
     floo()
@@ -550,6 +576,7 @@ fn test_apps_delete_json_with_explicit_flag() {
         .success()
         .stdout(predicate::str::contains(r#""success":true"#))
         .stdout(predicate::str::contains(TEST_APP_ID))
+        .stdout(predicate::str::contains(r#""operation_id":"app.delete""#))
         .stdout(predicate::str::contains(r#""destructive":true"#))
         .stdout(predicate::str::contains(r#""data_loss":true"#))
         .stdout(predicate::str::contains(r#""tier":3"#));
@@ -564,8 +591,16 @@ fn test_apps_delete_force_alias_still_works() {
     let _resolve = mock_resolve_app(&mut server);
 
     let _m_delete = server
-        .mock("DELETE", format!("/v1/apps/{TEST_APP_ID}").as_str())
-        .with_status(204)
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/operation-approvals").as_str(),
+        )
+        .match_body(Matcher::JsonString(
+            serde_json::json!({"operation_id": "app.delete"}).to_string(),
+        ))
+        .with_status(202)
+        .with_header("content-type", "application/json")
+        .with_body(app_delete_approval_json())
         .create();
 
     floo()
@@ -4443,7 +4478,9 @@ fn test_services_remove_with_explicit_flag_returns_approval_and_preserves_lock()
             "blast_radius": {
                 "provider_resources": 2,
                 "credential_carriers": 2,
-                "backup_artifacts": 0
+                "backup_artifacts": 0,
+                "platform_records": 0,
+                "identities": 0
             },
             "plan_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "requested_by_user_id": null,
