@@ -63,6 +63,20 @@ fn org_json() -> String {
     )
 }
 
+fn guardrail_policy_json(scope: &str, scope_id: &str, source: &str) -> String {
+    serde_json::json!({
+        "scope": scope,
+        "scope_id": scope_id,
+        "source": source,
+        "configured": source == "app_override" || (scope == "org" && source == "org_default"),
+        "gate_recoverable_dev": false,
+        "gate_recoverable_prod": true,
+        "gate_data_loss": true,
+        "gate_reversible": false,
+    })
+    .to_string()
+}
+
 /// Mock GET /v1/orgs/me for human-mode list.
 fn mock_org_me(server: &mut Server) -> Mock {
     server
@@ -406,6 +420,151 @@ fn test_orgs_invite_json_assigns_role_and_redacts_url() {
         // The one-time invite_url is secret-shaped: redacted, never raw.
         .stdout(predicate::str::contains("secret-token-xyz").not())
         .stdout(predicate::str::contains("contains_secrets"));
+}
+
+#[test]
+fn test_guardrails_show_org_json_is_exact() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _org = mock_org_me(&mut server);
+    let _policy = server
+        .mock("GET", format!("/v1/orgs/{TEST_ORG_ID}/guardrails").as_str())
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(guardrail_policy_json(
+            "org",
+            TEST_ORG_ID,
+            "platform_default",
+        ))
+        .create();
+
+    let output = floo()
+        .args(["--json", "guardrails", "show"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        value,
+        serde_json::json!({
+            "success": true,
+            "data": {
+                "scope": "org",
+                "scope_id": TEST_ORG_ID,
+                "source": "platform_default",
+                "configured": false,
+                "gate_recoverable_dev": false,
+                "gate_recoverable_prod": true,
+                "gate_data_loss": true,
+                "gate_reversible": false,
+            }
+        })
+    );
+}
+
+#[test]
+fn test_guardrails_set_app_sends_only_tier_two_policy() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _policy = server
+        .mock("PUT", format!("/v1/apps/{TEST_APP_ID}/guardrails").as_str())
+        .match_body(Matcher::JsonString(
+            r#"{"gate_recoverable_dev":true,"gate_recoverable_prod":false}"#.to_string(),
+        ))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            serde_json::json!({
+                "scope": "app",
+                "scope_id": TEST_APP_ID,
+                "source": "app_override",
+                "configured": true,
+                "gate_recoverable_dev": true,
+                "gate_recoverable_prod": false,
+                "gate_data_loss": true,
+                "gate_reversible": false,
+            })
+            .to_string(),
+        )
+        .create();
+
+    let output = floo()
+        .args([
+            "--json",
+            "guardrails",
+            "set",
+            "--app",
+            TEST_APP_NAME,
+            "--dev",
+            "approval",
+            "--prod",
+            "automatic",
+        ])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["data"]["source"], "app_override");
+    assert_eq!(value["data"]["gate_data_loss"], true);
+    assert_eq!(value["data"]["gate_recoverable_prod"], false);
+}
+
+#[test]
+fn test_guardrails_set_inherit_deletes_app_override() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _policy = server
+        .mock(
+            "DELETE",
+            format!("/v1/apps/{TEST_APP_ID}/guardrails").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(guardrail_policy_json("app", TEST_APP_ID, "org_default"))
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "guardrails",
+            "set",
+            "--app",
+            TEST_APP_NAME,
+            "--inherit",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""source":"org_default""#));
+}
+
+#[test]
+fn test_guardrails_set_requires_complete_posture() {
+    let server = Server::new();
+    let home = setup_config(&server);
+    floo()
+        .args(["--json", "guardrails", "set", "--dev", "approval"])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            "Both --dev and --prod are required unless --inherit is used.",
+        ))
+        .stdout(predicate::str::contains(
+            "Pass --dev <automatic|approval> --prod <automatic|approval>.",
+        ));
 }
 
 #[test]
