@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::commands;
 use crate::constants::VERSION;
@@ -255,6 +255,21 @@ dirty local files are not uploaded."
     #[command(subcommand)]
     Orgs(OrgsCommands),
 
+    /// Inspect and set human-approval policy for consequential operations.
+    #[command(
+        subcommand,
+        after_help = "\
+Examples:
+  floo guardrails show --json
+  floo guardrails show --app my-app
+  floo guardrails set --dev automatic --prod approval
+  floo guardrails set --app my-app --inherit
+
+Without --app, commands target the current organization. Tier 3 always requires
+human approval and cannot be changed by this command."
+    )]
+    Guardrails(GuardrailsCommands),
+
     /// Manage billing and spend caps.
     #[command(subcommand)]
     Billing(BillingCommands),
@@ -372,7 +387,7 @@ Examples:
     #[command(after_help = "\
 Topics: golden-path, quickstart, build, nextjs, rails, fastapi, django,
 express, templates, services, edge, egress, previews, config, cron, deploy, auth,
-notifications, feedback.
+notifications, guardrails, feedback.
 Aliases: storage -> services, app-toml -> config.
 Run `floo docs` (no topic) for a one-line description of each topic.")]
     Docs {
@@ -618,6 +633,46 @@ pub enum OrgsCommands {
     Switch {
         /// Org slug or ID.
         org_slug: String,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum GuardrailPosture {
+    Automatic,
+    Approval,
+}
+
+impl GuardrailPosture {
+    fn gated(self) -> bool {
+        matches!(self, Self::Approval)
+    }
+}
+
+#[derive(Subcommand)]
+pub enum GuardrailsCommands {
+    /// Show the effective org or app approval policy.
+    Show {
+        /// App name or ID. Omit to inspect the current org default.
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+    /// Set recoverable-operation policy or reset it to inherit.
+    Set {
+        /// App name or ID. Omit to set the current org default.
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Dev posture for tier-2 recoverable operations.
+        #[arg(long, value_enum, conflicts_with = "inherit")]
+        dev: Option<GuardrailPosture>,
+
+        /// Prod and preview posture for tier-2 recoverable operations.
+        #[arg(long, value_enum, conflicts_with = "inherit")]
+        prod: Option<GuardrailPosture>,
+
+        /// Remove this scope's row and inherit the org or platform policy.
+        #[arg(long, conflicts_with_all = ["dev", "prod"])]
+        inherit: bool,
     },
 }
 
@@ -2138,6 +2193,21 @@ pub fn run() {
             },
             OrgsCommands::Invite { email, role } => commands::orgs::invite(&email, &role),
             OrgsCommands::Switch { org_slug } => commands::orgs::switch(&org_slug),
+        },
+
+        Commands::Guardrails(sub) => match sub {
+            GuardrailsCommands::Show { app } => commands::guardrails::show(app.as_deref()),
+            GuardrailsCommands::Set {
+                app,
+                dev,
+                prod,
+                inherit,
+            } => commands::guardrails::set(
+                app.as_deref(),
+                dev.map(GuardrailPosture::gated),
+                prod.map(GuardrailPosture::gated),
+                inherit,
+            ),
         },
 
         Commands::Apps(sub) => match sub {

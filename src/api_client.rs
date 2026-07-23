@@ -232,6 +232,16 @@ impl FlooClient {
             .map_err(|e| FlooApiError::new(0, "CONNECTION_ERROR", e.to_string()))
     }
 
+    fn put_json(
+        &self,
+        path: &str,
+        body: &Value,
+    ) -> Result<reqwest::blocking::Response, FlooApiError> {
+        let req = self.apply_headers(self.client.put(self.url(path)).json(body));
+        req.send()
+            .map_err(|e| FlooApiError::new(0, "CONNECTION_ERROR", e.to_string()))
+    }
+
     fn delete(&self, path: &str) -> Result<reqwest::blocking::Response, FlooApiError> {
         let req = self.apply_headers(self.client.delete(self.url(path)));
         req.send()
@@ -353,6 +363,36 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn get_org_guardrails(
+        &self,
+        org_id: &str,
+    ) -> Result<GuardrailPolicyResponse, FlooApiError> {
+        let resp = self.get(&format!("/v1/orgs/{org_id}/guardrails"))?;
+        self.handle_response(resp)
+    }
+
+    pub fn set_org_guardrails(
+        &self,
+        org_id: &str,
+        gate_recoverable_dev: bool,
+        gate_recoverable_prod: bool,
+    ) -> Result<GuardrailPolicyResponse, FlooApiError> {
+        let body = serde_json::json!({
+            "gate_recoverable_dev": gate_recoverable_dev,
+            "gate_recoverable_prod": gate_recoverable_prod,
+        });
+        let resp = self.put_json(&format!("/v1/orgs/{org_id}/guardrails"), &body)?;
+        self.handle_response(resp)
+    }
+
+    pub fn reset_org_guardrails(
+        &self,
+        org_id: &str,
+    ) -> Result<GuardrailPolicyResponse, FlooApiError> {
+        let resp = self.delete(&format!("/v1/orgs/{org_id}/guardrails"))?;
+        self.handle_response(resp)
+    }
+
     // --- Access ---
 
     pub fn grant_app_access(&self, app_id: &str, email: &str) -> Result<Value, FlooApiError> {
@@ -406,6 +446,36 @@ impl FlooClient {
 
     pub fn get_app(&self, app_id: &str) -> Result<App, FlooApiError> {
         let resp = self.get(&format!("/v1/apps/{app_id}"))?;
+        self.handle_response(resp)
+    }
+
+    pub fn get_app_guardrails(
+        &self,
+        app_id: &str,
+    ) -> Result<GuardrailPolicyResponse, FlooApiError> {
+        let resp = self.get(&format!("/v1/apps/{app_id}/guardrails"))?;
+        self.handle_response(resp)
+    }
+
+    pub fn set_app_guardrails(
+        &self,
+        app_id: &str,
+        gate_recoverable_dev: bool,
+        gate_recoverable_prod: bool,
+    ) -> Result<GuardrailPolicyResponse, FlooApiError> {
+        let body = serde_json::json!({
+            "gate_recoverable_dev": gate_recoverable_dev,
+            "gate_recoverable_prod": gate_recoverable_prod,
+        });
+        let resp = self.put_json(&format!("/v1/apps/{app_id}/guardrails"), &body)?;
+        self.handle_response(resp)
+    }
+
+    pub fn reset_app_guardrails(
+        &self,
+        app_id: &str,
+    ) -> Result<GuardrailPolicyResponse, FlooApiError> {
+        let resp = self.delete(&format!("/v1/apps/{app_id}/guardrails"))?;
         self.handle_response(resp)
     }
 

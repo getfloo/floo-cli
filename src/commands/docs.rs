@@ -45,6 +45,7 @@ never uploads code.
   floo docs deploy     — detailed deploy flow and runtime detection
   floo docs auth       — add user authentication to your app
   floo docs notifications — control which emails floo sends you
+  floo docs guardrails — inspect and set recoverable-operation approval policy
   floo docs feedback   — report bugs, friction, or feature requests
   floo --help          — all available commands
   floo <command> --help — details for a specific command
@@ -335,6 +336,31 @@ All services share the same origin, so cookies and auth work without CORS.
   keeps the service until status=completed.
 
 Full guide: https://getfloo.com/docs/guides/managed-services
+";
+
+const GUARDRAILS: &str = "\
+floo guardrails
+
+Guardrails decide whether tier-2 recoverable operations need a human approval.
+The policy is server-owned, so a repository change cannot weaken its own gate.
+
+  floo guardrails show --json
+  floo guardrails show --app my-app
+  floo guardrails set --dev automatic --prod approval
+  floo guardrails set --app my-app --dev approval --prod approval
+  floo guardrails set --app my-app --inherit
+
+Without --app, show and set target the current organization. An app override
+inherits the org default after --inherit; an org default inherits the platform
+default. Preview uses the prod setting.
+
+Only tier 2 is configurable. Tier-1 additive work is always automatic. Tier-3
+irreversible work always requires approval from a current human session, and no
+CLI flag, API key, preset, or stored policy can disable that floor.
+
+The older readonly/supervised/autonomous agent modes govern database-command
+autonomy. They are intentionally not guardrail presets: risk policy and actor
+autonomy are separate axes, and coupling them would create a second policy model.
 ";
 
 const EDGE: &str = "\
@@ -1954,6 +1980,7 @@ pub(crate) const TOPICS: &[(&str, &str)] = &[
     ("deploy", DEPLOY),
     ("auth", AUTH),
     ("notifications", NOTIFICATIONS),
+    ("guardrails", GUARDRAILS),
     ("feedback", FEEDBACK),
 ];
 

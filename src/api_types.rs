@@ -125,6 +125,18 @@ pub struct CreateInviteResponse {
     pub expires_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GuardrailPolicyResponse {
+    pub scope: String,
+    pub scope_id: String,
+    pub source: String,
+    pub configured: bool,
+    pub gate_recoverable_dev: bool,
+    pub gate_recoverable_prod: bool,
+    pub gate_data_loss: bool,
+    pub gate_reversible: bool,
+}
+
 // --- App ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

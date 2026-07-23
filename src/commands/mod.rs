@@ -23,6 +23,7 @@ pub mod edge;
 pub mod env;
 pub mod feedback;
 pub mod github;
+pub mod guardrails;
 pub mod init;
 pub mod logs;
 pub mod notifications;
