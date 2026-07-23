@@ -1034,7 +1034,7 @@ pub enum ServicesCommands {
         name: String,
     },
 
-    /// Permanently destroy a managed service and its data.
+    /// Request human approval to permanently destroy a managed service and its data.
     ///
     /// Tier-3 destructive: requires typing the resource name to confirm,
     /// or --yes-i-know-this-destroys-data in automation. Never a plain --yes.
@@ -1052,8 +1052,8 @@ pub enum ServicesCommands {
         name: String,
 
         /// Skip interactive confirmation. Required in non-interactive contexts.
-        /// This is deliberately verbose — destroying user data must be
-        /// an explicit, acknowledged decision.
+        /// This is deliberately verbose — proposing destructive work must be
+        /// an explicit, acknowledged action. It does not approve the request.
         #[arg(long = "yes-i-know-this-destroys-data")]
         confirmed: bool,
     },

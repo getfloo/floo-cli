@@ -12,9 +12,16 @@ Floo provisions and manages Postgres, Redis, Storage, and Cron as platform servi
 
 ## How to Provision
 
-All managed services are declared in `floo.app.toml` and auto-provisioned on deploy. The API parses `floo.app.toml` directly from the repo tarball, so this works identically for `floo deploy`, `git push` (deploy-on-push), and preview deploys.
+Managed services are stateful resources. Provision them explicitly with the CLI:
 
-**There is no CLI command to imperatively provision a managed service.** Declare them in `floo.app.toml` and they are auto-provisioned on deploy.
+```bash
+floo services add postgres --app my-app
+floo services add redis --app my-app
+floo services add storage --app my-app
+floo services list --app my-app
+```
+
+Legacy `[postgres]`, `[redis]`, `[storage]`, and `[managed.<name>]` declarations still auto-provision missing resources on a git-triggered deploy during the transition window. Removing a declaration never destroys provider data. Terminal deletion is always an explicit `floo services remove` proposal followed by approval from a different human org admin in the dashboard.
 
 ## Managed Service Tiers
 
@@ -36,14 +43,11 @@ Redis and Storage tiers default to `basic` — no functional difference today.
 
 ## Postgres (Managed)
 
-**Declare in `floo.app.toml`:**
+**Provision with the CLI:**
 
-```toml
-[postgres]
-tier = "basic"    # optional, defaults to basic
+```bash
+floo services add postgres --tier basic --app my-app
 ```
-
-Then deploy — Floo auto-provisions on first deploy.
 
 **What happens:**
 - Floo creates a dedicated schema and role on the managed Postgres instance
@@ -82,13 +86,11 @@ let database_url = std::env::var("DATABASE_URL")?;
 
 ## Redis (Managed)
 
-**Declare in `floo.app.toml`:**
+**Provision with the CLI:**
 
-```toml
-[redis]
+```bash
+floo services add redis --app my-app
 ```
-
-Then deploy — Floo auto-provisions on first deploy.
 
 **What happens:**
 - Floo provisions a dedicated Redis instance via Upstash (serverless Redis)
@@ -116,13 +118,11 @@ const redisUrl = process.env.REDIS_URL;
 
 ## Storage (Managed)
 
-**Declare in `floo.app.toml`:**
+**Provision with the CLI:**
 
-```toml
-[storage]
+```bash
+floo services add storage --app my-app
 ```
-
-Then deploy — Floo auto-provisions on first deploy.
 
 **What happens:**
 - Floo creates a storage bucket scoped to your app
@@ -207,7 +207,7 @@ command = "node cleanup.js"
 service = "api"
 ```
 
-Then deploy — Floo syncs cron jobs on every deploy (creates new ones, updates changed ones, deletes removed ones). This works for both `floo deploy` and push-to-deploy (git push) — the API parses `[cron.*]` directly from `floo.app.toml` in the repo.
+Commit and push the manifest. floo syncs cron jobs on every git-triggered deploy (creates new ones, updates changed ones, deletes removed ones).
 
 **What happens:**
 - Floo creates a CronJob record for each `[cron.<name>]` section
@@ -278,5 +278,7 @@ Managed service env vars (`DATABASE_URL`, `REDIS_URL`, `STORAGE_BUCKET`) are pro
 - All managed service credentials arrive as environment variables
 - Use `floo env list --app my-app` to see what's provisioned
 - Use `floo services list --app my-app` to see service status and tiers
+- `floo services remove <type> --app my-app` creates or resumes an exact tier-3 approval request; it does not delete anything before a different human org admin approves it
+- Retain `.floo/services.lock` while the request is pending, executing, failed, or unknown. After dashboard approval completes, rerun the same remove command; authoritative API absence reconciles the matching stale lock entry without another destructive confirmation
 - Managed services are per-environment — dev and prod have separate instances
 - For local development, set the same env var names in your `.env` file pointing to local services

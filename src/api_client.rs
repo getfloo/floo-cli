@@ -432,13 +432,22 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
-    pub fn delete_app(&self, app_id: &str) -> Result<(), FlooApiError> {
-        let resp = self.delete(&format!("/v1/apps/{app_id}"))?;
-        if resp.status().as_u16() == 204 {
-            return Ok(());
-        }
-        self.handle_response_value(resp)?;
-        Ok(())
+    pub fn request_app_delete(
+        &self,
+        app_id: &str,
+    ) -> Result<OperationApprovalResponse, FlooApiError> {
+        let body = AppDeleteProposalRequest {
+            operation_id: "app.delete",
+        };
+        let value = serde_json::to_value(body).map_err(|e| {
+            FlooApiError::new(
+                500,
+                "SERIALIZE_ERROR",
+                format!("Failed to serialize app deletion proposal: {e}"),
+            )
+        })?;
+        let resp = self.post_json(&format!("/v1/apps/{app_id}/operation-approvals"), &value)?;
+        self.handle_response(resp)
     }
 
     // --- Deploys ---
@@ -744,17 +753,24 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
-    pub fn delete_managed_service(
+    pub fn request_managed_service_destroy(
         &self,
         app_id: &str,
         service_id: &str,
-    ) -> Result<(), FlooApiError> {
-        let resp = self.delete(&format!("/v1/apps/{app_id}/managed-services/{service_id}"))?;
-        let status = resp.status().as_u16();
-        if status >= 400 {
-            return Err(self.handle_error(resp));
-        }
-        Ok(())
+    ) -> Result<OperationApprovalResponse, FlooApiError> {
+        let body = OperationApprovalProposalRequest {
+            operation_id: "managed_service.destroy",
+            resource_id: service_id,
+        };
+        let value = serde_json::to_value(body).map_err(|e| {
+            FlooApiError::new(
+                500,
+                "SERIALIZE_ERROR",
+                format!("Failed to serialize operation approval proposal: {e}"),
+            )
+        })?;
+        let resp = self.post_json(&format!("/v1/apps/{app_id}/operation-approvals"), &value)?;
+        self.handle_response(resp)
     }
 
     pub fn list_storage_object_versions(

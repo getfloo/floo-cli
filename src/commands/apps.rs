@@ -214,20 +214,26 @@ pub fn delete(app_name: &str, destroy_data_flag: bool) {
         }
     }
 
-    if let Err(e) = client.delete_app(&app.id) {
-        output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-        process::exit(1);
+    let approval = match client.request_app_delete(&app.id) {
+        Ok(approval) => approval,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+    if output::is_json_mode() {
+        output::success(
+            &format!("App deletion is {}", approval.status),
+            Some(output::to_value(&approval)),
+        );
+        return;
     }
-
-    let risk: RiskMetadata = Tier::Three.into();
-    output::success(
-        &format!("Deleted app '{}'.", app.name),
-        Some(serde_json::json!({
-            "id": app.id,
-            "destructive": risk.destructive,
-            "data_loss": risk.data_loss,
-            "tier": risk.tier,
-        })),
+    output::info(
+        &format!(
+            "Deletion is {}. A different org admin must review it in the dashboard:\n{}",
+            approval.status, approval.dashboard_url
+        ),
+        None,
     );
 }
 

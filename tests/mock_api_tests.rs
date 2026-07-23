@@ -38,6 +38,24 @@ fn app_json() -> String {
     )
 }
 
+fn app_delete_approval_json() -> &'static str {
+    r#"{
+        "id":"approval-app-1","org_id":"org-uuid-5678","app_id":"app-uuid-1234",
+        "environment":"all","operation_id":"app.delete","resource_type":"app",
+        "resource_id":"app-uuid-1234","resource_name":"my-app","service_type":"app",
+        "provider_resource_ids":[],"status":"pending","tier":3,"destructive":true,
+        "data_loss":true,"blast_radius":{"provider_resources":0,"credential_carriers":0,
+        "backup_artifacts":0,"platform_records":12,"identities":1},
+        "plan_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "requested_by_user_id":null,"requested_at":"2026-07-21T00:00:00Z",
+        "expires_at":"2026-07-28T00:00:00Z","decided_by_user_id":null,"decided_at":null,
+        "authorized_at":null,"completed_at":null,"decision_note":null,"error_code":null,
+        "error_message":null,
+        "dashboard_url":"https://app.getfloo.com/apps/app-uuid-1234/operation-approvals/approval-app-1",
+        "next_action":"open_dashboard"
+    }"#
+}
+
 /// Org JSON fixture for org lookup mocks.
 fn org_json() -> String {
     format!(
@@ -533,8 +551,16 @@ fn test_apps_delete_json_with_explicit_flag() {
     let _resolve = mock_resolve_app(&mut server);
 
     let _m_delete = server
-        .mock("DELETE", format!("/v1/apps/{TEST_APP_ID}").as_str())
-        .with_status(204)
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/operation-approvals").as_str(),
+        )
+        .match_body(Matcher::JsonString(
+            serde_json::json!({"operation_id": "app.delete"}).to_string(),
+        ))
+        .with_status(202)
+        .with_header("content-type", "application/json")
+        .with_body(app_delete_approval_json())
         .create();
 
     floo()
@@ -550,6 +576,7 @@ fn test_apps_delete_json_with_explicit_flag() {
         .success()
         .stdout(predicate::str::contains(r#""success":true"#))
         .stdout(predicate::str::contains(TEST_APP_ID))
+        .stdout(predicate::str::contains(r#""operation_id":"app.delete""#))
         .stdout(predicate::str::contains(r#""destructive":true"#))
         .stdout(predicate::str::contains(r#""data_loss":true"#))
         .stdout(predicate::str::contains(r#""tier":3"#));
@@ -564,8 +591,16 @@ fn test_apps_delete_force_alias_still_works() {
     let _resolve = mock_resolve_app(&mut server);
 
     let _m_delete = server
-        .mock("DELETE", format!("/v1/apps/{TEST_APP_ID}").as_str())
-        .with_status(204)
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/operation-approvals").as_str(),
+        )
+        .match_body(Matcher::JsonString(
+            serde_json::json!({"operation_id": "app.delete"}).to_string(),
+        ))
+        .with_status(202)
+        .with_header("content-type", "application/json")
+        .with_body(app_delete_approval_json())
         .create();
 
     floo()
@@ -4312,7 +4347,7 @@ fn test_services_remove_refuses_without_confirmation_flag_in_json_mode() {
         )
         .create();
 
-    // No mock for DELETE — the command must refuse before reaching that endpoint.
+    // No proposal mock: the command must refuse before reaching that endpoint.
     let project = TempDir::new().unwrap();
     std::fs::write(
         project.path().join("floo.app.toml"),
@@ -4338,7 +4373,7 @@ fn test_services_remove_refuses_without_confirmation_flag_in_json_mode() {
 }
 
 #[test]
-fn test_services_remove_with_explicit_flag_destroys_and_updates_lock() {
+fn test_services_remove_with_explicit_flag_returns_approval_and_preserves_lock() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
@@ -4355,12 +4390,38 @@ fn test_services_remove_with_explicit_flag_destroys_and_updates_lock() {
         )
         .create();
 
-    let _m_delete = server
+    let _m_propose = server
         .mock(
-            "DELETE",
-            format!("/v1/apps/{TEST_APP_ID}/managed-services/ms-1").as_str(),
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/operation-approvals").as_str(),
         )
-        .with_status(204)
+        .match_body(Matcher::JsonString(
+            serde_json::json!({
+                "operation_id": "managed_service.destroy",
+                "resource_id": "ms-1"
+            })
+            .to_string(),
+        ))
+        .with_status(202)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{
+                "id":"approval-1","org_id":"org-1","app_id":"app-uuid-1234",
+                "environment":"all",
+                "operation_id":"managed_service.destroy","resource_type":"managed_service",
+                "resource_id":"ms-1","resource_name":"default","service_type":"postgres",
+                "provider_resource_ids":["app_default","app_default_role"],"status":"pending",
+                "tier":3,"destructive":true,"data_loss":true,
+                "blast_radius":{"provider_resources":2,"credential_carriers":2,"backup_artifacts":0},
+                "plan_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "requested_by_user_id":null,
+                "requested_at":"2026-07-21T00:00:00Z","expires_at":"2026-07-28T00:00:00Z",
+                "decided_by_user_id":null,"decided_at":null,"authorized_at":null,
+                "completed_at":null,"decision_note":null,"error_code":null,"error_message":null,
+                "dashboard_url":"https://app.getfloo.com/apps/app-uuid-1234/operation-approvals/approval-1",
+                "next_action":"open_dashboard"
+            }"#,
+        )
         .create();
 
     let project = TempDir::new().unwrap();
@@ -4378,7 +4439,7 @@ fn test_services_remove_with_explicit_flag_destroys_and_updates_lock() {
     )
     .unwrap();
 
-    floo()
+    let assert = floo()
         .args([
             "--json",
             "services",
@@ -4391,17 +4452,176 @@ fn test_services_remove_with_explicit_flag_destroys_and_updates_lock() {
         .env("HOME", home.path())
         .current_dir(project.path())
         .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""success":true"#))
-        .stdout(predicate::str::contains(r#""destructive":true"#))
-        .stdout(predicate::str::contains(r#""data_loss":true"#))
-        .stdout(predicate::str::contains(r#""tier":3"#));
+        .success();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("stdout must be one JSON envelope");
+    assert_eq!(envelope["success"], serde_json::Value::Bool(true));
+    assert_eq!(
+        envelope["data"],
+        serde_json::json!({
+            "id": "approval-1",
+            "org_id": "org-1",
+            "app_id": "app-uuid-1234",
+            "environment": "all",
+            "operation_id": "managed_service.destroy",
+            "resource_type": "managed_service",
+            "resource_id": "ms-1",
+            "resource_name": "default",
+            "service_type": "postgres",
+            "provider_resource_ids": ["app_default", "app_default_role"],
+            "status": "pending",
+            "tier": 3,
+            "destructive": true,
+            "data_loss": true,
+            "blast_radius": {
+                "provider_resources": 2,
+                "credential_carriers": 2,
+                "backup_artifacts": 0,
+                "platform_records": 0,
+                "identities": 0
+            },
+            "plan_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "requested_by_user_id": null,
+            "requested_at": "2026-07-21T00:00:00Z",
+            "expires_at": "2026-07-28T00:00:00Z",
+            "decided_by_user_id": null,
+            "decided_at": null,
+            "authorized_at": null,
+            "completed_at": null,
+            "decision_note": null,
+            "error_code": null,
+            "error_message": null,
+            "dashboard_url": "https://app.getfloo.com/apps/app-uuid-1234/operation-approvals/approval-1",
+            "next_action": "open_dashboard"
+        })
+    );
 
     let lock = std::fs::read_to_string(project.path().join(".floo").join("services.lock")).unwrap();
     assert!(
-        !lock.contains(r#""postgres""#),
-        "lock file should no longer have the postgres entry, got: {lock}"
+        lock.contains(r#""postgres""#),
+        "lock file must retain the service until execution completes, got: {lock}"
     );
+}
+
+#[test]
+fn test_services_remove_fails_closed_against_api_without_proposal_endpoint() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _m_list = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"managed_services":[{"id":"ms-1","app_id":"app-uuid-1234","type":"postgres","name":"default","status":"ready","env_var_keys":["DATABASE_URL"],"created_at":null,"updated_at":null}],"total":1}"#,
+        )
+        .create();
+    let _m_propose = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/operation-approvals").as_str(),
+        )
+        .match_body(Matcher::JsonString(
+            serde_json::json!({
+                "operation_id": "managed_service.destroy",
+                "resource_id": "ms-1"
+            })
+            .to_string(),
+        ))
+        .with_status(404)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":{"code":"NOT_FOUND","message":"Not found"}}"#)
+        .create();
+    let project = TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        format!("[app]\nname = \"{TEST_APP_NAME}\"\n"),
+    )
+    .unwrap();
+    std::fs::create_dir_all(project.path().join(".floo")).unwrap();
+    std::fs::write(
+        project.path().join(".floo").join("services.lock"),
+        r#"{"version":1,"managed_services":[{"type":"postgres","name":"default","status":"ready","created_at":null}]}
+"#,
+    )
+    .unwrap();
+
+    let assert = floo()
+        .args([
+            "--json",
+            "services",
+            "remove",
+            "postgres",
+            "--app",
+            TEST_APP_NAME,
+            "--yes-i-know-this-destroys-data",
+        ])
+        .env("HOME", home.path())
+        .current_dir(project.path())
+        .assert()
+        .failure();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(envelope["success"], false);
+    let lock = std::fs::read_to_string(project.path().join(".floo").join("services.lock")).unwrap();
+    assert!(lock.contains(r#""postgres""#));
+}
+
+#[test]
+fn test_services_remove_reconciles_lock_after_approved_deletion() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _m_list = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"managed_services":[],"total":0}"#)
+        .create();
+
+    let project = TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        format!("[app]\nname = \"{TEST_APP_NAME}\"\n"),
+    )
+    .unwrap();
+    std::fs::create_dir_all(project.path().join(".floo")).unwrap();
+    std::fs::write(
+        project.path().join(".floo").join("services.lock"),
+        r#"{"version":1,"managed_services":[{"type":"postgres","name":"default","status":"ready","created_at":null}]}
+"#,
+    )
+    .unwrap();
+
+    let assert = floo()
+        .args([
+            "--json",
+            "services",
+            "remove",
+            "postgres",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .current_dir(project.path())
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(envelope["data"]["status"], "absent");
+    assert_eq!(envelope["data"]["lock_updated"], true);
+    let lock = std::fs::read_to_string(project.path().join(".floo").join("services.lock")).unwrap();
+    assert!(!lock.contains(r#""postgres""#));
 }
 
 #[test]
