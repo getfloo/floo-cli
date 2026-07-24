@@ -371,7 +371,7 @@ Examples:
     /// full list of topics with one-line descriptions.
     #[command(after_help = "\
 Topics: golden-path, quickstart, build, nextjs, rails, fastapi, django,
-express, templates, services, edge, egress, previews, config, cron, deploy, auth,
+express, templates, services, doctor, edge, egress, previews, config, cron, deploy, auth,
 notifications, feedback.
 Aliases: storage -> services, app-toml -> config.
 Run `floo docs` (no topic) for a one-line description of each topic.")]
@@ -1754,6 +1754,20 @@ pub enum ReparoCommands {
 
 #[derive(Subcommand)]
 pub enum DoctorCommands {
+    /// Check managed-service data-plane health.
+    #[command(after_help = "\
+Examples:
+  floo doctor managed-services                Use the app from floo.app.toml
+  floo doctor managed-services --app foo      Diagnose a specific app
+  floo doctor managed-services --json         Machine-readable output for agents
+
+Exit code is non-zero when a managed-service issue is detected.")]
+    ManagedServices {
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+
     /// Diagnose an app's accounts-mode posture (feedback 64268e05).
     #[command(after_help = "\
 Examples:
@@ -2517,6 +2531,9 @@ pub fn run() {
 
         Commands::Doctor(sub) => match sub {
             DoctorCommands::Accounts { app } => commands::doctor::accounts(app.as_deref()),
+            DoctorCommands::ManagedServices { app } => {
+                commands::doctor::managed_services(app.as_deref())
+            }
         },
 
         Commands::Feedback {
@@ -3096,5 +3113,23 @@ mod tests {
         // to JSON, whereas `--help`/`--version` are stdout displays that don't.
         assert!(parse_err(&["floo", "doctor", "--json"]).use_stderr());
         assert!(!parse_err(&["floo", "--help"]).use_stderr());
+    }
+
+    #[test]
+    fn doctor_managed_services_parses_app_and_json_flags() {
+        let cli = Cli::try_parse_from([
+            "floo",
+            "doctor",
+            "managed-services",
+            "--app",
+            "payments",
+            "--json",
+        ])
+        .expect("managed-services doctor command parses");
+        assert!(cli.json);
+        let Commands::Doctor(DoctorCommands::ManagedServices { app }) = cli.command else {
+            panic!("expected Doctor::ManagedServices");
+        };
+        assert_eq!(app.as_deref(), Some("payments"));
     }
 }

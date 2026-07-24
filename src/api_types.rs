@@ -355,6 +355,14 @@ pub struct ListServicesResponse {
 // Mirrors api/app/schemas/managed_services.py. Keep these in lock-step.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManagedRedisEnvironmentHealth {
+    pub status: String,
+    pub reason: String,
+    pub observed_at: Option<String>,
+    pub remediation: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManagedServiceSummary {
     pub id: String,
     pub app_id: String,
@@ -366,6 +374,10 @@ pub struct ManagedServiceSummary {
     pub env_var_keys: Vec<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
+    #[serde(default)]
+    pub dev_health: Option<ManagedRedisEnvironmentHealth>,
+    #[serde(default)]
+    pub prod_health: Option<ManagedRedisEnvironmentHealth>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -397,6 +409,10 @@ pub struct ManagedServiceDetail {
     pub env_var_keys: Vec<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
+    #[serde(default)]
+    pub dev_health: Option<ManagedRedisEnvironmentHealth>,
+    #[serde(default)]
+    pub prod_health: Option<ManagedRedisEnvironmentHealth>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -877,6 +893,29 @@ pub struct AccountsDoctorResponse {
     pub drift: Vec<AccountsDoctorDrift>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManagedServiceDoctorIssue {
+    pub resource_id: String,
+    pub resource_kind: String,
+    #[serde(rename = "type")]
+    pub service_type: String,
+    pub name: String,
+    pub environment: String,
+    pub status: String,
+    pub reason: String,
+    pub observed_at: Option<String>,
+    pub remediation: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManagedServicesDoctorResponse {
+    pub app_id: String,
+    pub app_name: String,
+    pub checked_environments: usize,
+    pub degraded_detected: bool,
+    pub issues: Vec<ManagedServiceDoctorIssue>,
+}
+
 // --- Analytics ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -959,4 +998,67 @@ pub struct NotificationPreference {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationPreferencesResponse {
     pub preferences: Vec<NotificationPreference>,
+}
+
+#[cfg(test)]
+mod managed_services_doctor_tests {
+    use super::{ManagedServiceSummary, ManagedServicesDoctorResponse};
+
+    #[test]
+    fn response_deserializes_redacted_issue_contract() {
+        let response: ManagedServicesDoctorResponse = serde_json::from_value(serde_json::json!({
+            "app_id": "app-1",
+            "app_name": "payments",
+            "checked_environments": 2,
+            "degraded_detected": true,
+            "issues": [{
+                "resource_id": "redis-1",
+                "resource_kind": "managed_service",
+                "type": "redis",
+                "name": "default",
+                "environment": "prod",
+                "status": "throttled",
+                "reason": "throttle_daily_limit",
+                "observed_at": "2026-07-24T17:00:00Z",
+                "remediation": "Increase the Upstash daily request allowance."
+            }]
+        }))
+        .expect("doctor response deserializes");
+
+        assert!(response.degraded_detected);
+        assert_eq!(response.issues[0].service_type, "redis");
+        assert_eq!(response.issues[0].reason, "throttle_daily_limit");
+    }
+
+    #[test]
+    fn services_response_deserializes_redis_environment_health() {
+        let service: ManagedServiceSummary = serde_json::from_value(serde_json::json!({
+            "id": "redis-1",
+            "app_id": "app-1",
+            "type": "redis",
+            "name": "default",
+            "status": "ready",
+            "env_var_keys": ["REDIS_URL"],
+            "created_at": "2026-07-24T17:00:00Z",
+            "updated_at": "2026-07-24T17:00:00Z",
+            "dev_health": {
+                "status": "healthy",
+                "reason": "healthy",
+                "observed_at": "2026-07-24T17:00:00Z",
+                "remediation": null
+            },
+            "prod_health": {
+                "status": "throttled",
+                "reason": "throttle_daily_limit",
+                "observed_at": "2026-07-24T17:00:00Z",
+                "remediation": "Contact floo support."
+            }
+        }))
+        .expect("managed service response deserializes");
+
+        assert_eq!(
+            service.prod_health.expect("prod health").status,
+            "throttled"
+        );
+    }
 }

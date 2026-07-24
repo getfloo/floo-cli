@@ -246,6 +246,8 @@ mod tests {
             env_var_keys: vec![],
             created_at: None,
             updated_at: None,
+            dev_health: None,
+            prod_health: None,
         }
     }
 

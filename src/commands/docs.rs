@@ -37,6 +37,7 @@ never uploads code.
   floo docs express    — build and deploy an Express app on floo (end-to-end)
   floo docs templates  — copy-paste app structures (React+FastAPI, Next.js, etc.)
   floo docs services   — service types and managed services (alias: storage)
+  floo docs doctor     — diagnose managed Redis health and accounts drift
   floo docs edge       — edge routes, the IP/CIDR firewall, enforcement order
   floo docs egress     — outbound egress and private-network status
   floo docs previews   — command-line preview sandboxes for remote branches
@@ -341,6 +342,40 @@ default behind an explicit development-only guard.
   floo services add <type> --app <name>      — provision a managed service
   floo services remove <type> --app <name>   — permanently destroy (tier-3)
   floo services migrate --app <name>         — move legacy TOML → CLI state
+";
+
+const DOCTOR: &str = "\
+Floo Doctor
+
+Doctor commands return one verdict plus the evidence behind it. Every command
+supports --json and exits non-zero when it detects an issue.
+
+## Managed Redis data-plane health
+
+  floo doctor managed-services --app <name>
+  floo doctor managed-services --app <name> --json
+
+floo executes one short-lived read/write canary against every ready dev, prod,
+and preview Redis resource each minute. The doctor reports throttling, auth or
+permission rejection, unreachable providers, command rejection, configuration
+errors, and missing or stale observations.
+
+Each issue includes service, environment, stable status and reason, observation
+time, and remediation. It never includes Redis credentials, raw provider
+responses, or customer keys.
+
+For request-rate or quota throttling, reduce Redis traffic and contact
+team@getfloo.com to raise managed capacity.
+
+## Accounts-mode drift
+
+  floo doctor accounts --app <name>
+  floo doctor accounts --app <name> --json
+
+The accounts doctor compares requested access config with the gateway state
+currently serving it. It exits non-zero when the drift list is non-empty.
+
+Full guide: https://getfloo.com/docs/cli/doctor
 ";
 
 const EDGE: &str = "\
@@ -1971,6 +2006,7 @@ pub(crate) const TOPICS: &[(&str, &str)] = &[
     ("express", EXPRESS),
     ("templates", TEMPLATES),
     ("services", SERVICES),
+    ("doctor", DOCTOR),
     ("edge", EDGE),
     ("egress", EGRESS),
     ("previews", PREVIEWS),
@@ -2040,6 +2076,7 @@ mod tests {
         assert!(!OVERVIEW.is_empty());
         assert!(!QUICKSTART.is_empty());
         assert!(!SERVICES.is_empty());
+        assert!(!DOCTOR.is_empty());
         assert!(!PREVIEWS.is_empty());
         assert!(!CONFIG.is_empty());
         assert!(!CRON.is_empty());
