@@ -921,8 +921,8 @@ exchange to implement.
 
 ## What you get
 
-  - Hosted sign-in page (email magic link, Google, GitHub)
-    — branded; gateway redirects unauthenticated visitors to it
+  - Hosted WorkOS sign-in for floo identities, including Google and
+    other configured providers
   - Session cookie (__floo_session) validated on every request,
     rolled forward as users stay active, revoked on sign-out
   - Identity headers (X-Floo-User-Email/Id/Name/Role) injected on
@@ -935,23 +935,42 @@ exchange to implement.
                             would have allowed cross-origin drive-by sign-out.
                             Does NOT log the user out of WorkOS — federated
                             SLO is not yet supported.
-  - Per-app user list in the dashboard (first-seen, last-active,
-    sign-in count)
+  - Explicit per-app member list with member/admin tenant roles
+  - Immediate session and app-key revocation when app access is removed
 
-## Restricting who can sign in
+## Invite app users
 
-By default, anyone with a valid email can sign in. Restrict access
-in the dashboard or in floo.app.toml:
+Accounts-mode apps are invite-only. Invite a floo identity from the
+dashboard Access tab or the CLI:
 
-  [auth]
-  access_policy = \"domain\"          # \"open\", \"invite\", or \"domain\"
-  allowed_domains = [\"acme.com\"]    # required when access_policy = \"domain\"
+  floo apps invite teammate@acme.com --role member --app my-app
+  floo apps invites --app my-app
 
-  - open    — anyone with a valid email
-  - invite  — invited users only (manage in dashboard's per-app
-              Access tab, or assign on first deploy)
-  - domain  — restricted to allowed_domains (Pro+; consumer
-              mailboxes like gmail.com rejected by default)
+List responses include `next_cursor` when more results exist. Continue
+with `--cursor NEXT_CURSOR` for invitations or members.
+
+The recipient creates or reuses the matching global floo account, then
+accepts the app membership. App access never grants dashboard, deploy,
+organization, billing, or platform API-key authority.
+
+Invitation URLs are secret-shaped and redacted by default. When you need
+to hand off the URL yourself, add global `--reveal-secrets`; otherwise the
+provider email is the delivery path.
+
+Manage pending invitations:
+
+  floo apps invite-resend INVITE_ID --app my-app
+  floo apps invite-revoke INVITE_ID --app my-app
+
+Resending rotates the old link. List and manage active app members:
+
+  floo apps members --app my-app
+  floo apps member-role MEMBERSHIP_ID admin --app my-app
+  floo apps member-remove MEMBERSHIP_ID --app my-app
+
+Organization membership does not imply app membership. Invite operators
+to every app they should use. Changing a role revokes sessions carrying
+the old role; removing a member revokes their app sessions and keys.
 
 ## Access Modes
 

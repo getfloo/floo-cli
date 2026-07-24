@@ -355,10 +355,80 @@ impl FlooClient {
 
     // --- Access ---
 
-    pub fn grant_app_access(&self, app_id: &str, email: &str) -> Result<Value, FlooApiError> {
-        let body = serde_json::json!({"email": email});
-        let resp = self.post_json(&format!("/v1/apps/{app_id}/access"), &body)?;
+    pub fn create_app_invite(
+        &self,
+        app_id: &str,
+        email: &str,
+        role: &str,
+    ) -> Result<Value, FlooApiError> {
+        let body = serde_json::json!({"email": email, "role": role});
+        let resp = self.post_json(&format!("/v1/apps/{app_id}/invites"), &body)?;
         self.handle_response(resp)
+    }
+
+    pub fn list_app_invites(
+        &self,
+        app_id: &str,
+        cursor: Option<&str>,
+    ) -> Result<Value, FlooApiError> {
+        let mut query = Vec::new();
+        if let Some(cursor) = cursor {
+            query.push(("cursor", cursor));
+        }
+        let resp = self.get_with_query(&format!("/v1/apps/{app_id}/invites"), &query)?;
+        self.handle_response(resp)
+    }
+
+    pub fn resend_app_invite(&self, app_id: &str, invite_id: &str) -> Result<Value, FlooApiError> {
+        let resp = self.post_json(
+            &format!("/v1/apps/{app_id}/invites/{invite_id}/resend"),
+            &serde_json::json!({}),
+        )?;
+        self.handle_response(resp)
+    }
+
+    pub fn revoke_app_invite(&self, app_id: &str, invite_id: &str) -> Result<(), FlooApiError> {
+        let resp = self.delete(&format!("/v1/apps/{app_id}/invites/{invite_id}"))?;
+        if resp.status().is_success() {
+            return Ok(());
+        }
+        self.handle_response_value(resp)?;
+        Ok(())
+    }
+
+    pub fn list_app_members(
+        &self,
+        app_id: &str,
+        cursor: Option<&str>,
+    ) -> Result<Value, FlooApiError> {
+        let mut query = Vec::new();
+        if let Some(cursor) = cursor {
+            query.push(("cursor", cursor));
+        }
+        let resp = self.get_with_query(&format!("/v1/apps/{app_id}/members"), &query)?;
+        self.handle_response(resp)
+    }
+
+    pub fn update_app_member_role(
+        &self,
+        app_id: &str,
+        membership_id: &str,
+        role: &str,
+    ) -> Result<Value, FlooApiError> {
+        let resp = self.patch_json(
+            &format!("/v1/apps/{app_id}/members/{membership_id}"),
+            &serde_json::json!({"role": role}),
+        )?;
+        self.handle_response(resp)
+    }
+
+    pub fn remove_app_member(&self, app_id: &str, membership_id: &str) -> Result<(), FlooApiError> {
+        let resp = self.delete(&format!("/v1/apps/{app_id}/members/{membership_id}"))?;
+        if resp.status().is_success() {
+            return Ok(());
+        }
+        self.handle_response_value(resp)?;
+        Ok(())
     }
 
     // --- Billing ---
