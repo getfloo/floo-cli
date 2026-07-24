@@ -304,6 +304,20 @@ prefix before forwarding, so your FastAPI routes stay at the root:
 Your API code does NOT need /api prefixes. The gateway handles it.
 All services share the same origin, so cookies and auth work without CORS.
 
+## localhost fallback diagnostics
+
+Source validation treats localhost URLs as non-blocking warnings:
+
+  - Explicit Node or Vite development guard: no warning.
+  - Runtime-configured URL that may fall back to localhost:
+    unverified_localhost_fallback (production value not proven from source).
+  - No recognized development-only guard:
+    hardcoded_localhost_fallback.
+
+For production service-to-service calls, use the injected discovery variable
+such as API_URL or a relative gateway path such as /api. Keep a localhost
+default behind an explicit development-only guard.
+
 ## Service Types
 
   web     — serves the frontend (HTML/JS/CSS). Gets the root path (/).
@@ -2136,6 +2150,8 @@ mod tests {
     fn test_services_explains_routing() {
         assert!(SERVICES.contains("gateway strips the /api"));
         assert!(SERVICES.contains("fetch(\"/api/users\")"));
+        assert!(SERVICES.contains("unverified_localhost_fallback"));
+        assert!(SERVICES.contains("hardcoded_localhost_fallback"));
     }
 
     #[test]
