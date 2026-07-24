@@ -406,7 +406,7 @@ schema, or https://getfloo.com/docs/guides/cron-jobs for the long-form guide.",
         after_help = "\
 Examples:
   floo cron list --app my-app              List all cron jobs and their last run status
-  floo cron show daily-report --app my-app Show details for a single cron job
+  floo cron show daily-report --app my-app  Show details for a single cron job
   floo cron run daily-report --app my-app  Manually trigger a cron job
 
 Schedules are declared in floo.app.toml under [cron.<name>]. This CLI is
@@ -2653,6 +2653,7 @@ mod tests {
         source: String,
         line: usize,
         literal: String,
+        full_invocation: bool,
     }
 
     fn collect_files(dir: &Path, extension: &str, files: &mut Vec<PathBuf>) {
@@ -2674,27 +2675,89 @@ mod tests {
         text: &str,
         source: &str,
         line: usize,
+        full_invocation: bool,
         commands: &mut Vec<GuidanceCommand>,
     ) {
         let mut remaining = text;
         while let Some(start) = remaining.find("floo ") {
+            let delimiter = remaining[..start]
+                .chars()
+                .last()
+                .filter(|character| matches!(character, '`' | '\''));
             let occurrence = &remaining[start..];
-            let end = occurrence[5..]
+            let first = occurrence[5..]
+                .split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .trim_matches(|character: char| {
+                    matches!(
+                        character,
+                        '`' | '\'' | '"' | '(' | ')' | '[' | ']' | ',' | '.' | ';' | ':'
+                    )
+                });
+            let command_shaped = Cli::command().get_subcommands().any(|command| {
+                command.get_name() == first || command.get_all_aliases().any(|alias| alias == first)
+            });
+            if !command_shaped {
+                remaining = &occurrence[5..];
+                continue;
+            }
+
+            let mut end = occurrence[5..]
                 .find("floo ")
                 .map_or(occurrence.len(), |next| next + 5);
-            let literal = occurrence[..end]
-                .trim()
-                .trim_matches(|character: char| {
-                    matches!(character, '`' | '\'' | '"' | ')' | ',' | ';')
-                })
-                .to_string();
+            if let Some(delimiter) = delimiter {
+                if let Some(offset) = occurrence[5..].find(delimiter) {
+                    end = end.min(offset + 5);
+                }
+            }
+            if source.ends_with(".rs") {
+                let mut escaped = false;
+                for (offset, character) in occurrence[5..].char_indices() {
+                    if escaped {
+                        escaped = false;
+                    } else if character == '\\' {
+                        escaped = true;
+                    } else if character == '"' {
+                        end = end.min(offset + 5);
+                        break;
+                    }
+                }
+            }
+            let literal = occurrence[..end].trim().to_string();
             commands.push(GuidanceCommand {
                 source: source.to_string(),
                 line,
+                full_invocation: full_invocation && !literal.contains(" — "),
                 literal,
             });
             remaining = &occurrence[end..];
         }
+    }
+
+    fn inline_span_has_arguments(span: &str) -> bool {
+        if matches!(span, "floo dev --fixture-user")
+            || span.ends_with(" ...")
+            || span.ends_with(" --")
+        {
+            return false;
+        }
+        let mut command = Cli::command();
+        for token in span.split_whitespace().skip(1) {
+            let next = command
+                .get_subcommands()
+                .find(|candidate| {
+                    candidate.get_name() == token
+                        || candidate.get_all_aliases().any(|alias| alias == token)
+                })
+                .cloned();
+            if let Some(subcommand) = next {
+                command = subcommand;
+            } else {
+                return true;
+            }
+        }
+        false
     }
 
     fn extract_guidance_commands(path: &Path) -> Vec<GuidanceCommand> {
@@ -2713,38 +2776,106 @@ mod tests {
         let mut in_code_fence = false;
         let mut commands = Vec::new();
 
-        for (index, line) in body.lines().enumerate() {
+        let physical_lines: Vec<&str> = body.lines().collect();
+        let mut index = 0;
+        while index < physical_lines.len() {
             let line_number = index + 1;
+            let mut logical_line = physical_lines[index].to_string();
+            while logical_line.contains("floo ") && logical_line.trim_end().ends_with('\\') {
+                let trimmed = logical_line.trim_end();
+                let slash_count = trimmed
+                    .chars()
+                    .rev()
+                    .take_while(|value| *value == '\\')
+                    .count();
+                logical_line.truncate(trimmed.len() - slash_count);
+                index += 1;
+                if index >= physical_lines.len() {
+                    break;
+                }
+                logical_line.push(' ');
+                logical_line.push_str(physical_lines[index].trim());
+            }
+            let line = logical_line.as_str();
             let trimmed = line.trim();
             if markdown && trimmed.starts_with("```") {
                 in_code_fence = !in_code_fence;
+                index += 1;
                 continue;
             }
 
             if in_code_fence || (!trimmed.starts_with("//") && trimmed.starts_with("floo ")) {
-                push_floo_occurrences(line, &source, line_number, &mut commands);
+                push_floo_occurrences(line, &source, line_number, true, &mut commands);
             }
 
-            for (span_index, span) in line.split('`').enumerate() {
-                if span_index % 2 == 1 && span.trim_start().starts_with("floo ") {
-                    push_floo_occurrences(span, &source, line_number, &mut commands);
-                }
-            }
-
-            if !markdown && !trimmed.starts_with("//") {
-                for marker in ["\"floo ", "Bash(floo "] {
-                    if let Some(marker_index) = line.find(marker) {
-                        if marker == "\"floo "
-                            && marker_index > 0
-                            && line.as_bytes()[marker_index - 1] == b'\\'
-                        {
-                            continue;
-                        }
-                        push_floo_occurrences(line, &source, line_number, &mut commands);
-                        break;
+            if markdown || !trimmed.starts_with("//") {
+                for (span_index, span) in line.split('`').enumerate() {
+                    if span_index % 2 != 1 {
+                        continue;
+                    }
+                    let candidate = span.trim();
+                    if candidate.starts_with("floo ") {
+                        push_floo_occurrences(
+                            candidate,
+                            &source,
+                            line_number,
+                            inline_span_has_arguments(candidate),
+                            &mut commands,
+                        );
+                        continue;
+                    }
+                    if let Some(start) = candidate.find("floo ") {
+                        let command = &candidate[start..];
+                        push_floo_occurrences(
+                            command,
+                            &source,
+                            line_number,
+                            inline_span_has_arguments(command),
+                            &mut commands,
+                        );
+                        continue;
+                    }
+                    let mut words = candidate.split_whitespace();
+                    let Some(first) = words.next() else {
+                        continue;
+                    };
+                    if markdown
+                        && words.next().is_some()
+                        && Cli::command().get_subcommands().any(|command| {
+                            command.get_name() == first
+                                || command.get_all_aliases().any(|alias| alias == first)
+                        })
+                    {
+                        let expanded = format!("floo {candidate}");
+                        push_floo_occurrences(
+                            &expanded,
+                            &source,
+                            line_number,
+                            inline_span_has_arguments(&expanded),
+                            &mut commands,
+                        );
                     }
                 }
             }
+
+            if !markdown
+                && !trimmed.starts_with("//")
+                && !trimmed.starts_with("floo ")
+                && line.contains("floo ")
+            {
+                let occurrence = line.find("floo ").expect("checked above");
+                let prefix = line[..occurrence].trim_end();
+                push_floo_occurrences(
+                    line,
+                    &source,
+                    line_number,
+                    prefix.ends_with('"')
+                        && !prefix.ends_with("\\\"")
+                        && !line.contains("Bash(floo "),
+                    &mut commands,
+                );
+            }
+            index += 1;
         }
 
         commands
@@ -2754,13 +2885,18 @@ mod tests {
         fn record_options(
             command: &clap::Command,
             options: &mut std::collections::HashSet<String>,
+            aliases: &mut std::collections::HashMap<String, String>,
         ) {
             for argument in command.get_arguments() {
                 if let Some(long) = argument.get_long() {
                     options.insert(long.to_string());
-                }
-                if let Some(aliases) = argument.get_all_aliases() {
-                    options.extend(aliases.into_iter().map(str::to_string));
+                    if let Some(argument_aliases) = argument.get_all_aliases() {
+                        aliases.extend(
+                            argument_aliases
+                                .into_iter()
+                                .map(|alias| (alias.to_string(), long.to_string())),
+                        );
+                    }
                 }
             }
         }
@@ -2769,23 +2905,26 @@ mod tests {
         // exclusion exact and documented so new prose cannot silently bypass
         // the command-path check.
         const NON_COMMAND_TEMPLATES: &[&str] = &[
-            "floo --help",        // Global help invocation, not a command path.
-            "floo --version",     // Global version invocation, rewritten before clap parsing.
-            "floo -V",            // Short global version invocation.
-            "floo <command>",     // Generic help syntax.
-            "floo <path>",        // Generic command-tree renderer documentation.
-            "floo <subcommand>",  // Generic command placeholder in agent instructions.
-            "floo deploy ...",    // The clap help explicitly documents this compatibility alias.
-            "floo (end-to-end",   // Product prose in the built-in overview.
-            "floo emails",        // Product prose in the built-in notifications guide.
-            "floo gateway",       // Product noun in the generated security guidance.
-            "floo manages",       // Product prose in the built-in authentication guide.
-            "floo never",         // Product prose in the write-only secret guidance.
-            "floo not installed", // Installer error prose.
-            "floo provisions",    // Product prose in the bundled services skill.
-            "floo puts",          // Product prose in the built-in networking guide.
-            "floo sends",         // Product prose in the built-in feedback guide.
-            "floo {",             // Runtime version-status copy built with format placeholders.
+            "floo --help",           // Global help invocation, not a command path.
+            "floo --version",        // Global version invocation, rewritten before clap parsing.
+            "floo -V",               // Short global version invocation.
+            "floo <command>",        // Generic help syntax.
+            "floo <path>",           // Generic command-tree renderer documentation.
+            "floo <subcommand>",     // Generic command placeholder in agent instructions.
+            "floo auth login opens", // Product prose in the built-in quickstart.
+            "floo deploy ...",       // The clap help explicitly documents this compatibility alias.
+            "floo deploy for a",     // Product prose describing a preview sandbox.
+            "floo (end-to-end",      // Product prose in the built-in overview.
+            "floo emails",           // Product prose in the built-in notifications guide.
+            "floo gateway",          // Product noun in the generated security guidance.
+            "floo manages",          // Product prose in the built-in authentication guide.
+            "floo never",            // Product prose in the write-only secret guidance.
+            "floo not installed",    // Installer error prose.
+            "floo provisions",       // Product prose in the bundled services skill.
+            "floo puts",             // Product prose in the built-in networking guide.
+            "floo run inherits",     // Product prose in the built-in Rails guide.
+            "floo sends",            // Product prose in the built-in feedback guide.
+            "floo {",                // Runtime version-status copy built with format placeholders.
         ];
         if NON_COMMAND_TEMPLATES
             .iter()
@@ -2798,7 +2937,8 @@ mod tests {
         let mut path = Vec::new();
         let mut known_options =
             std::collections::HashSet::from(["help".to_string(), "version".to_string()]);
-        record_options(&command, &mut known_options);
+        let mut option_aliases = std::collections::HashMap::new();
+        record_options(&command, &mut known_options, &mut option_aliases);
         for raw_token in literal.split_whitespace().skip(1) {
             let raw_token = raw_token.split('{').next().unwrap_or(raw_token);
             let token = raw_token.trim_matches(|character: char| {
@@ -2820,6 +2960,9 @@ mod tests {
                         | '\\'
                 )
             });
+            if token == "..." {
+                break;
+            }
             if token.is_empty() || token.starts_with('-') {
                 break;
             }
@@ -2833,7 +2976,7 @@ mod tests {
             if let Some(subcommand) = exact_subcommand {
                 path.push(token.to_string());
                 command = subcommand;
-                record_options(&command, &mut known_options);
+                record_options(&command, &mut known_options, &mut option_aliases);
                 continue;
             }
 
@@ -2881,9 +3024,14 @@ mod tests {
                 .trim_matches(|character: char| {
                     matches!(
                         character,
-                        '`' | '\'' | '"' | ')' | ']' | ',' | ';' | ':' | '*'
+                        '`' | '\'' | '"' | ')' | ']' | ',' | '.' | ';' | ':' | '*'
                     )
                 });
+            if let Some(canonical) = option_aliases.get(option) {
+                return Err(format!(
+                    "`--{option}` is a compatibility alias; use canonical `--{canonical}`"
+                ));
+            }
             if !known_options.contains(option) {
                 return Err(format!(
                     "`--{option}` is not a parseable option for `floo {}`",
@@ -2892,6 +3040,122 @@ mod tests {
             }
         }
         Ok(path)
+    }
+
+    fn full_guidance_argv(literal: &str, rust_source: bool) -> Result<Vec<String>, String> {
+        fn command_column_end(literal: &str) -> usize {
+            if let Some(index) = literal.find(" — ") {
+                return index;
+            }
+            let mut quote = None;
+            let mut escaped = false;
+            let mut whitespace_start = None;
+            let mut whitespace_count = 0;
+            for (index, character) in literal.char_indices() {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                if character == '\\' && quote != Some('\'') {
+                    escaped = true;
+                    continue;
+                }
+                if matches!(character, '\'' | '"') {
+                    if quote == Some(character) {
+                        quote = None;
+                    } else if quote.is_none() {
+                        quote = Some(character);
+                    }
+                }
+                if quote.is_none() && character.is_whitespace() {
+                    if let Some(start) = whitespace_start {
+                        whitespace_count += 1;
+                        let remainder = literal[index..].trim_start();
+                        if remainder.starts_with('#') {
+                            return literal.len();
+                        }
+                        if whitespace_count >= 3
+                            || remainder.starts_with('—')
+                            || remainder.chars().next().is_some_and(char::is_uppercase)
+                        {
+                            return start;
+                        }
+                    } else {
+                        whitespace_start = Some(index);
+                        whitespace_count = 1;
+                    }
+                } else {
+                    whitespace_start = None;
+                    whitespace_count = 0;
+                }
+            }
+            literal.len()
+        }
+
+        fn replace_placeholder(token: &str, previous: Option<&str>) -> String {
+            let replacement = match previous {
+                Some("--env") => "dev",
+                Some("--role") => "member",
+                Some("--category") => "general",
+                _ if matches!(token, "<type>" | "<managed>") => "postgres",
+                _ => "guidance-value",
+            };
+            let mut normalized = token.to_string();
+            while let (Some(start), Some(end)) = (normalized.find('<'), normalized.find('>')) {
+                if end < start {
+                    break;
+                }
+                normalized.replace_range(start..=end, replacement);
+            }
+            while let (Some(start), Some(end)) = (normalized.find('{'), normalized.find('}')) {
+                if end < start {
+                    break;
+                }
+                normalized.replace_range(start..=end, replacement);
+            }
+            normalized
+        }
+
+        let literal = if rust_source {
+            literal
+                .strip_suffix("\")]")
+                .or_else(|| literal.strip_suffix("\")],"))
+                .or_else(|| literal.strip_suffix("\")"))
+                .or_else(|| literal.strip_suffix("\","))
+                .or_else(|| {
+                    (!literal.ends_with("\\\""))
+                        .then(|| literal.strip_suffix('"'))
+                        .flatten()
+                })
+                .unwrap_or(literal)
+        } else {
+            literal
+        };
+        let unescaped = literal.replace("\\\"", "\"");
+        let command_column = &unescaped[..command_column_end(&unescaped)];
+        let tokens =
+            shlex::split(command_column).ok_or_else(|| "invalid shell quoting".to_string())?;
+        let mut argv = Vec::new();
+        for token in tokens {
+            let token = token.trim_matches(|character: char| {
+                matches!(
+                    character,
+                    '`' | '\'' | '"' | '(' | ')' | '[' | ']' | ',' | '.' | ';' | '*'
+                )
+            });
+            if token.is_empty()
+                || matches!(token, "&&" | "|" | "||" | "#")
+                || token.starts_with("2>")
+            {
+                break;
+            }
+            let normalized = replace_placeholder(token, argv.last().map(String::as_str));
+            argv.push(normalized);
+        }
+        if argv.first().map(String::as_str) != Some("floo") {
+            return Err("normalized invocation does not start with `floo`".to_string());
+        }
+        Ok(argv)
     }
 
     #[test]
@@ -2910,12 +3174,35 @@ mod tests {
             for guidance in extract_guidance_commands(&file) {
                 match canonical_command_path(&guidance.literal) {
                     Ok(path) if path.is_empty() => {}
-                    Ok(path) => {
-                        let mut args = vec!["floo".to_string()];
-                        args.extend(path);
-                        args.push("--help".to_string());
+                    Ok(_path) => {
+                        let args = if guidance.full_invocation {
+                            match full_guidance_argv(
+                                &guidance.literal,
+                                guidance.source.ends_with(".rs"),
+                            ) {
+                                Ok(args) => args,
+                                Err(reason) => {
+                                    failures.push(format!(
+                                        "{}:{} `{}`: {reason}",
+                                        guidance.source, guidance.line, guidance.literal
+                                    ));
+                                    continue;
+                                }
+                            }
+                        } else {
+                            checked += 1;
+                            continue;
+                        };
                         match Cli::try_parse_from(args) {
-                            Err(error) if error.kind() == ErrorKind::DisplayHelp => {
+                            Ok(_) => {
+                                checked += 1;
+                            }
+                            Err(error)
+                                if matches!(
+                                    error.kind(),
+                                    ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+                                ) =>
+                            {
                                 checked += 1;
                             }
                             Err(error) => failures.push(format!(
@@ -2924,10 +3211,6 @@ mod tests {
                                 guidance.line,
                                 guidance.literal,
                                 error.kind()
-                            )),
-                            Ok(_) => failures.push(format!(
-                                "{}:{} `{}` did not take clap's help path",
-                                guidance.source, guidance.line, guidance.literal
                             )),
                         }
                     }
@@ -2960,6 +3243,24 @@ mod tests {
             canonical_command_path("floo run --service api -- pytest --maxfail=1").is_ok(),
             "arguments after `--` belong to the nested command, not floo"
         );
+        assert!(
+            Cli::try_parse_from(full_guidance_argv("floo apps show --app", false).unwrap())
+                .is_err(),
+            "full guidance parsing must reject missing option values"
+        );
+        assert!(
+            Cli::try_parse_from(
+                full_guidance_argv("floo apps show first-app second-app", false).unwrap(),
+            )
+            .is_err(),
+            "full guidance parsing must reject extra positionals"
+        );
+        assert!(
+            canonical_command_path("floo redeploy --dry-run").is_err(),
+            "first-party guidance must reject deprecated option aliases"
+        );
+        assert!(!inline_span_has_arguments("floo services remove"));
+        assert!(inline_span_has_arguments("floo apps show --app"));
     }
 
     #[test]

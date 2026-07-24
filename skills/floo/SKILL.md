@@ -179,7 +179,7 @@ floo env set KEY=VAL --app my-app --service backend   # target a specific servic
 floo env set STRIPE_KEY --stdin --secret --app my-app  # write-only: floo never returns the value
 ```
 
-Write-only vars (`--secret`): `env get` refuses with `ENV_VAR_WRITE_ONLY`, `env list` shows `(write-only)`, exports return `value: null`, and `floo dev`/`floo run` withhold them (reported in `withheld_secret_keys`). Deploys still receive them. A later `env set` without the flag keeps the marker; to make a key readable again, unset it and set a fresh value. `run floo docs env` for the full contract.
+Write-only vars (`--secret`): `env get` refuses with `ENV_VAR_WRITE_ONLY`, `env list` shows `(write-only)`, exports return `value: null`, and `floo dev`/`floo run` withhold them (reported in `withheld_secret_keys`). Deploys still receive them. A later `env set` without the flag keeps the marker; to make a key readable again, unset it and set a fresh value. Run `floo docs config` for the full contract.
 
 ### Logs and Debugging
 
@@ -218,9 +218,9 @@ Legacy `[postgres]`/`[redis]`/`[storage]` sections in `floo.app.toml` still auto
 
 Commands that destroy state follow a tiered confirmation model:
 
-- **Tier 1 (reversible, no data):** `env unset`, scaling. Idempotent; no prompt.
-- **Tier 2 (destructive but recoverable from code):** `domains remove`, `deploys rollback`. `y/N` prompt, `--yes` to skip.
-- **Tier 3 (unrecoverable data loss):** `apps delete`, `services remove <managed>`, `orgs delete`. Typed-name confirmation, or `--yes-i-know-this-destroys-data` to skip in automation. Never a plain `--yes`.
+- **Tier 1 (reversible, no data):** `floo env unset`, scaling. Idempotent; no prompt.
+- **Tier 2 (destructive but recoverable from code):** `floo domains remove`, `floo deploys rollback`. `y/N` prompt, `--yes` to skip.
+- **Tier 3 (unrecoverable data loss):** `floo apps delete`, `floo services remove <managed>`. Typed-name confirmation, or `--yes-i-know-this-destroys-data` to skip in automation. Never a plain `--yes`.
 
 Every destructive command's `--json` output includes `destructive: true, data_loss: true|false, tier: N` so agents can reason about risk from the contract, not the prompt text.
 

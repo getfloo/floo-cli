@@ -1247,7 +1247,7 @@ Floo — Golden Path
   floo logs query --app my-app --service web        # one service (multi-service apps)
   floo logs query --app my-app --cron nightly-report # a specific cron job's output
   floo logs query --app my-app --deployment latest --json
-  floo logs query --app my-app --json --limit 100 --cursor \"$NEXT_CURSOR\"
+  floo logs query --app my-app --json --tail 100 --cursor \"$NEXT_CURSOR\"
   floo deploys logs <deploy-id> --app my-app
 
 ## Decision Table: What Command Do I Run?
@@ -1622,8 +1622,7 @@ Any NEXT_PUBLIC_* var is baked into the JS bundle at BUILD TIME. Thread
 it through the Dockerfile as ARG + ENV in the build stage AND pass it
 on every build:
 
-  floo env set NEXT_PUBLIC_API_URL=https://my-app.on.getfloo.com \\
-    --app my-app --build-arg
+  floo env set NEXT_PUBLIC_API_URL=https://my-app.on.getfloo.com --app my-app
 
 Skipping this is the most common Next.js footgun on floo.
 
@@ -1670,7 +1669,7 @@ Then in a Server Component or Route Handler:
 
   - /healthz is reserved by Cloud Run — use /health
   - HOSTNAME=0.0.0.0 (standalone defaults to localhost)
-  - NEXT_PUBLIC_* must be threaded via --build-arg
+  - NEXT_PUBLIC_* changes require floo redeploy --rebuild
   - output: \"standalone\" in next.config.js
   - Never expose tokens to client components
 
