@@ -1,6 +1,6 @@
-# Floo CLI
+# floo CLI
 
-The command-line interface for [Floo](https://getfloo.com) — manage and observe web apps. Deploys are git-driven (push to `main` for dev, cut a GitHub release for prod); this CLI handles everything else.
+The command-line interface for [floo](https://getfloo.com) - manage and observe web apps. Deploys are git-driven (push to `main` for dev, cut a GitHub release for prod); this CLI handles everything else.
 
 ## Install
 
@@ -49,7 +49,7 @@ floo update --version v0.1.0
 
 ```bash
 # Authenticate
-floo login
+floo auth login
 
 # Connect and deploy your project
 cd my-project
@@ -57,7 +57,7 @@ floo apps github connect owner/repo
 
 # Manage apps
 floo apps list
-floo apps status my-app
+floo apps show my-app
 floo apps delete my-app
 
 # Environment variables
@@ -71,7 +71,7 @@ floo domains list --app my-app
 # Edge routes
 floo edge routes list --app my-app --json
 
-# Edge policy (IP/CIDR firewall, Team plan) — configured in floo.app.toml [edge], read via CLI
+# Edge policy (IP/CIDR firewall, Team plan) - configured in floo.app.toml [edge], read via CLI
 floo edge policy get --env prod
 floo edge policy check 203.0.113.7 --env prod
 ```
@@ -114,7 +114,7 @@ cargo build
 
 ## Contributing
 
-Contributions are welcome! Please:
+Contributions are welcome. Please:
 
 1. Fork the repository
 2. Install the git hooks once (a pre-push gate runs `./scripts/test` on Rust changes):
@@ -133,6 +133,7 @@ The pre-push hook blocks a push whose Rust changes fail `./scripts/test`; bypass
 
 ## Documentation
 
+- Run `floo docs` for the version-matched offline topic index (`floo docs --json` for agents).
 - [Getting Started](https://getfloo.com/docs/introduction)
 - [CLI Reference](https://getfloo.com/docs/cli/overview)
 - [Configuration Reference](https://getfloo.com/docs/reference/config-spec)

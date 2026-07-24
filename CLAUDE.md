@@ -35,7 +35,7 @@ Dual-mode output pattern:
 - **Colored output** (spinners, tables, progress) → **stderr**
 - **JSON output** → **stdout**
 
-This makes `floo deploy --json 2>/dev/null | jq` work for agents.
+This makes `floo deploys list --json 2>/dev/null | jq` work for agents.
 
 `JSON_MODE` is an `AtomicBool` set once at startup. Every output function checks it.
 
@@ -96,12 +96,17 @@ Packs source into `.tar.gz`, respects `.flooignore`. 500MB size limit.
   - CLI issues: `Closes #N` (same-repo reference)
   - Cross-repo issues: `Closes getfloo/floo#N`
 
-## Agent Skill Maintenance
+## Offline Guidance Maintenance
 
-The skill file (`skills/floo/SKILL.md`) is a tiny intro (~30 lines). Platform knowledge lives in
-`floo docs` (`src/commands/docs.rs`). Command metadata lives in `floo commands`
-(`src/commands/command_tree.rs`). When adding new commands, update `command_tree.rs` and add
-`after_help` examples in `cli.rs`. Only update `skills/floo/SKILL.md` if the getting-started flow changes.
+The installed binary is the version-matched offline knowledge pack:
+
+- Clap definitions and `after_help` examples in `src/cli.rs` own exact syntax.
+- `docs/offline/*.md` owns on-demand platform guidance.
+- The typed registry in `src/commands/docs.rs` owns topic names, aliases, summaries, and JSON discovery.
+- `skills/floo/SKILL.md` and `plugin/skills/**/SKILL.md` stay compact and route agents to those local surfaces while preserving durable safety policy.
+- `src/commands/command_tree.rs` owns the machine-readable command catalog.
+
+When behavior changes, update every affected offline topic in the same PR. Do not copy long-form command reference back into a skill or a Rust string. The guidance validator scans README, every offline topic, every bundled skill, Clap help strings, and production Rust strings against the live Clap tree.
 
 ## Release Flow
 

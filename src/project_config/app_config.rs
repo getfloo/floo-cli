@@ -98,7 +98,7 @@ const VALID_MANAGED_SERVICE_TYPES: &[&str] = &["postgres", "redis", "storage"];
 
 /// A custom domain declared as `[domains."<hostname>"]`. The hostname is the table key;
 /// `service` names which service backs it (None defers to the interactive/verify path),
-/// `enabled` defaults to true. Mirrors the API `DomainConfig` so a local `floo check`
+/// `enabled` defaults to true. Mirrors the API `DomainConfig` so local preflight
 /// predicts what the deploy accepts.
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 #[serde(deny_unknown_fields)]
@@ -110,7 +110,7 @@ pub struct DomainBlock {
 }
 
 /// Validate `[domains."<hostname>"]` blocks against the same hostname rules the API parser
-/// enforces (`_DOMAIN_HOSTNAME_RE` + the 255-char cap), so `floo check` predicts the deploy.
+/// enforces (`_DOMAIN_HOSTNAME_RE` + the 255-char cap), so preflight predicts the deploy.
 /// Shared by the app and single-service config paths.
 pub(crate) fn validate_domain_blocks(
     domains: &HashMap<String, DomainBlock>,
@@ -541,8 +541,8 @@ fn validate_worker_command_collision(config: &AppFileConfig) -> Result<(), FlooE
     Ok(())
 }
 
-/// Validate `[managed.<name>]` blocks, mirroring the API's parse rules so a local
-/// `floo check` predicts what the deploy accepts: a known type, and no duplicate
+/// Validate `[managed.<name>]` blocks, mirroring the API's parse rules so local
+/// preflight predicts what the deploy accepts: a known type, and no duplicate
 /// `(type, name)` — including collisions with the legacy `[postgres]`/`[redis]`/
 /// `[storage]` sections, which the server treats as the "default" instance of a type.
 ///

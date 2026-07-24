@@ -1075,8 +1075,8 @@ pub fn deploy(
             output::info(&format!("  Access: {}", mode.as_str()), None);
         }
         // Closes feedback c9b70eb5 — surface the auto-deploy contract the
-        // moment a manual `floo deploy` finishes, so the user knows the
-        // next change ships via `git push` (no need to remember `floo deploy`).
+        // moment a manual `floo redeploy` finishes, so the user knows the
+        // next change ships via `git push` (no need to remember `floo redeploy`).
         // The hint only renders for human terminals; JSON consumers infer
         // from the connected service in the response.
         let app_url = format!("https://app.getfloo.com/{}", app_data.name);
@@ -1489,7 +1489,7 @@ fn is_cloudsql_socket_database_url(value: &str) -> bool {
 /// `env_plan` carries the per-service managed-injection keys + declared
 /// required/optional contract, which the required-env and migrate checks read.
 ///
-/// Absorbs the validation logic that was previously in `floo check`.
+/// Absorbs the validation logic that was previously in the removed check command.
 ///
 /// Service-local paths resolve against `resolved.config_dir` (where the config
 /// lives), NOT a user-supplied path: `resolve_app_context` walks up from the
@@ -2069,8 +2069,7 @@ fn generate_security_findings(
              To require auth, set `[app] access_mode = \"accounts\"` in \
              floo.app.toml — that's the placement applied on every push. \
              Per-env overrides via `[environments.<name>]` are accepted by \
-             the schema but not yet applied server-side; use \
-             `floo deploy --access-mode` to scope one env in the meantime."
+             the schema but not yet applied server-side."
                 .to_string(),
         ));
     }
@@ -2707,8 +2706,8 @@ pub(crate) fn poll_deploy(client: &FlooClient, app_id: &str, initial_data: &Depl
                 "Deploy timed out after 10 minutes",
                 &ErrorCode::DeployTimeout,
                 Some(&format!(
-                    "The deploy may still complete — check status with \
-                     `floo apps status {app_id}` (deploy ID: {deploy_id})"
+                    "The deploy may still complete. Check status with \
+                     `floo apps show {app_id}` (deploy ID: {deploy_id})."
                 )),
             );
             process::exit(1);

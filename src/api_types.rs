@@ -395,8 +395,8 @@ pub struct CreateManagedServiceRequest<'a> {
 }
 
 /// Detail response. Deliberately skips `credentials` — the CLI must never print
-/// plaintext secrets. If a future command needs them (e.g. `floo env sync`),
-/// add a separate deserialization path rather than exposing them here.
+/// plaintext secrets. If future behavior needs them, add a separate
+/// deserialization path rather than exposing them here.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManagedServiceDetail {
     pub id: String,

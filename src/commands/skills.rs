@@ -245,65 +245,124 @@ pub fn refresh_skill_files() -> Vec<String> {
     refreshed
 }
 
-fn recommended_permissions() -> (Vec<&'static str>, Vec<&'static str>) {
-    let read_only = vec![
-        "Bash(floo apps list:*)",
-        "Bash(floo apps status:*)",
-        "Bash(floo apps github status:*)",
-        "Bash(floo deploys list:*)",
-        "Bash(floo deploys logs:*)",
-        "Bash(floo deploys watch:*)",
-        "Bash(floo previews list:*)",
-        "Bash(floo previews status:*)",
-        "Bash(floo previews logs:*)",
-        "Bash(floo previews resources list:*)",
-        "Bash(floo previews resources show:*)",
-        "Bash(floo env list:*)",
-        "Bash(floo services list:*)",
-        "Bash(floo services show:*)",
-        "Bash(floo domains list:*)",
-        "Bash(floo logs:*)",
-        "Bash(floo analytics:*)",
-        "Bash(floo releases list:*)",
-        "Bash(floo releases show:*)",
-        "Bash(floo redeploy --dry-run:*)",
-        "Bash(floo docs:*)",
-        "Bash(floo commands:*)",
-        "Bash(floo version:*)",
-        "Bash(floo auth whoami:*)",
-        "Bash(floo orgs members list:*)",
-        "Bash(floo billing contact:*)",
-    ];
-
-    let read_write = vec![
-        "Bash(floo apps password:*)",
-        "Bash(floo env get:*)",
-        "Bash(floo deploy:*)",
-        "Bash(floo previews up:*)",
-        "Bash(floo previews delete:*)",
-        "Bash(floo previews resources reset:*)",
-        "Bash(floo deploys rollback:*)",
-        "Bash(floo init:*)",
-        "Bash(floo env set:*)",
-        "Bash(floo env remove:*)",
-        "Bash(floo env import:*)",
-        "Bash(floo domains add:*)",
-        "Bash(floo domains verify:*)",
-        "Bash(floo domains remove:*)",
-        "Bash(floo apps delete:*)",
-        "Bash(floo apps github connect:*)",
-        "Bash(floo apps github disconnect:*)",
-        "Bash(floo releases promote:*)",
-        "Bash(floo billing spend-cap set:*)",
-        "Bash(floo billing upgrade:*)",
-        "Bash(floo orgs members set-role:*)",
-        "Bash(floo update:*)",
-    ];
-
-    (read_only, read_write)
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PermissionClass {
+    ReadOnly,
+    ReadWrite,
 }
 
-fn print_permission_recommendations(read_only: &[&str], read_write: &[&str]) {
+#[derive(Clone, Copy, Debug)]
+struct Permission {
+    class: PermissionClass,
+    command: &'static [&'static str],
+    required_flags: &'static [&'static str],
+}
+
+impl Permission {
+    fn render(self) -> String {
+        let invocation = self
+            .command
+            .iter()
+            .chain(self.required_flags)
+            .copied()
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("Bash(floo {invocation}:*)")
+    }
+}
+
+const NO_FLAGS: &[&str] = &[];
+const PREFLIGHT_FLAG: &[&str] = &["--preflight"];
+
+macro_rules! permission {
+    ($class:ident, [$($segment:literal),+]) => {
+        Permission {
+            class: PermissionClass::$class,
+            command: &[$($segment),+],
+            required_flags: NO_FLAGS,
+        }
+    };
+    ($class:ident, [$($segment:literal),+], $flags:expr) => {
+        Permission {
+            class: PermissionClass::$class,
+            command: &[$($segment),+],
+            required_flags: $flags,
+        }
+    };
+}
+
+/// Explicit capabilities recommended to coding agents. A command omitted from
+/// this typed table is intentionally not granted.
+const RECOMMENDED_PERMISSIONS: &[Permission] = &[
+    permission!(ReadOnly, ["apps", "list"]),
+    permission!(ReadOnly, ["apps", "show"]),
+    permission!(ReadOnly, ["apps", "github", "status"]),
+    permission!(ReadOnly, ["deploys", "list"]),
+    permission!(ReadOnly, ["deploys", "logs"]),
+    permission!(ReadOnly, ["deploys", "watch"]),
+    permission!(ReadOnly, ["previews", "list"]),
+    permission!(ReadOnly, ["previews", "status"]),
+    permission!(ReadOnly, ["previews", "logs"]),
+    permission!(ReadOnly, ["previews", "resources", "list"]),
+    permission!(ReadOnly, ["previews", "resources", "show"]),
+    permission!(ReadOnly, ["env", "list"]),
+    permission!(ReadOnly, ["services", "list"]),
+    permission!(ReadOnly, ["services", "show"]),
+    permission!(ReadOnly, ["domains", "list"]),
+    permission!(ReadOnly, ["logs"]),
+    permission!(ReadOnly, ["analytics"]),
+    permission!(ReadOnly, ["releases", "list"]),
+    permission!(ReadOnly, ["releases", "show"]),
+    permission!(ReadOnly, ["preflight"]),
+    permission!(ReadOnly, ["redeploy"], PREFLIGHT_FLAG),
+    permission!(ReadOnly, ["docs"]),
+    permission!(ReadOnly, ["commands"]),
+    permission!(ReadOnly, ["version"]),
+    permission!(ReadOnly, ["auth", "whoami"]),
+    permission!(ReadOnly, ["doctor", "accounts"]),
+    permission!(ReadOnly, ["doctor", "managed-services"]),
+    permission!(ReadOnly, ["orgs", "members", "list"]),
+    permission!(ReadOnly, ["billing", "contact"]),
+    permission!(ReadWrite, ["apps", "password"]),
+    permission!(ReadWrite, ["env", "get"]),
+    permission!(ReadWrite, ["redeploy"]),
+    permission!(ReadWrite, ["previews", "up"]),
+    permission!(ReadWrite, ["previews", "delete"]),
+    permission!(ReadWrite, ["previews", "resources", "reset"]),
+    permission!(ReadWrite, ["deploys", "rollback"]),
+    permission!(ReadWrite, ["init"]),
+    permission!(ReadWrite, ["env", "set"]),
+    permission!(ReadWrite, ["env", "unset"]),
+    permission!(ReadWrite, ["env", "import"]),
+    permission!(ReadWrite, ["domains", "add"]),
+    permission!(ReadWrite, ["domains", "verify"]),
+    permission!(ReadWrite, ["domains", "remove"]),
+    permission!(ReadWrite, ["apps", "delete"]),
+    permission!(ReadWrite, ["apps", "github", "connect"]),
+    permission!(ReadWrite, ["apps", "github", "disconnect"]),
+    permission!(ReadWrite, ["releases", "promote"]),
+    permission!(ReadWrite, ["billing", "spend-cap", "set"]),
+    permission!(ReadWrite, ["billing", "upgrade"]),
+    permission!(ReadWrite, ["orgs", "members", "set-role"]),
+    permission!(ReadWrite, ["update"]),
+];
+
+fn recommended_permissions() -> (Vec<String>, Vec<String>) {
+    let by_class = |class| {
+        RECOMMENDED_PERMISSIONS
+            .iter()
+            .copied()
+            .filter(|permission| permission.class == class)
+            .map(Permission::render)
+            .collect()
+    };
+    (
+        by_class(PermissionClass::ReadOnly),
+        by_class(PermissionClass::ReadWrite),
+    )
+}
+
+fn print_permission_recommendations(read_only: &[String], read_write: &[String]) {
     eprintln!();
     eprintln!("{}", "  Recommended permissions for coding agents:".bold());
     eprintln!();
@@ -338,14 +397,15 @@ mod tests {
     #[test]
     fn test_skill_content_is_embedded() {
         assert!(!SKILL_CONTENT.is_empty());
-        assert!(SKILL_CONTENT.contains("# Floo"));
+        assert!(SKILL_CONTENT.contains("# floo"));
     }
 
     #[test]
     fn test_skill_content_has_key_sections() {
-        assert!(SKILL_CONTENT.contains("## Getting Started"));
-        assert!(SKILL_CONTENT.contains("## Self-Discovery"));
+        assert!(SKILL_CONTENT.contains("## Discover before acting"));
+        assert!(SKILL_CONTENT.contains("## Deploy invariant"));
         assert!(SKILL_CONTENT.contains("floo docs"));
+        assert!(SKILL_CONTENT.contains("floo commands --json"));
         assert!(SKILL_CONTENT.contains("--json"));
     }
 
@@ -365,47 +425,107 @@ mod tests {
 
     #[test]
     fn test_services_skill_covers_all_services() {
-        assert!(SKILL_SERVICES.contains("## Postgres"));
-        assert!(SKILL_SERVICES.contains("## Redis"));
-        assert!(SKILL_SERVICES.contains("## Storage"));
+        assert!(SKILL_SERVICES.contains("floo docs services"));
+        assert!(SKILL_SERVICES.contains("Postgres"));
+        assert!(SKILL_SERVICES.contains("Redis"));
+        assert!(SKILL_SERVICES.contains("Storage"));
         assert!(SKILL_SERVICES.contains("DATABASE_URL"));
         assert!(SKILL_SERVICES.contains("REDIS_URL"));
-        assert!(SKILL_SERVICES.contains("STORAGE_BUCKET"));
     }
 
     #[test]
     fn test_security_skill_has_anti_patterns() {
-        assert!(SKILL_SECURITY.contains("## Anti-Pattern Blocklist"));
-        assert!(SKILL_SECURITY.contains("## Secrets Management"));
-        assert!(SKILL_SECURITY.contains("## Database Security"));
-        assert!(SKILL_SECURITY.contains("NEVER hardcode"));
+        assert!(SKILL_SECURITY.contains("## Secrets"));
+        assert!(SKILL_SECURITY.contains("## Data access"));
+        assert!(SKILL_SECURITY.contains("floo docs auth"));
+        assert!(SKILL_SECURITY.contains("Never hardcode"));
     }
 
     #[test]
     fn test_recommended_permissions_read_only() {
         let (read_only, _) = recommended_permissions();
-        assert!(read_only.contains(&"Bash(floo apps list:*)"));
-        assert!(read_only.contains(&"Bash(floo logs:*)"));
-        assert!(read_only.contains(&"Bash(floo previews status:*)"));
-        assert!(read_only.contains(&"Bash(floo previews resources list:*)"));
-        assert!(read_only.contains(&"Bash(floo previews resources show:*)"));
-        assert!(read_only.contains(&"Bash(floo redeploy --dry-run:*)"));
-        assert!(read_only.contains(&"Bash(floo docs:*)"));
+        for expected in [
+            "Bash(floo apps list:*)",
+            "Bash(floo logs:*)",
+            "Bash(floo previews status:*)",
+            "Bash(floo previews resources list:*)",
+            "Bash(floo previews resources show:*)",
+            "Bash(floo apps show:*)",
+            "Bash(floo preflight:*)",
+            "Bash(floo redeploy --preflight:*)",
+            "Bash(floo docs:*)",
+        ] {
+            assert!(read_only.iter().any(|permission| permission == expected));
+        }
         // Write commands should not be in read-only
-        assert!(!read_only.contains(&"Bash(floo deploy:*)"));
-        assert!(!read_only.contains(&"Bash(floo apps delete:*)"));
+        assert!(!read_only
+            .iter()
+            .any(|permission| permission == "Bash(floo deploy:*)"));
+        assert!(!read_only
+            .iter()
+            .any(|permission| permission == "Bash(floo apps delete:*)"));
     }
 
     #[test]
     fn test_recommended_permissions_read_write() {
         let (_, read_write) = recommended_permissions();
-        assert!(read_write.contains(&"Bash(floo deploy:*)"));
-        assert!(read_write.contains(&"Bash(floo previews up:*)"));
-        assert!(read_write.contains(&"Bash(floo previews resources reset:*)"));
-        assert!(read_write.contains(&"Bash(floo env set:*)"));
-        assert!(read_write.contains(&"Bash(floo apps delete:*)"));
+        for expected in [
+            "Bash(floo redeploy:*)",
+            "Bash(floo previews up:*)",
+            "Bash(floo previews resources reset:*)",
+            "Bash(floo env set:*)",
+            "Bash(floo apps delete:*)",
+        ] {
+            assert!(read_write.iter().any(|permission| permission == expected));
+        }
         // Read-only commands should not be in read-write
-        assert!(!read_write.contains(&"Bash(floo logs:*)"));
-        assert!(!read_write.contains(&"Bash(floo docs:*)"));
+        assert!(!read_write
+            .iter()
+            .any(|permission| permission == "Bash(floo logs:*)"));
+        assert!(!read_write
+            .iter()
+            .any(|permission| permission == "Bash(floo docs:*)"));
+    }
+
+    #[test]
+    fn test_recommended_permission_commands_exist_in_clap() {
+        use clap::CommandFactory;
+
+        let root = crate::cli::Cli::command();
+        for permission in RECOMMENDED_PERMISSIONS {
+            let mut command = &root;
+            for segment in permission.command {
+                command = command.find_subcommand(segment).unwrap_or_else(|| {
+                    panic!(
+                        "recommended permission references unknown command path `floo {}`",
+                        permission.command.join(" ")
+                    )
+                });
+            }
+            for flag in permission.required_flags {
+                let long = flag
+                    .strip_prefix("--")
+                    .unwrap_or_else(|| panic!("permission flag `{flag}` must use long form"));
+                assert!(
+                    root.get_arguments()
+                        .chain(command.get_arguments())
+                        .any(|argument| argument.get_long() == Some(long)),
+                    "recommended permission `floo {}` uses unknown or non-canonical flag `{flag}`",
+                    permission.command.join(" "),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_recommended_permissions_are_unique() {
+        let mut rendered = std::collections::HashSet::new();
+        for permission in RECOMMENDED_PERMISSIONS {
+            let rule = permission.render();
+            assert!(
+                rendered.insert(rule.clone()),
+                "duplicate permission `{rule}`"
+            );
+        }
     }
 }

@@ -59,7 +59,10 @@ pub fn status(app: Option<&str>, deploy_id: Option<&str>) {
                     output::error(
                         "No deploys found for this app yet.",
                         &ErrorCode::DeployNotFound,
-                        Some("Run `floo deploy .` or push to the connected GitHub branch."),
+                        Some(
+                            "Push to the connected GitHub branch, or run \
+                             `floo redeploy --app <name>`.",
+                        ),
                     );
                     process::exit(1);
                 }
@@ -157,8 +160,8 @@ fn derive_next_command(deploy_status: &str, host_bound: bool) -> &'static str {
         }
         "failed" => "floo deploys logs",
         "live" if host_bound => "floo logs",
-        "live" => "floo apps status",
-        _ => "floo apps status",
+        "live" => "floo apps show",
+        _ => "floo apps show",
     }
 }
 

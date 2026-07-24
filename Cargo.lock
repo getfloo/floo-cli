@@ -432,6 +432,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "shlex",
+ "syn",
  "tempfile",
  "thiserror",
  "toml",

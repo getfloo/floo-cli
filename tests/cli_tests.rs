@@ -96,6 +96,76 @@ fn test_no_args_shows_help() {
         .stderr(predicate::str::contains("Usage: floo"));
 }
 
+// --- Offline documentation ---
+
+fn offline_docs() -> Command {
+    let mut command = floo();
+    command
+        .env("FLOO_NO_UPDATE_CHECK", "1")
+        .env("FLOO_API_URL", "http://127.0.0.1:9")
+        .env("HOME", "/tmp/floo-test-nonexistent");
+    command
+}
+
+#[test]
+fn test_docs_overview_works_without_api_access() {
+    offline_docs()
+        .arg("docs")
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains("## Offline topics"))
+        .stderr(predicate::str::contains("floo docs services"))
+        .stderr(predicate::str::contains("floo commands --json"));
+}
+
+#[test]
+fn test_docs_json_exposes_versioned_topic_catalog_offline() {
+    let output = offline_docs()
+        .args(["--json", "docs"])
+        .output()
+        .expect("run floo docs --json");
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+
+    let response: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("docs output must be JSON");
+    let data = &response["data"];
+    assert_eq!(response["success"], true);
+    assert_eq!(data["schema_version"], 1);
+    assert_eq!(data["cli_version"], "0.0.0-dev");
+    assert_eq!(data["topic"], "overview");
+    assert!(data["content"]
+        .as_str()
+        .unwrap()
+        .contains("## Offline topics"));
+    assert!(data["topics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|topic| topic["name"] == "services"
+            && topic["aliases"] == serde_json::json!(["storage"])));
+}
+
+#[test]
+fn test_docs_alias_json_names_canonical_topic() {
+    let output = offline_docs()
+        .args(["--json", "docs", "storage"])
+        .output()
+        .expect("run aliased docs topic");
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+
+    let response: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("docs output must be JSON");
+    let data = &response["data"];
+    assert_eq!(data["schema_version"], 1);
+    assert_eq!(data["cli_version"], "0.0.0-dev");
+    assert_eq!(data["topic"], "services");
+    assert_eq!(data["requested_topic"], "storage");
+    assert_eq!(data["alias"], true);
+}
+
 // --- `--json` arg-error contract (#1156) ---
 // An agent that always passes `--json` must get JSON on EVERY terminal output,
 // including clap parse failures. clap's auto-exit would otherwise dump

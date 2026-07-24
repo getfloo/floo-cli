@@ -19,7 +19,7 @@ pub struct Cli {
     pub json: bool,
 
     /// Preview what a command would do without executing it.
-    #[arg(long, global = true)]
+    #[arg(long = "preflight", alias = "dry-run", global = true)]
     pub dry_run: bool,
 
     /// Emit secret-shaped values verbatim in `--json` output instead of
@@ -370,11 +370,8 @@ Examples:
     /// Built-in platform documentation. Run `floo docs` (no topic) for the
     /// full list of topics with one-line descriptions.
     #[command(after_help = "\
-Topics: golden-path, quickstart, build, nextjs, rails, fastapi, django,
-express, templates, services, doctor, edge, egress, previews, config, cron, deploy, auth,
-notifications, feedback.
-Aliases: storage -> services, app-toml -> config.
-Run `floo docs` (no topic) for a one-line description of each topic.")]
+Run `floo docs` for the version-matched offline topic index.
+Run `floo docs --json` for a machine-readable topic catalog.")]
     Docs {
         /// Documentation topic to display. Omit for the overview.
         topic: Option<String>,
@@ -406,7 +403,7 @@ schema, or https://getfloo.com/docs/guides/cron-jobs for the long-form guide.",
         after_help = "\
 Examples:
   floo cron list --app my-app              List all cron jobs and their last run status
-  floo cron show daily-report --app my-app Show details for a single cron job
+  floo cron show daily-report --app my-app  Show details for a single cron job
   floo cron run daily-report --app my-app  Manually trigger a cron job
 
 Schedules are declared in floo.app.toml under [cron.<name>]. This CLI is
@@ -444,7 +441,7 @@ material, no Cloud Run audit payloads. Those live on dedicated surfaces."
     ///
     /// Downloads the target release and overwrites the file at `floo`'s current path
     /// on disk. There is no automatic rollback — to revert, reinstall the desired
-    /// version with the installer or download the binary directly. Use `--dry-run` to
+    /// version with the installer or download the binary directly. Use `--preflight` to
     /// preview the release without touching the binary.
     Update {
         /// Specific release tag to install (e.g. v0.2.0).
@@ -651,6 +648,7 @@ pub enum AppsCommands {
     ///
     /// Accepts either a positional name or `--app` for parity with the rest
     /// of the CLI's flag-based API. Pass exactly one.
+    #[command(alias = "status")]
     Show {
         /// App name or ID (positional form). Mutually exclusive with `--app`.
         app_name: Option<String>,
@@ -1501,7 +1499,7 @@ Examples:
     #[command(after_help = "\
 Examples:
   floo previews resources reset feat-db-abcde --app my-app --resource postgres:default --yes
-  floo previews resources reset feat-db-abcde --app my-app --resource redis:cache --dry-run --json
+  floo previews resources reset feat-db-abcde --app my-app --resource redis:cache --preflight --json
 
 Reset is preview-scoped. Dev and prod resources are not touched. Providers that
 do not yet support reset fail closed with the API's named reset blocker.")]
@@ -1966,7 +1964,7 @@ fn reject_unsupported_dry_run(command: &Commands) {
     }
     let suggestion = format!("Supported: {}.", DRY_RUN_SUPPORTED_COMMANDS.join(", "));
     output::error(
-        "--dry-run is not supported for this command.",
+        "--preflight is not supported for this command.",
         &crate::errors::ErrorCode::InvalidFormat,
         Some(&suggestion),
     );
@@ -2608,40 +2606,84 @@ pub fn run() {
 }
 
 #[cfg(test)]
+#[path = "cli/guidance_tests.rs"]
+mod guidance_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
 
     fn argv(parts: &[&str]) -> Vec<OsString> {
         parts.iter().map(OsString::from).collect()
     }
 
-    /// `floo docs --help` must list every topic and alias. Pinned to the
-    /// `TOPICS`/`ALIASES` tables so the help block can't silently drift —
-    /// before #1159 it advertised only "services, config, deploy".
+    /// Help routes callers to the generated topic index instead of duplicating
+    /// a static list that can drift from the registry.
     #[test]
-    fn docs_help_lists_every_topic_and_alias() {
-        use clap::CommandFactory;
+    fn docs_help_routes_to_generated_topic_index() {
         let mut cmd = Cli::command();
         let docs = cmd
             .find_subcommand_mut("docs")
             .expect("docs subcommand exists");
         let help = docs.render_long_help().to_string();
-        for (name, _) in crate::commands::docs::TOPICS {
-            assert!(
-                help.contains(name),
-                "`floo docs --help` is missing topic '{name}'",
-            );
-        }
-        for (alias, _) in crate::commands::docs::ALIASES {
-            assert!(
-                help.contains(alias),
-                "`floo docs --help` is missing alias '{alias}'",
-            );
-        }
+        assert!(help.contains("floo docs"));
+        assert!(help.contains("floo docs --json"));
+        assert!(!help.contains("golden-path, quickstart"));
     }
 
     fn strs(args: &[OsString]) -> Vec<&str> {
         args.iter().map(|a| a.to_str().unwrap()).collect()
+    }
+
+    #[test]
+    fn removed_apps_status_is_a_hidden_compatibility_alias() {
+        let stale = concat!("sta", "tus");
+        let cli = Cli::try_parse_from(["floo", "apps", stale, "my-app"])
+            .unwrap_or_else(|error| panic!("hidden compatibility alias must parse: {error}"));
+        let Commands::Apps(AppsCommands::Show { app_name, app }) = cli.command else {
+            panic!("compatibility alias must dispatch to apps show");
+        };
+        assert_eq!(app_name.as_deref(), Some("my-app"));
+        assert_eq!(app, None);
+
+        let mut root = Cli::command();
+        let apps = root.find_subcommand_mut("apps").expect("apps command");
+        let show = apps.find_subcommand_mut("show").expect("apps show command");
+        assert!(
+            show.get_all_aliases().any(|alias| alias == stale),
+            "compatibility alias must remain parseable"
+        );
+        assert!(
+            show.get_visible_aliases().all(|alias| alias != stale),
+            "compatibility alias must stay out of first-party help"
+        );
+    }
+
+    #[test]
+    fn deprecated_dry_run_flag_is_a_hidden_compatibility_alias() {
+        let cli = Cli::try_parse_from(["floo", "redeploy", "--dry-run", "--app", "my-app"])
+            .unwrap_or_else(|error| panic!("deprecated --dry-run alias must parse: {error}"));
+        assert!(cli.dry_run);
+
+        let root = Cli::command();
+        let preflight = root
+            .get_arguments()
+            .find(|argument| argument.get_id() == "dry_run")
+            .expect("global preflight argument");
+        assert_eq!(preflight.get_long(), Some("preflight"));
+        assert!(
+            preflight
+                .get_all_aliases()
+                .is_some_and(|aliases| aliases.contains(&"dry-run")),
+            "deprecated --dry-run spelling must remain parseable"
+        );
+        assert!(
+            preflight
+                .get_visible_aliases()
+                .is_none_or(|aliases| !aliases.contains(&"dry-run")),
+            "deprecated --dry-run spelling must stay out of first-party help"
+        );
     }
 
     #[test]
@@ -2705,37 +2747,37 @@ mod tests {
     fn dry_run_supported_names_are_real_subcommands() {
         // Minimal required positionals so each invocation parses.
         let invocations: &[(&str, &[&str])] = &[
-            ("init", &["floo", "init", "--dry-run"]),
-            ("redeploy", &["floo", "redeploy", "--dry-run"]),
-            ("preflight", &["floo", "preflight", "--dry-run"]),
-            ("dev", &["floo", "dev", "--dry-run"]),
-            ("update", &["floo", "update", "--dry-run"]),
-            ("env set", &["floo", "env", "set", "K=V", "--dry-run"]),
-            ("env unset", &["floo", "env", "unset", "K", "--dry-run"]),
+            ("init", &["floo", "init", "--preflight"]),
+            ("redeploy", &["floo", "redeploy", "--preflight"]),
+            ("preflight", &["floo", "preflight", "--preflight"]),
+            ("dev", &["floo", "dev", "--preflight"]),
+            ("update", &["floo", "update", "--preflight"]),
+            ("env set", &["floo", "env", "set", "K=V", "--preflight"]),
+            ("env unset", &["floo", "env", "unset", "K", "--preflight"]),
             (
                 "env import",
-                &["floo", "env", "import", ".env", "--dry-run"],
+                &["floo", "env", "import", ".env", "--preflight"],
             ),
             (
                 "apps delete",
-                &["floo", "apps", "delete", "myapp", "--dry-run"],
+                &["floo", "apps", "delete", "myapp", "--preflight"],
             ),
             (
                 "domains add",
-                &["floo", "domains", "add", "x.com", "--dry-run"],
+                &["floo", "domains", "add", "x.com", "--preflight"],
             ),
             (
                 "domains remove",
-                &["floo", "domains", "remove", "x.com", "--dry-run"],
+                &["floo", "domains", "remove", "x.com", "--preflight"],
             ),
-            ("cron run", &["floo", "cron", "run", "myjob", "--dry-run"]),
+            ("cron run", &["floo", "cron", "run", "myjob", "--preflight"]),
             (
                 "deploys rollback",
-                &["floo", "deploys", "rollback", "myapp", "abc", "--dry-run"],
+                &["floo", "deploys", "rollback", "myapp", "abc", "--preflight"],
             ),
             (
                 "db migrate",
-                &["floo", "db", "migrate", "--app", "myapp", "--dry-run"],
+                &["floo", "db", "migrate", "--app", "myapp", "--preflight"],
             ),
             (
                 "db query",
@@ -2746,7 +2788,7 @@ mod tests {
                     "SELECT 1",
                     "--app",
                     "myapp",
-                    "--dry-run",
+                    "--preflight",
                 ],
             ),
             (
@@ -2759,7 +2801,7 @@ mod tests {
                     "feat-db-abcde",
                     "--app",
                     "myapp",
-                    "--dry-run",
+                    "--preflight",
                 ],
             ),
             (
@@ -2774,7 +2816,7 @@ mod tests {
                     "myapp",
                     "--resource",
                     "postgres:default",
-                    "--dry-run",
+                    "--preflight",
                 ],
             ),
         ];
@@ -2791,7 +2833,7 @@ mod tests {
         for (label, args) in invocations {
             let cli = Cli::try_parse_from(args.iter().copied())
                 .unwrap_or_else(|e| panic!("clap rejected '{label}' invocation {args:?}: {e}"));
-            assert!(cli.dry_run, "expected --dry-run set for '{label}'");
+            assert!(cli.dry_run, "expected --preflight set for '{label}'");
             assert!(
                 !dry_run_is_unsupported(&cli.command),
                 "'{label}' is listed as supported but dry_run_is_unsupported() returns true",
