@@ -248,15 +248,128 @@ pub fn show_password(app_name: &str) {
     }
 }
 
-pub fn invite(email: &str, app_flag: Option<&str>) {
+pub fn invite(email: &str, role: &str, app_flag: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);
     let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
 
-    match client.grant_app_access(&app_id, email) {
+    match client.create_app_invite(&app_id, email, role) {
         Ok(result) => {
-            output::success(&format!("Invited {email} to '{app_name}'."), Some(result));
+            output::success(
+                &format!("Invited {email} to '{app_name}'."),
+                Some(result.clone()),
+            );
+            if !output::is_json_mode() {
+                if crate::redact::is_reveal_secrets() {
+                    if let Some(invite_url) =
+                        result.get("invite_url").and_then(|value| value.as_str())
+                    {
+                        output::info(&format!("Invitation URL (shown once): {invite_url}"), None);
+                    }
+                } else if result
+                    .get("delivery_status")
+                    .and_then(|value| value.as_str())
+                    != Some("sent")
+                {
+                    output::warn(
+                        "Email delivery was not confirmed. Resend with --reveal-secrets to copy the one-time URL.",
+                    );
+                }
+            }
         }
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    }
+}
+
+pub fn invites(app_flag: Option<&str>, cursor: Option<&str>) {
+    super::require_auth();
+    let client = super::init_client(None);
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
+    match client.list_app_invites(&app_id, cursor) {
+        Ok(result) => output::success(&format!("Invitations for '{app_name}'."), Some(result)),
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    }
+}
+
+pub fn resend_invite(invite_id: &str, app_flag: Option<&str>) {
+    super::require_auth();
+    let client = super::init_client(None);
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
+    match client.resend_app_invite(&app_id, invite_id) {
+        Ok(result) => output::success(
+            &format!("Resent invitation for '{app_name}'."),
+            Some(result),
+        ),
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    }
+}
+
+pub fn revoke_invite(invite_id: &str, app_flag: Option<&str>) {
+    super::require_auth();
+    let client = super::init_client(None);
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
+    match client.revoke_app_invite(&app_id, invite_id) {
+        Ok(()) => output::success(
+            &format!("Revoked invitation for '{app_name}'."),
+            Some(serde_json::json!({"invite_id": invite_id, "app_id": app_id})),
+        ),
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    }
+}
+
+pub fn members(app_flag: Option<&str>, cursor: Option<&str>) {
+    super::require_auth();
+    let client = super::init_client(None);
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
+    match client.list_app_members(&app_id, cursor) {
+        Ok(result) => output::success(&format!("Members for '{app_name}'."), Some(result)),
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    }
+}
+
+pub fn set_member_role(membership_id: &str, role: &str, app_flag: Option<&str>) {
+    super::require_auth();
+    let client = super::init_client(None);
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
+    match client.update_app_member_role(&app_id, membership_id, role) {
+        Ok(result) => output::success(
+            &format!("Set member role to {role} for '{app_name}'."),
+            Some(result),
+        ),
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    }
+}
+
+pub fn remove_member(membership_id: &str, app_flag: Option<&str>) {
+    super::require_auth();
+    let client = super::init_client(None);
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
+    match client.remove_app_member(&app_id, membership_id) {
+        Ok(()) => output::success(
+            &format!("Removed app member from '{app_name}'."),
+            Some(serde_json::json!({
+                "membership_id": membership_id,
+                "app_id": app_id,
+            })),
+        ),
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);

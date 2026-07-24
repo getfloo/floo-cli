@@ -420,6 +420,80 @@ fn test_apps_list_human() {
 }
 
 #[test]
+fn test_apps_invite_posts_role_and_redacts_one_time_url() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _invite = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/invites").as_str(),
+        )
+        .match_body(Matcher::PartialJson(serde_json::json!({
+            "email": "app-user@example.com",
+            "role": "admin",
+        })))
+        .with_status(201)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"id":"invite-1","email":"app-user@example.com","role":"admin","status":"pending","invite_url":"https://app.getfloo.com/app-invite#token=secret-app-token"}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "apps",
+            "invite",
+            "app-user@example.com",
+            "--role",
+            "admin",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""role":"admin""#))
+        .stdout(predicate::str::contains("secret-app-token").not())
+        .stdout(predicate::str::contains("contains_secrets"));
+}
+
+#[test]
+fn test_apps_member_role_uses_canonical_membership_endpoint() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _role = server
+        .mock(
+            "PATCH",
+            format!("/v1/apps/{TEST_APP_ID}/members/membership-1").as_str(),
+        )
+        .match_body(Matcher::PartialJson(serde_json::json!({"role": "member"})))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"id":"membership-1","email":"app-user@example.com","role":"member","status":"active"}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "apps",
+            "member-role",
+            "membership-1",
+            "member",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""role":"member""#));
+}
+
+#[test]
 fn test_apps_show_json() {
     let mut server = Server::new();
     let home = setup_config(&server);

@@ -691,12 +691,66 @@ pub enum AppsCommands {
         app_name: String,
     },
 
-    /// Invite a user to an app (grant email-based access).
+    /// Invite a floo identity to an app.
     Invite {
         /// Email address to invite.
         email: String,
 
         /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// App role to grant after acceptance.
+        #[arg(long, default_value = "member", value_parser = ["member", "admin"])]
+        role: String,
+    },
+
+    /// List app invitations.
+    Invites {
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Continue from a previous response's next_cursor.
+        #[arg(long)]
+        cursor: Option<String>,
+    },
+
+    /// Rotate and resend a pending app invitation.
+    InviteResend {
+        invite_id: String,
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+
+    /// Revoke a pending app invitation.
+    InviteRevoke {
+        invite_id: String,
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+
+    /// List explicit app members.
+    Members {
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Continue from a previous response's next_cursor.
+        #[arg(long)]
+        cursor: Option<String>,
+    },
+
+    /// Change an app member's tenant role and revoke their active sessions.
+    MemberRole {
+        membership_id: String,
+        #[arg(value_parser = ["member", "admin"])]
+        role: String,
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+
+    /// Remove an app member and revoke their app sessions and user API keys.
+    MemberRemove {
+        membership_id: String,
         #[arg(short, long)]
         app: Option<String>,
     },
@@ -1842,7 +1896,13 @@ fn dry_run_is_unsupported(command: &Commands) -> bool {
                 OrgsCommands::Members(MembersCommands::SetRole { .. })
                     | OrgsCommands::Switch { .. },
             )
-            | Commands::Apps(AppsCommands::Invite { .. })
+            | Commands::Apps(
+                AppsCommands::Invite { .. }
+                    | AppsCommands::InviteResend { .. }
+                    | AppsCommands::InviteRevoke { .. }
+                    | AppsCommands::MemberRole { .. }
+                    | AppsCommands::MemberRemove { .. }
+            )
             | Commands::Billing(BillingCommands::SpendCap(SpendCapCommands::Set { .. }))
             | Commands::Run { .. }
             | Commands::Feedback { .. }
@@ -2169,7 +2229,29 @@ pub fn run() {
                 GitHubCommands::Status { app } => commands::github::status(app.as_deref()),
             },
             AppsCommands::Password { app_name } => commands::apps::show_password(&app_name),
-            AppsCommands::Invite { email, app } => commands::apps::invite(&email, app.as_deref()),
+            AppsCommands::Invite { email, app, role } => {
+                commands::apps::invite(&email, &role, app.as_deref())
+            }
+            AppsCommands::Invites { app, cursor } => {
+                commands::apps::invites(app.as_deref(), cursor.as_deref())
+            }
+            AppsCommands::InviteResend { invite_id, app } => {
+                commands::apps::resend_invite(&invite_id, app.as_deref())
+            }
+            AppsCommands::InviteRevoke { invite_id, app } => {
+                commands::apps::revoke_invite(&invite_id, app.as_deref())
+            }
+            AppsCommands::Members { app, cursor } => {
+                commands::apps::members(app.as_deref(), cursor.as_deref())
+            }
+            AppsCommands::MemberRole {
+                membership_id,
+                role,
+                app,
+            } => commands::apps::set_member_role(&membership_id, &role, app.as_deref()),
+            AppsCommands::MemberRemove { membership_id, app } => {
+                commands::apps::remove_member(&membership_id, app.as_deref())
+            }
         },
 
         Commands::Env(sub) => match sub {
