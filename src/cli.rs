@@ -19,7 +19,7 @@ pub struct Cli {
     pub json: bool,
 
     /// Preview what a command would do without executing it.
-    #[arg(long, global = true)]
+    #[arg(long = "preflight", alias = "dry-run", global = true)]
     pub dry_run: bool,
 
     /// Emit secret-shaped values verbatim in `--json` output instead of
@@ -444,7 +444,7 @@ material, no Cloud Run audit payloads. Those live on dedicated surfaces."
     ///
     /// Downloads the target release and overwrites the file at `floo`'s current path
     /// on disk. There is no automatic rollback — to revert, reinstall the desired
-    /// version with the installer or download the binary directly. Use `--dry-run` to
+    /// version with the installer or download the binary directly. Use `--preflight` to
     /// preview the release without touching the binary.
     Update {
         /// Specific release tag to install (e.g. v0.2.0).
@@ -651,6 +651,7 @@ pub enum AppsCommands {
     ///
     /// Accepts either a positional name or `--app` for parity with the rest
     /// of the CLI's flag-based API. Pass exactly one.
+    #[command(alias = "status")]
     Show {
         /// App name or ID (positional form). Mutually exclusive with `--app`.
         app_name: Option<String>,
@@ -1501,7 +1502,7 @@ Examples:
     #[command(after_help = "\
 Examples:
   floo previews resources reset feat-db-abcde --app my-app --resource postgres:default --yes
-  floo previews resources reset feat-db-abcde --app my-app --resource redis:cache --dry-run --json
+  floo previews resources reset feat-db-abcde --app my-app --resource redis:cache --preflight --json
 
 Reset is preview-scoped. Dev and prod resources are not touched. Providers that
 do not yet support reset fail closed with the API's named reset blocker.")]
@@ -1966,7 +1967,7 @@ fn reject_unsupported_dry_run(command: &Commands) {
     }
     let suggestion = format!("Supported: {}.", DRY_RUN_SUPPORTED_COMMANDS.join(", "));
     output::error(
-        "--dry-run is not supported for this command.",
+        "--preflight is not supported for this command.",
         &crate::errors::ErrorCode::InvalidFormat,
         Some(&suggestion),
     );
@@ -2610,6 +2611,9 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
+    use std::fs;
+    use std::path::{Path, PathBuf};
 
     fn argv(parts: &[&str]) -> Vec<OsString> {
         parts.iter().map(OsString::from).collect()
@@ -2642,6 +2646,370 @@ mod tests {
 
     fn strs(args: &[OsString]) -> Vec<&str> {
         args.iter().map(|a| a.to_str().unwrap()).collect()
+    }
+
+    #[derive(Debug)]
+    struct GuidanceCommand {
+        source: String,
+        line: usize,
+        literal: String,
+    }
+
+    fn collect_files(dir: &Path, extension: &str, files: &mut Vec<PathBuf>) {
+        for entry in fs::read_dir(dir).expect("guidance directory is readable") {
+            let path = entry.expect("guidance entry is readable").path();
+            if path.is_dir() {
+                let name = path.file_name().and_then(|value| value.to_str());
+                if matches!(name, Some(".git" | ".claude" | "target")) {
+                    continue;
+                }
+                collect_files(&path, extension, files);
+            } else if path.extension().and_then(|value| value.to_str()) == Some(extension) {
+                files.push(path);
+            }
+        }
+    }
+
+    fn push_floo_occurrences(
+        text: &str,
+        source: &str,
+        line: usize,
+        commands: &mut Vec<GuidanceCommand>,
+    ) {
+        let mut remaining = text;
+        while let Some(start) = remaining.find("floo ") {
+            let occurrence = &remaining[start..];
+            let end = occurrence[5..]
+                .find("floo ")
+                .map_or(occurrence.len(), |next| next + 5);
+            let literal = occurrence[..end]
+                .trim()
+                .trim_matches(|character: char| {
+                    matches!(character, '`' | '\'' | '"' | ')' | ',' | ';')
+                })
+                .to_string();
+            commands.push(GuidanceCommand {
+                source: source.to_string(),
+                line,
+                literal,
+            });
+            remaining = &occurrence[end..];
+        }
+    }
+
+    fn extract_guidance_commands(path: &Path) -> Vec<GuidanceCommand> {
+        let source = path
+            .strip_prefix(env!("CARGO_MANIFEST_DIR"))
+            .unwrap_or(path)
+            .display()
+            .to_string();
+        let body = fs::read_to_string(path).expect("guidance source is UTF-8");
+        let markdown = path.extension().and_then(|value| value.to_str()) == Some("md");
+        let body = if markdown {
+            body.as_str()
+        } else {
+            body.split("\n#[cfg(test)]").next().unwrap_or(body.as_str())
+        };
+        let mut in_code_fence = false;
+        let mut commands = Vec::new();
+
+        for (index, line) in body.lines().enumerate() {
+            let line_number = index + 1;
+            let trimmed = line.trim();
+            if markdown && trimmed.starts_with("```") {
+                in_code_fence = !in_code_fence;
+                continue;
+            }
+
+            if in_code_fence || (!trimmed.starts_with("//") && trimmed.starts_with("floo ")) {
+                push_floo_occurrences(line, &source, line_number, &mut commands);
+            }
+
+            for (span_index, span) in line.split('`').enumerate() {
+                if span_index % 2 == 1 && span.trim_start().starts_with("floo ") {
+                    push_floo_occurrences(span, &source, line_number, &mut commands);
+                }
+            }
+
+            if !markdown && !trimmed.starts_with("//") {
+                for marker in ["\"floo ", "Bash(floo "] {
+                    if let Some(marker_index) = line.find(marker) {
+                        if marker == "\"floo "
+                            && marker_index > 0
+                            && line.as_bytes()[marker_index - 1] == b'\\'
+                        {
+                            continue;
+                        }
+                        push_floo_occurrences(line, &source, line_number, &mut commands);
+                        break;
+                    }
+                }
+            }
+        }
+
+        commands
+    }
+
+    fn canonical_command_path(literal: &str) -> Result<Vec<String>, String> {
+        fn record_options(
+            command: &clap::Command,
+            options: &mut std::collections::HashSet<String>,
+        ) {
+            for argument in command.get_arguments() {
+                if let Some(long) = argument.get_long() {
+                    options.insert(long.to_string());
+                }
+                if let Some(aliases) = argument.get_all_aliases() {
+                    options.extend(aliases.into_iter().map(str::to_string));
+                }
+            }
+        }
+
+        // These are command templates, not executable guidance. Keep every
+        // exclusion exact and documented so new prose cannot silently bypass
+        // the command-path check.
+        const NON_COMMAND_TEMPLATES: &[&str] = &[
+            "floo --help",        // Global help invocation, not a command path.
+            "floo --version",     // Global version invocation, rewritten before clap parsing.
+            "floo -V",            // Short global version invocation.
+            "floo <command>",     // Generic help syntax.
+            "floo <path>",        // Generic command-tree renderer documentation.
+            "floo <subcommand>",  // Generic command placeholder in agent instructions.
+            "floo deploy ...",    // The clap help explicitly documents this compatibility alias.
+            "floo (end-to-end",   // Product prose in the built-in overview.
+            "floo emails",        // Product prose in the built-in notifications guide.
+            "floo gateway",       // Product noun in the generated security guidance.
+            "floo manages",       // Product prose in the built-in authentication guide.
+            "floo never",         // Product prose in the write-only secret guidance.
+            "floo not installed", // Installer error prose.
+            "floo provisions",    // Product prose in the bundled services skill.
+            "floo puts",          // Product prose in the built-in networking guide.
+            "floo sends",         // Product prose in the built-in feedback guide.
+            "floo {",             // Runtime version-status copy built with format placeholders.
+        ];
+        if NON_COMMAND_TEMPLATES
+            .iter()
+            .any(|template| literal.starts_with(template))
+        {
+            return Ok(Vec::new());
+        }
+
+        let mut command = Cli::command();
+        let mut path = Vec::new();
+        let mut known_options =
+            std::collections::HashSet::from(["help".to_string(), "version".to_string()]);
+        record_options(&command, &mut known_options);
+        for raw_token in literal.split_whitespace().skip(1) {
+            let raw_token = raw_token.split('{').next().unwrap_or(raw_token);
+            let token = raw_token.trim_matches(|character: char| {
+                matches!(
+                    character,
+                    '`' | '\''
+                        | '"'
+                        | '('
+                        | ')'
+                        | '['
+                        | ']'
+                        | '{'
+                        | '}'
+                        | ','
+                        | '.'
+                        | ';'
+                        | ':'
+                        | '*'
+                        | '\\'
+                )
+            });
+            if token.is_empty() || token.starts_with('-') {
+                break;
+            }
+
+            let exact_subcommand = {
+                command
+                    .get_subcommands()
+                    .find(|candidate| candidate.get_name() == token)
+                    .cloned()
+            };
+            if let Some(subcommand) = exact_subcommand {
+                path.push(token.to_string());
+                command = subcommand;
+                record_options(&command, &mut known_options);
+                continue;
+            }
+
+            if let Some(canonical) = command.get_subcommands().find_map(|candidate| {
+                candidate
+                    .get_all_aliases()
+                    .any(|alias| alias == token)
+                    .then(|| candidate.get_name().to_string())
+            }) {
+                return Err(format!(
+                    "`{token}` is a compatibility alias; use canonical `{canonical}`"
+                ));
+            }
+
+            if command.has_subcommands() {
+                return Err(format!(
+                    "`{token}` is not a canonical subcommand below `{}`",
+                    if path.is_empty() {
+                        "floo".to_string()
+                    } else {
+                        format!("floo {}", path.join(" "))
+                    }
+                ));
+            }
+            break;
+        }
+
+        if path.is_empty() {
+            return Err("no canonical command path found".to_string());
+        }
+        for raw_token in literal.split_whitespace() {
+            if raw_token == "--" {
+                break;
+            }
+            let Some(raw_option) = raw_token.strip_prefix("--") else {
+                continue;
+            };
+            if raw_option.is_empty() {
+                continue;
+            }
+            let option = raw_option
+                .split('=')
+                .next()
+                .unwrap_or(raw_option)
+                .trim_matches(|character: char| {
+                    matches!(
+                        character,
+                        '`' | '\'' | '"' | ')' | ']' | ',' | ';' | ':' | '*'
+                    )
+                });
+            if !known_options.contains(option) {
+                return Err(format!(
+                    "`--{option}` is not a parseable option for `floo {}`",
+                    path.join(" ")
+                ));
+            }
+        }
+        Ok(path)
+    }
+
+    #[test]
+    fn bundled_guidance_uses_canonical_parseable_commands() {
+        use clap::error::ErrorKind;
+
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut files = Vec::new();
+        collect_files(root, "md", &mut files);
+        collect_files(&root.join("src"), "rs", &mut files);
+        files.sort();
+
+        let mut failures = Vec::new();
+        let mut checked = 0;
+        for file in files {
+            for guidance in extract_guidance_commands(&file) {
+                match canonical_command_path(&guidance.literal) {
+                    Ok(path) if path.is_empty() => {}
+                    Ok(path) => {
+                        let mut args = vec!["floo".to_string()];
+                        args.extend(path);
+                        args.push("--help".to_string());
+                        match Cli::try_parse_from(args) {
+                            Err(error) if error.kind() == ErrorKind::DisplayHelp => {
+                                checked += 1;
+                            }
+                            Err(error) => failures.push(format!(
+                                "{}:{} `{}` parsed with unexpected {:?}",
+                                guidance.source,
+                                guidance.line,
+                                guidance.literal,
+                                error.kind()
+                            )),
+                            Ok(_) => failures.push(format!(
+                                "{}:{} `{}` did not take clap's help path",
+                                guidance.source, guidance.line, guidance.literal
+                            )),
+                        }
+                    }
+                    Err(reason) => failures.push(format!(
+                        "{}:{} `{}`: {reason}",
+                        guidance.source, guidance.line, guidance.literal
+                    )),
+                }
+            }
+        }
+
+        assert!(
+            checked > 50,
+            "guidance scan found too few commands: {checked}"
+        );
+        assert!(
+            failures.is_empty(),
+            "first-party guidance contains stale command paths:\n{}",
+            failures.join("\n")
+        );
+
+        let bad = ["floo", "not-a-command", "--help"];
+        let error = parse_err(&bad);
+        assert_ne!(error.kind(), ErrorKind::DisplayHelp);
+        assert!(
+            canonical_command_path("floo apps show my-app --not-a-real-option").is_err(),
+            "guidance scan must reject stale options as well as stale command paths"
+        );
+        assert!(
+            canonical_command_path("floo run --service api -- pytest --maxfail=1").is_ok(),
+            "arguments after `--` belong to the nested command, not floo"
+        );
+    }
+
+    #[test]
+    fn removed_apps_status_is_a_hidden_compatibility_alias() {
+        let stale = concat!("sta", "tus");
+        let cli = Cli::try_parse_from(["floo", "apps", stale, "my-app"])
+            .unwrap_or_else(|error| panic!("hidden compatibility alias must parse: {error}"));
+        let Commands::Apps(AppsCommands::Show { app_name, app }) = cli.command else {
+            panic!("compatibility alias must dispatch to apps show");
+        };
+        assert_eq!(app_name.as_deref(), Some("my-app"));
+        assert_eq!(app, None);
+
+        let mut root = Cli::command();
+        let apps = root.find_subcommand_mut("apps").expect("apps command");
+        let show = apps.find_subcommand_mut("show").expect("apps show command");
+        assert!(
+            show.get_all_aliases().any(|alias| alias == stale),
+            "compatibility alias must remain parseable"
+        );
+        assert!(
+            show.get_visible_aliases().all(|alias| alias != stale),
+            "compatibility alias must stay out of first-party help"
+        );
+    }
+
+    #[test]
+    fn deprecated_dry_run_flag_is_a_hidden_compatibility_alias() {
+        let cli = Cli::try_parse_from(["floo", "redeploy", "--dry-run", "--app", "my-app"])
+            .unwrap_or_else(|error| panic!("deprecated --dry-run alias must parse: {error}"));
+        assert!(cli.dry_run);
+
+        let root = Cli::command();
+        let preflight = root
+            .get_arguments()
+            .find(|argument| argument.get_id() == "dry_run")
+            .expect("global preflight argument");
+        assert_eq!(preflight.get_long(), Some("preflight"));
+        assert!(
+            preflight
+                .get_all_aliases()
+                .is_some_and(|aliases| aliases.contains(&"dry-run")),
+            "deprecated --dry-run spelling must remain parseable"
+        );
+        assert!(
+            preflight
+                .get_visible_aliases()
+                .is_none_or(|aliases| !aliases.contains(&"dry-run")),
+            "deprecated --dry-run spelling must stay out of first-party help"
+        );
     }
 
     #[test]
@@ -2705,37 +3073,37 @@ mod tests {
     fn dry_run_supported_names_are_real_subcommands() {
         // Minimal required positionals so each invocation parses.
         let invocations: &[(&str, &[&str])] = &[
-            ("init", &["floo", "init", "--dry-run"]),
-            ("redeploy", &["floo", "redeploy", "--dry-run"]),
-            ("preflight", &["floo", "preflight", "--dry-run"]),
-            ("dev", &["floo", "dev", "--dry-run"]),
-            ("update", &["floo", "update", "--dry-run"]),
-            ("env set", &["floo", "env", "set", "K=V", "--dry-run"]),
-            ("env unset", &["floo", "env", "unset", "K", "--dry-run"]),
+            ("init", &["floo", "init", "--preflight"]),
+            ("redeploy", &["floo", "redeploy", "--preflight"]),
+            ("preflight", &["floo", "preflight", "--preflight"]),
+            ("dev", &["floo", "dev", "--preflight"]),
+            ("update", &["floo", "update", "--preflight"]),
+            ("env set", &["floo", "env", "set", "K=V", "--preflight"]),
+            ("env unset", &["floo", "env", "unset", "K", "--preflight"]),
             (
                 "env import",
-                &["floo", "env", "import", ".env", "--dry-run"],
+                &["floo", "env", "import", ".env", "--preflight"],
             ),
             (
                 "apps delete",
-                &["floo", "apps", "delete", "myapp", "--dry-run"],
+                &["floo", "apps", "delete", "myapp", "--preflight"],
             ),
             (
                 "domains add",
-                &["floo", "domains", "add", "x.com", "--dry-run"],
+                &["floo", "domains", "add", "x.com", "--preflight"],
             ),
             (
                 "domains remove",
-                &["floo", "domains", "remove", "x.com", "--dry-run"],
+                &["floo", "domains", "remove", "x.com", "--preflight"],
             ),
-            ("cron run", &["floo", "cron", "run", "myjob", "--dry-run"]),
+            ("cron run", &["floo", "cron", "run", "myjob", "--preflight"]),
             (
                 "deploys rollback",
-                &["floo", "deploys", "rollback", "myapp", "abc", "--dry-run"],
+                &["floo", "deploys", "rollback", "myapp", "abc", "--preflight"],
             ),
             (
                 "db migrate",
-                &["floo", "db", "migrate", "--app", "myapp", "--dry-run"],
+                &["floo", "db", "migrate", "--app", "myapp", "--preflight"],
             ),
             (
                 "db query",
@@ -2746,7 +3114,7 @@ mod tests {
                     "SELECT 1",
                     "--app",
                     "myapp",
-                    "--dry-run",
+                    "--preflight",
                 ],
             ),
             (
@@ -2759,7 +3127,7 @@ mod tests {
                     "feat-db-abcde",
                     "--app",
                     "myapp",
-                    "--dry-run",
+                    "--preflight",
                 ],
             ),
             (
@@ -2774,7 +3142,7 @@ mod tests {
                     "myapp",
                     "--resource",
                     "postgres:default",
-                    "--dry-run",
+                    "--preflight",
                 ],
             ),
         ];
@@ -2791,7 +3159,7 @@ mod tests {
         for (label, args) in invocations {
             let cli = Cli::try_parse_from(args.iter().copied())
                 .unwrap_or_else(|e| panic!("clap rejected '{label}' invocation {args:?}: {e}"));
-            assert!(cli.dry_run, "expected --dry-run set for '{label}'");
+            assert!(cli.dry_run, "expected --preflight set for '{label}'");
             assert!(
                 !dry_run_is_unsupported(&cli.command),
                 "'{label}' is listed as supported but dry_run_is_unsupported() returns true",

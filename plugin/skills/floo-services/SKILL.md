@@ -8,11 +8,11 @@ description: >
 
 # Floo Managed Services
 
-Floo provisions and manages Postgres, Redis, Storage, and Cron as platform services. All credentials are delivered as environment variables — never hardcode them.
+floo provisions and manages Postgres, Redis, Storage, and Cron as platform services. All credentials are delivered as environment variables — never hardcode them.
 
 ## How to Provision
 
-All managed services are declared in `floo.app.toml` and auto-provisioned on deploy. The API parses `floo.app.toml` directly from the repo tarball, so this works identically for `floo deploy`, `git push` (deploy-on-push), and preview deploys.
+All managed services are declared in `floo.app.toml` and auto-provisioned on deploy. The API parses `floo.app.toml` directly from the connected GitHub repository, so this works for push-triggered, redeploy, and preview deploys.
 
 **There is no CLI command to imperatively provision a managed service.** Declare them in `floo.app.toml` and they are auto-provisioned on deploy.
 
@@ -91,7 +91,7 @@ let database_url = std::env::var("DATABASE_URL")?;
 Then deploy — Floo auto-provisions on first deploy.
 
 **What happens:**
-- Floo provisions a dedicated Redis instance via Upstash (serverless Redis)
+- floo provisions a dedicated Redis instance via Upstash (serverless Redis)
 - TLS-encrypted by default
 
 **Env vars created:** `REDIS_URL` — a `rediss://` connection string (note: `rediss` with double-s means TLS).
@@ -111,7 +111,7 @@ const redisUrl = process.env.REDIS_URL;
 
 **Rules:**
 - NEVER hardcode the Redis URL
-- NEVER use `redis://` (non-TLS) — Floo provisions with TLS (`rediss://`)
+- NEVER use `redis://` (non-TLS) — floo provisions with TLS (`rediss://`)
 - NEVER store sensitive application data in Redis without TTL — Redis is a cache, not a durable store
 
 ## Storage (Managed)
@@ -207,7 +207,7 @@ command = "node cleanup.js"
 service = "api"
 ```
 
-Then deploy — Floo syncs cron jobs on every deploy (creates new ones, updates changed ones, deletes removed ones). This works for both `floo deploy` and push-to-deploy (git push) — the API parses `[cron.*]` directly from `floo.app.toml` in the repo.
+Then deploy. floo syncs cron jobs on every deploy (creates new ones, updates changed ones, deletes removed ones). This works for both push-triggered and forced redeploys because the API reads `[cron.*]` directly from `floo.app.toml` in the connected repository.
 
 **What happens:**
 - Floo creates a CronJob record for each `[cron.<name>]` section

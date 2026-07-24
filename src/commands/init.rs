@@ -25,7 +25,7 @@ const APP_TOML_HEADER: &str = r#"# floo.app.toml — see https://getfloo.com/doc
 #
 # Deploys happen on `git push`. After `floo apps github connect`, every
 # push to your default branch builds and deploys to the dev environment
-# automatically (no `floo deploy` needed). Cutting a GitHub release
+# automatically (no manual deploy command needed). Cutting a GitHub release
 # promotes that build to production. See
 # https://getfloo.com/docs/guides/golden-path.md.
 #

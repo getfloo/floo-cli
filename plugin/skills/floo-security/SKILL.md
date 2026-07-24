@@ -109,8 +109,8 @@ app.use(cors({ origin: "*" }));
 **Rules:**
 - NEVER deploy with debug mode enabled in production (`DEBUG=True`, `NODE_ENV=development`)
 - Verify environment variables differ between dev and prod: `floo env list --app my-app`
-- Use `floo redeploy --dry-run` before production deploys
-- Review build logs after deploy: `floo deploy logs <id> --app my-app`
+- Use `floo redeploy --preflight` before production deploys
+- Review build logs after deploy: `floo deploys logs <id> --app my-app`
 - Check runtime logs after deploy: `floo logs --app my-app --since 5m --error`
 
 ## Anti-Pattern Blocklist

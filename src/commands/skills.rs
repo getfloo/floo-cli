@@ -248,7 +248,7 @@ pub fn refresh_skill_files() -> Vec<String> {
 fn recommended_permissions() -> (Vec<&'static str>, Vec<&'static str>) {
     let read_only = vec![
         "Bash(floo apps list:*)",
-        "Bash(floo apps status:*)",
+        "Bash(floo apps show:*)",
         "Bash(floo apps github status:*)",
         "Bash(floo deploys list:*)",
         "Bash(floo deploys logs:*)",
@@ -266,7 +266,7 @@ fn recommended_permissions() -> (Vec<&'static str>, Vec<&'static str>) {
         "Bash(floo analytics:*)",
         "Bash(floo releases list:*)",
         "Bash(floo releases show:*)",
-        "Bash(floo redeploy --dry-run:*)",
+        "Bash(floo redeploy --preflight:*)",
         "Bash(floo docs:*)",
         "Bash(floo commands:*)",
         "Bash(floo version:*)",
@@ -278,14 +278,14 @@ fn recommended_permissions() -> (Vec<&'static str>, Vec<&'static str>) {
     let read_write = vec![
         "Bash(floo apps password:*)",
         "Bash(floo env get:*)",
-        "Bash(floo deploy:*)",
+        "Bash(floo redeploy:*)",
         "Bash(floo previews up:*)",
         "Bash(floo previews delete:*)",
         "Bash(floo previews resources reset:*)",
         "Bash(floo deploys rollback:*)",
         "Bash(floo init:*)",
         "Bash(floo env set:*)",
-        "Bash(floo env remove:*)",
+        "Bash(floo env unset:*)",
         "Bash(floo env import:*)",
         "Bash(floo domains add:*)",
         "Bash(floo domains verify:*)",
@@ -389,7 +389,8 @@ mod tests {
         assert!(read_only.contains(&"Bash(floo previews status:*)"));
         assert!(read_only.contains(&"Bash(floo previews resources list:*)"));
         assert!(read_only.contains(&"Bash(floo previews resources show:*)"));
-        assert!(read_only.contains(&"Bash(floo redeploy --dry-run:*)"));
+        assert!(read_only.contains(&"Bash(floo apps show:*)"));
+        assert!(read_only.contains(&"Bash(floo redeploy --preflight:*)"));
         assert!(read_only.contains(&"Bash(floo docs:*)"));
         // Write commands should not be in read-only
         assert!(!read_only.contains(&"Bash(floo deploy:*)"));
@@ -399,7 +400,7 @@ mod tests {
     #[test]
     fn test_recommended_permissions_read_write() {
         let (_, read_write) = recommended_permissions();
-        assert!(read_write.contains(&"Bash(floo deploy:*)"));
+        assert!(read_write.contains(&"Bash(floo redeploy:*)"));
         assert!(read_write.contains(&"Bash(floo previews up:*)"));
         assert!(read_write.contains(&"Bash(floo previews resources reset:*)"));
         assert!(read_write.contains(&"Bash(floo env set:*)"));

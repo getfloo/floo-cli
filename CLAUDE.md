@@ -35,7 +35,7 @@ Dual-mode output pattern:
 - **Colored output** (spinners, tables, progress) → **stderr**
 - **JSON output** → **stdout**
 
-This makes `floo deploy --json 2>/dev/null | jq` work for agents.
+This makes `floo deploys list --json 2>/dev/null | jq` work for agents.
 
 `JSON_MODE` is an `AtomicBool` set once at startup. Every output function checks it.
 

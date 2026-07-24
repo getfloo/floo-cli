@@ -139,7 +139,7 @@ Floo Quickstart — End-to-End Walkthrough
 
 ## 8. Local Development
 
-  floo dev --app my-app --service web
+  floo dev --app my-app
 
   Runs your service locally with live Cloud SQL access and the same env vars
   as the deployed version. Requires dev_command set on the service in floo.app.toml.
@@ -192,7 +192,8 @@ confirmation.
   floo services remove postgres --app <name>      # tier-3 destructive
   floo services migrate --app <name>              # convert legacy TOML to CLI-managed
 
-  On success, `floo services add/remove` updates .floo/services.lock
+  On success, `floo services add` and `floo services remove` update
+  .floo/services.lock
   (commit this file) so PR reviewers see managed-service state changes
   in `git diff` alongside code changes. The lock file is a record of
   state, not a source — platform is the source of truth.
@@ -1363,8 +1364,7 @@ Floo Templates — Copy-Paste App Structures
     # vite.config.ts proxy forwards /api/* to localhost:8080
 
   Or use floo dev for cloud-connected local development:
-    floo dev --app my-app --service api    # terminal 1
-    floo dev --app my-app --service web    # terminal 2
+  floo dev --app my-app                  # starts both services
 
 ### Env Vars
 
@@ -1517,14 +1517,14 @@ Two commands cover the daily Rails workflow once your first deploy is up.
 
 Local dev server with prod-shaped env:
 
-  floo dev --app my-rails-app --service web
+  floo dev --app my-rails-app
 
 Runs your dev_command locally with DATABASE_URL and other env vars
 sourced from floo. Real Cloud SQL connection, no exported credentials.
 
 Add --fixture-user to test signed-in (accounts-mode) flows locally:
 
-  floo dev --app my-rails-app --service web --fixture-user you@example.com
+  floo dev --app my-rails-app --fixture-user you@example.com
 
 The proxy injects the same X-Floo-User-* headers floo's gateway adds in
 production, so the controller reading those headers works locally with
@@ -1664,7 +1664,7 @@ Then in a Server Component or Route Handler:
 
 ## 7. Local dev
 
-  floo dev --app my-nextjs-app --service web
+  floo dev --app my-nextjs-app
 
 ## Gotchas
 
@@ -1738,7 +1738,7 @@ Then a FastAPI dependency:
 
 ## 6. Local dev
 
-  floo dev --app my-fastapi-app --service web
+  floo dev --app my-fastapi-app
 
 ## Gotchas
 
@@ -1830,7 +1830,7 @@ headers with HTTP_ and uppercases them):
 
 ## 7. Local dev
 
-  floo dev --app my-django-app --service web
+  floo dev --app my-django-app
 
 ## Gotchas
 
@@ -1904,7 +1904,7 @@ won't get set behind floo's edge.
 
 ## 7. Local dev
 
-  floo dev --app my-express-app --service web
+  floo dev --app my-express-app
 
 ## Gotchas
 
@@ -1967,7 +1967,7 @@ deploy (added, updated, or removed to match config).
   Useful for testing or one-off catch-up runs:
 
     floo cron run daily-report --app my-app
-    floo cron run daily-report --app my-app --dry-run   # preview, no API call
+    floo cron run daily-report --app my-app --preflight   # preview, no API call
 
 ## CLI surface
 

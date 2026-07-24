@@ -13,18 +13,18 @@ Floo deploys web apps from the terminal. All management happens through `floo` c
 1. `floo auth login` — authenticate (or `--api-key <key>` for CI)
 2. `floo init <app-name>` — scaffold config files (local only, no API call)
 3. `floo apps github connect owner/repo` — connect to GitHub and trigger first deploy
-4. `floo apps status <name>` — see your app's URL and status
+4. `floo apps show <name>` — see your app's URL and status
 
-After the first deploy, push to GitHub to trigger deploys automatically. Watch progress with `floo deploy watch`. All source comes from GitHub — the CLI never uploads code.
+After the first deploy, push to GitHub to trigger deploys automatically. Watch progress with `floo deploys watch`. All source comes from GitHub — the CLI never uploads code.
 
 ## How Deploys Work
 
-Pushing to GitHub triggers a deploy via webhook. Watch it with `floo deploy watch --app <name>`. Use `floo redeploy` only to force a redeploy without a code change (e.g., after updating env vars).
+Pushing to GitHub triggers a deploy via webhook. Watch it with `floo deploys watch --app <name>`. Use `floo redeploy` only to force a redeploy without a code change (e.g., after updating env vars).
 
 Normal workflow:
 
 ```bash
-git push origin main && floo deploy watch --app <name>
+git push origin main && floo deploys watch --app <name>
 ```
 
 Force redeploy (after env var change):
@@ -114,10 +114,10 @@ Most commands infer the app name from config files in the current directory. Use
 
 ## Dry Run
 
-`--dry-run` previews what a command will do without executing it. Supported on: `deploy`, `env set/remove/import`, `apps delete`, `domains add/remove`, `deploy rollback`.
+`--preflight` previews what a command will do without executing it. Supported on `redeploy`, `env set`, `env unset`, `env import`, `apps delete`, `domains add`, `domains remove`, and `deploys rollback`.
 
 ```bash
-floo redeploy --dry-run --json    # preview deploy without executing
+floo redeploy --preflight --json    # preview deploy without executing
 ```
 
 ## Common Workflows
@@ -129,7 +129,7 @@ floo env set API_KEY=secret --app my-app              # set a var
 floo env set DB_URL=... --app my-app --restart         # set and restart
 floo env list --app my-app --json                      # list all vars
 floo env import .env --app my-app                      # import from file
-floo env remove SECRET --app my-app                    # remove a var
+floo env unset SECRET --app my-app                     # remove a var
 floo env set KEY=VAL --app my-app --service backend   # target a specific service (multi-service apps)
 ```
 
@@ -145,10 +145,10 @@ floo logs --app my-app --search "panic" --json     # search + JSON
 ### Deploy Management
 
 ```bash
-floo deploy list --app my-app                      # deploy history
-floo deploy logs <deploy-id> --app my-app          # build logs
-floo deploy watch --app my-app                     # stream progress
-floo deploy rollback my-app <deploy-id>            # rollback
+floo deploys list --app my-app                     # deploy history
+floo deploys logs <deploy-id> --app my-app          # build logs
+floo deploys watch --app my-app                    # stream progress
+floo deploys rollback my-app <deploy-id>            # rollback
 floo redeploy --app my-app                         # force redeploy
 floo redeploy --service api --app my-app          # redeploy specific service
 ```

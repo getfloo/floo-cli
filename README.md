@@ -49,7 +49,7 @@ floo update --version v0.1.0
 
 ```bash
 # Authenticate
-floo login
+floo auth login
 
 # Connect and deploy your project
 cd my-project
@@ -57,7 +57,7 @@ floo apps github connect owner/repo
 
 # Manage apps
 floo apps list
-floo apps status my-app
+floo apps show my-app
 floo apps delete my-app
 
 # Environment variables

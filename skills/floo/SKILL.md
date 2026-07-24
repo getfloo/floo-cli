@@ -15,7 +15,7 @@ Agents are confident-and-wrong by default. Preflight is the mechanism that turns
 **No state change is complete until a read-only command has confirmed the change landed as expected.**
 
 1. **After any edit to `floo.app.toml` or `floo.service.toml`, run `floo preflight`.** Not "after a batch of edits" — every logical change. Read the output, confirm it matches intent.
-2. **After any mutation command (`floo env set/remove`, `floo services add/remove`, `floo domains add/remove`), run `floo preflight`.** Mutations cascade; preflight is the receipt.
+2. **After any mutation command (`floo env set` / `floo env unset`, `floo services add` / `floo services remove`, `floo domains add` / `floo domains remove`), run `floo preflight`.** Mutations cascade; preflight is the receipt.
 3. **Before `git push` / merge (the deploy trigger), run `floo preflight`.** Last safe checkpoint before the irreversible action. No exceptions.
 4. **If preflight shows changes you didn't intend, stop. Do not push.** Unexpected diff = silent corruption. Investigate before acting.
 5. **Use `floo preflight --json` for structured parsing.** Parse plans; don't screen-scrape.
@@ -27,10 +27,10 @@ Every mutation has a read-only partner that confirms it landed:
 | Mutation | Audit |
 |---|---|
 | edit `floo.app.toml` / `floo.service.toml` | `floo preflight` |
-| `floo env set/remove/import` | `floo preflight` + `floo env list` |
-| `floo services add/remove` | `floo preflight` + `floo services list` |
-| `floo domains add/remove` | `floo domains list` (verify CNAME target) |
-| merge to main (deploy) | `floo deploy watch` + `floo logs --live` |
+| `floo env set` / `floo env unset` / `floo env import` | `floo preflight` + `floo env list` |
+| `floo services add` / `floo services remove` | `floo preflight` + `floo services list` |
+| `floo domains add` / `floo domains remove` | `floo domains list` (verify CNAME target) |
+| merge to main (deploy) | `floo deploys watch` + `floo logs --live` |
 
 If a command you're about to run doesn't have an obvious audit partner, stop and ask before running it.
 
@@ -50,19 +50,19 @@ Legacy `[postgres]`/`[redis]`/`[storage]` sections in `floo.app.toml` are deprec
 1. `floo auth login` — sign up or log in (opens browser; use `--api-key <key>` for CI/headless)
 2. `floo init <app-name>` — scaffold config files (local only, no API call)
 3. `floo apps github connect owner/repo` — connect to GitHub and trigger first deploy
-4. `floo apps status <name>` — see your app's URL and status
+4. `floo apps show <name>` — see your app's URL and status
 
-After the first deploy, push to GitHub to trigger deploys automatically. Watch progress with `floo deploy watch`. All source comes from GitHub — the CLI never uploads code.
+After the first deploy, push to GitHub to trigger deploys automatically. Watch progress with `floo deploys watch`. All source comes from GitHub — the CLI never uploads code.
 
 ## How Deploys Work
 
-Pushing to GitHub triggers a deploy via webhook. Watch it with `floo deploy watch --app <name>`. Use `floo redeploy` only to force a redeploy without a code change (e.g., after updating env vars). Use `floo preflight` to validate config before pushing.
+Pushing to GitHub triggers a deploy via webhook. Watch it with `floo deploys watch --app <name>`. Use `floo redeploy` only to force a redeploy without a code change (e.g., after updating env vars). Use `floo preflight` to validate config before pushing.
 
 Normal workflow:
 
 ```bash
 floo preflight                                  # validate config
-git push origin main && floo deploy watch --app <name>
+git push origin main && floo deploys watch --app <name>
 ```
 
 Force redeploy (after env var change):
@@ -140,7 +140,7 @@ The CLI is fully self-documenting:
 Every command supports `--json`. JSON goes to stdout, human output to stderr.
 
 ```bash
-floo deploy --json 2>/dev/null | jq '.data.app.url'
+floo deploys list --json 2>/dev/null | jq '.data.deploys'
 ```
 
 Success: `{"success": true, "message": "...", "data": {...}}`
@@ -163,7 +163,7 @@ floo redeploy --preflight --json         # preview redeploy without executing
 floo env set FOO=bar --preflight         # preview a single mutation
 ```
 
-`--dry-run` is a deprecated alias for `--preflight` — it still works with a one-line deprecation notice, but new code should use `--preflight`. One word, one concept.
+`--dry-run` is a deprecated, hidden alias for `--preflight`; existing automation still works, but new code should use `--preflight`. One word, one concept.
 
 ## Common Workflows
 
@@ -174,7 +174,7 @@ floo env set API_KEY=secret --app my-app              # set a var
 floo env set DB_URL=... --app my-app --restart         # set and restart
 floo env list --app my-app --json                      # list all vars
 floo env import .env --app my-app                      # import from file
-floo env remove SECRET --app my-app                    # remove a var
+floo env unset SECRET --app my-app                     # remove a var
 floo env set KEY=VAL --app my-app --service backend   # target a specific service (multi-service apps)
 floo env set STRIPE_KEY --stdin --secret --app my-app  # write-only: floo never returns the value
 ```
@@ -198,7 +198,7 @@ floo logs --app my-app --cron nightly-report       # a specific cron job's outpu
 floo preflight                                     # audit declared vs deployed state
 floo preflight --json                              # structured plan for agents
 floo redeploy --app my-app                         # force redeploy (after env var changes)
-floo redeploy --restart --app my-app               # restart without rebuilding
+floo redeploy --app my-app                         # restart without rebuilding
 floo redeploy --service api --app my-app          # redeploy specific service
 floo redeploy --preflight --app my-app             # preview redeploy without executing
 ```
@@ -218,8 +218,8 @@ Legacy `[postgres]`/`[redis]`/`[storage]` sections in `floo.app.toml` still auto
 
 Commands that destroy state follow a tiered confirmation model:
 
-- **Tier 1 (reversible, no data):** `env remove`, scaling. Idempotent; no prompt.
-- **Tier 2 (destructive but recoverable from code):** `domains remove`, `deploy rollback`. `y/N` prompt, `--yes` to skip.
+- **Tier 1 (reversible, no data):** `env unset`, scaling. Idempotent; no prompt.
+- **Tier 2 (destructive but recoverable from code):** `domains remove`, `deploys rollback`. `y/N` prompt, `--yes` to skip.
 - **Tier 3 (unrecoverable data loss):** `apps delete`, `services remove <managed>`, `orgs delete`. Typed-name confirmation, or `--yes-i-know-this-destroys-data` to skip in automation. Never a plain `--yes`.
 
 Every destructive command's `--json` output includes `destructive: true, data_loss: true|false, tier: N` so agents can reason about risk from the contract, not the prompt text.
@@ -229,10 +229,10 @@ Every destructive command's `--json` output includes `destructive: true, data_lo
 ### Deploy History
 
 ```bash
-floo deploy list --app my-app                      # deploy history
-floo deploy logs <deploy-id> --app my-app          # build logs
-floo deploy watch --app my-app                     # stream progress
-floo deploy rollback my-app <deploy-id>            # rollback
+floo deploys list --app my-app                     # deploy history
+floo deploys logs <deploy-id> --app my-app          # build logs
+floo deploys watch --app my-app                    # stream progress
+floo deploys rollback my-app <deploy-id>            # rollback
 ```
 
 ### Custom Domains
