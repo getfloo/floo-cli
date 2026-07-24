@@ -2,7 +2,7 @@
 name = "floo"
 version = "0.0.0-dev"
 edition = "2021"
-description = "CLI for Floo — deploy, manage, and observe web apps"
+description = "CLI for floo: manage and observe web apps with git-driven deploys"
 license = "MIT"
 repository = "https://github.com/getfloo/floo-cli"
 homepage = "https://getfloo.com"
@@ -52,6 +52,7 @@ predicates = "3"
 tempfile = "3"
 mockito = "1"
 shlex = "1"
+syn = { version = "2", features = ["full", "visit"] }
 
 [profile.release]
 strip = true

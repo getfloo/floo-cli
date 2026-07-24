@@ -1,176 +1,76 @@
 ---
 name: floo
-description: Floo CLI command reference and patterns. Use when running floo commands, writing CLI integrations, debugging CLI behavior, or when the user mentions floo deploy, floo init, floo logs, floo env, or any floo subcommand.
+description: floo CLI discovery, operating invariants, and safety rules. Use when running floo commands, writing CLI integrations, debugging CLI behavior, or working with a floo project.
 user-invocable: false
 ---
 
-# Floo CLI
+# floo CLI
 
-Floo deploys web apps from the terminal. All management happens through `floo` commands.
+The installed `floo` binary is the version-matched source for command syntax and offline platform guidance. Do not rely on remembered flags or make a web request before checking it.
 
-## Getting Started
+## Discover before acting
 
-1. `floo auth login` — authenticate (or `--api-key <key>` for CI)
-2. `floo init <app-name>` — scaffold config files (local only, no API call)
-3. `floo apps github connect owner/repo` — connect to GitHub and trigger first deploy
-4. `floo apps show <name>` — see your app's URL and status
+Use these local surfaces in order:
 
-After the first deploy, push to GitHub to trigger deploys automatically. Watch progress with `floo deploys watch`. All source comes from GitHub — the CLI never uploads code.
+1. `floo commands --json` for the machine-readable command tree.
+2. `floo <command> --help` for exact flags, arguments, and examples.
+3. `floo docs --json` for the offline topic catalog.
+4. `floo docs <topic> --json` for version-matched platform guidance.
 
-## How Deploys Work
+The JSON docs index includes `schema_version`, `cli_version`, topic summaries, and aliases. If the installed binary lacks a needed capability, run `floo update` and check again. Use getfloo.com only when the bundled knowledge is insufficient and website access is permitted.
 
-Pushing to GitHub triggers a deploy via webhook. Watch it with `floo deploys watch --app <name>`. Use `floo redeploy` only to force a redeploy without a code change (e.g., after updating env vars).
+For automation, pass `--json`. JSON responses go to stdout; human output goes to stderr. Parse the response envelope instead of screen-scraping prose.
 
-Normal workflow:
+## Deploy invariant
 
-```bash
-git push origin main && floo deploys watch --app <name>
-```
+Deploys are git-driven:
 
-Force redeploy (after env var change):
+- A push or merge to the connected branch deploys dev.
+- A GitHub release promotes prod.
+- The CLI never uploads source and `floo init` only writes local config.
+- `floo redeploy` is for a no-code rebuild from connected GitHub source, such as applying changed environment values.
 
-```bash
-floo env set API_KEY=new-value --app my-app
-floo redeploy --app my-app
-```
+There is no normal deploy command. Validate with `floo preflight`, push through git, then observe with the current `deploys` and `logs` help surfaces.
 
-The API pulls source from GitHub, builds a container via Cloud Build, and deploys to Cloud Run. GitHub must be connected first (`floo apps github connect`).
+## Source of truth
 
-- `floo init` creates local config files only — no app is registered on the platform
-- `floo apps github connect` auto-creates the app if needed, connects GitHub, and triggers the first deploy (use `--no-deploy` to skip)
-- `floo redeploy` forces a redeploy of the latest code (use after env var changes or config updates)
+Auditable app shape and policy belong in `floo.app.toml` and move through git. This includes services, routes, access policy, cron, domain bindings, and managed-service declarations supported by the installed version. Opaque secret values stay outside git and are written through the CLI. Stateful resources and external bindings have explicit CLI lifecycle actions; omitting a declaration never grants permission to destroy stored data.
 
-## Config Files
+When older projects use a legacy authoring surface, follow the migration guidance in `floo docs config` or `floo docs services`. Do not create a second write path for the same state.
 
-Single-service app — `floo.service.toml` in project root:
+## Audit every mutation
 
-```toml
-[app]
-name = "my-app"
+No state change is complete until a read-only command confirms the resulting state.
 
-[service]
-name = "web"
-port = 3000
-type = "web"          # web | api | worker
-ingress = "public"    # public | internal
-env_file = ".env"     # optional, synced on deploy
-```
+- After editing floo config, run `floo preflight --json`.
+- Before a mutation, use its `--preflight` form when available.
+- After an environment change, inspect the relevant `env` read surface and run preflight.
+- After a service or domain change, inspect its list/show surface and run preflight.
+- After a git-triggered deploy, watch the deployment and inspect runtime logs.
+- If the audit differs from intent, stop and investigate before another mutation or push.
 
-Multi-service app (inline) — `floo.app.toml` with type/port per service:
+`--dry-run` is a compatibility alias for `--preflight`. Use `--preflight` in new work.
 
-```toml
-[app]
-name = "my-app"
+## Destructive actions
 
-[services.api]
-type = "api"
-path = "./api"
-port = 8080
+Resolve the exact app, environment, service, and resource before destructive work. Preview first, read the command's current help, and request explicit user authorization for the specific data-bearing target. Never infer approval from a general request or bypass a typed data-loss confirmation.
 
-[services.web]
-type = "web"
-path = "./web"
-port = 3000
-```
+## Secrets
 
-Multi-service app (delegated) — `floo.app.toml` with paths, plus a `floo.service.toml` in each service dir:
+Never place credentials in source, committed `.env` files, floo TOML, logs, errors, or frontend build variables. Prefer stdin and the CLI's write-only secret mode when available. After writing a secret, verify only its key and metadata; do not attempt to reveal its value.
 
-```toml
-[app]
-name = "my-app"
+## Topic routing
 
-[services.api]
-path = "./api"
+- Setup and first deploy: `floo docs quickstart`
+- Decision flow: `floo docs golden-path`
+- Config and secret behavior: `floo docs config`
+- Services and data: `floo docs services`
+- Managed-service health and accounts drift: `floo docs doctor`
+- Git-driven deployment: `floo docs deploy`
+- Routes and access controls: `floo docs edge`
+- Hosted-app authentication: `floo docs auth`
+- Scheduled jobs: `floo docs cron`
+- Preview environments: `floo docs previews`
+- Outbound networking: `floo docs egress`
 
-[services.web]
-path = "./web"
-```
-
-Inline and delegated are mutually exclusive per service directory. Do not mix both.
-
-## Self-Discovery
-
-The CLI is fully self-documenting:
-
-- `floo --help` — all commands
-- `floo <command> --help` — command details with examples
-- `floo docs` — platform overview (services, deploys, config)
-- `floo commands --json` — structured command tree for agents
-
-## Agent Output
-
-Every command supports `--json`. JSON goes to stdout, human output to stderr.
-
-```bash
-floo redeploy --json 2>/dev/null | jq '.data.app.url'
-```
-
-Success: `{"success": true, "message": "...", "data": {...}}`
-Error: `{"success": false, "error": {"code": "...", "message": "...", "suggestion": "..."}}`
-
-## The `--app` Flag
-
-Most commands infer the app name from config files in the current directory. Use `--app <name>` to override or when running outside the project directory.
-
-## Dry Run
-
-`--preflight` previews what a command will do without executing it. Supported on `redeploy`, `env set`, `env unset`, `env import`, `apps delete`, `domains add`, `domains remove`, and `deploys rollback`.
-
-```bash
-floo redeploy --preflight --json    # preview deploy without executing
-```
-
-## Common Workflows
-
-### Environment Variables
-
-```bash
-floo env set API_KEY=secret --app my-app              # set a var
-floo env set DB_URL=... --app my-app --restart         # set and restart
-floo env list --app my-app --json                      # list all vars
-floo env import .env --app my-app                      # import from file
-floo env unset SECRET --app my-app                     # remove a var
-floo env set KEY=VAL --app my-app --service backend   # target a specific service (multi-service apps)
-```
-
-### Logs and Debugging
-
-```bash
-floo logs --app my-app                             # last 100 lines
-floo logs --app my-app --since 1h --error          # errors in last hour
-floo logs --app my-app --live                      # stream real-time
-floo logs --app my-app --search "panic" --json     # search + JSON
-```
-
-### Deploy Management
-
-```bash
-floo deploys list --app my-app                     # deploy history
-floo deploys logs <deploy-id> --app my-app          # build logs
-floo deploys watch --app my-app                    # stream progress
-floo deploys rollback my-app <deploy-id>            # rollback
-floo redeploy --app my-app                         # force redeploy
-floo redeploy --service api --app my-app          # redeploy specific service
-```
-
-### Custom Domains
-
-```bash
-floo domains add app.example.com --app my-app                       # single-service app
-floo domains add app.example.com --app my-app --service frontend   # target a specific service (multi-service)
-floo domains list --app my-app
-```
-
-### Local Development
-
-```bash
-floo dev                                   # start all services locally with managed-service credentials
-floo dev --app my-app                      # explicitly specify the app
-```
-
-### Cron Jobs
-
-```bash
-floo cron list --app my-app                # list cron jobs and last run status
-floo cron run daily-report --app my-app    # manually trigger a cron job
-```
+If the CLI or platform is confusing, submit a concise report with `floo feedback "sanitized description" --json`, including the failing command, sanitized output, expected behavior, and reproduction context.
