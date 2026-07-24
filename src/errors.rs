@@ -302,6 +302,15 @@ impl FlooApiError {
     pub fn is_not_found(&self) -> bool {
         self.status_code == 404
     }
+
+    /// True only for FastAPI's generic missing-route response.
+    ///
+    /// This is deliberately narrower than `is_not_found`: a structured
+    /// `APP_NOT_FOUND` or ownership 404 from a real endpoint is authoritative
+    /// and must never be mistaken for an older server that lacks the route.
+    pub fn is_missing_route(&self) -> bool {
+        self.status_code == 404 && self.code == "API_ERROR" && self.message == "Not Found"
+    }
 }
 
 #[cfg(test)]
@@ -352,6 +361,13 @@ mod tests {
         // A non-404 status must stay not-found=false even if some unrelated
         // payload happened to carry a NOT_FOUND-ish code.
         assert!(!FlooApiError::new(400, "NOT_FOUND", "weird").is_not_found());
+    }
+
+    #[test]
+    fn test_is_missing_route_matches_only_generic_fastapi_404() {
+        assert!(FlooApiError::new(404, "API_ERROR", "Not Found").is_missing_route());
+        assert!(!FlooApiError::new(404, "APP_NOT_FOUND", "App not found.").is_missing_route());
+        assert!(!FlooApiError::new(404, "API_ERROR", "App not found.").is_missing_route());
     }
 
     #[test]
