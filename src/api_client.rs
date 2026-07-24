@@ -185,7 +185,11 @@ impl FlooClient {
             return Err(self.handle_error(response));
         }
         response.json::<T>().map_err(|e| {
-            FlooApiError::new(500, "PARSE_ERROR", format!("Failed to parse response: {e}"))
+            FlooApiError::new(
+                status,
+                "PARSE_ERROR",
+                format!("Failed to parse response: {e}"),
+            )
         })
     }
 
@@ -1277,6 +1281,23 @@ impl FlooClient {
         };
         let resp = self.post_json(&format!("/v1/apps/{app_id}/restart"), &body)?;
         self.handle_response(resp)
+    }
+
+    pub fn preflight_restart(
+        &self,
+        app_id: &str,
+        services: Option<&[String]>,
+    ) -> Result<(), FlooApiError> {
+        let query: Vec<(&str, &str)> = services
+            .unwrap_or_default()
+            .iter()
+            .map(|service| ("services", service.as_str()))
+            .collect();
+        let resp = self.get_with_query(&format!("/v1/apps/{app_id}/restart/preflight"), &query)?;
+        if resp.status().as_u16() >= 400 {
+            return Err(self.handle_error(resp));
+        }
+        Ok(())
     }
 
     pub fn rebuild_app(

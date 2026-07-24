@@ -8,10 +8,10 @@ use crate::deploy_status;
 use crate::errors::ErrorCode;
 use crate::output;
 use crate::project_config;
+use serde::Serialize;
 
 const DEPLOY_HINT: &str =
     "Push a commit to trigger a deploy with the updated env vars, or run: floo redeploy";
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -54,6 +54,86 @@ fn format_target(app_name: &str, service_name: Option<&str>) -> String {
     match service_name {
         Some(sn) => format!("{app_name}/{sn}"),
         None => app_name.to_string(),
+    }
+}
+
+#[derive(Serialize)]
+struct FailedEnvTarget {
+    target: String,
+    outcome: TargetOutcome,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum TargetOutcome {
+    Rejected,
+    Unknown,
+    CommittedResponseUnreadable,
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum EnvUpdateState {
+    NotStarted,
+    NotUpdated,
+    Partial,
+    Complete,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum RestartState {
+    NotRequested,
+    PreflightFailed,
+    NotStarted,
+    AttemptCreated,
+    Started,
+    Failed,
+    Unknown,
+}
+
+impl RestartState {
+    fn started(self) -> Option<bool> {
+        match self {
+            Self::NotStarted | Self::PreflightFailed => Some(false),
+            Self::Started | Self::Failed => Some(true),
+            Self::NotRequested | Self::AttemptCreated | Self::Unknown => None,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct EnvSetFailureData {
+    env_updated: Option<bool>,
+    env_update_state: EnvUpdateState,
+    restart_started: Option<bool>,
+    restart_state: RestartState,
+    results: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    failed_target: Option<FailedEnvTarget>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    unattempted_targets: Vec<String>,
+}
+
+impl EnvSetFailureData {
+    fn new(
+        env_updated: Option<bool>,
+        env_update_state: EnvUpdateState,
+        restart_state: RestartState,
+        results: Vec<serde_json::Value>,
+        failed_target: Option<FailedEnvTarget>,
+        unattempted_targets: Vec<String>,
+    ) -> Self {
+        Self {
+            env_updated,
+            env_update_state,
+            restart_started: restart_state.started(),
+            restart_state,
+            results,
+            failed_target,
+            unattempted_targets,
+        }
     }
 }
 
@@ -356,6 +436,15 @@ pub fn set(
         key_value.split_once('=').unwrap().0.to_uppercase()
     };
 
+    if restart && env != "dev" {
+        output::error(
+            "`--restart` only targets dev, so it cannot be combined with another `--env`.",
+            &ErrorCode::InvalidArguments,
+            Some("Set the value without `--restart`. The next release applies prod env changes."),
+        );
+        process::exit(1);
+    }
+
     if output::is_dry_run_mode() {
         // Dry-run mutates nothing, so it must NOT consume stdin or read the
         // file — it previews the key/target only.
@@ -395,12 +484,58 @@ pub fn set(
     let client = super::init_client(None);
     let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
     let targets = resolve_service_ids(&client, &app_id, &app_name, service_names);
+    let target_names: Vec<String> = targets
+        .iter()
+        .map(|(_, service_name)| format_target(&app_name, service_name.as_deref()))
+        .collect();
+
+    if restart {
+        let services = (!service_names.is_empty()).then_some(service_names);
+        match client.preflight_restart(&app_id, services) {
+            Ok(()) => {}
+            // Compatibility with API revisions that predate restart preflight:
+            // fall back only for FastAPI's generic missing-route response.
+            Err(e) if e.is_missing_route() => {}
+            Err(e) => {
+                let is_active_deploy = e.code == "DEPLOY_IN_PROGRESS";
+                let message = if is_active_deploy {
+                    "Restart did not start because a deploy is already in progress. No env values were changed."
+                } else {
+                    "Restart preflight failed. No env values were changed."
+                };
+                let suggestion = if is_active_deploy {
+                    "Wait for the active deploy to finish, then retry."
+                } else {
+                    "Resolve the restart error, then retry."
+                };
+                output::error_with_data(
+                    message,
+                    &ErrorCode::from_api(&e.code),
+                    Some(suggestion),
+                    Some(output::to_value(&EnvSetFailureData::new(
+                        Some(false),
+                        EnvUpdateState::NotStarted,
+                        if is_active_deploy {
+                            RestartState::NotStarted
+                        } else {
+                            RestartState::PreflightFailed
+                        },
+                        Vec::new(),
+                        None,
+                        target_names.clone(),
+                    ))),
+                );
+                process::exit(1);
+            }
+        }
+    }
 
     // Read the side-channel value only AFTER every "this set can't run" check
-    // (auth, app/target resolution) has passed. Reading first would block an
-    // interactive `--stdin` on EOF — or consume a secret file/FIFO — for a
-    // logged-out user or a multi-service app with no `--services`, then error
-    // anyway (codex #1152). Dry-run already returned above without reading.
+    // (auth, app/target resolution, restart preflight) has passed. Reading first
+    // would block an interactive `--stdin` on EOF — or consume a secret
+    // file/FIFO — for a logged-out user, an invalid target, or a blocked
+    // restart, then error anyway (codex #1152, getfloo/floo#1779). Dry-run
+    // already returned above without reading.
     let value: String = match value_source {
         ValueSource::Stdin => read_stdin_value(),
         ValueSource::File(path) => read_value_file(path),
@@ -408,7 +543,7 @@ pub fn set(
     };
 
     let mut results: Vec<serde_json::Value> = Vec::new();
-    for (service_id, service_name) in &targets {
+    for (index, (service_id, service_name)) in targets.iter().enumerate() {
         match client.set_env_var(&app_id, &key, &value, service_id.as_deref(), env, secret) {
             Ok(result) => {
                 let target = format_target(&app_name, service_name.as_deref());
@@ -423,7 +558,84 @@ pub fn set(
                 }
             }
             Err(e) => {
-                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                let target = target_names[index].clone();
+                let unattempted_targets = target_names[index + 1..].to_vec();
+                let prior_count = results.len();
+                let outcome = if e.code == "PARSE_ERROR" && (200..400).contains(&e.status_code) {
+                    TargetOutcome::CommittedResponseUnreadable
+                } else if (400..500).contains(&e.status_code) {
+                    TargetOutcome::Rejected
+                } else {
+                    TargetOutcome::Unknown
+                };
+                let current_committed = outcome == TargetOutcome::CommittedResponseUnreadable;
+                let has_confirmed_write = prior_count > 0 || current_committed;
+                let env_updated = if has_confirmed_write {
+                    Some(true)
+                } else if outcome == TargetOutcome::Unknown {
+                    None
+                } else {
+                    Some(false)
+                };
+                let env_update_state = if outcome == TargetOutcome::Unknown {
+                    EnvUpdateState::Unknown
+                } else if outcome == TargetOutcome::Rejected && has_confirmed_write {
+                    EnvUpdateState::Partial
+                } else if has_confirmed_write && unattempted_targets.is_empty() {
+                    EnvUpdateState::Complete
+                } else if has_confirmed_write {
+                    EnvUpdateState::Partial
+                } else {
+                    EnvUpdateState::NotUpdated
+                };
+                let restart_suffix = if restart {
+                    " Restart did not start."
+                } else {
+                    ""
+                };
+                let message = match outcome {
+                    TargetOutcome::CommittedResponseUnreadable => format!(
+                        "Saved {key} on {target}, but its response could not be read.{restart_suffix}"
+                    ),
+                    TargetOutcome::Rejected if prior_count > 0 => format!(
+                        "Saved {key} on {prior_count} target(s), then the update failed on {target}: {}{restart_suffix}",
+                        e.message
+                    ),
+                    TargetOutcome::Rejected => format!(
+                        "Could not save {key} on {target}: {}{restart_suffix}",
+                        e.message
+                    ),
+                    TargetOutcome::Unknown if prior_count > 0 => format!(
+                        "Saved {key} on {prior_count} target(s). The update outcome for {target} is unknown: {}{restart_suffix}",
+                        e.message
+                    ),
+                    TargetOutcome::Unknown => format!(
+                        "The update outcome for {target} is unknown: {}{restart_suffix}",
+                        e.message
+                    ),
+                };
+                let suggestion = if outcome == TargetOutcome::Unknown {
+                    Some("Check `floo env list` before retrying.")
+                } else {
+                    None
+                };
+                output::error_with_data(
+                    &message,
+                    &ErrorCode::from_api(&e.code),
+                    suggestion,
+                    Some(output::to_value(&EnvSetFailureData::new(
+                        env_updated,
+                        env_update_state,
+                        if restart {
+                            RestartState::NotStarted
+                        } else {
+                            RestartState::NotRequested
+                        },
+                        results,
+                        Some(FailedEnvTarget { target, outcome }),
+                        unattempted_targets,
+                    ))),
+                );
                 process::exit(1);
             }
         }
@@ -461,7 +673,65 @@ pub fn set(
             }
             Err(e) => {
                 spinner.finish();
-                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                let (restart_state, message, suggestion) = match e.code.as_str() {
+                        "DEPLOY_IN_PROGRESS" => (
+                            RestartState::NotStarted,
+                            format!(
+                                "Saved {key} on {} target(s), but restart did not start: {}",
+                                results.len(),
+                                e.message
+                            ),
+                            Some("Wait for the active deploy to finish, then run `floo redeploy`."),
+                        ),
+                        "RESTART_DISPATCH_FAILED" => (
+                            RestartState::AttemptCreated,
+                            format!(
+                                "Saved {key} on {} target(s). A restart attempt was created, but dispatch outcome is unknown: {}",
+                                results.len(),
+                                e.message
+                            ),
+                            Some("Check `floo deploys list` before retrying."),
+                        ),
+                        "RESTART_PIPELINE_FAILED" => (
+                            RestartState::Failed,
+                            format!(
+                                "Saved {key} on {} target(s). Restart started and failed: {}",
+                                results.len(),
+                                e.message
+                            ),
+                            Some("Run `floo logs` for details."),
+                        ),
+                        "PARSE_ERROR" if (200..400).contains(&e.status_code) => (
+                            RestartState::Started,
+                            format!(
+                                "Saved {key} on {} target(s). Restart started, but its response could not be read.",
+                                results.len()
+                            ),
+                            Some("Check `floo deploys list` before retrying."),
+                        ),
+                        _ => (
+                            RestartState::Unknown,
+                            format!(
+                                "Saved {key} on {} target(s). Restart outcome is unknown: {}",
+                                results.len(),
+                                e.message
+                            ),
+                            Some("Check `floo deploys list` before retrying."),
+                        ),
+                    };
+                output::error_with_data(
+                    &message,
+                    &ErrorCode::from_api(&e.code),
+                    suggestion,
+                    Some(output::to_value(&EnvSetFailureData::new(
+                        Some(true),
+                        EnvUpdateState::Complete,
+                        restart_state,
+                        results,
+                        None,
+                        Vec::new(),
+                    ))),
+                );
                 process::exit(1);
             }
         };
@@ -492,12 +762,16 @@ pub fn set(
             process::exit(1);
         }
 
-        // cancelled = the target env was torn down before the restart ran: a moot
-        // terminal (not a failure — exit 0), but don't claim it "Restarted".
-        let restart_msg = if final_status == "cancelled" {
-            "Restart cancelled: its target environment was removed before it ran.".to_string()
-        } else {
-            format!("Restarted {url}")
+        // A 202 response confirms the restart attempt started, not that it has
+        // already reached LIVE. Keep this command to one JSON document and let
+        // `floo deploys watch` own completion streaming.
+        let restart_msg = match final_status {
+            "cancelled" => {
+                "Restart cancelled: its target environment was removed before it ran.".to_string()
+            }
+            "superseded" => "Restart superseded by a newer deploy.".to_string(),
+            "live" => format!("Restarted {url}"),
+            _ => "Restart started.".to_string(),
         };
         output::success(
             &restart_msg,

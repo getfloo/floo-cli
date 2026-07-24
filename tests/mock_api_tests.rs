@@ -775,6 +775,814 @@ fn set_env_response_body() -> &'static str {
     }"#
 }
 
+fn env_set_response(key: &str, service_id: Option<&str>, id: &str) -> String {
+    let service_id = service_id
+        .map(|value| format!(r#""{value}""#))
+        .unwrap_or_else(|| "null".to_string());
+    format!(
+        r#"{{
+            "id":"{id}",
+            "app_id":"00000000-0000-0000-0000-0000000000aa",
+            "environment_id":"00000000-0000-0000-0000-0000000000ee",
+            "service_id":{service_id},
+            "key":"{key}",
+            "masked_value":"value****",
+            "created_at":"2026-04-24T00:00:00Z",
+            "updated_at":"2026-04-24T00:00:00Z"
+        }}"#
+    )
+}
+
+fn mock_restart_preflight(server: &mut Server, status: usize, body: impl Into<String>) -> Mock {
+    server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/restart/preflight").as_str(),
+        )
+        .with_status(status)
+        .with_header("content-type", "application/json")
+        .with_body(body.into())
+        .create()
+}
+
+fn mock_empty_restart_preflight(server: &mut Server) -> Mock {
+    mock_restart_preflight(server, 204, "")
+}
+
+fn mock_multi_service_restart_preflight(server: &mut Server) -> Mock {
+    server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/restart/preflight").as_str(),
+        )
+        .match_query(Matcher::Exact("services=web&services=api".into()))
+        .with_status(204)
+        .create()
+}
+
+fn mock_env_set(
+    server: &mut Server,
+    service_id: &str,
+    status: usize,
+    body: impl Into<String>,
+) -> Mock {
+    server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/env").as_str())
+        .match_query(Matcher::UrlEncoded("env".into(), "dev".into()))
+        .match_body(Matcher::Regex(format!(r#""service_id":"{service_id}""#)))
+        .with_status(status)
+        .with_header("content-type", "application/json")
+        .with_body(body.into())
+        .create()
+}
+
+#[test]
+fn test_env_set_restart_preflight_blocks_before_write() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
+    let _preflight = mock_restart_preflight(
+        &mut server,
+        409,
+        r#"{"detail":{"code":"DEPLOY_IN_PROGRESS","message":"A deploy is already in progress."}}"#,
+    );
+    let _no_set = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/env").as_str())
+        .match_query(Matcher::UrlEncoded("env".into(), "dev".into()))
+        .expect(0)
+        .create();
+    let _no_restart = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/restart").as_str())
+        .expect(0)
+        .create();
+
+    let assert = floo()
+        .args([
+            "--json",
+            "env",
+            "set",
+            "MY_KEY=my_value",
+            "--restart",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure();
+
+    let output: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(
+        output,
+        serde_json::json!({
+            "success": false,
+            "error": {
+                "code": "DEPLOY_IN_PROGRESS",
+                "message": "Restart did not start because a deploy is already in progress. No env values were changed.",
+                "suggestion": "Wait for the active deploy to finish, then retry."
+            },
+            "data": {
+                "env_updated": false,
+                "env_update_state": "not_started",
+                "restart_started": false,
+                "restart_state": "not_started",
+                "results": [],
+                "unattempted_targets": ["my-app/web"]
+            }
+        })
+    );
+}
+
+#[test]
+fn test_env_set_restart_refusal_reports_single_persisted_write() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
+    let _preflight = mock_empty_restart_preflight(&mut server);
+    let _set = mock_env_set(
+        &mut server,
+        TEST_SERVICE_ID,
+        200,
+        env_set_response("MY_KEY", Some(TEST_SERVICE_ID), "env-web"),
+    );
+    let _restart = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/restart").as_str(),
+        )
+        .with_status(409)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"detail":{"code":"DEPLOY_IN_PROGRESS","message":"A deploy is already in progress."}}"#,
+        )
+        .create();
+
+    let assert = floo()
+        .args([
+            "--json",
+            "env",
+            "set",
+            "MY_KEY=my_value",
+            "--restart",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure();
+
+    let output: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(output["success"], false);
+    assert_eq!(output["error"]["code"], "DEPLOY_IN_PROGRESS");
+    assert_eq!(output["data"]["env_updated"], true);
+    assert_eq!(output["data"]["env_update_state"], "complete");
+    assert_eq!(output["data"]["restart_started"], false);
+    assert_eq!(output["data"]["restart_state"], "not_started");
+    assert_eq!(output["data"]["results"].as_array().unwrap().len(), 1);
+    assert_eq!(output["data"]["results"][0]["service_id"], TEST_SERVICE_ID);
+}
+
+#[test]
+fn test_env_set_restart_refusal_reports_every_persisted_service_write() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_two(&mut server);
+    let _preflight = mock_multi_service_restart_preflight(&mut server);
+    let _set_web = mock_env_set(
+        &mut server,
+        TEST_SERVICE_ID,
+        200,
+        env_set_response("MY_KEY", Some(TEST_SERVICE_ID), "env-web"),
+    );
+    let _set_api = mock_env_set(
+        &mut server,
+        "svc-uuid-5678",
+        200,
+        env_set_response("MY_KEY", Some("svc-uuid-5678"), "env-api"),
+    );
+    let _restart = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/restart").as_str(),
+        )
+        .with_status(409)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"detail":{"code":"DEPLOY_IN_PROGRESS","message":"A deploy is already in progress."}}"#,
+        )
+        .create();
+
+    let assert = floo()
+        .args([
+            "--json",
+            "env",
+            "set",
+            "MY_KEY=my_value",
+            "--services",
+            "web,api",
+            "--restart",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure();
+
+    let output: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(output["error"]["code"], "DEPLOY_IN_PROGRESS");
+    assert_eq!(output["data"]["env_updated"], true);
+    assert_eq!(output["data"]["restart_started"], false);
+    assert_eq!(output["data"]["results"].as_array().unwrap().len(), 2);
+    assert_eq!(output["data"]["results"][0]["service_id"], TEST_SERVICE_ID);
+    assert_eq!(output["data"]["results"][1]["service_id"], "svc-uuid-5678");
+}
+
+#[test]
+fn test_env_set_restart_refusal_human_output_names_saved_state() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
+    let _preflight = mock_empty_restart_preflight(&mut server);
+    let _set = mock_env_set(
+        &mut server,
+        TEST_SERVICE_ID,
+        200,
+        env_set_response("MY_KEY", Some(TEST_SERVICE_ID), "env-web"),
+    );
+    let _restart = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/restart").as_str(),
+        )
+        .with_status(409)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"detail":{"code":"DEPLOY_IN_PROGRESS","message":"A deploy is already in progress."}}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "env",
+            "set",
+            "MY_KEY=my_value",
+            "--restart",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Set MY_KEY on my-app/web."))
+        .stderr(predicate::str::contains(
+            "Saved MY_KEY on 1 target(s), but restart did not start",
+        ));
+}
+
+#[test]
+fn test_env_set_restart_rejects_prod_before_dry_run_or_io() {
+    let server = Server::new();
+    let home = setup_config(&server);
+
+    let assert = floo()
+        .args([
+            "--json",
+            "env",
+            "set",
+            "MY_KEY",
+            "--stdin",
+            "--env",
+            "prod",
+            "--restart",
+            "--dry-run",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .write_stdin("must-not-be-consumed")
+        .assert()
+        .failure();
+
+    let output: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(output["error"]["code"], "INVALID_ARGUMENTS");
+    assert!(output["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("only targets dev"));
+}
+
+#[test]
+fn test_env_set_restart_preflight_falls_back_only_when_route_is_missing() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
+    let _preflight = mock_restart_preflight(&mut server, 404, r#"{"detail":"Not Found"}"#);
+    let _set = mock_env_set(
+        &mut server,
+        TEST_SERVICE_ID,
+        200,
+        env_set_response("MY_KEY", Some(TEST_SERVICE_ID), "env-web"),
+    );
+    let _restart = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/restart").as_str())
+        .with_status(202)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"id":"restart-new","status":"pending","url":null}"#)
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "env",
+            "set",
+            "MY_KEY=my_value",
+            "--restart",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_env_set_restart_preflight_keeps_structured_app_not_found_terminal() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
+    let _preflight = mock_restart_preflight(
+        &mut server,
+        404,
+        r#"{"detail":{"code":"APP_NOT_FOUND","message":"App not found."}}"#,
+    );
+    let _no_set = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/env").as_str())
+        .expect(0)
+        .create();
+    let _no_restart = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/restart").as_str())
+        .expect(0)
+        .create();
+
+    let assert = floo()
+        .args([
+            "--json",
+            "env",
+            "set",
+            "MY_KEY=my_value",
+            "--restart",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure();
+
+    let output: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(output["error"]["code"], "APP_NOT_FOUND");
+    assert_eq!(output["data"]["env_updated"], false);
+    assert_eq!(output["data"]["restart_state"], "preflight_failed");
+}
+
+#[test]
+fn test_env_set_restart_preflight_failure_mutates_nothing() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
+    let _preflight = mock_restart_preflight(
+        &mut server,
+        503,
+        r#"{"detail":{"code":"SERVICE_UNAVAILABLE","message":"Deploy state is unavailable."}}"#,
+    );
+    let _no_set = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/env").as_str())
+        .match_query(Matcher::UrlEncoded("env".into(), "dev".into()))
+        .expect(0)
+        .create();
+
+    let assert = floo()
+        .args([
+            "--json",
+            "env",
+            "set",
+            "MY_KEY",
+            "--stdin",
+            "--restart",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .write_stdin("must-not-be-used")
+        .assert()
+        .failure();
+
+    let output: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(output["error"]["code"], "SERVICE_UNAVAILABLE");
+    assert_eq!(output["data"]["env_updated"], false);
+    assert_eq!(output["data"]["restart_started"], false);
+    assert_eq!(output["data"]["restart_state"], "preflight_failed");
+}
+
+#[test]
+fn test_env_set_reports_partial_multi_service_write_failure() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_two(&mut server);
+    let _preflight = mock_multi_service_restart_preflight(&mut server);
+    let _set_web = mock_env_set(
+        &mut server,
+        TEST_SERVICE_ID,
+        200,
+        env_set_response("MY_KEY", Some(TEST_SERVICE_ID), "env-web"),
+    );
+    let _set_api = mock_env_set(
+        &mut server,
+        "svc-uuid-5678",
+        422,
+        r#"{"detail":{"code":"INVALID_ENV_VALUE","message":"Value rejected."}}"#,
+    );
+    let _no_restart = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/restart").as_str())
+        .expect(0)
+        .create();
+
+    let assert = floo()
+        .args([
+            "--json",
+            "env",
+            "set",
+            "MY_KEY=my_value",
+            "--services",
+            "web,api",
+            "--restart",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure();
+
+    let output: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(output["error"]["code"], "INVALID_ENV_VALUE");
+    assert_eq!(output["data"]["env_updated"], true);
+    assert_eq!(output["data"]["env_update_state"], "partial");
+    assert_eq!(output["data"]["restart_started"], false);
+    assert_eq!(
+        output["data"]["failed_target"],
+        serde_json::json!({"target": "my-app/api", "outcome": "rejected"})
+    );
+    assert_eq!(output["data"]["results"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn test_env_set_reports_unknown_single_write_without_claiming_no_update() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
+    let _preflight = mock_empty_restart_preflight(&mut server);
+    let _set = mock_env_set(
+        &mut server,
+        TEST_SERVICE_ID,
+        503,
+        r#"{"detail":{"code":"SERVICE_UNAVAILABLE","message":"Write response unavailable."}}"#,
+    );
+    let _no_restart = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/restart").as_str())
+        .expect(0)
+        .create();
+
+    let assert = floo()
+        .args([
+            "--json",
+            "env",
+            "set",
+            "MY_KEY=my_value",
+            "--restart",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure();
+
+    let output: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(output["error"]["code"], "SERVICE_UNAVAILABLE");
+    assert_eq!(output["data"]["env_updated"], serde_json::Value::Null);
+    assert_eq!(output["data"]["env_update_state"], "unknown");
+    assert_eq!(output["data"]["restart_started"], false);
+    assert_eq!(
+        output["data"]["failed_target"],
+        serde_json::json!({"target": "my-app/web", "outcome": "unknown"})
+    );
+}
+
+#[test]
+fn test_env_set_restart_unknown_error_does_not_claim_rollback_or_refusal() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
+    let _preflight = mock_empty_restart_preflight(&mut server);
+    let _set = mock_env_set(
+        &mut server,
+        TEST_SERVICE_ID,
+        200,
+        env_set_response("MY_KEY", Some(TEST_SERVICE_ID), "env-web"),
+    );
+    let _restart = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/restart").as_str())
+        .with_status(500)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"detail":{"code":"RESTART_BACKEND_ERROR","message":"Restart response failed."}}"#,
+        )
+        .create();
+
+    let assert = floo()
+        .args([
+            "--json",
+            "env",
+            "set",
+            "MY_KEY=my_value",
+            "--restart",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure();
+
+    let output: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(output["data"]["env_updated"], true);
+    assert_eq!(output["data"]["restart_started"], serde_json::Value::Null);
+    assert_eq!(output["data"]["restart_state"], "unknown");
+    assert!(output["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("outcome is unknown"));
+}
+
+#[test]
+fn test_env_set_restart_dispatch_failure_reports_created_attempt() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
+    let _preflight = mock_empty_restart_preflight(&mut server);
+    let _set = mock_env_set(
+        &mut server,
+        TEST_SERVICE_ID,
+        200,
+        env_set_response("MY_KEY", Some(TEST_SERVICE_ID), "env-web"),
+    );
+    let _restart = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/restart").as_str())
+        .with_status(503)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":{"code":"RESTART_DISPATCH_FAILED","message":"Dispatch failed."}}"#)
+        .create();
+
+    let assert = floo()
+        .args([
+            "--json",
+            "env",
+            "set",
+            "MY_KEY=my_value",
+            "--restart",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure();
+
+    let output: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(output["error"]["code"], "RESTART_DISPATCH_FAILED");
+    assert_eq!(output["data"]["env_updated"], true);
+    assert_eq!(output["data"]["restart_started"], serde_json::Value::Null);
+    assert_eq!(output["data"]["restart_state"], "attempt_created");
+}
+
+#[test]
+fn test_env_set_restart_pipeline_failure_reports_started_and_failed() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
+    let _preflight = mock_empty_restart_preflight(&mut server);
+    let _set = mock_env_set(
+        &mut server,
+        TEST_SERVICE_ID,
+        200,
+        env_set_response("MY_KEY", Some(TEST_SERVICE_ID), "env-web"),
+    );
+    let _restart = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/restart").as_str())
+        .with_status(500)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"detail":{"code":"RESTART_PIPELINE_FAILED","message":"Restart pipeline failed unexpectedly."}}"#,
+        )
+        .create();
+
+    let assert = floo()
+        .args([
+            "--json",
+            "env",
+            "set",
+            "MY_KEY=my_value",
+            "--restart",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure();
+
+    let output: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(output["error"]["code"], "RESTART_PIPELINE_FAILED");
+    assert_eq!(output["data"]["env_updated"], true);
+    assert_eq!(output["data"]["restart_started"], true);
+    assert_eq!(output["data"]["restart_state"], "failed");
+}
+
+#[test]
+fn test_env_set_restart_parse_error_reports_started() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
+    let _preflight = mock_empty_restart_preflight(&mut server);
+    let _set = mock_env_set(
+        &mut server,
+        TEST_SERVICE_ID,
+        200,
+        env_set_response("MY_KEY", Some(TEST_SERVICE_ID), "env-web"),
+    );
+    let _restart = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/restart").as_str())
+        .with_status(202)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"id":"restart-new","status":"pending""#)
+        .create();
+
+    let assert = floo()
+        .args([
+            "--json",
+            "env",
+            "set",
+            "MY_KEY=my_value",
+            "--restart",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure();
+
+    let output: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(output["error"]["code"], "PARSE_ERROR");
+    assert_eq!(output["data"]["env_updated"], true);
+    assert_eq!(output["data"]["restart_started"], true);
+    assert_eq!(output["data"]["restart_state"], "started");
+}
+
+#[test]
+fn test_env_set_parse_error_reports_committed_write_before_restart() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
+    let _preflight = mock_empty_restart_preflight(&mut server);
+    let _set = mock_env_set(
+        &mut server,
+        TEST_SERVICE_ID,
+        200,
+        r#"{"id":"env-web","key":"MY_KEY""#,
+    );
+    let _no_restart = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/restart").as_str())
+        .expect(0)
+        .create();
+
+    let assert = floo()
+        .args([
+            "--json",
+            "env",
+            "set",
+            "MY_KEY=my_value",
+            "--restart",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure();
+
+    let output: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    assert_eq!(output["error"]["code"], "PARSE_ERROR");
+    assert_eq!(output["data"]["env_updated"], true);
+    assert_eq!(output["data"]["env_update_state"], "complete");
+    assert_eq!(output["data"]["restart_started"], false);
+    assert_eq!(
+        output["data"]["failed_target"],
+        serde_json::json!({
+            "target": "my-app/web",
+            "outcome": "committed_response_unreadable"
+        })
+    );
+}
+
+#[test]
+fn test_env_set_pending_restart_reports_started_and_preserves_success_shape() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
+    let _preflight = mock_empty_restart_preflight(&mut server);
+    let env_result = env_set_response("MY_KEY", Some(TEST_SERVICE_ID), "env-web");
+    let _set = mock_env_set(&mut server, TEST_SERVICE_ID, 200, env_result.clone());
+    let deploy_result = serde_json::json!({"id": "restart-new", "status": "pending", "url": null});
+    let _restart = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/restart").as_str())
+        .with_status(202)
+        .with_header("content-type", "application/json")
+        .with_body(deploy_result.to_string())
+        .create();
+
+    let assert = floo()
+        .args([
+            "--json",
+            "env",
+            "set",
+            "MY_KEY=my_value",
+            "--restart",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success();
+
+    let output: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    let mut expected_env: serde_json::Value = serde_json::from_str(&env_result).unwrap();
+    expected_env["is_secret"] = serde_json::Value::Bool(false);
+    assert_eq!(
+        output,
+        serde_json::json!({
+            "success": true,
+            "data": {
+                "env": expected_env,
+                "deploy": deploy_result
+            }
+        })
+    );
+}
+
+#[test]
+fn test_env_set_pending_restart_human_output_says_started_not_completed() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
+    let _preflight = mock_empty_restart_preflight(&mut server);
+    let _set = mock_env_set(
+        &mut server,
+        TEST_SERVICE_ID,
+        200,
+        env_set_response("MY_KEY", Some(TEST_SERVICE_ID), "env-web"),
+    );
+    let _restart = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/restart").as_str())
+        .with_status(202)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"id":"restart-new","status":"pending","url":null}"#)
+        .create();
+
+    floo()
+        .args([
+            "env",
+            "set",
+            "MY_KEY=my_value",
+            "--restart",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Restart started."))
+        .stderr(predicate::str::contains("Restarted").not());
+}
+
 #[test]
 fn test_env_set_stdin() {
     // #1152: a secret value piped on stdin keeps it out of argv / shell history.
