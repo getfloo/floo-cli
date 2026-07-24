@@ -126,7 +126,7 @@ fn mock_services_single(server: &mut Server) -> Mock {
         ]))
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"services":[{"id":"svc-web-1","name":"web","type":"web","status":"live","cloud_run_url":"https://web.floo.app","port":3000}]}"#)
+        .with_body(r#"{"services":[{"id":"svc-web-1","name":"web","type":"web","status":"live","cloud_run_url":"https://web.floo.app","port":3000,"cpu":"2","memory":"1Gi","max_instances":10,"min_instances":1,"max_request_body_mb":32}]}"#)
         .create()
 }
 
@@ -2244,16 +2244,23 @@ fn test_services_list_json_returns_both_app_and_managed_services() {
         )
         .create();
 
-    floo()
+    let output = floo()
         .args(["--json", "services", "list", "--app", TEST_APP_NAME])
         .env("HOME", home.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""success":true"#))
-        .stdout(predicate::str::contains("app_services"))
-        .stdout(predicate::str::contains("managed_services"))
-        .stdout(predicate::str::contains("web"))
-        .stdout(predicate::str::contains("postgres"));
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let json = parse_single_json_object(&output.stdout);
+    assert_eq!(json["success"], true);
+    assert_eq!(json["data"]["managed_services"][0]["type"], "postgres");
+    let service = &json["data"]["app_services"][0];
+    assert_eq!(service["name"], "web");
+    assert_eq!(service["cpu"], "2");
+    assert_eq!(service["memory"], "1Gi");
+    assert_eq!(service["max_instances"], 10);
+    assert_eq!(service["min_instances"], 1);
+    assert_eq!(service["max_request_body_mb"], 32);
 }
 
 #[test]
@@ -2970,14 +2977,86 @@ fn test_services_show_user_managed() {
     let _resolve = mock_resolve_app(&mut server);
     let _services = mock_services_single(&mut server);
 
-    floo()
+    let output = floo()
         .args(["--json", "services", "show", "web", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let json = parse_single_json_object(&output.stdout);
+    assert_eq!(json["success"], true);
+    let service = &json["data"];
+    assert_eq!(service["name"], "web");
+    assert_eq!(service["cloud_run_url"], "https://web.floo.app");
+    assert_eq!(service["cpu"], "2");
+    assert_eq!(service["memory"], "1Gi");
+    assert_eq!(service["max_instances"], 10);
+    assert_eq!(service["min_instances"], 1);
+    assert_eq!(service["max_request_body_mb"], 32);
+}
+
+#[test]
+fn test_services_show_json_preserves_null_resource_fields() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/services").as_str(),
+        )
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"services":[{"id":"svc-web-1","name":"web","type":"web","status":"live","ingress":"public","cloud_run_url":"https://web.floo.app","port":3000,"cpu":null,"memory":null,"max_instances":null,"min_instances":null,"max_request_body_mb":null}]}"#,
+        )
+        .create();
+
+    let output = floo()
+        .args(["--json", "services", "show", "web", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let json = parse_single_json_object(&output.stdout);
+    let service = &json["data"];
+    let fields = service.as_object().expect("service object");
+    assert!(fields.contains_key("cpu"));
+    assert!(fields.contains_key("memory"));
+    assert!(fields.contains_key("max_instances"));
+    assert!(fields.contains_key("min_instances"));
+    assert!(fields.contains_key("max_request_body_mb"));
+    assert!(service["cpu"].is_null());
+    assert!(service["memory"].is_null());
+    assert!(service["max_instances"].is_null());
+    assert!(service["min_instances"].is_null());
+    assert!(service["max_request_body_mb"].is_null());
+}
+
+#[test]
+fn test_services_show_human_renders_configured_resources() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_services_single(&mut server);
+
+    floo()
+        .args(["services", "show", "web", "--app", TEST_APP_NAME])
         .env("HOME", home.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains(r#""success":true"#))
-        .stdout(predicate::str::contains("web"))
-        .stdout(predicate::str::contains("https://web.floo.app"));
+        .stderr(predicate::str::contains("Configured resources:"))
+        .stderr(predicate::str::contains("CPU:              2"))
+        .stderr(predicate::str::contains("Memory:           1Gi"))
+        .stderr(predicate::str::contains("Min instances:    1"))
+        .stderr(predicate::str::contains("Max instances:    10"))
+        .stderr(predicate::str::contains("Max request body: 32 MiB"));
 }
 
 #[test]

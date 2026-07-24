@@ -193,6 +193,20 @@ fn render_app_service(svc: &crate::api_types::ApiService, service_name: &str, ap
         .port
         .map(|p| p.to_string())
         .unwrap_or_else(|| "-".to_string());
+    let cpu = svc.cpu.as_deref().unwrap_or("-");
+    let memory = svc.memory.as_deref().unwrap_or("-");
+    let min_instances = svc
+        .min_instances
+        .map(|count| count.to_string())
+        .unwrap_or_else(|| "-".to_string());
+    let max_instances = svc
+        .max_instances
+        .map(|count| count.to_string())
+        .unwrap_or_else(|| "-".to_string());
+    let max_request_body = svc
+        .max_request_body_mb
+        .map(|size| format!("{size} MiB"))
+        .unwrap_or_else(|| "-".to_string());
 
     output::info(&format!("Service {service_name} ({app_name}):"), None);
     output::info(&format!("  Type:    {svc_type}"), None);
@@ -200,6 +214,12 @@ fn render_app_service(svc: &crate::api_types::ApiService, service_name: &str, ap
     output::info(&format!("  Ingress: {ingress}"), None);
     output::info(&format!("  URL:     {url}"), None);
     output::info(&format!("  Port:    {port}"), None);
+    output::info("  Configured resources:", None);
+    output::info(&format!("    CPU:              {cpu}"), None);
+    output::info(&format!("    Memory:           {memory}"), None);
+    output::info(&format!("    Min instances:    {min_instances}"), None);
+    output::info(&format!("    Max instances:    {max_instances}"), None);
+    output::info(&format!("    Max request body: {max_request_body}"), None);
 }
 
 fn render_managed_service(

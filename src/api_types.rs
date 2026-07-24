@@ -334,6 +334,16 @@ pub struct ApiService {
     pub ingress: Option<String>,
     pub cloud_run_url: Option<String>,
     pub port: Option<u64>,
+    #[serde(default)]
+    pub cpu: Option<String>,
+    #[serde(default)]
+    pub memory: Option<String>,
+    #[serde(default)]
+    pub max_instances: Option<u64>,
+    #[serde(default)]
+    pub min_instances: Option<u64>,
+    #[serde(default)]
+    pub max_request_body_mb: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
