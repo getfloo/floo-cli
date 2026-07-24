@@ -86,10 +86,17 @@ pub fn list(app: Option<&str>, env: &str) {
         ]);
     }
     for ms in &managed_services {
+        let environment_health = match env {
+            "prod" => ms.prod_health.as_ref(),
+            _ => ms.dev_health.as_ref(),
+        };
+        let status = environment_health
+            .filter(|health| health.status != "healthy")
+            .map_or(ms.status.as_str(), |_| "degraded");
         rows.push(vec![
             ms.name.clone(),
             ms.service_type.clone(),
-            ms.status.clone(),
+            status.to_string(),
             "managed".to_string(),
             "\u{2014}".to_string(),
         ]);
@@ -245,6 +252,8 @@ fn render_managed_service(
     );
     output::info(&format!("  Status:   {}", detail.status), None);
     output::info(&format!("  Created:  {created}"), None);
+    render_redis_health("Dev health", detail.dev_health.as_ref());
+    render_redis_health("Prod health", detail.prod_health.as_ref());
     if !detail.env_var_keys.is_empty() {
         output::info(
             &format!("  Env vars: {}", detail.env_var_keys.join(", ")),
@@ -254,6 +263,27 @@ fn render_managed_service(
             "  (credentials are injected at runtime; use 'floo env list' to see keys)",
             None,
         );
+    }
+}
+
+fn render_redis_health(
+    label: &str,
+    health: Option<&crate::api_types::ManagedRedisEnvironmentHealth>,
+) {
+    let Some(health) = health else {
+        return;
+    };
+    output::info(
+        &format!(
+            "  {label}: {} ({}, observed {})",
+            health.status,
+            health.reason,
+            health.observed_at.as_deref().unwrap_or("not yet")
+        ),
+        None,
+    );
+    if let Some(remediation) = &health.remediation {
+        output::info(&format!("    Remediation: {remediation}"), None);
     }
 }
 

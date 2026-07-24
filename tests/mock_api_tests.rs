@@ -5810,6 +5810,73 @@ fn test_doctor_accounts_json_old_api_no_field_derives_from_drift_list() {
         .stdout(predicate::str::contains(r#""drift_detected":true"#));
 }
 
+fn mock_doctor_managed_services(server: &mut Server, body: &str) -> Mock {
+    server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/doctor/managed-services").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(body)
+        .create()
+}
+
+#[test]
+fn test_doctor_managed_services_json_healthy_exits_zero() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _doctor = mock_doctor_managed_services(
+        &mut server,
+        &format!(
+            r#"{{"app_id":"{TEST_APP_ID}","app_name":"{TEST_APP_NAME}","checked_environments":2,"degraded_detected":false,"issues":[]}}"#
+        ),
+    );
+
+    floo()
+        .args([
+            "--json",
+            "doctor",
+            "managed-services",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""degraded_detected":false"#));
+}
+
+#[test]
+fn test_doctor_managed_services_json_issue_exits_one_and_redacts_credentials() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _doctor = mock_doctor_managed_services(
+        &mut server,
+        &format!(
+            r#"{{"app_id":"{TEST_APP_ID}","app_name":"{TEST_APP_NAME}","checked_environments":2,"degraded_detected":false,"issues":[{{"resource_id":"redis-1","resource_kind":"managed_service","type":"redis","name":"default","environment":"prod","status":"throttled","reason":"throttle_daily_limit","observed_at":"2026-07-24T17:00:00Z","remediation":"Contact floo support to raise managed capacity."}}]}}"#
+        ),
+    );
+
+    floo()
+        .args([
+            "--json",
+            "doctor",
+            "managed-services",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(r#""degraded_detected":true"#))
+        .stdout(predicate::str::contains("throttle_daily_limit"))
+        .stdout(predicate::str::contains("redis://").not())
+        .stdout(predicate::str::contains("password").not());
+}
+
 // --- env multi-target JSON contract (#203) ---
 //
 // One invocation emits exactly ONE JSON object on stdout. The per-service

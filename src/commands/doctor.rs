@@ -7,7 +7,9 @@
 
 use std::process;
 
-use crate::api_types::{AccountsDoctorDrift, AccountsDoctorResponse};
+use crate::api_types::{
+    AccountsDoctorDrift, AccountsDoctorResponse, ManagedServicesDoctorResponse,
+};
 use crate::errors::ErrorCode;
 use crate::output;
 
@@ -52,6 +54,83 @@ pub fn accounts(app_flag: Option<&str>) {
     // convention as `preflight` and `db migrate --dry-run`.
     if drift_detected {
         process::exit(1);
+    }
+}
+
+pub fn managed_services(app_flag: Option<&str>) {
+    super::require_auth();
+    let client = super::init_client(None);
+    let (app_id, _app_name) = super::resolve_app_from_config(&client, app_flag);
+
+    let mut result = match client.diagnose_managed_services(&app_id) {
+        Ok(response) => response,
+        Err(error) => {
+            output::error(&error.message, &ErrorCode::from_api(&error.code), None);
+            process::exit(1);
+        }
+    };
+    let degraded_detected = !result.issues.is_empty();
+    result.degraded_detected = degraded_detected;
+
+    if output::is_json_mode() {
+        output::success(
+            "Managed-service doctor diagnosis.",
+            Some(output::to_value(&result)),
+        );
+    } else {
+        render_managed_services(&result);
+    }
+
+    if degraded_detected {
+        process::exit(1);
+    }
+}
+
+fn render_managed_services(result: &ManagedServicesDoctorResponse) {
+    output::info(
+        &format!("App: {} ({})", result.app_name, result.app_id),
+        None,
+    );
+    eprintln!(
+        "Checked Redis environments: {}",
+        result.checked_environments
+    );
+
+    if result.issues.is_empty() {
+        output::info("Managed Redis data planes are healthy.", None);
+        return;
+    }
+
+    output::info(
+        &format!("Managed-service issues detected ({}):", result.issues.len()),
+        None,
+    );
+    let rows: Vec<Vec<String>> = result
+        .issues
+        .iter()
+        .map(|issue| {
+            vec![
+                issue.name.clone(),
+                issue.environment.clone(),
+                issue.status.clone(),
+                issue.reason.clone(),
+                issue
+                    .observed_at
+                    .clone()
+                    .unwrap_or_else(|| "not observed".to_string()),
+            ]
+        })
+        .collect();
+    output::table(
+        &["Service", "Environment", "Status", "Reason", "Observed"],
+        &rows,
+        None,
+    );
+    for issue in &result.issues {
+        eprintln!(
+            "  {} ({}): {}",
+            issue.name, issue.environment, issue.remediation
+        );
     }
 }
 
