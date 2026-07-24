@@ -44,6 +44,7 @@ pub struct LockManagedService {
 pub enum LockError {
     Io(std::io::Error),
     Parse(serde_json::Error),
+    Config(String),
     NoProject,
 }
 
@@ -52,6 +53,7 @@ impl std::fmt::Display for LockError {
         match self {
             LockError::Io(e) => write!(f, "I/O error: {e}"),
             LockError::Parse(e) => write!(f, "parse error: {e}"),
+            LockError::Config(message) => write!(f, "config error: {message}"),
             LockError::NoProject => write!(
                 f,
                 "no floo.app.toml or floo.service.toml found in current directory tree"
@@ -173,6 +175,30 @@ pub fn record_remove(service_type: &str, name: &str) -> Result<(), LockError> {
     record_remove_at(&root, service_type, name)
 }
 
+fn contains_for_app_at(
+    project_root: &Path,
+    app_name: &str,
+    service_type: &str,
+    name: &str,
+) -> Result<bool, LockError> {
+    let resolved = crate::project_config::resolve_app_context(project_root, None)
+        .map_err(|error| LockError::Config(error.message))?;
+    if resolved.app_name != app_name {
+        return Ok(false);
+    }
+    let lock = read(project_root)?;
+    Ok(lock
+        .managed_services
+        .iter()
+        .any(|entry| entry.service_type == service_type && entry.name == name))
+}
+
+/// Whether the matching app's current-project lock records a managed service.
+pub fn contains_for_app(app_name: &str, service_type: &str, name: &str) -> Result<bool, LockError> {
+    let root = current_project_root()?;
+    contains_for_app_at(&root, app_name, service_type, name)
+}
+
 fn current_project_root() -> Result<PathBuf, LockError> {
     let cwd = std::env::current_dir()?;
     find_project_root(&cwd).ok_or(LockError::NoProject)
@@ -282,6 +308,16 @@ mod tests {
         let lock = read(&root).unwrap();
         assert_eq!(lock.managed_services.len(), 1);
         assert_eq!(lock.managed_services[0].service_type, "redis");
+    }
+
+    #[test]
+    fn contains_for_app_at_refuses_another_apps_lock() {
+        let dir = TempDir::new().unwrap();
+        let root = mk_project(&dir);
+        record_add_at(&root, &fake_detail("postgres", "default")).unwrap();
+
+        assert!(!contains_for_app_at(&root, "another-app", "postgres", "default").unwrap());
+        assert!(contains_for_app_at(&root, "test", "postgres", "default").unwrap());
     }
 
     #[test]

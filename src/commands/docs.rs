@@ -188,13 +188,14 @@ confirmation.
   floo services add postgres --app <name>         # provision
   floo services show postgres --app <name>        # inspect
   floo services list --app <name>                 # see everything
-  floo services remove postgres --app <name>      # tier-3 destructive
+  floo services remove postgres --app <name>      # request tier-3 deletion approval
   floo services migrate --app <name>              # convert legacy TOML to CLI-managed
 
-  On success, `floo services add/remove` updates .floo/services.lock
-  (commit this file) so PR reviewers see managed-service state changes
-  in `git diff` alongside code changes. The lock file is a record of
-  state, not a source — platform is the source of truth.
+  On success, `floo services add` updates .floo/services.lock. A remove
+  request leaves the lock unchanged while human approval and deletion are
+  pending, then reconciles it after the platform reports the service absent.
+  Commit the lock file so PR reviewers see managed-service state changes in
+  `git diff`. The lock is a record of state, not a source of truth.
 
   Connection credentials are injected at runtime, never stored in the
   lock file or in your repo:
@@ -325,8 +326,15 @@ All services share the same origin, so cookies and auth work without CORS.
   floo services list --app <name>            — list all services (app + managed)
   floo services show <service> --app <name>  — details (no credentials in output)
   floo services add <type> --app <name>      — provision a managed service
-  floo services remove <type> --app <name>   — permanently destroy (tier-3)
+  floo services remove <type> --app <name>   — request two-person deletion approval (tier-3)
   floo services migrate --app <name>         — move legacy TOML → CLI state
+
+  `services remove` does not mutate the resource. It returns one structured
+  approval object and dashboard URL. A different human org admin approves the
+  exact fingerprint in a WorkOS session; API keys cannot approve. The lock file
+  keeps the service until status=completed.
+
+Full guide: https://getfloo.com/docs/guides/managed-services
 ";
 
 const EDGE: &str = "\
