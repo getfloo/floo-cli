@@ -327,6 +327,19 @@ pub struct AppServiceEntry {
     pub max_instances: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_instances: Option<u32>,
+    /// Exact always-on instance count for a `worker` service (getfloo/floo#1801).
+    ///
+    /// A worker deploys as a Cloud Run Worker Pool, which has a fixed manual instance
+    /// count rather than request autoscaling — so `min_instances`/`max_instances`, which
+    /// are autoscaling bounds, do not describe it. Overloading `min_instances` for the
+    /// manual count is what let a global `[resources] min_instances` reach every worker
+    /// in an app; `instances` is per-service only and never inherited.
+    ///
+    /// Absent → 1 (a worker is always-on by default; one that scales to zero drains
+    /// nothing). `0` is the declared, auditable way to say "this worker exists but is
+    /// off". Only valid on `type = "worker"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instances: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dev_command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -391,6 +404,7 @@ impl AppServiceEntry {
             memory: None,
             max_instances: None,
             min_instances: None,
+            instances: None,
             dev_command: None,
             migrate_command: None,
             command: None,
@@ -449,6 +463,37 @@ fn validate_app_config(config: &AppFileConfig) -> Result<(), FlooError> {
                     format!("Add path = \"./subdir\" to [services.{name}]."),
                 ));
             }
+        }
+        // `instances` is the Worker Pool's exact manual count; a web/api service is
+        // request-autoscaled and has no such knob (getfloo/floo#1801). Reject it loudly
+        // rather than accepting a key the deploy would silently ignore.
+        if entry.instances.is_some() && entry.service_type != AppServiceType::Worker {
+            return Err(FlooError::with_suggestion(
+                ErrorCode::InvalidProjectConfig,
+                format!(
+                    "Service '{name}' in {} sets 'instances', which is only valid for type = \"worker\".",
+                    super::APP_CONFIG_FILE
+                ),
+                format!(
+                    "Remove instances from [services.{name}], or use min_instances/max_instances to set autoscaling bounds."
+                ),
+            ));
+        }
+        // The inverse: `min_instances` used to be the worker's instance count and is now
+        // inert on that path. A silently-ignored key is how a customer ends up believing
+        // a worker is pinned when nothing reads the value, so it is a hard error that
+        // names its replacement. (`max_instances` on a worker stays accepted-and-advisory
+        // — it predates this and floo-artifact declares it; tightening that is separate
+        // cleanup, not part of #1801.)
+        if entry.service_type == AppServiceType::Worker && entry.min_instances.is_some() {
+            return Err(FlooError::with_suggestion(
+                ErrorCode::InvalidProjectConfig,
+                format!(
+                    "Service '{name}' in {} is a worker and sets min_instances, which no longer controls a worker's instance count.",
+                    super::APP_CONFIG_FILE
+                ),
+                format!("Replace it with instances = <n> in [services.{name}] (0 turns the worker off)."),
+            ));
         }
         if let Some(ref env) = entry.env {
             env.validate(&format!("[services.{name}.env]"))?;
@@ -1149,6 +1194,101 @@ path = "./backend"
         );
         let api = &config.services["api"];
         assert!(api.ingress.is_none());
+    }
+
+    #[test]
+    fn test_worker_instances_parses() {
+        // The whole point of the CLI half of getfloo/floo#1801: AppServiceEntry is
+        // deny_unknown_fields, so until this field exists, a manifest declaring
+        // `instances` fails to parse and breaks `floo check`/`floo status`.
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[services.worker]
+type = "worker"
+path = "./worker"
+instances = 0
+command = "python -m worker"
+"#,
+        )
+        .unwrap();
+
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        assert_eq!(config.services["worker"].instances, Some(0));
+    }
+
+    #[test]
+    fn test_instances_rejected_on_non_worker() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[services.api]
+type = "api"
+path = "./api"
+instances = 2
+"#,
+        )
+        .unwrap();
+
+        let err = load_app_config(dir.path()).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+        assert!(err.message.contains("only valid for type = \"worker\""));
+    }
+
+    #[test]
+    fn test_min_instances_rejected_on_worker() {
+        // min_instances used to be the worker's instance count. Now inert on that path,
+        // so it must fail loudly and name its replacement rather than be ignored.
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[services.worker]
+type = "worker"
+path = "./worker"
+min_instances = 2
+command = "python -m worker"
+"#,
+        )
+        .unwrap();
+
+        let err = load_app_config(dir.path()).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+        assert!(err.message.contains("no longer controls"));
+    }
+
+    #[test]
+    fn test_max_instances_still_accepted_on_worker() {
+        // floo-artifact declares this today; #1801 must not break its deploys.
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[services.worker]
+type = "worker"
+path = "./worker"
+max_instances = 1
+command = "python -m worker"
+"#,
+        )
+        .unwrap();
+
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        assert_eq!(config.services["worker"].max_instances, Some(1));
     }
 
     #[test]

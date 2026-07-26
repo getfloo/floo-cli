@@ -861,6 +861,7 @@ mod tests {
             memory: None,
             max_instances: None,
             min_instances: None,
+            instances: None,
             dev_command: dev_command.map(String::from),
             migrate_command: None,
             command: None,
