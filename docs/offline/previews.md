@@ -3,6 +3,37 @@ floo Preview Sandboxes
 Use `floo previews` when an agent needs an isolated, real floo environment for a
 pushed feature branch before opening or relying on a pull request preview.
 
+## Pull request previews are opt-in
+
+Opening a pull request does not deploy a preview unless the app turns them on.
+There are two controls, and the per-PR one wins.
+
+App default, in `floo.app.toml`:
+
+  [github]
+  preview_environments = true
+  preview_ttl_hours = 72
+
+A missing `preview_environments` key means previews are off. `[preview] enabled`
+and `[preview] ttl_hours` are deprecated aliases that still work for one
+migration window and log a `legacy_preview_toml` warning on every deploy.
+
+Per-PR override, as a comment on the pull request itself:
+
+  /floo preview on
+  /floo preview off
+
+`on` opts one PR in when the app default is off; `off` opts one PR out when the
+app default is on. floo reconciles the comment immediately, so opting in does
+not require pushing another commit.
+
+The comment must contain the command and nothing else, and its author must be a
+repository owner, member, or collaborator. The most recently updated authorized
+command wins; editing or deleting it returns the PR to the app default.
+
+`floo previews up` reaches the same kind of environment from the CLI and needs
+neither a pull request nor the app-level setting.
+
 ## Source contract
 
 Preview sandboxes deploy remote GitHub source only:

@@ -49,6 +49,24 @@ fn is_command_start(candidate: &str) -> bool {
         })
 }
 
+/// `/floo …` at a word boundary is a pull request comment command, not CLI
+/// syntax. floo's PR previews are driven by `/floo preview on` / `/floo preview
+/// off`, and `preview` is a compatibility alias of the `previews` subcommand, so
+/// without this the comment command cannot be documented in first-party guidance
+/// at all. A slash that follows a path character (`bin/floo deploy`) is still a
+/// real invocation and stays validated.
+fn is_pr_comment_command(text: &str, start: usize) -> bool {
+    let Some(before_slash) = text
+        .get(..start)
+        .and_then(|prefix| prefix.strip_suffix('/'))
+    else {
+        return false;
+    };
+    !before_slash.chars().last().is_some_and(|character| {
+        character.is_alphanumeric() || matches!(character, '.' | '-' | '_' | '~')
+    })
+}
+
 fn push_occurrences(
     text: &str,
     source: &str,
@@ -58,6 +76,10 @@ fn push_occurrences(
 ) {
     let mut remainder = text;
     while let Some(start) = remainder.find("floo ") {
+        if is_pr_comment_command(remainder, start) {
+            remainder = &remainder[start + "floo ".len()..];
+            continue;
+        }
         let delimiter = remainder[..start]
             .chars()
             .last()
@@ -444,6 +466,48 @@ fn guidance_validator_rejects_stale_syntax() {
     );
     assert_eq!(prose.len(), 1);
     assert!(validate_path_and_options(&prose[0].invocation).is_err());
+}
+
+#[test]
+fn guidance_validator_skips_pr_comment_commands() {
+    // `/floo preview on` is a pull request comment command. `preview` is a
+    // compatibility alias of `previews`, so treating it as CLI syntax would
+    // make the comment command undocumentable in first-party guidance.
+    let mut comment = Vec::new();
+    push_occurrences(
+        "Comment `/floo preview on` on the pull request to opt it in.",
+        "comment-fixture.md",
+        1,
+        false,
+        &mut comment,
+    );
+    assert!(
+        comment.is_empty(),
+        "pull request comment commands must not be validated as CLI syntax: {comment:?}"
+    );
+
+    // A slash that continues a path is still a real invocation.
+    let mut path_invocation = Vec::new();
+    push_occurrences(
+        "Run /usr/local/bin/floo apps status my-app to inspect it.",
+        "path-fixture.md",
+        1,
+        false,
+        &mut path_invocation,
+    );
+    assert_eq!(path_invocation.len(), 1);
+    assert!(validate_path_and_options(&path_invocation[0].invocation).is_err());
+
+    // A bare `floo …` next to a slash-delimited sentence is unaffected.
+    let mut plain = Vec::new();
+    push_occurrences(
+        "Deploy/promote, then run floo apps status my-app.",
+        "plain-fixture.md",
+        1,
+        false,
+        &mut plain,
+    );
+    assert_eq!(plain.len(), 1);
 }
 
 #[test]
