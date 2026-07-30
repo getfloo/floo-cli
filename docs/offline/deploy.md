@@ -29,6 +29,19 @@ floo Deploy Flow
     floo env set API_KEY=new-value --app myapp --service api
     floo redeploy --app myapp
 
+  A no-rebuild redeploy replays only the immutable contract captured by the
+  current LIVE deploy. If that historical contract is unavailable or invalid,
+  floo fails closed and returns one exact recovery command:
+
+    floo redeploy --app myapp --rebuild
+
+  `--rebuild` resolves the connected primary repository's current default-
+  branch HEAD, downloads that exact commit from GitHub, reparses
+  `floo.app.toml`, and persists fresh immutable topology, environment,
+  resource, and cron contracts. It does not upload local files or require an
+  artificial source commit. JSON errors preserve `recovery_action`,
+  `recovery_command`, `recovery_app_id`, and `recovery_source`.
+
 ## First Deploy
 
   Use `floo apps github connect owner/repo`. This connects GitHub and
@@ -94,7 +107,7 @@ floo Deploy Flow
 ## Redeploy Options
 
   floo redeploy --app <name>       - redeploy with fresh env vars (no rebuild)
-  floo redeploy --app <name> --rebuild  - force a full rebuild from latest commit
+  floo redeploy --app <name> --rebuild  - rebuild exact current GitHub default-branch HEAD
   floo redeploy [path]             - resolve app/config from this directory; source stays on GitHub
   floo redeploy --service <name>  - redeploy specific services only
   floo redeploy --sync-env         - re-sync env vars from env_file before redeploying

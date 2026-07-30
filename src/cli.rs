@@ -168,12 +168,14 @@ Examples:
     #[command(after_help = "\
 Examples:
   floo redeploy --app my-app               Redeploy with fresh env vars (no rebuild)
-  floo redeploy --app my-app --rebuild     Force a full rebuild from latest commit
+  floo redeploy --app my-app --rebuild     Rebuild current GitHub default-branch HEAD
   floo redeploy                            Redeploy from current project directory
   floo redeploy --service api              Redeploy specific services only
 
 Note: The primary way to deploy is `git push`. Use `floo redeploy` when you
-need to apply env var changes or force a rebuild without a code change.")]
+need to apply env var changes or rebuild the unchanged GitHub commit. If a
+no-rebuild restart reports an unavailable immutable contract, run the exact
+`--rebuild` command it returns.")]
     Redeploy {
         /// Project directory (only needed when --app is not provided).
         #[arg(default_value = ".")]
@@ -192,7 +194,7 @@ need to apply env var changes or force a rebuild without a code change.")]
         )]
         services: Vec<String>,
 
-        /// Force a full rebuild from the latest commit (re-download source and run Cloud Build).
+        /// Rebuild the exact current GitHub default-branch commit (reparse immutable contracts and run Cloud Build).
         #[arg(long)]
         rebuild: bool,
 
