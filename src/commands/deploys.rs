@@ -6,7 +6,7 @@ use chrono::Utc;
 use colored::Colorize;
 
 use crate::api_client::FlooClient;
-use crate::api_types::Deploy;
+use crate::api_types::{CoalescedCommit, Deploy};
 use crate::commands::deploy::{poll_deploy, settle_to_terminal, stream_deploy, stream_deploy_json};
 use crate::deploy_status;
 use crate::errors::ErrorCode;
@@ -684,13 +684,13 @@ pub fn watch(app: Option<&str>, commit: Option<&str>) {
 
     let (app_id, app_name) = super::resolve_app_from_config(&client, app);
 
-    let deploy = match commit {
+    let matched = match commit {
         Some(sha) => find_deploy_by_commit(&client, &app_id, sha),
-        None => find_latest_deploy(&client, &app_id),
+        None => find_latest_deploy(&client, &app_id).map(|deploy| (deploy, None)),
     };
 
-    let deploy = match deploy {
-        Some(d) => d,
+    let (deploy, coalesced_commit) = match matched {
+        Some(found) => found,
         None => {
             output::error(
                 "No deploy found.",
@@ -701,6 +701,9 @@ pub fn watch(app: Option<&str>, commit: Option<&str>) {
         }
     };
 
+    if let Some(lineage) = coalesced_commit.as_ref() {
+        emit_commit_coalesced(lineage, &deploy);
+    }
     emit_deploy_found(&deploy, &app_name);
 
     let status = deploy.status.as_deref().unwrap_or("");
@@ -753,7 +756,11 @@ fn find_latest_deploy(client: &FlooClient, app_id: &str) -> Option<Deploy> {
     result.deploys.into_iter().next()
 }
 
-fn find_deploy_by_commit(client: &FlooClient, app_id: &str, sha_prefix: &str) -> Option<Deploy> {
+fn find_deploy_by_commit(
+    client: &FlooClient,
+    app_id: &str,
+    sha_prefix: &str,
+) -> Option<(Deploy, Option<CoalescedCommit>)> {
     let start = Instant::now();
     let spinner = if !output::is_json_mode() {
         Some(output::Spinner::new(&format!(
@@ -764,26 +771,58 @@ fn find_deploy_by_commit(client: &FlooClient, app_id: &str, sha_prefix: &str) ->
     };
 
     loop {
-        let result = match client.list_deploys(app_id) {
-            Ok(r) => r,
-            Err(e) => {
-                if let Some(s) = spinner.as_ref() {
-                    s.finish();
-                }
-                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-                process::exit(1);
-            }
-        };
+        let mut cursor: Option<String> = None;
+        let mut coalesced_match: Option<(Deploy, CoalescedCommit)> = None;
 
-        if let Some(deploy) = result.deploys.into_iter().find(|d| {
-            d.commit_sha
-                .as_deref()
-                .is_some_and(|s| s.starts_with(sha_prefix))
-        }) {
+        loop {
+            let result = match client.list_deploys_paginated(app_id, 100, cursor.as_deref()) {
+                Ok(r) => r,
+                Err(e) => {
+                    if let Some(s) = spinner.as_ref() {
+                        s.finish();
+                    }
+                    output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                    process::exit(1);
+                }
+            };
+
+            for deploy in result.deploys {
+                if deploy
+                    .commit_sha
+                    .as_deref()
+                    .is_some_and(|sha| sha.starts_with(sha_prefix))
+                {
+                    if let Some(s) = spinner.as_ref() {
+                        s.finish();
+                    }
+                    return Some((deploy, None));
+                }
+
+                if coalesced_match.is_none() {
+                    if let Some(lineage) = deploy
+                        .coalesced_commits
+                        .iter()
+                        .find(|lineage| lineage.requested_commit_sha.starts_with(sha_prefix))
+                    {
+                        coalesced_match = Some((deploy.clone(), lineage.clone()));
+                    }
+                }
+            }
+
+            if !result.has_more {
+                break;
+            }
+            let Some(next_cursor) = result.next_cursor else {
+                break;
+            };
+            cursor = Some(next_cursor);
+        }
+
+        if let Some((deploy, lineage)) = coalesced_match {
             if let Some(s) = spinner.as_ref() {
                 s.finish();
             }
-            return Some(deploy);
+            return Some((deploy, Some(lineage)));
         }
 
         if start.elapsed() >= COMMIT_WAIT_TIMEOUT {
@@ -802,6 +841,29 @@ fn find_deploy_by_commit(client: &FlooClient, app_id: &str, sha_prefix: &str) ->
         }
 
         thread::sleep(COMMIT_POLL_INTERVAL);
+    }
+}
+
+fn emit_commit_coalesced(lineage: &CoalescedCommit, deploy: &Deploy) {
+    let effective_commit = deploy.commit_sha.as_deref().unwrap_or("unknown");
+    if output::is_json_mode() {
+        output::print_json(&serde_json::json!({
+            "event": "commit_coalesced",
+            "lineage_status": "superseded",
+            "requested_commit": lineage.requested_commit_sha,
+            "effective_commit": effective_commit,
+            "effective_deploy_id": deploy.id,
+        }));
+    } else {
+        output::info(
+            &format!(
+                "Commit {} was coalesced into descendant {} — following deploy {}.",
+                super::short_sha(&lineage.requested_commit_sha),
+                super::short_sha(effective_commit),
+                deploy.id,
+            ),
+            None,
+        );
     }
 }
 

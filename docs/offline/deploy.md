@@ -20,6 +20,16 @@ floo Deploy Flow
 
   The push triggers a deploy automatically via GitHub webhook.
 
+  To follow one pushed commit, pass its full or abbreviated SHA:
+
+    floo deploys watch --app <name> --commit <sha>
+
+  If rapid pushes arrive while another deploy is active, floo may coalesce an
+  intermediate commit into the later authoritative deploy. Watch follows that
+  recorded effective deploy and emits `commit_coalesced` in JSON mode before
+  the ordinary deploy lifecycle events. An exact deploy for the requested SHA
+  always takes precedence.
+
 ## Force Redeploy
 
   Use `floo redeploy` only when you need to apply an operational change
@@ -105,5 +115,6 @@ floo Deploy Flow
   floo deploys list --app <name>    - list past deploys without build logs
   floo deploys logs <id> --app <n>  - build logs for a specific deploy
   floo deploys watch --app <name>   - stream deploy progress in real-time
+  floo deploys watch --app <name> --commit <sha>  - follow exact or coalesced commit lineage
   floo deploys rollback <app> <id>  - rollback to a previous deploy
   floo releases rollback --app <name> --to <id>  - same, alias under releases

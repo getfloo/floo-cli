@@ -218,6 +218,16 @@ pub struct FailureRootCause {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoalescedCommit {
+    pub requested_commit_sha: String,
+    pub source_repo_full_name: String,
+    pub github_ref: String,
+    pub created_at: String,
+    #[serde(default)]
+    pub resolved_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Deploy {
     pub id: String,
     #[serde(default)]
@@ -232,6 +242,8 @@ pub struct Deploy {
     pub generated_password: Option<String>,
     pub triggered_by: Option<String>,
     pub commit_sha: Option<String>,
+    #[serde(default)]
+    pub coalesced_commits: Vec<CoalescedCommit>,
     #[serde(default)]
     pub github_ref: Option<String>,
     #[serde(default)]
