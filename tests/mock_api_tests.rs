@@ -4351,6 +4351,234 @@ fn test_deploy_list_from_config() {
         .stdout(predicate::str::contains("deploy-123"));
 }
 
+#[test]
+fn test_deploy_watch_follows_coalesced_descendant_and_emits_structured_lineage() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let requested = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let effective = "cccccccccccccccccccccccccccccccccccccccc";
+    let _deploys = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("include_build_logs".into(), "false".into()),
+            Matcher::UrlEncoded("limit".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{
+                "deploys":[{{
+                    "id":"deploy-effective",
+                    "status":"live",
+                    "commit_sha":"{effective}",
+                    "coalesced_commits":[{{
+                        "requested_commit_sha":"{requested}",
+                        "source_repo_full_name":"myorg/myrepo",
+                        "github_ref":"refs/heads/main",
+                        "created_at":"2026-07-30T12:00:00Z",
+                        "resolved_at":"2026-07-30T12:01:00Z"
+                    }}]
+                }}],
+                "has_more":false
+            }}"#
+        ))
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "deploys",
+            "watch",
+            "--app",
+            TEST_APP_NAME,
+            "--commit",
+            "bbbbbbbb",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""event":"commit_coalesced""#))
+        .stdout(predicate::str::contains(r#""lineage_status":"superseded""#))
+        .stdout(predicate::str::contains(format!(
+            r#""requested_commit":"{requested}""#
+        )))
+        .stdout(predicate::str::contains(format!(
+            r#""effective_commit":"{effective}""#
+        )))
+        .stdout(predicate::str::contains(
+            r#""effective_deploy_id":"deploy-effective""#,
+        ))
+        .stdout(predicate::str::contains(r#""event":"done""#))
+        .stdout(predicate::str::contains(r#""status":"live""#));
+}
+
+#[test]
+fn test_deploy_watch_prefers_exact_commit_on_later_page_over_coalesced_match() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let requested = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let _first_page = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("include_build_logs".into(), "false".into()),
+            Matcher::UrlEncoded("limit".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{
+                "deploys":[{{
+                    "id":"deploy-coalesced",
+                    "status":"live",
+                    "commit_sha":"cccccccccccccccccccccccccccccccccccccccc",
+                    "coalesced_commits":[{{
+                        "requested_commit_sha":"{requested}",
+                        "source_repo_full_name":"myorg/myrepo",
+                        "github_ref":"refs/heads/main",
+                        "created_at":"2026-07-30T12:00:00Z"
+                    }}]
+                }}],
+                "has_more":true,
+                "next_cursor":"cursor-2"
+            }}"#
+        ))
+        .create();
+    let _second_page = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("include_build_logs".into(), "false".into()),
+            Matcher::UrlEncoded("limit".into(), "100".into()),
+            Matcher::UrlEncoded("cursor".into(), "cursor-2".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{
+                "deploys":[{{
+                    "id":"deploy-exact",
+                    "status":"live",
+                    "commit_sha":"{requested}"
+                }}],
+                "has_more":false
+            }}"#
+        ))
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "deploys",
+            "watch",
+            "--app",
+            TEST_APP_NAME,
+            "--commit",
+            "bbbbbbbb",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""deploy_id":"deploy-exact""#))
+        .stdout(predicate::str::contains("commit_coalesced").not());
+}
+
+#[test]
+fn test_deploy_watch_coalesced_failed_descendant_keeps_failure_exit() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _deploys = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("include_build_logs".into(), "false".into()),
+            Matcher::UrlEncoded("limit".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{
+                "deploys":[{
+                    "id":"deploy-failed",
+                    "status":"failed",
+                    "commit_sha":"cccccccccccccccccccccccccccccccccccccccc",
+                    "coalesced_commits":[{
+                        "requested_commit_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                        "source_repo_full_name":"myorg/myrepo",
+                        "github_ref":"refs/heads/main",
+                        "created_at":"2026-07-30T12:00:00Z"
+                    }]
+                }],
+                "has_more":false
+            }"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "deploys",
+            "watch",
+            "--app",
+            TEST_APP_NAME,
+            "--commit",
+            "bbbbbbbb",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""event":"commit_coalesced""#))
+        .stdout(predicate::str::contains(r#""status":"failed""#));
+}
+
+#[test]
+fn test_deploy_watch_coalesced_superseded_descendant_is_non_failure_terminal() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _deploys = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("include_build_logs".into(), "false".into()),
+            Matcher::UrlEncoded("limit".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{
+                "deploys":[{
+                    "id":"deploy-superseded",
+                    "status":"superseded",
+                    "commit_sha":"cccccccccccccccccccccccccccccccccccccccc",
+                    "coalesced_commits":[{
+                        "requested_commit_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                        "source_repo_full_name":"myorg/myrepo",
+                        "github_ref":"refs/heads/main",
+                        "created_at":"2026-07-30T12:00:00Z"
+                    }]
+                }],
+                "has_more":false
+            }"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "deploys",
+            "watch",
+            "--app",
+            TEST_APP_NAME,
+            "--commit",
+            "bbbbbbbb",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""event":"commit_coalesced""#))
+        .stdout(predicate::str::contains(r#""status":"superseded""#));
+}
+
 // ───────────────────────── Deploy ─────────────────────────
 
 #[test]
