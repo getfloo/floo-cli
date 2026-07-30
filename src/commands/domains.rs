@@ -6,6 +6,18 @@ use crate::api_client::FlooClient;
 use crate::errors::ErrorCode;
 use crate::output;
 
+fn claimant_proof_status(domain: &crate::api_types::Domain) -> &'static str {
+    if domain.claim_verified_at.is_some() {
+        "confirmed"
+    } else if domain.status.as_deref() == Some("active")
+        || domain.status.as_deref() == Some("ACTIVE")
+    {
+        "reproof required"
+    } else {
+        "pending"
+    }
+}
+
 fn check_services_flag(client: &FlooClient, app_id: &str, services: Option<&str>) {
     let result = match client.list_services(app_id, None) {
         Ok(r) => r,
@@ -123,6 +135,7 @@ pub fn list(app: Option<&str>) {
             vec![
                 d.hostname.clone(),
                 d.status.as_deref().unwrap_or("-").to_string(),
+                claimant_proof_status(d).to_string(),
                 d.dns_instructions
                     .as_deref()
                     .unwrap_or("\u{2014}")
@@ -132,7 +145,7 @@ pub fn list(app: Option<&str>) {
         .collect();
 
     output::table(
-        &["Domain", "Status", "DNS"],
+        &["Domain", "Status", "DNS control", "DNS"],
         &rows,
         Some(output::to_value(&result)),
     );
@@ -274,6 +287,10 @@ pub fn status(hostname: &str, app: Option<&str>) {
     output::info(&format!("Status:   {status}"), None);
     output::info(&format!("SSL:      {ssl}"), None);
     output::info(&format!("Verified: {verified}"), None);
+    output::info(
+        &format!("Control:  {}", claimant_proof_status(domain)),
+        None,
+    );
     output::info(&format!("Service:  {service}"), None);
     if let Some(dns) = domain.dns_instructions.as_deref() {
         output::info(&format!("DNS:      {dns}"), None);
@@ -329,7 +346,9 @@ pub fn watch(hostname: &str, app: Option<&str>, timeout_secs: u64) {
                 output::error(
                     &format!("Domain {hostname} verification failed."),
                     &ErrorCode::DomainVerificationFailed,
-                    Some("Check your DNS CNAME record and try again with 'floo domains verify'."),
+                    Some(
+                        "Check the traffic and _floo-verify TXT records, then try 'floo domains verify' again.",
+                    ),
                 );
                 process::exit(1);
             }

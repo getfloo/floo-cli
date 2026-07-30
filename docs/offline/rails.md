@@ -125,7 +125,8 @@ identity headers in front of the local server, no conditional code.
 
   floo domains add app.example.com --app my-rails-app
 
-Add the CNAME shown in the output at your DNS provider.
+Add the traffic and `_floo-verify` TXT records shown in the output, then run
+`floo domains verify app.example.com --app my-rails-app`.
 
 ## Common gotchas
 
