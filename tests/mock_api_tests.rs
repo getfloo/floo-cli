@@ -4698,6 +4698,121 @@ fn test_deploy_existing_app_by_name_json() {
         .stdout(predicate::str::contains(r#""deploy""#));
 }
 
+#[test]
+fn test_redeploy_rebuild_requests_server_resolved_github_head() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let rebuild = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
+        .match_body(Matcher::Json(serde_json::json!({"runtime": "nodejs"})))
+        .with_status(201)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"id":"deploy-rebuilt","status":"live","commit_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","url":"https://my-app.floo.app"}"#,
+        )
+        .create();
+
+    floo()
+        .args(["--json", "redeploy", "--app", TEST_APP_NAME, "--rebuild"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""id":"deploy-rebuilt""#))
+        .stdout(predicate::str::contains(
+            r#""commit_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb""#,
+        ));
+
+    rebuild.assert();
+}
+
+#[test]
+fn test_redeploy_restart_json_preserves_typed_contract_recovery() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let command = format!("floo redeploy --app {TEST_APP_NAME} --rebuild");
+    let _restart = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/restart").as_str())
+        .with_status(400)
+        .with_header("content-type", "application/json")
+        .with_body(
+            serde_json::json!({
+                "detail": {
+                    "code": "DEPLOY_CRON_CONTRACT_UNAVAILABLE",
+                    "message": format!(
+                        "Source deploy predates immutable cron snapshots. Run `{command}`."
+                    ),
+                    "recovery_action": "rebuild_current_github_head",
+                    "recovery_command": command,
+                    "recovery_app_id": TEST_APP_ID,
+                    "recovery_source": "github_default_branch_head",
+                    "blocked_source_deploy_id": "deploy-legacy",
+                    "blocked_source_commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+            })
+            .to_string(),
+        )
+        .create();
+
+    floo()
+        .args(["--json", "redeploy", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            r#""code":"DEPLOY_CRON_CONTRACT_UNAVAILABLE""#,
+        ))
+        .stdout(predicate::str::contains(
+            r#""recovery_action":"rebuild_current_github_head""#,
+        ))
+        .stdout(predicate::str::contains(format!(
+            r#""recovery_command":"{command}""#
+        )))
+        .stdout(predicate::str::contains(format!(
+            r#""suggestion":"{command}""#
+        )))
+        .stdout(predicate::str::contains(
+            r#""recovery_source":"github_default_branch_head""#,
+        ));
+}
+
+#[test]
+fn test_redeploy_restart_human_prints_invalid_contract_rebuild_command() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let command = format!("floo redeploy --app {TEST_APP_NAME} --rebuild");
+    let _restart = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/restart").as_str())
+        .with_status(400)
+        .with_header("content-type", "application/json")
+        .with_body(
+            serde_json::json!({
+                "detail": {
+                    "code": "DEPLOY_CRON_CONTRACT_INVALID",
+                    "message": "The source deploy has an invalid immutable cron snapshot.",
+                    "recovery_action": "rebuild_current_github_head",
+                    "recovery_command": command,
+                    "recovery_app_id": TEST_APP_ID,
+                    "recovery_source": "github_default_branch_head"
+                }
+            })
+            .to_string(),
+        )
+        .create();
+
+    floo()
+        .args(["redeploy", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "The source deploy has an invalid immutable cron snapshot.",
+        ))
+        .stderr(predicate::str::contains(command));
+}
+
 // ───────── Deploy not-found keyed on HTTP 404 status (#152 follow-up) ─────────
 //
 // #157 hardened resolve_app_or_exit / logs / releases / github / the deploy()

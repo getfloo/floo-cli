@@ -130,6 +130,33 @@ pub fn error(message: &str, code: &ErrorCode, suggestion: Option<&str>) {
     }
 }
 
+/// Render an API error while preserving its typed detail fields in JSON mode.
+///
+/// The API owns recovery metadata such as an exact command and authoritative
+/// source. Keeping those fields on the error object lets agents act without
+/// parsing prose; human mode uses the same command as the suggestion.
+pub fn error_with_details(
+    message: &str,
+    code: &ErrorCode,
+    suggestion: Option<&str>,
+    details: Option<&Value>,
+) {
+    if is_json_mode() {
+        let mut err = build_error_json(code, message, suggestion);
+        if let (Some(err_obj), Some(Value::Object(detail_obj))) = (err.as_object_mut(), details) {
+            for (key, value) in detail_obj {
+                err_obj.entry(key.clone()).or_insert_with(|| value.clone());
+            }
+        }
+        print_json(&serde_json::json!({"success": false, "error": err}));
+    } else {
+        eprintln!("{} {message}", "Error:".red());
+        if let Some(sug) = suggestion {
+            eprintln!("  \u{2192} {sug}");
+        }
+    }
+}
+
 pub fn error_with_data(
     message: &str,
     code: &ErrorCode,

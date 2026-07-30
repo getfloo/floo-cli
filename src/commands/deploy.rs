@@ -1146,7 +1146,17 @@ fn deploy_restart(
         }
         Err(e) => {
             spinner.finish();
-            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            let recovery_command = e
+                .extra
+                .as_ref()
+                .and_then(|extra| extra.get("recovery_command"))
+                .and_then(|command| command.as_str());
+            output::error_with_details(
+                &e.message,
+                &ErrorCode::from_api(&e.code),
+                recovery_command,
+                e.extra.as_ref(),
+            );
             process::exit(1);
         }
     };
