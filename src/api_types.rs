@@ -666,6 +666,8 @@ pub struct Domain {
     pub service_name: Option<String>,
     pub ssl_status: Option<String>,
     pub verified: Option<bool>,
+    #[serde(default)]
+    pub claim_verified_at: Option<String>,
     pub created_at: Option<String>,
 }
 

@@ -68,14 +68,15 @@ floo - Golden Path
 
      floo domains add app.example.com --app my-app
 
-  2. The output shows a CNAME record to add at your DNS provider:
+  2. The output shows the traffic and claimant-control records to add:
 
      CNAME app.example.com -> my-app.on.getfloo.com
+     TXT _floo-verify.app.example.com -> <claim token from the command>
 
-  3. Add that CNAME record in your DNS provider (Cloudflare, Route 53, etc).
+  3. Add both records in your DNS provider (Cloudflare, Route 53, etc).
 
-  4. Verify the domain in the dashboard (click "Verify DNS") or wait for
-     the auto-poll to pick it up. Once verified, status changes to active
+  4. Run `floo domains verify app.example.com --app my-app` or click
+     "Verify DNS" in the dashboard. Once verified, status changes to active
      and you get a confirmation email.
 
   For multi-service apps, target a specific service:
@@ -111,7 +112,7 @@ floo - Golden Path
   See deploy history                    | floo deploys list --app my-app
   Roll back to a previous version       | floo deploys rollback my-app <id>
   Set an env var                        | floo env set KEY=val --app my-app
-  Add a custom domain                   | floo domains add example.com --app my-app (then add CNAME at DNS provider)
+  Add a custom domain                   | floo domains add example.com --app my-app (then add the shown DNS records)
   Verify a custom domain                | floo domains verify example.com --app my-app
   View logs                             | floo logs query --app my-app
   Run locally with prod credentials     | floo dev --app my-app (requires dev_command)

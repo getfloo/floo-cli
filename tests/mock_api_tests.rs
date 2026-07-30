@@ -2207,6 +2207,33 @@ fn test_domains_list_json() {
 }
 
 #[test]
+fn test_domains_list_marks_legacy_active_domain_for_reproof() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _m_list = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/domains").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"domains":[{"hostname":"legacy.example.com","status":"active","claim_verified_at":null,"dns_instructions":"Add a TXT record: _floo-verify.legacy.example.com with value claim-token"}]}"#,
+        )
+        .create();
+
+    floo()
+        .args(["domains", "list", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("reproof required"))
+        .stderr(predicate::str::contains("_floo-verify.legacy.example.com"));
+}
+
+#[test]
 fn test_domains_remove_refuses_without_yes_flag_in_json_mode() {
     let mut server = Server::new();
     let home = setup_config(&server);
@@ -2325,6 +2352,32 @@ fn test_domains_show_json() {
         .success()
         .stdout(predicate::str::contains(r#""success":true"#))
         .stdout(predicate::str::contains("app.example.com"));
+}
+
+#[test]
+fn test_domains_show_reports_confirmed_claimant_control() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _m_list = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/domains").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"domains":[{"hostname":"app.example.com","status":"active","verified":true,"claim_verified_at":"2026-07-30T12:00:00Z"}]}"#,
+        )
+        .create();
+
+    floo()
+        .args(["domains", "show", "app.example.com", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Control:  confirmed"));
 }
 
 #[test]
