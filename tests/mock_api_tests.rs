@@ -315,7 +315,7 @@ fn test_billing_usage_period_scopes_derived_fields() {
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(format!(
-            r#"{{"id":"{TEST_ORG_ID}","name":"Test Org","slug":"test-org","plan":"pro","spend_cap":10000,"current_period_spend_cents":9000,"spend_cap_exceeded":false}}"#
+            r#"{{"id":"{TEST_ORG_ID}","name":"Test Org","slug":"test-org","plan":"paygo","spend_cap":10000,"current_period_spend_cents":9000,"spend_cap_exceeded":false}}"#
         ))
         .create();
 
@@ -323,7 +323,7 @@ fn test_billing_usage_period_scopes_derived_fields() {
         .mock("GET", "/v1/billing/limits")
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"plan":"pro","max_spend_cap_cents":20000}"#)
+        .with_body(r#"{"plan":"paygo","max_spend_cap_cents":20000}"#)
         .create();
 
     let _breakdown = server
@@ -332,7 +332,7 @@ fn test_billing_usage_period_scopes_derived_fields() {
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
-            r#"{"period":{"start":"2026-05-01T00:00:00Z","end":"2026-06-01T00:00:00Z","label":"Last month"},"total_cost_usd":120.0,"included_cost_usd":5.0,"apps":[]}"#,
+            r#"{"period":{"start":"2026-05-01T00:00:00Z","end":"2026-06-01T00:00:00Z","label":"Last month"},"total_cost_usd":120.0,"included_cost_usd":0.0,"apps":[]}"#,
         )
         .create();
 

@@ -89,8 +89,8 @@ the old role; removing a member revokes their app sessions and keys.
 ## Access Modes
 
   public    - no auth, anyone can access (default)
-  password  - shared password for simple protection (Pro+)
-  accounts  - per-user auth, gateway-managed (Pro+)
+  password  - shared password for simple protection (Pay as you go+)
+  accounts  - per-user auth, gateway-managed (Pay as you go+)
 
 Enterprise SSO (SAML/OIDC) is a sales-assisted setup, not a self-serve
 access_mode value - email sales@getfloo.com if your team needs it.
