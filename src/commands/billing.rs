@@ -3,6 +3,22 @@ use std::process;
 use crate::errors::ErrorCode;
 use crate::output;
 
+fn canonical_plan(plan: &str) -> &str {
+    match plan {
+        "hobby" | "pro" => "paygo",
+        current => current,
+    }
+}
+
+fn plan_display(plan: &str) -> (&'static str, &'static str) {
+    match canonical_plan(plan) {
+        "paygo" => ("Pay as you go", "$0 commitment"),
+        "team" => ("Team", "$250/mo"),
+        "enterprise" => ("Enterprise", "Custom"),
+        _ => ("Free", "$0"),
+    }
+}
+
 pub fn upgrade(plan: Option<String>) {
     super::require_auth();
     let client = super::init_client(None);
@@ -107,7 +123,7 @@ pub fn spend_cap_get() {
         output::warn("Spend cap exceeded \u{2014} deploys are blocked.");
     }
     if org.plan.as_deref() == Some("free") {
-        eprintln!("  Upgrade: floo billing upgrade --plan pro");
+        eprintln!("  Upgrade: floo billing upgrade --plan paygo");
     }
 }
 
@@ -186,16 +202,10 @@ pub fn usage(period: &str) {
     let period_spend_cents = (breakdown.total_cost_usd * 100.0).round() as u64;
     let exceeded = matches!(spend_cap, Some(cap) if cap > 0 && period_spend_cents >= cap);
 
-    let plan_price = match plan {
-        "hobby" => "$5/mo",
-        "pro" => "$20/mo",
-        "team" => "$200/mo",
-        "enterprise" => "Custom",
-        _ => "$0",
-    };
+    let (plan_label, plan_price) = plan_display(plan);
 
     let data = serde_json::json!({
-        "plan": plan,
+        "plan": canonical_plan(plan),
         "spend_cap_cents": spend_cap,
         "max_spend_cap_cents": max_cap,
         "period_spend_cents": period_spend_cents,
@@ -215,10 +225,9 @@ pub fn usage(period: &str) {
         return;
     }
 
-    let plan_label = plan[..1].to_uppercase() + &plan[1..];
     eprintln!("  Plan: {} ({})", plan_label, plan_price);
     eprintln!(
-        "  Compute credit: ${:.2}/month",
+        "  floo credits included: {:.2}/month",
         breakdown.included_cost_usd
     );
     eprintln!(
@@ -266,5 +275,21 @@ pub fn usage(period: &str) {
         } else {
             output::warn("Spend cap exceeded \u{2014} deploys are blocked.");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{canonical_plan, plan_display};
+
+    #[test]
+    fn plan_display_projects_legacy_offers_into_the_canonical_catalog() {
+        for plan in ["hobby", "pro", "paygo"] {
+            assert_eq!(canonical_plan(plan), "paygo");
+            assert_eq!(plan_display(plan), ("Pay as you go", "$0 commitment"));
+        }
+        assert_eq!(plan_display("team"), ("Team", "$250/mo"));
+        assert_eq!(plan_display("enterprise"), ("Enterprise", "Custom"));
+        assert_eq!(plan_display("free"), ("Free", "$0"));
     }
 }

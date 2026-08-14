@@ -30,7 +30,7 @@ const APP_TOML_HEADER: &str = r#"# floo.app.toml — see https://getfloo.com/doc
 # https://getfloo.com/docs/guides/golden-path.md.
 #
 # Common knobs to add when you need them (under [app], applies to every env):
-#   access_mode = "accounts"   # require sign-in (Pro+) — public, password,
+#   access_mode = "accounts"   # require sign-in (Pay as you go+) — public, password,
 #                              #   accounts, or sso. The [app] level is the
 #                              #   one that actually applies on push deploys
 #                              #   today; per-env overrides via

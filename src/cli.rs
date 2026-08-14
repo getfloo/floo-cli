@@ -567,8 +567,8 @@ pub enum BillingCommands {
 
     /// Upgrade your plan via Stripe Checkout or Billing Portal.
     Upgrade {
-        /// Plan to upgrade to: hobby, pro, or team. Omit to open billing portal.
-        #[arg(long, value_parser = ["hobby", "pro", "team"])]
+        /// Plan to upgrade to: paygo or team. Omit to open billing portal.
+        #[arg(long, value_parser = ["paygo", "team"])]
         plan: Option<String>,
     },
 
@@ -3083,6 +3083,23 @@ mod tests {
 
         let err = parse_err(&["floo", "orgs", "invite", "a@x.com", "--role", "owner"]);
         assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
+    }
+
+    #[test]
+    fn billing_upgrade_accepts_only_canonical_self_serve_plans() {
+        for plan in ["paygo", "team"] {
+            let cli = Cli::try_parse_from(["floo", "billing", "upgrade", "--plan", plan])
+                .unwrap_or_else(|e| panic!("clap rejected canonical plan {plan}: {e}"));
+            let Commands::Billing(BillingCommands::Upgrade { plan: parsed }) = cli.command else {
+                panic!("expected Billing::Upgrade");
+            };
+            assert_eq!(parsed.as_deref(), Some(plan));
+        }
+
+        for legacy in ["hobby", "pro"] {
+            let err = parse_err(&["floo", "billing", "upgrade", "--plan", legacy]);
+            assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
+        }
     }
 
     // --- `--json` arg-error contract (#1156) ---
