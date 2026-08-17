@@ -65,6 +65,7 @@ Never place credentials in source, committed `.env` files, floo TOML, logs, erro
 - Decision flow: `floo docs golden-path`
 - Config and secret behavior: `floo docs config`
 - Services and data: `floo docs services`
+- Availability, scaling, and CPU behavior: `floo docs scaling`
 - Managed-service health and accounts drift: `floo docs doctor`
 - Git-driven deployment: `floo docs deploy`
 - Routes and access controls: `floo docs edge`

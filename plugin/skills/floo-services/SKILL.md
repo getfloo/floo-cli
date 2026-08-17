@@ -8,9 +8,10 @@ description: floo service, database, cache, storage, cron, and service-routing s
 Use the installed CLI as the version-matched authority:
 
 1. Read `floo docs services --json`.
-2. Read `floo docs config --json` for the current declaration schema.
-3. Inspect exact command syntax with `floo services --help` and the selected subcommand's help.
-4. Run `floo preflight --json` before pushing config or completing an operational change.
+2. Read `floo docs scaling --json` before choosing HTTP availability or worker count.
+3. Read `floo docs config --json` for the current declaration schema.
+4. Inspect exact command syntax with `floo services --help` and the selected subcommand's help.
+5. Run `floo preflight --json` before pushing config or completing an operational change.
 
 Do not copy service syntax from memory or search the web until these offline surfaces are exhausted.
 

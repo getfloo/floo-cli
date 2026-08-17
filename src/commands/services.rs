@@ -105,7 +105,7 @@ pub fn list(app: Option<&str>, env: &str) {
     output::table(&["Name", "Type", "Status", "Ingress", "URL"], &rows, None);
 }
 
-pub fn info(service_name: &str, app: Option<&str>) {
+pub fn info(service_name: &str, app: Option<&str>, env: &str) {
     super::require_auth();
     let client = super::init_client(None);
 
@@ -113,7 +113,7 @@ pub fn info(service_name: &str, app: Option<&str>) {
     let app_id = app_id.as_str();
     let app_name = app_name.as_str();
 
-    let app_services = match client.list_services(app_id, None) {
+    let app_services = match client.list_services(app_id, Some(env)) {
         Ok(r) => r,
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
@@ -210,6 +210,10 @@ fn render_app_service(svc: &crate::api_types::ApiService, service_name: &str, ap
         .max_instances
         .map(|count| count.to_string())
         .unwrap_or_else(|| "-".to_string());
+    let instances = svc
+        .instances
+        .map(|count| count.to_string())
+        .unwrap_or_else(|| "-".to_string());
     let max_request_body = svc
         .max_request_body_mb
         .map(|size| format!("{size} MiB"))
@@ -226,7 +230,50 @@ fn render_app_service(svc: &crate::api_types::ApiService, service_name: &str, ap
     output::info(&format!("    Memory:           {memory}"), None);
     output::info(&format!("    Min instances:    {min_instances}"), None);
     output::info(&format!("    Max instances:    {max_instances}"), None);
+    output::info(&format!("    Worker instances: {instances}"), None);
     output::info(&format!("    Max request body: {max_request_body}"), None);
+
+    if let Some(runtime) = &svc.runtime_plan {
+        let environment = runtime
+            .environment
+            .as_deref()
+            .unwrap_or("selected environment");
+        let effective = &runtime.effective;
+        let scaling = if runtime.service_type == "worker" {
+            format!(
+                "{} fixed instance(s)",
+                effective.instances.unwrap_or_default()
+            )
+        } else {
+            format!(
+                "{}–{} instances",
+                effective.min_instances.unwrap_or_default(),
+                effective.max_instances.unwrap_or_default()
+            )
+        };
+        let cpu = effective.cpu.as_deref().unwrap_or("-");
+        let memory = effective.memory.as_deref().unwrap_or("-");
+        let cpu_reason = runtime.cpu_allocation_reason.replace('_', " ");
+        output::info(&format!("  Effective runtime ({environment}):"), None);
+        output::info(
+            &format!(
+                "    Availability: {} ({scaling})",
+                runtime.availability.replace('_', " ")
+            ),
+            None,
+        );
+        output::info(&format!("    CPU / memory: {cpu} / {memory}"), None);
+        output::info(
+            &format!(
+                "    CPU allocation: {} ({cpu_reason})",
+                runtime.cpu_allocation.replace('_', " ")
+            ),
+            None,
+        );
+        for warning in &runtime.warnings {
+            output::warn(&format!("Runtime adjustment: {warning}"));
+        }
+    }
 }
 
 fn render_managed_service(

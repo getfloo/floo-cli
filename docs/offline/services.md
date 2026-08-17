@@ -18,6 +18,9 @@ with confirmation for the exact app, environment, type, and name.
   api     - HTTP server for backend APIs
   worker  - background process (no incoming HTTP traffic)
 
+  Availability and cost/latency choices are declared with `min_instances` for
+  web/api and `instances` for workers. See: floo docs scaling
+
   Declare inline in floo.app.toml with type, port, and path. A deploy applies
   the declared service shape. It does not infer destructive intent for a
   production service merely because a declaration disappeared.
