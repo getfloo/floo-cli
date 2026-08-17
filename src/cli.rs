@@ -1064,6 +1064,10 @@ pub enum ServicesCommands {
             conflicts_with = "service_name"
         )]
         service: Option<String>,
+
+        /// Environment to inspect: dev or prod.
+        #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
+        env: String,
     },
 
     /// Provision a managed service (postgres, redis, or storage).
@@ -2346,6 +2350,7 @@ pub fn run() {
                 service_name,
                 app,
                 service,
+                env,
             } => {
                 let resolved = service_name.or(service).unwrap_or_else(|| {
                     output::error(
@@ -2355,7 +2360,7 @@ pub fn run() {
                     );
                     std::process::exit(1);
                 });
-                commands::services::info(&resolved, app.as_deref())
+                commands::services::info(&resolved, app.as_deref(), &env)
             }
             ServicesCommands::Add {
                 service_type,

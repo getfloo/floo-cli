@@ -337,6 +337,38 @@ pub struct SetEnvVarResponse {
 // --- Service ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiRuntimeValues {
+    pub cpu: Option<String>,
+    pub memory: Option<String>,
+    pub min_instances: Option<u64>,
+    pub max_instances: Option<u64>,
+    pub instances: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiRuntimeSources {
+    pub cpu: Option<String>,
+    pub memory: Option<String>,
+    pub min_instances: Option<String>,
+    pub max_instances: Option<String>,
+    pub instances: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiRuntimePlan {
+    pub environment: Option<String>,
+    pub service_type: String,
+    pub availability: String,
+    pub declared: ApiRuntimeValues,
+    pub effective: ApiRuntimeValues,
+    pub sources: ApiRuntimeSources,
+    pub cpu_allocation: String,
+    pub cpu_allocation_reason: String,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiService {
     pub id: String,
     pub name: String,
@@ -355,7 +387,11 @@ pub struct ApiService {
     #[serde(default)]
     pub min_instances: Option<u64>,
     #[serde(default)]
+    pub instances: Option<u64>,
+    #[serde(default)]
     pub max_request_body_mb: Option<u64>,
+    #[serde(default)]
+    pub runtime_plan: Option<ApiRuntimePlan>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

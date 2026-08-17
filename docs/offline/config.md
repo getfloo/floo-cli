@@ -125,7 +125,13 @@ floo Config Files
   [resources]
   cpu = "1"             # CPU cores (0.25 to 8)
   memory = "512Mi"      # Memory (128Mi to 32Gi)
-  max_instances = 10    # Max autoscale instances
+  min_instances = 0     # HTTP baseline; 0 = on-demand, 1+ = warm
+  max_instances = 3     # Max HTTP autoscale instances (platform default: 3)
+
+  Global min_instances applies only to web/api services. Workers use the
+  per-service `instances` field and never inherit this HTTP autoscaling floor.
+  See `floo docs scaling` for exact on-demand, warm, running-worker, and
+  paused-worker recipes.
 
 ## Environment Overrides (in floo.app.toml)
 

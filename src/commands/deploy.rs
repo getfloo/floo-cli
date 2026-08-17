@@ -43,6 +43,127 @@ struct ManagedEnvInjection {
     keys: Vec<String>,
 }
 
+const LOCAL_DEFAULT_MAX_INSTANCES: u32 = 3;
+
+/// Stable, agent-readable scaling plan derived from local configuration.
+///
+/// Values under `configured` preserve the merged declaration (including a global
+/// resource value). `locally_resolved` fills platform defaults needed to describe
+/// intent. The server remains authoritative for plan clamps, which is why every
+/// entry carries `server_resolution_required=true`; post-deploy `services show`
+/// reports the effective result.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct RuntimePlan {
+    service: String,
+    service_type: String,
+    availability: String,
+    configured: RuntimePlanValues,
+    locally_resolved: RuntimePlanValues,
+    sources: RuntimePlanSources,
+    cpu_allocation: String,
+    cpu_allocation_reason: String,
+    server_resolution_required: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct RuntimePlanValues {
+    min_instances: Option<u32>,
+    max_instances: Option<u32>,
+    instances: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct RuntimePlanSources {
+    min_instances: Option<String>,
+    max_instances: Option<String>,
+    instances: Option<String>,
+}
+
+fn build_runtime_plan(services: &[ServiceConfig]) -> Vec<RuntimePlan> {
+    services
+        .iter()
+        .map(|service| {
+            let is_worker = service.service_type == ServiceType::Worker;
+            let configured = RuntimePlanValues {
+                min_instances: service.min_instances,
+                max_instances: service.max_instances,
+                instances: service.instances,
+            };
+
+            if is_worker {
+                let instances = service.instances.unwrap_or(1);
+                RuntimePlan {
+                    service: service.name.clone(),
+                    service_type: service.service_type.to_string(),
+                    availability: if instances == 0 { "paused" } else { "fixed" }.to_string(),
+                    configured,
+                    locally_resolved: RuntimePlanValues {
+                        min_instances: None,
+                        max_instances: None,
+                        instances: Some(instances),
+                    },
+                    sources: RuntimePlanSources {
+                        min_instances: None,
+                        max_instances: None,
+                        instances: Some(
+                            if service.instances.is_some() {
+                                "configured"
+                            } else {
+                                "platform_default"
+                            }
+                            .to_string(),
+                        ),
+                    },
+                    cpu_allocation: "always_allocated".to_string(),
+                    cpu_allocation_reason: "worker_background_process".to_string(),
+                    server_resolution_required: true,
+                }
+            } else {
+                let min_instances = service.min_instances.unwrap_or(0);
+                let max_instances = service.max_instances.unwrap_or(LOCAL_DEFAULT_MAX_INSTANCES);
+                RuntimePlan {
+                    service: service.name.clone(),
+                    service_type: service.service_type.to_string(),
+                    availability: if min_instances == 0 {
+                        "on_demand"
+                    } else {
+                        "warm"
+                    }
+                    .to_string(),
+                    configured,
+                    locally_resolved: RuntimePlanValues {
+                        min_instances: Some(min_instances),
+                        max_instances: Some(max_instances),
+                        instances: None,
+                    },
+                    sources: RuntimePlanSources {
+                        min_instances: Some(
+                            if service.min_instances.is_some() {
+                                "configured"
+                            } else {
+                                "platform_default"
+                            }
+                            .to_string(),
+                        ),
+                        max_instances: Some(
+                            if service.max_instances.is_some() {
+                                "configured"
+                            } else {
+                                "platform_default"
+                            }
+                            .to_string(),
+                        ),
+                        instances: None,
+                    },
+                    cpu_allocation: "request_based".to_string(),
+                    cpu_allocation_reason: "http_request_scoped".to_string(),
+                    server_resolution_required: true,
+                }
+            }
+        })
+        .collect()
+}
+
 /// Severity of a preflight finding.
 ///
 /// - `Error` blocks the deploy (preflight exits 1). Reserved for configs that
@@ -424,6 +545,7 @@ pub fn preflight(path: PathBuf, app: Option<String>, services_filter: Vec<String
         &env_injection_plan,
     );
     let security_findings = generate_security_findings(&services, &resolved, &env_injection_plan);
+    let runtime_plan = build_runtime_plan(&services);
 
     let valid = !has_errors(&validation_findings);
     let contains_secrets = security_findings
@@ -472,6 +594,7 @@ pub fn preflight(path: PathBuf, app: Option<String>, services_filter: Vec<String
         let data = serde_json::json!({
             "app": app_name,
             "services": svc_json,
+            "runtime_plan": runtime_plan,
             "managed_services": managed_json,
             "env_injection_plan": env_injection_plan,
             "cron": cron_json,
@@ -520,6 +643,7 @@ pub fn preflight(path: PathBuf, app: Option<String>, services_filter: Vec<String
         &resolved,
         &services,
         &per_service_detection,
+        &runtime_plan,
         &env_injection_plan,
         &validation_findings,
     );
@@ -749,6 +873,7 @@ pub fn deploy(
         &env_injection_plan,
     );
     let valid = !has_errors(&validation_findings);
+    let runtime_plan = build_runtime_plan(&services);
 
     // 6. Display preflight info
     if !output::is_json_mode() {
@@ -757,6 +882,7 @@ pub fn deploy(
             &resolved,
             &services,
             &per_service_detection,
+            &runtime_plan,
             &env_injection_plan,
             &validation_findings,
         );
@@ -819,6 +945,7 @@ pub fn deploy(
                 "app": app_name,
                 "services": svc_json,
                 "managed_services": managed_json,
+                "runtime_plan": runtime_plan,
                 "env_injection_plan": env_injection_plan,
                 "cron": cron_json(&resolved),
                 "findings": validation_findings,
@@ -2372,6 +2499,7 @@ fn display_preflight_human(
     resolved: &project_config::ResolvedApp,
     services: &[ServiceConfig],
     per_service_detection: &[(String, DetectionResult)],
+    runtime_plan: &[RuntimePlan],
     env_injection_plan: &EnvInjectionPlan,
     findings: &[PreflightFinding],
 ) {
@@ -2406,7 +2534,11 @@ fn display_preflight_human(
     }
     eprintln!();
 
-    for (svc, (_, det)) in services.iter().zip(per_service_detection.iter()) {
+    for ((svc, (_, det)), runtime) in services
+        .iter()
+        .zip(per_service_detection.iter())
+        .zip(runtime_plan.iter())
+    {
         let path_label = if svc.path == "." {
             String::new()
         } else {
@@ -2427,6 +2559,26 @@ fn display_preflight_human(
             "    runtime: {}{framework_label} \u{2014} {} confidence",
             det.runtime, det.confidence
         );
+        if runtime.availability == "paused" {
+            eprintln!("    availability: paused, 0 running instances");
+        } else if runtime.availability == "fixed" {
+            eprintln!(
+                "    availability: {}, fixed {}, always-allocated CPU",
+                runtime.availability,
+                runtime.locally_resolved.instances.unwrap_or(0),
+            );
+        } else {
+            eprintln!(
+                "    availability: {}, scales {}\u{2013}{}, request-based CPU",
+                runtime.availability.replace('_', "-"),
+                runtime.locally_resolved.min_instances.unwrap_or(0),
+                runtime
+                    .locally_resolved
+                    .max_instances
+                    .unwrap_or(LOCAL_DEFAULT_MAX_INSTANCES),
+            );
+        }
+        eprintln!("    note: plan limits are resolved by the server; verify with `floo services show --json`");
         eprintln!();
     }
 
@@ -2435,7 +2587,10 @@ fn display_preflight_human(
     // Show global [resources] if present
     if let Some(ref app_cfg) = resolved.app_config {
         if let Some(ref res) = app_cfg.resources {
-            let has_any = res.cpu.is_some() || res.memory.is_some() || res.max_instances.is_some();
+            let has_any = res.cpu.is_some()
+                || res.memory.is_some()
+                || res.max_instances.is_some()
+                || res.min_instances.is_some();
             if has_any {
                 eprintln!("  [resources] (global defaults)");
                 let mut parts = Vec::new();
@@ -2447,6 +2602,9 @@ fn display_preflight_human(
                 }
                 if let Some(max) = res.max_instances {
                     parts.push(format!("max_instances: {max}"));
+                }
+                if let Some(min) = res.min_instances {
+                    parts.push(format!("min_instances: {min} (HTTP services only)"));
                 }
                 eprintln!("    {}", parts.join(", "));
                 eprintln!();
@@ -3036,6 +3194,63 @@ mod tests {
             r#"{{"id":"dep-1","status":"{status}","created_at":"2024-01-01T00:00:00Z"}}"#
         ))
         .unwrap()
+    }
+
+    fn runtime_service(
+        name: &str,
+        service_type: ServiceType,
+        min_instances: Option<u32>,
+        max_instances: Option<u32>,
+        instances: Option<u32>,
+    ) -> ServiceConfig {
+        ServiceConfig {
+            name: name.to_string(),
+            service_type,
+            path: ".".to_string(),
+            port: 8080,
+            ingress: ServiceIngress::Public,
+            domain: None,
+            cpu: None,
+            memory: None,
+            max_instances,
+            min_instances,
+            instances,
+            migrate_command: None,
+        }
+    }
+
+    #[test]
+    fn runtime_plan_names_all_four_scaling_postures() {
+        let services = vec![
+            runtime_service("on-demand", ServiceType::Web, None, None, None),
+            runtime_service("warm", ServiceType::Api, Some(1), Some(5), None),
+            runtime_service("worker", ServiceType::Worker, None, None, None),
+            runtime_service("paused", ServiceType::Worker, None, None, Some(0)),
+        ];
+
+        let plan = build_runtime_plan(&services);
+
+        assert_eq!(plan[0].availability, "on_demand");
+        assert_eq!(plan[0].locally_resolved.min_instances, Some(0));
+        assert_eq!(plan[0].locally_resolved.max_instances, Some(3));
+        assert_eq!(
+            plan[0].sources.min_instances.as_deref(),
+            Some("platform_default")
+        );
+        assert_eq!(plan[0].cpu_allocation, "request_based");
+
+        assert_eq!(plan[1].availability, "warm");
+        assert_eq!(plan[1].configured.min_instances, Some(1));
+        assert_eq!(plan[1].locally_resolved.max_instances, Some(5));
+        assert_eq!(plan[1].sources.max_instances.as_deref(), Some("configured"));
+
+        assert_eq!(plan[2].availability, "fixed");
+        assert_eq!(plan[2].locally_resolved.instances, Some(1));
+        assert_eq!(plan[2].cpu_allocation, "always_allocated");
+
+        assert_eq!(plan[3].availability, "paused");
+        assert_eq!(plan[3].configured.instances, Some(0));
+        assert_eq!(plan[3].locally_resolved.instances, Some(0));
     }
 
     // floo-cli#208: the SSE stream closes when the executor job exits, which

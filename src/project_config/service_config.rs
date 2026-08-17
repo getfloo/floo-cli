@@ -215,6 +215,8 @@ pub struct ServiceConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_instances: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub instances: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub migrate_command: Option<String>,
 }
 
@@ -296,6 +298,10 @@ pub struct ServiceSection {
     pub domain: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_instances: Option<u32>,
+    /// Exact fixed count for a worker. Omitted workers default to one instance;
+    /// zero is the explicit paused state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instances: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dev_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -324,6 +330,7 @@ impl ServiceSection {
             memory: None,
             max_instances: None,
             min_instances: self.min_instances,
+            instances: self.instances,
             migrate_command: self.migrate_command.clone(),
         }
     }
@@ -352,6 +359,36 @@ pub fn load_service_config(dir: &Path) -> Result<Option<ServiceFileConfig>, Floo
     validate_domain_blocks(&config.domains)?;
     if let Some(ref edge) = config.edge {
         edge.validate("[edge]")?;
+    }
+    let is_worker = config.service.service_type == ServiceType::Worker;
+    if config.service.instances.is_some() && !is_worker {
+        return Err(FlooError::with_suggestion(
+            ErrorCode::InvalidProjectConfig,
+            format!(
+                "Service '{}' in {} sets 'instances', which is only valid for type = \"worker\".",
+                config.service.name,
+                super::SERVICE_CONFIG_FILE,
+            ),
+            "Remove instances, or use min_instances/max_instances for an HTTP service.".to_string(),
+        ));
+    }
+    if is_worker
+        && (config.service.min_instances.is_some()
+            || config
+                .resources
+                .as_ref()
+                .is_some_and(|resources| resources.min_instances.is_some()))
+    {
+        return Err(FlooError::with_suggestion(
+            ErrorCode::InvalidProjectConfig,
+            format!(
+                "Service '{}' in {} is a worker and sets min_instances, which does not control a worker's fixed count.",
+                config.service.name,
+                super::SERVICE_CONFIG_FILE,
+            ),
+            "Replace min_instances with instances = <n> in [service] (0 turns the worker off)."
+                .to_string(),
+        ));
     }
 
     Ok(Some(config))
@@ -432,6 +469,81 @@ env_file = ".env"
     }
 
     #[test]
+    fn test_worker_instances_parse_and_pause() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::SERVICE_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[service]
+name = "jobs"
+type = "worker"
+port = 8080
+instances = 0
+"#,
+        )
+        .unwrap();
+
+        let config = load_service_config(dir.path()).unwrap().unwrap();
+        assert_eq!(config.service.instances, Some(0));
+        assert_eq!(config.service.to_api_service_config(".").instances, Some(0));
+    }
+
+    #[test]
+    fn test_http_service_rejects_worker_instances() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::SERVICE_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[service]
+name = "web"
+type = "web"
+port = 8080
+instances = 1
+"#,
+        )
+        .unwrap();
+
+        let error = load_service_config(dir.path()).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidProjectConfig);
+        assert!(error.message.contains("only valid for type = \"worker\""));
+    }
+
+    #[test]
+    fn test_worker_rejects_http_min_instances_in_either_section() {
+        for scaling in ["min_instances = 1", "[resources]\nmin_instances = 1"] {
+            let dir = TempDir::new().unwrap();
+            fs::write(
+                dir.path().join(super::super::SERVICE_CONFIG_FILE),
+                format!(
+                    r#"
+[app]
+name = "my-app"
+
+[service]
+name = "jobs"
+type = "worker"
+port = 8080
+{scaling}
+"#
+                ),
+            )
+            .unwrap();
+
+            let error = load_service_config(dir.path()).unwrap_err();
+            assert_eq!(error.code, ErrorCode::InvalidProjectConfig);
+            assert!(error
+                .message
+                .contains("does not control a worker's fixed count"));
+        }
+    }
+
+    #[test]
     fn test_load_service_config_missing_returns_none() {
         let dir = TempDir::new().unwrap();
         let result = load_service_config(dir.path()).unwrap();
@@ -501,6 +613,7 @@ ingress = "internal"
                 env_file: None,
                 domain: None,
                 min_instances: None,
+                instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -525,6 +638,7 @@ ingress = "internal"
             env_file: None,
             domain: None,
             min_instances: None,
+            instances: None,
             dev_command: None,
             migrate_command: None,
         };
@@ -550,6 +664,7 @@ ingress = "internal"
             memory: None,
             max_instances: None,
             min_instances: None,
+            instances: None,
             migrate_command: None,
         };
         let json = serde_json::to_value(&config).unwrap();
@@ -730,6 +845,7 @@ port = 8000
             env_file: None,
             domain: Some("getfloo.com".to_string()),
             min_instances: None,
+            instances: None,
             dev_command: None,
             migrate_command: None,
         };
@@ -751,6 +867,7 @@ port = 8000
             memory: None,
             max_instances: None,
             min_instances: None,
+            instances: None,
             migrate_command: None,
         };
         let json = serde_json::to_value(&config).unwrap();
@@ -770,6 +887,7 @@ port = 8000
             memory: None,
             max_instances: None,
             min_instances: None,
+            instances: None,
             migrate_command: None,
         };
         let json = serde_json::to_value(&config).unwrap();
@@ -794,6 +912,7 @@ port = 8000
                 env_file: None,
                 domain: Some("getfloo.com".to_string()),
                 min_instances: None,
+                instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -869,6 +988,7 @@ port = 8000
             memory: None,
             max_instances: None,
             min_instances: None,
+            instances: None,
             migrate_command: None,
         };
         let json = serde_json::to_value(&config).unwrap();
@@ -890,6 +1010,7 @@ port = 8000
             memory: Some("4Gi".to_string()),
             max_instances: Some(5),
             min_instances: None,
+            instances: None,
             migrate_command: None,
         };
         let json = serde_json::to_value(&config).unwrap();

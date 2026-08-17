@@ -115,18 +115,33 @@ fn mock_resolve_app(server: &mut Server) -> Vec<Mock> {
 
 /// Mock a single user-managed service (web).
 fn mock_services_single(server: &mut Server) -> Mock {
+    mock_services_single_for_env(server, None)
+}
+
+fn mock_services_single_env(server: &mut Server, environment: &str) -> Mock {
+    mock_services_single_for_env(server, Some(environment))
+}
+
+fn mock_services_single_for_env(server: &mut Server, environment: Option<&str>) -> Mock {
+    let mut query = vec![
+        Matcher::UrlEncoded("page".into(), "1".into()),
+        Matcher::UrlEncoded("per_page".into(), "100".into()),
+    ];
+    if let Some(environment) = environment {
+        query.push(Matcher::UrlEncoded(
+            "environment".into(),
+            environment.into(),
+        ));
+    }
     server
         .mock(
             "GET",
             format!("/v1/apps/{TEST_APP_ID}/services").as_str(),
         )
-        .match_query(Matcher::AllOf(vec![
-            Matcher::UrlEncoded("page".into(), "1".into()),
-            Matcher::UrlEncoded("per_page".into(), "100".into()),
-        ]))
+        .match_query(Matcher::AllOf(query))
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"services":[{"id":"svc-web-1","name":"web","type":"web","status":"live","cloud_run_url":"https://web.floo.app","port":3000,"cpu":"2","memory":"1Gi","max_instances":10,"min_instances":1,"max_request_body_mb":32}]}"#)
+        .with_body(r#"{"services":[{"id":"svc-web-1","name":"web","type":"web","status":"live","cloud_run_url":"https://web.floo.app","port":3000,"cpu":"2","memory":"1Gi","max_instances":10,"min_instances":1,"instances":null,"max_request_body_mb":32,"runtime_plan":{"environment":"dev","service_type":"web","availability":"warm","declared":{"cpu":"2","memory":"1Gi","min_instances":1,"max_instances":10,"instances":null},"effective":{"cpu":"2","memory":"1Gi","min_instances":1,"max_instances":10,"instances":null},"sources":{"cpu":"configured","memory":"configured","min_instances":"configured","max_instances":"configured","instances":null},"cpu_allocation":"request_based","cpu_allocation_reason":"http_request_scoped","warnings":[]}}]}"#)
         .create()
 }
 
@@ -3038,7 +3053,7 @@ fn test_services_list_json_returns_both_app_and_managed_services() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
-    let _services = mock_services_single(&mut server);
+    let _services = mock_services_single_env(&mut server, "dev");
 
     let _m_managed = server
         .mock(
@@ -3069,6 +3084,9 @@ fn test_services_list_json_returns_both_app_and_managed_services() {
     assert_eq!(service["max_instances"], 10);
     assert_eq!(service["min_instances"], 1);
     assert_eq!(service["max_request_body_mb"], 32);
+    assert_eq!(service["runtime_plan"]["environment"], "dev");
+    assert_eq!(service["runtime_plan"]["availability"], "warm");
+    assert_eq!(service["runtime_plan"]["cpu_allocation"], "request_based");
 }
 
 #[test]
@@ -3646,7 +3664,7 @@ fn test_services_list_partial_view_when_managed_services_fetch_fails() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
-    let _services = mock_services_single(&mut server);
+    let _services = mock_services_single_env(&mut server, "dev");
 
     // Managed services endpoint is broken. `list` must degrade gracefully:
     // app services render, managed_services is empty, a warning fires.
@@ -3783,7 +3801,7 @@ fn test_services_show_user_managed() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
-    let _services = mock_services_single(&mut server);
+    let _services = mock_services_single_env(&mut server, "dev");
 
     let output = floo()
         .args(["--json", "services", "show", "web", "--app", TEST_APP_NAME])
@@ -3817,6 +3835,7 @@ fn test_services_show_json_preserves_null_resource_fields() {
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("page".into(), "1".into()),
             Matcher::UrlEncoded("per_page".into(), "100".into()),
+            Matcher::UrlEncoded("environment".into(), "dev".into()),
         ]))
         .with_status(200)
         .with_header("content-type", "application/json")
@@ -3852,7 +3871,7 @@ fn test_services_show_human_renders_configured_resources() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
-    let _services = mock_services_single(&mut server);
+    let _services = mock_services_single_env(&mut server, "dev");
 
     floo()
         .args(["services", "show", "web", "--app", TEST_APP_NAME])
@@ -3864,7 +3883,54 @@ fn test_services_show_human_renders_configured_resources() {
         .stderr(predicate::str::contains("Memory:           1Gi"))
         .stderr(predicate::str::contains("Min instances:    1"))
         .stderr(predicate::str::contains("Max instances:    10"))
-        .stderr(predicate::str::contains("Max request body: 32 MiB"));
+        .stderr(predicate::str::contains("Max request body: 32 MiB"))
+        .stderr(predicate::str::contains("Effective runtime (dev):"))
+        .stderr(predicate::str::contains(
+            "Availability: warm (1–10 instances)",
+        ))
+        .stderr(predicate::str::contains(
+            "CPU allocation: request based (http request scoped)",
+        ));
+}
+
+#[test]
+fn test_services_show_selects_prod_runtime_plan() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/services").as_str(),
+        )
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+            Matcher::UrlEncoded("environment".into(), "prod".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"services":[{"id":"svc-web-1","name":"web","type":"web","status":"live","cloud_run_url":"https://web.floo.app","port":3000,"runtime_plan":{"environment":"prod","service_type":"web","availability":"on_demand","declared":{"cpu":null,"memory":null,"min_instances":null,"max_instances":null,"instances":null},"effective":{"cpu":"1","memory":"512Mi","min_instances":0,"max_instances":3,"instances":null},"sources":{"cpu":"platform_default","memory":"platform_default","min_instances":"platform_default","max_instances":"platform_default","instances":null},"cpu_allocation":"request_based","cpu_allocation_reason":"http_request_scoped","warnings":[]}}]}"#)
+        .create();
+
+    let output = floo()
+        .args([
+            "--json",
+            "services",
+            "show",
+            "web",
+            "--app",
+            TEST_APP_NAME,
+            "--env",
+            "prod",
+        ])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "{output:?}");
+    let json = parse_single_json_object(&output.stdout);
+    assert_eq!(json["data"]["runtime_plan"]["environment"], "prod");
 }
 
 #[test]
@@ -3878,6 +3944,7 @@ fn test_services_show_routes_to_managed_service_by_type() {
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("page".into(), "1".into()),
             Matcher::UrlEncoded("per_page".into(), "100".into()),
+            Matcher::UrlEncoded("environment".into(), "dev".into()),
         ]))
         .with_status(200)
         .with_header("content-type", "application/json")
@@ -3938,6 +4005,7 @@ fn test_services_show_nothing_matches_lists_available() {
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("page".into(), "1".into()),
             Matcher::UrlEncoded("per_page".into(), "100".into()),
+            Matcher::UrlEncoded("environment".into(), "dev".into()),
         ]))
         .with_status(200)
         .with_header("content-type", "application/json")
@@ -4265,6 +4333,7 @@ fn test_services_show_surfaces_api_errors() {
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("page".into(), "1".into()),
             Matcher::UrlEncoded("per_page".into(), "100".into()),
+            Matcher::UrlEncoded("environment".into(), "dev".into()),
         ]))
         .with_status(500)
         .with_header("content-type", "application/json")

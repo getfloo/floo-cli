@@ -20,6 +20,8 @@ const PREVIEWS: &str = include_str!("../../docs/offline/previews.md");
 
 const CONFIG: &str = include_str!("../../docs/offline/config.md");
 
+const SCALING: &str = include_str!("../../docs/offline/scaling.md");
+
 const DEPLOY: &str = include_str!("../../docs/offline/deploy.md");
 
 const AUTH: &str = include_str!("../../docs/offline/auth.md");
@@ -150,6 +152,12 @@ pub(crate) const TOPICS: &[Topic] = &[
         summary: "Configuration file formats and examples",
         aliases: CONFIG_ALIASES,
         content: CONFIG,
+    },
+    Topic {
+        name: "scaling",
+        summary: "Availability, scaling, and CPU behavior",
+        aliases: NO_ALIASES,
+        content: SCALING,
     },
     Topic {
         name: "cron",
@@ -291,6 +299,7 @@ mod tests {
         assert!(!DOCTOR.is_empty());
         assert!(!PREVIEWS.is_empty());
         assert!(!CONFIG.is_empty());
+        assert!(!SCALING.is_empty());
         assert!(!CRON.is_empty());
         assert!(!DEPLOY.is_empty());
         assert!(!AUTH.is_empty());
@@ -370,6 +379,26 @@ mod tests {
     #[test]
     fn test_services_no_coming_soon() {
         assert!(!SERVICES.contains("coming soon"));
+    }
+
+    #[test]
+    fn test_scaling_topic_has_all_runtime_postures() {
+        assert!(render_overview().contains("floo docs scaling"));
+        for phrase in [
+            "min_instances = 0",
+            "min_instances = 1",
+            "instances = 1",
+            "instances = 0",
+            "request-based CPU",
+            "always-allocated CPU",
+            "floo preflight --json",
+            "floo services show",
+        ] {
+            assert!(
+                SCALING.contains(phrase),
+                "scaling topic is missing {phrase}"
+            );
+        }
     }
 
     #[test]

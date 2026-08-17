@@ -79,9 +79,11 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
             let max_instances = entry
                 .max_instances
                 .or_else(|| global_resources.and_then(|r| r.max_instances));
-            let min_instances = entry
-                .min_instances
-                .or_else(|| global_resources.and_then(|r| r.min_instances));
+            let min_instances = entry.min_instances.or_else(|| {
+                (service_type != ServiceType::Worker)
+                    .then(|| global_resources.and_then(|r| r.min_instances))
+                    .flatten()
+            });
 
             let svc = ServiceConfig {
                 name: name.clone(),
@@ -94,6 +96,7 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
                 memory,
                 max_instances,
                 min_instances,
+                instances: entry.instances,
                 migrate_command: entry.migrate_command.clone(),
             };
 
@@ -164,7 +167,14 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
 
                 let mut svc = svc_file.service.to_api_service_config(normalized_path);
 
-                // Let floo.app.toml override floo.service.toml values
+                // Apply resources from floo.service.toml [resources]
+                let global_resources = resolved
+                    .app_config
+                    .as_ref()
+                    .and_then(|c| c.resources.as_ref());
+                apply_service_file_resources(&mut svc, &svc_file.resources, global_resources);
+
+                // Let floo.app.toml override floo.service.toml/global values last.
                 if let Some(ref app_cfg) = resolved.app_config {
                     if let Some(entry) = app_cfg.services.get(name) {
                         if let Some(override_ingress) = entry.ingress {
@@ -173,15 +183,9 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
                         if entry.domain.is_some() {
                             svc.domain = entry.domain.clone();
                         }
+                        apply_app_service_overrides(&mut svc, entry);
                     }
                 }
-
-                // Apply resources from floo.service.toml [resources]
-                let global_resources = resolved
-                    .app_config
-                    .as_ref()
-                    .and_then(|c| c.resources.as_ref());
-                apply_service_file_resources(&mut svc, &svc_file.resources, global_resources);
 
                 if !seen_names.insert(svc.name.clone()) {
                     return Err(FlooError::new(
@@ -233,11 +237,12 @@ fn apply_service_file_resources(
     svc_resources: &Option<ResourceConfig>,
     global_resources: Option<&ResourceConfig>,
 ) {
+    let is_worker = svc.service_type == ServiceType::Worker;
     if let Some(res) = svc_resources {
         svc.cpu = res.cpu.clone();
         svc.memory = res.memory.clone();
         svc.max_instances = res.max_instances;
-        svc.min_instances = res.min_instances;
+        svc.min_instances = (!is_worker).then_some(res.min_instances).flatten();
     }
     // Fall back to global for any fields still None
     if let Some(global) = global_resources {
@@ -250,9 +255,29 @@ fn apply_service_file_resources(
         if svc.max_instances.is_none() {
             svc.max_instances = global.max_instances;
         }
-        if svc.min_instances.is_none() {
+        if !is_worker && svc.min_instances.is_none() {
             svc.min_instances = global.min_instances;
         }
+    }
+}
+
+/// Apply the app-level declaration last: delegated precedence is
+/// floo.app.toml service override > floo.service.toml > global [resources].
+fn apply_app_service_overrides(svc: &mut ServiceConfig, entry: &AppServiceEntry) {
+    if entry.cpu.is_some() {
+        svc.cpu = entry.cpu.clone();
+    }
+    if entry.memory.is_some() {
+        svc.memory = entry.memory.clone();
+    }
+    if entry.max_instances.is_some() {
+        svc.max_instances = entry.max_instances;
+    }
+    if svc.service_type != ServiceType::Worker && entry.min_instances.is_some() {
+        svc.min_instances = entry.min_instances;
+    }
+    if svc.service_type == ServiceType::Worker && entry.instances.is_some() {
+        svc.instances = entry.instances;
     }
 }
 
@@ -437,6 +462,7 @@ ingress = "public"
                 env_file: None,
                 domain: None,
                 min_instances: None,
+                instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -590,6 +616,7 @@ ingress = "public"
                 env_file: None,
                 domain: None,
                 min_instances: None,
+                instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -690,6 +717,7 @@ ingress = "public"
                 env_file: None,
                 domain: None,
                 min_instances: None,
+                instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -889,6 +917,7 @@ ingress = "public"
                 env_file: None,
                 domain: None,
                 min_instances: None,
+                instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -1085,6 +1114,7 @@ ingress = "public"
                 memory: None,
                 max_instances: None,
                 min_instances: None,
+                instances: None,
                 migrate_command: None,
             },
             ServiceConfig {
@@ -1098,6 +1128,7 @@ ingress = "public"
                 memory: None,
                 max_instances: None,
                 min_instances: None,
+                instances: None,
                 migrate_command: None,
             },
         ];
@@ -1120,6 +1151,7 @@ ingress = "public"
                 memory: None,
                 max_instances: None,
                 min_instances: None,
+                instances: None,
                 migrate_command: None,
             },
             ServiceConfig {
@@ -1133,6 +1165,7 @@ ingress = "public"
                 memory: None,
                 max_instances: None,
                 min_instances: None,
+                instances: None,
                 migrate_command: None,
             },
         ];
@@ -1156,6 +1189,7 @@ ingress = "public"
                 memory: None,
                 max_instances: None,
                 min_instances: None,
+                instances: None,
                 migrate_command: None,
             },
             ServiceConfig {
@@ -1169,6 +1203,7 @@ ingress = "public"
                 memory: None,
                 max_instances: None,
                 min_instances: None,
+                instances: None,
                 migrate_command: None,
             },
         ];
@@ -1208,6 +1243,7 @@ ingress = "public"
                 env_file: None,
                 domain: None,
                 min_instances: None,
+                instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
@@ -1728,6 +1764,135 @@ domain = "svc.example.com"
     }
 
     #[test]
+    fn worker_never_inherits_global_http_minimum() {
+        let mut worker = ServiceConfig {
+            name: "jobs".to_string(),
+            service_type: ServiceType::Worker,
+            path: ".".to_string(),
+            port: 8080,
+            ingress: ServiceIngress::Internal,
+            domain: None,
+            cpu: None,
+            memory: None,
+            max_instances: None,
+            min_instances: None,
+            instances: None,
+            migrate_command: None,
+        };
+        let global = ResourceConfig {
+            cpu: Some("1".to_string()),
+            memory: Some("512Mi".to_string()),
+            max_instances: Some(3),
+            min_instances: Some(1),
+        };
+
+        apply_service_file_resources(&mut worker, &None, Some(&global));
+
+        assert_eq!(worker.min_instances, None);
+        assert_eq!(worker.instances, None);
+    }
+
+    #[test]
+    fn delegated_app_override_wins_service_file_and_global_resources() {
+        let mut service = ServiceConfig {
+            name: "api".to_string(),
+            service_type: ServiceType::Api,
+            path: "backend".to_string(),
+            port: 8080,
+            ingress: ServiceIngress::Public,
+            domain: None,
+            cpu: None,
+            memory: None,
+            max_instances: None,
+            min_instances: None,
+            instances: None,
+            migrate_command: None,
+        };
+        let global = ResourceConfig {
+            cpu: Some("1".to_string()),
+            memory: Some("512Mi".to_string()),
+            max_instances: Some(2),
+            min_instances: Some(0),
+        };
+        let service_file = Some(ResourceConfig {
+            cpu: Some("2".to_string()),
+            memory: None,
+            max_instances: Some(4),
+            min_instances: Some(1),
+        });
+        let app_override = AppServiceEntry {
+            service_type: AppServiceType::Api,
+            path: Some("backend".to_string()),
+            repo: None,
+            version: None,
+            plan: None,
+            port: None,
+            ingress: None,
+            env_file: None,
+            domain: None,
+            cpu: Some("4".to_string()),
+            memory: Some("2Gi".to_string()),
+            max_instances: Some(8),
+            min_instances: Some(2),
+            instances: None,
+            dev_command: None,
+            migrate_command: None,
+            command: None,
+            env: None,
+        };
+
+        apply_service_file_resources(&mut service, &service_file, Some(&global));
+        apply_app_service_overrides(&mut service, &app_override);
+
+        assert_eq!(service.cpu.as_deref(), Some("4"));
+        assert_eq!(service.memory.as_deref(), Some("2Gi"));
+        assert_eq!(service.max_instances, Some(8));
+        assert_eq!(service.min_instances, Some(2));
+    }
+
+    #[test]
+    fn delegated_worker_app_instances_override_wins_service_file() {
+        let mut worker = ServiceConfig {
+            name: "jobs".to_string(),
+            service_type: ServiceType::Worker,
+            path: "jobs".to_string(),
+            port: 8080,
+            ingress: ServiceIngress::Internal,
+            domain: None,
+            cpu: None,
+            memory: None,
+            max_instances: None,
+            min_instances: None,
+            instances: Some(2),
+            migrate_command: None,
+        };
+        let app_override = AppServiceEntry {
+            service_type: AppServiceType::Worker,
+            path: Some("jobs".to_string()),
+            repo: None,
+            version: None,
+            plan: None,
+            port: None,
+            ingress: None,
+            env_file: None,
+            domain: None,
+            cpu: None,
+            memory: None,
+            max_instances: None,
+            min_instances: None,
+            instances: Some(0),
+            dev_command: None,
+            migrate_command: None,
+            command: None,
+            env: None,
+        };
+
+        apply_app_service_overrides(&mut worker, &app_override);
+
+        assert_eq!(worker.instances, Some(0));
+    }
+
+    #[test]
     fn test_discover_inline_errors_when_service_toml_exists() {
         let dir = TempDir::new().unwrap();
 
@@ -1910,6 +2075,7 @@ domain = "svc.example.com"
                 env_file: None,
                 domain: None,
                 min_instances: None,
+                instances: None,
                 dev_command: None,
                 migrate_command: None,
             },
