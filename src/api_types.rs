@@ -644,9 +644,39 @@ pub struct DeclaredManagedService {
     pub tier: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize)]
+pub struct DeclaredRuntimeService {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub service_type: String,
+    pub cpu: Option<String>,
+    pub memory: Option<String>,
+    pub min_instances: Option<u32>,
+    pub max_instances: Option<u32>,
+    pub instances: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct DeclaredState {
     pub managed_services: Vec<DeclaredManagedService>,
+    pub environment: String,
+    pub services: Vec<DeclaredRuntimeService>,
+}
+
+impl Default for DeclaredState {
+    fn default() -> Self {
+        Self {
+            managed_services: Vec::new(),
+            environment: "dev".to_string(),
+            services: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PreflightRuntimeService {
+    pub name: String,
+    pub runtime_plan: ApiRuntimePlan,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -684,6 +714,8 @@ pub struct PlanSummary {
 pub struct PreflightPlan {
     #[serde(default)]
     pub managed_services: ManagedServicesPlan,
+    #[serde(default)]
+    pub runtime_services: Vec<PreflightRuntimeService>,
     #[serde(default)]
     pub summary: PlanSummary,
     #[serde(default)]

@@ -392,7 +392,10 @@ mod tests {
             "request-based CPU",
             "always-allocated CPU",
             "floo preflight --json",
+            "floo preflight --env prod --json",
             "floo services show",
+            "paid production",
+            "$24.64/month",
         ] {
             assert!(
                 SCALING.contains(phrase),
