@@ -91,6 +91,7 @@ floo Deploy Flow
 
   floo preflight                   - validate config, detect runtimes, check readiness
   floo preflight --json            - structured output for agents
+  floo preflight --env prod --json - resolve tier-aware production runtime defaults
 
   Preflight FAILS (exit 1, valid=false) on configs that can't build or run:
   a service path that doesn't exist, a [cron.*] with an invalid schedule, a
@@ -110,6 +111,10 @@ floo Deploy Flow
                            required/optional keys, explicit vs implicit mode.
     data.cron[]          - declared [cron.*] entries (name, schedule, command,
                            service, timeout).
+    data.runtime_plan[]  - local configured/default scaling intent. A production
+                           omission remains unresolved without the app plan.
+    data.plan.runtime_services[] - authenticated server resolution for --env,
+                           including effective values, sources, and billing notes.
     contains_secrets     - top-level marker, true when a secret-shaped var is
                            found in a web service's env file (it may ship to
                            the browser). Harnesses can refuse the payload.

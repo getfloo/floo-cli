@@ -125,8 +125,13 @@ floo Config Files
   [resources]
   cpu = "1"             # CPU cores (0.25 to 8)
   memory = "512Mi"      # Memory (128Mi to 32Gi)
-  min_instances = 0     # HTTP baseline; 0 = on-demand, 1+ = warm
   max_instances = 3     # Max HTTP autoscale instances (platform default: 3)
+
+  Omitted HTTP min_instances is 1 for paid production and 0 for Free, dev,
+  and preview. Set min_instances = 0 explicitly to opt paid production into
+  scale-to-zero. The warm default is about $24.64/month for the default HTTP
+  shape before request traffic and credits, or about $36.96/month with the
+  floo-managed Postgres default shape.
 
   Global min_instances applies only to web/api services. Workers use the
   per-service `instances` field and never inherit this HTTP autoscaling floor.

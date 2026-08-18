@@ -144,7 +144,8 @@ Examples:
     #[command(after_help = "\
 Examples:
   floo preflight                           Validate current directory
-  floo preflight ./app --json              Validate ./app with JSON output")]
+  floo preflight ./app --json              Validate ./app with JSON output
+  floo preflight --env prod                Resolve the production runtime plan")]
     Preflight {
         /// Project directory to validate.
         #[arg(default_value = ".")]
@@ -162,6 +163,10 @@ Examples:
             value_delimiter = ','
         )]
         services: Vec<String>,
+
+        /// Environment whose server-side runtime defaults should be resolved.
+        #[arg(long, default_value = "dev", value_parser = ["dev", "prod", "preview"])]
+        env: String,
     },
 
     /// Force a redeploy (after env var changes, config updates, or to rebuild).
@@ -2108,7 +2113,8 @@ pub fn run() {
             path,
             app,
             services,
-        } => commands::deploy::preflight(path, app, services),
+            env,
+        } => commands::deploy::preflight(path, app, services, env),
 
         Commands::Redeploy {
             path,

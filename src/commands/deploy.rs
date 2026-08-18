@@ -56,6 +56,7 @@ const LOCAL_DEFAULT_MAX_INSTANCES: u32 = 3;
 struct RuntimePlan {
     service: String,
     service_type: String,
+    environment: String,
     availability: String,
     configured: RuntimePlanValues,
     locally_resolved: RuntimePlanValues,
@@ -63,6 +64,7 @@ struct RuntimePlan {
     cpu_allocation: String,
     cpu_allocation_reason: String,
     server_resolution_required: bool,
+    notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -79,7 +81,7 @@ struct RuntimePlanSources {
     instances: Option<String>,
 }
 
-fn build_runtime_plan(services: &[ServiceConfig]) -> Vec<RuntimePlan> {
+fn build_runtime_plan(services: &[ServiceConfig], environment: &str) -> Vec<RuntimePlan> {
     services
         .iter()
         .map(|service| {
@@ -95,6 +97,7 @@ fn build_runtime_plan(services: &[ServiceConfig]) -> Vec<RuntimePlan> {
                 RuntimePlan {
                     service: service.name.clone(),
                     service_type: service.service_type.to_string(),
+                    environment: environment.to_string(),
                     availability: if instances == 0 { "paused" } else { "fixed" }.to_string(),
                     configured,
                     locally_resolved: RuntimePlanValues {
@@ -117,14 +120,21 @@ fn build_runtime_plan(services: &[ServiceConfig]) -> Vec<RuntimePlan> {
                     cpu_allocation: "always_allocated".to_string(),
                     cpu_allocation_reason: "worker_background_process".to_string(),
                     server_resolution_required: true,
+                    notes: Vec::new(),
                 }
             } else {
-                let min_instances = service.min_instances.unwrap_or(0);
+                let min_instances = service
+                    .min_instances
+                    .or_else(|| (environment != "prod").then_some(0));
                 let max_instances = service.max_instances.unwrap_or(LOCAL_DEFAULT_MAX_INSTANCES);
+                let server_resolved_prod_default = environment == "prod" && min_instances.is_none();
                 RuntimePlan {
                     service: service.name.clone(),
                     service_type: service.service_type.to_string(),
-                    availability: if min_instances == 0 {
+                    environment: environment.to_string(),
+                    availability: if server_resolved_prod_default {
+                        "server_resolved"
+                    } else if min_instances == Some(0) {
                         "on_demand"
                     } else {
                         "warm"
@@ -132,18 +142,13 @@ fn build_runtime_plan(services: &[ServiceConfig]) -> Vec<RuntimePlan> {
                     .to_string(),
                     configured,
                     locally_resolved: RuntimePlanValues {
-                        min_instances: Some(min_instances),
+                        min_instances,
                         max_instances: Some(max_instances),
                         instances: None,
                     },
                     sources: RuntimePlanSources {
-                        min_instances: Some(
-                            if service.min_instances.is_some() {
-                                "configured"
-                            } else {
-                                "platform_default"
-                            }
-                            .to_string(),
+                        min_instances: service.min_instances.map(|_| "configured".to_string()).or_else(
+                            || (environment != "prod").then(|| "platform_default".to_string()),
                         ),
                         max_instances: Some(
                             if service.max_instances.is_some() {
@@ -158,6 +163,11 @@ fn build_runtime_plan(services: &[ServiceConfig]) -> Vec<RuntimePlan> {
                     cpu_allocation: "request_based".to_string(),
                     cpu_allocation_reason: "http_request_scoped".to_string(),
                     server_resolution_required: true,
+                    notes: if server_resolved_prod_default {
+                        vec!["Paid production defaults to one warm instance and bills continuously; Free remains on-demand. Set min_instances = 0 to opt out.".to_string()]
+                    } else {
+                        Vec::new()
+                    },
                 }
             }
         })
@@ -464,7 +474,12 @@ fn status_label(status: &str) -> &str {
     }
 }
 
-pub fn preflight(path: PathBuf, app: Option<String>, services_filter: Vec<String>) {
+pub fn preflight(
+    path: PathBuf,
+    app: Option<String>,
+    services_filter: Vec<String>,
+    environment: String,
+) {
     // 1. Canonicalize path
     let project_path = match path.canonicalize() {
         Ok(p) => p,
@@ -545,7 +560,7 @@ pub fn preflight(path: PathBuf, app: Option<String>, services_filter: Vec<String
         &env_injection_plan,
     );
     let security_findings = generate_security_findings(&services, &resolved, &env_injection_plan);
-    let runtime_plan = build_runtime_plan(&services);
+    let runtime_plan = build_runtime_plan(&services, &environment);
 
     let valid = !has_errors(&validation_findings);
     let contains_secrets = security_findings
@@ -558,7 +573,13 @@ pub fn preflight(path: PathBuf, app: Option<String>, services_filter: Vec<String
 
     // 7. Remote preflight audit (declared vs deployed). Best-effort — auth/resolution
     // failures degrade to a note; local validation still ships.
-    let remote_plan = fetch_remote_preflight(&app_name, &managed_services, &resolved.config_dir);
+    let remote_plan = fetch_remote_preflight(
+        &app_name,
+        &managed_services,
+        &services,
+        &environment,
+        &resolved.config_dir,
+    );
 
     // 8. Display
     if output::is_json_mode() {
@@ -873,7 +894,7 @@ pub fn deploy(
         &env_injection_plan,
     );
     let valid = !has_errors(&validation_findings);
-    let runtime_plan = build_runtime_plan(&services);
+    let runtime_plan = build_runtime_plan(&services, "dev");
 
     // 6. Display preflight info
     if !output::is_json_mode() {
@@ -2567,6 +2588,11 @@ fn display_preflight_human(
                 runtime.availability,
                 runtime.locally_resolved.instances.unwrap_or(0),
             );
+        } else if runtime.availability == "server_resolved" {
+            eprintln!(
+                "    availability: server-resolved for {}; authenticate to resolve the app plan",
+                runtime.environment,
+            );
         } else {
             eprintln!(
                 "    availability: {}, scales {}\u{2013}{}, request-based CPU",
@@ -2577,6 +2603,9 @@ fn display_preflight_human(
                     .max_instances
                     .unwrap_or(LOCAL_DEFAULT_MAX_INSTANCES),
             );
+        }
+        for note in &runtime.notes {
+            eprintln!("    note: {note}");
         }
         eprintln!("    note: plan limits are resolved by the server; verify with `floo services show --json`");
         eprintln!();
@@ -3075,9 +3104,11 @@ pub(crate) fn sync_env_vars_if_needed(
 fn fetch_remote_preflight(
     app_name: &str,
     managed: &[project_config::ManagedServiceDeclaration],
+    services: &[ServiceConfig],
+    environment: &str,
     project_root: &Path,
 ) -> Option<crate::api_types::PreflightPlan> {
-    use crate::api_types::DeclaredState;
+    use crate::api_types::{DeclaredRuntimeService, DeclaredState};
     use crate::config::load_config;
 
     load_config().api_key.as_ref()?;
@@ -3087,6 +3118,19 @@ fn fetch_remote_preflight(
 
     let declared = DeclaredState {
         managed_services: collect_declared_managed_services(managed, project_root),
+        environment: environment.to_string(),
+        services: services
+            .iter()
+            .map(|service| DeclaredRuntimeService {
+                name: service.name.clone(),
+                service_type: service.service_type.to_string(),
+                cpu: service.cpu.clone(),
+                memory: service.memory.clone(),
+                min_instances: service.min_instances,
+                max_instances: service.max_instances,
+                instances: service.instances,
+            })
+            .collect(),
     };
 
     client.preflight(&app.id, &declared).ok()
@@ -3140,6 +3184,47 @@ fn collect_declared_managed_services(
 }
 
 fn render_plan_human(plan: &crate::api_types::PreflightPlan) {
+    if !plan.runtime_services.is_empty() {
+        eprintln!("  Server-resolved runtime plan:");
+        for service in &plan.runtime_services {
+            let runtime = &service.runtime_plan;
+            let environment = runtime
+                .environment
+                .as_deref()
+                .unwrap_or("selected environment");
+            let scaling = if runtime.service_type == "worker" {
+                format!(
+                    "{} fixed instance(s)",
+                    runtime.effective.instances.unwrap_or_default()
+                )
+            } else {
+                format!(
+                    "{}-{} instances",
+                    runtime.effective.min_instances.unwrap_or_default(),
+                    runtime.effective.max_instances.unwrap_or_default()
+                )
+            };
+            let source = runtime
+                .sources
+                .min_instances
+                .as_deref()
+                .or(runtime.sources.instances.as_deref())
+                .unwrap_or("not applicable");
+            eprintln!(
+                "    {} ({}): {}, {} [{}]",
+                service.name,
+                environment,
+                runtime.availability.replace('_', " "),
+                scaling,
+                source.replace('_', " "),
+            );
+            for note in &runtime.warnings {
+                eprintln!("      note: {note}");
+            }
+        }
+        eprintln!();
+    }
+
     let ms = &plan.managed_services;
     if !ms.to_provision.is_empty() {
         eprintln!("  Will provision on next deploy:");
@@ -3228,7 +3313,7 @@ mod tests {
             runtime_service("paused", ServiceType::Worker, None, None, Some(0)),
         ];
 
-        let plan = build_runtime_plan(&services);
+        let plan = build_runtime_plan(&services, "dev");
 
         assert_eq!(plan[0].availability, "on_demand");
         assert_eq!(plan[0].locally_resolved.min_instances, Some(0));
@@ -3251,6 +3336,20 @@ mod tests {
         assert_eq!(plan[3].availability, "paused");
         assert_eq!(plan[3].configured.instances, Some(0));
         assert_eq!(plan[3].locally_resolved.instances, Some(0));
+    }
+
+    #[test]
+    fn prod_omission_waits_for_server_tier_resolution_and_explains_cost() {
+        let services = vec![runtime_service("web", ServiceType::Web, None, None, None)];
+
+        let plan = build_runtime_plan(&services, "prod");
+
+        assert_eq!(plan[0].environment, "prod");
+        assert_eq!(plan[0].availability, "server_resolved");
+        assert_eq!(plan[0].locally_resolved.min_instances, None);
+        assert_eq!(plan[0].sources.min_instances, None);
+        assert!(plan[0].notes[0].contains("bills continuously"));
+        assert!(plan[0].notes[0].contains("min_instances = 0"));
     }
 
     // floo-cli#208: the SSE stream closes when the executor job exits, which

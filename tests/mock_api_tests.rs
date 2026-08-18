@@ -5524,6 +5524,14 @@ fn test_preflight_surfaces_orphaned_managed_service() {
             "POST",
             format!("/v1/apps/{TEST_APP_ID}/preflight").as_str(),
         )
+        .match_body(Matcher::PartialJson(serde_json::json!({
+            "environment": "prod",
+            "services": [{
+                "name": "web",
+                "type": "web",
+                "min_instances": null
+            }]
+        })))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
@@ -5534,6 +5542,20 @@ fn test_preflight_surfaces_orphaned_managed_service() {
                     "to_orphan":[{"type":"postgres","name":"default","tier":"basic","managed_service_id":"ms-1","data_impact":"Postgres schema app_xyz and role floo_app_xyz"}],
                     "in_flight_deprovisioning":[]
                 },
+                "runtime_services":[{
+                    "name":"web",
+                    "runtime_plan":{
+                        "environment":"prod",
+                        "service_type":"web",
+                        "availability":"warm",
+                        "declared":{"cpu":null,"memory":null,"min_instances":null,"max_instances":null,"instances":null},
+                        "effective":{"cpu":"1","memory":"512Mi","min_instances":1,"max_instances":3,"instances":null},
+                        "sources":{"cpu":"platform_default","memory":"platform_default","min_instances":"platform_default","max_instances":"platform_default","instances":null},
+                        "cpu_allocation":"request_based",
+                        "cpu_allocation_reason":"http_request_scoped",
+                        "warnings":["Warm production baseline bills continuously; set min_instances = 0 in floo.app.toml to opt out."]
+                    }
+                }],
                 "summary":{"action_count":1,"destructive_count":1,"estimated_duration_seconds":null},
                 "destructive":true,
                 "data_loss":false
@@ -5564,13 +5586,24 @@ ingress = "public"
     .unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "preflight",
+            project.path().to_str().unwrap(),
+            "--env",
+            "prod",
+        ])
         .env("HOME", home.path())
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""valid":true"#))
         .stdout(predicate::str::contains(r#""to_orphan""#))
         .stdout(predicate::str::contains("app_xyz"))
+        .stdout(predicate::str::contains(r#""availability":"warm""#))
+        .stdout(predicate::str::contains(
+            r#""min_instances":"platform_default""#,
+        ))
+        .stdout(predicate::str::contains("bills continuously"))
         .stdout(predicate::str::contains(r#""destructive":true"#));
 }
 

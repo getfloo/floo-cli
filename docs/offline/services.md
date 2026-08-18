@@ -21,6 +21,11 @@ with confirmation for the exact app, environment, type, and name.
   Availability and cost/latency choices are declared with `min_instances` for
   web/api and `instances` for workers. See: floo docs scaling
 
+  Paid production web/api services default to one warm instance when
+  min_instances is omitted. The default bills continuously. Set
+  min_instances = 0 to opt into scale-to-zero; Free, dev, and preview default
+  to zero.
+
   Declare inline in floo.app.toml with type, port, and path. A deploy applies
   the declared service shape. It does not infer destructive intent for a
   production service merely because a declaration disappeared.

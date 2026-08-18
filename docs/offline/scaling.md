@@ -30,6 +30,11 @@ up to `max_instances`. The baseline avoids its cold start; new burst capacity
 may still cold-start. Warm does not mean CPU always on: web and api services use
 request-based CPU, including when attached to floo-managed Postgres.
 
+At the current floo rate card, one warm default HTTP instance (1 vCPU / 512
+MiB) is about $24.64/month before request traffic and credits. A service
+attached to floo-managed Postgres uses the 1.5 vCPU / 768 MiB default shape,
+about $36.96/month while warm.
+
 Use a worker for work that must run without an HTTP request. Workers have a
 fixed count and always-allocated CPU:
 
@@ -45,7 +50,10 @@ Pause a worker explicitly with `instances = 0`. Workers never use
 
 ## Defaults, limits, and verification
 
-- HTTP `min_instances` defaults to 0 in dev and in the locally resolved plan.
+- Omitted HTTP `min_instances` defaults to 1 for paid production and 0 for
+  Free, dev, and preview.
+- Explicit `min_instances = 0` opts a paid production HTTP service into
+  scale-to-zero.
 - HTTP `max_instances` defaults to 3.
 - Worker `instances` defaults to 1.
 - Per-service values override delegated `floo.service.toml` values, which
@@ -55,6 +63,13 @@ Pause a worker explicitly with `instances = 0`. Workers never use
 
 Run `floo preflight --json` before pushing. Read `data.runtime_plan` for the
 configured values, locally resolved defaults, field sources, availability
-posture, and CPU mode. After deployment, use
-`floo services show <name> --app <app> --json` to verify the server-effective
-runtime plan.
+posture, and CPU mode. For an authenticated existing app, run
+`floo preflight --env prod --json` and read `data.plan.runtime_services` for the
+exact tier-aware production default and continuous-billing note. After
+deployment, use `floo services show <name> --app <app> --json` to verify the
+server-effective runtime plan.
+
+Existing paid production services with an omitted minimum adopt warm on their
+next production deploy, promote, restart, or rollback. floo does not create a
+revision only to migrate the default. Commit an explicit zero before that next
+runtime change to remain on-demand.
