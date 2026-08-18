@@ -1207,7 +1207,7 @@ pub enum DomainsCommands {
         app: Option<String>,
     },
 
-    /// Verify DNS for a pending custom domain.
+    /// Confirm DNS control for a pending or grandfathered custom domain.
     Verify {
         /// Domain hostname to verify.
         hostname: String,
