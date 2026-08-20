@@ -107,7 +107,7 @@ pub fn config_dir_name() -> &'static str {
     }
 }
 
-/// Returns the Floo config directory. Checks `FLOO_CONFIG_DIR` first,
+/// Returns the floo config directory. Checks `FLOO_CONFIG_DIR` first,
 /// falls back to `$HOME/.floo-local` or `$HOME/.floo` based on binary name.
 pub(crate) fn config_dir() -> PathBuf {
     if let Ok(dir) = env::var("FLOO_CONFIG_DIR") {

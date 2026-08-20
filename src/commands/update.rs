@@ -188,14 +188,14 @@ pub fn update(version: Option<&str>) {
 
     if !output::is_json_mode() {
         let label = version.unwrap_or("latest");
-        output::info(&format!("Checking for Floo updates ({label})..."), None);
+        output::info(&format!("Checking for floo updates ({label})..."), None);
     }
 
     match updater::run_update(version) {
         Ok(result) => {
             let refreshed = refresh_and_announce_skills();
             output::success(
-                &format!("Updated Floo to {}.", result.version),
+                &format!("Updated floo to {}.", result.version),
                 Some(serde_json::json!({
                     "version": result.version,
                     "path": result.install_path,

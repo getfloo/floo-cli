@@ -2667,7 +2667,7 @@ fn render_security_findings_human(findings: &[PreflightFinding]) {
 /// Print the auto-deploy contract and the final "ready" line. Only called when
 /// the config has no errors; the warning count keeps a clean green honest.
 fn print_preflight_ready(findings: &[PreflightFinding]) {
-    // Closes feedback c9b70eb5: "no obvious signal anywhere in the Floo
+    // Closes feedback c9b70eb5: "no obvious signal anywhere in the floo
     // workflow that dev auto-deploys on GitHub push." The CLI is the surface
     // the user is in front of right before pushing — surfacing the auto-deploy
     // contract here means they don't have to leave for the docs.

@@ -5441,7 +5441,7 @@ fn test_update_json_release_lookup_failure() {
 }
 
 #[test]
-fn test_update_json_success() {
+fn test_update_human_and_json_success() {
     let Some(asset_name) = update_asset_name() else {
         return;
     };
@@ -5506,6 +5506,18 @@ fn test_update_json_success() {
         .success()
         .stdout(predicate::str::contains(r#""success":true"#))
         .stdout(predicate::str::contains(r#""version":"v0.2.0""#));
+
+    floo()
+        .args(["update"])
+        .env("FLOO_UPDATE_API_BASE", format!("{}/releases", server.url()))
+        .env("FLOO_UPDATE_TARGET_PATH", install_path.as_os_str())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Checking for floo updates (latest)...",
+        ))
+        .stderr(predicate::str::contains("Updated floo to v0.2.0."))
+        .stderr(predicate::str::contains(concat!("Fl", "oo")).not());
 
     assert_eq!(
         std::fs::read(install_path).unwrap(),
