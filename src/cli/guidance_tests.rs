@@ -26,6 +26,12 @@ fn collect_files(dir: &Path, extension: &str, files: &mut Vec<PathBuf>) {
     }
 }
 
+fn collect_markdown_files(dir: &Path, files: &mut Vec<PathBuf>) {
+    for extension in ["md", "mdx", "txt"] {
+        collect_files(dir, extension, files);
+    }
+}
+
 fn source_name(path: &Path) -> String {
     path.strip_prefix(env!("CARGO_MANIFEST_DIR"))
         .unwrap_or(path)
@@ -80,10 +86,33 @@ fn push_occurrences(
             remainder = &remainder[start + "floo ".len()..];
             continue;
         }
-        let delimiter = remainder[..start]
+        let prefix = &remainder[..start];
+        let delimiter = prefix
             .chars()
             .last()
             .filter(|character| matches!(character, '`' | '\''));
+        // Preserve the separating whitespace: the suffixes below deliberately
+        // include it so words such as "rerun" do not match "run ".
+        let normalized_prefix = prefix.to_ascii_lowercase();
+        let prose_guidance = [
+            "run ",
+            "use ",
+            "try ",
+            "with ",
+            "then ",
+            "command ",
+            "invocation ",
+            "rerun ",
+            "execute ",
+        ]
+        .iter()
+        .any(|suffix| normalized_prefix.ends_with(suffix));
+        let line_command = text.trim_start().starts_with("floo ");
+        let path_command = prefix.ends_with('/');
+        if delimiter.is_none() && !prose_guidance && !line_command && !path_command {
+            remainder = &remainder[start + "floo ".len()..];
+            continue;
+        }
         let occurrence = &remainder[start..];
         let mut end = occurrence[5..]
             .find("floo ")
@@ -233,6 +262,7 @@ fn command_column(invocation: &str) -> &str {
                 || remainder.starts_with("- ")
                 || remainder.starts_with('|')
                 || remainder.starts_with("&&")
+                || remainder.starts_with('>')
             {
                 return &invocation[..spaces_start];
             }
@@ -274,7 +304,10 @@ fn normalized_argv(invocation: &str) -> Result<Vec<String>, String> {
                 '`' | '\'' | '"' | '(' | ')' | '[' | ']' | ',' | '.' | ';' | '*'
             )
         });
-        if token.is_empty() || matches!(token, "|" | "||" | "&&" | "#") || token.starts_with("2>") {
+        if token.is_empty()
+            || matches!(token, "|" | "||" | "&&" | "#" | ">" | ">>")
+            || token.starts_with("2>")
+        {
             break;
         }
         argv.push(replace_placeholders(token, argv.last().map(String::as_str)));
@@ -379,7 +412,16 @@ fn first_party_guidance_matches_clap() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut markdown = vec![root.join("README.md")];
     for directory in ["docs/offline", "skills", "plugin/skills"] {
-        collect_files(&root.join(directory), "md", &mut markdown);
+        collect_markdown_files(&root.join(directory), &mut markdown);
+    }
+    if let Some(external_root) = std::env::var_os("FLOO_EXTERNAL_GUIDANCE_DIR") {
+        let external_root = PathBuf::from(external_root);
+        assert!(
+            external_root.is_dir(),
+            "FLOO_EXTERNAL_GUIDANCE_DIR is not a directory: {}",
+            external_root.display()
+        );
+        collect_markdown_files(&external_root, &mut markdown);
     }
     markdown.sort();
     markdown.dedup();

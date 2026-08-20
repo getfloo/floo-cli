@@ -437,8 +437,10 @@ fn test_update_help() {
 
 #[test]
 fn test_deploy_not_authenticated() {
+    let project = tempfile::TempDir::new().unwrap();
     floo()
         .arg("redeploy")
+        .current_dir(project.path())
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
@@ -449,8 +451,10 @@ fn test_deploy_not_authenticated() {
 
 #[test]
 fn test_deploy_json_not_authenticated() {
+    let project = tempfile::TempDir::new().unwrap();
     floo()
         .args(["--json", "redeploy"])
+        .current_dir(project.path())
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
@@ -977,11 +981,20 @@ fn test_init_creates_config_json() {
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""app_name":"myapp"#))
+        .stdout(predicate::str::contains("floo preflight --json"))
+        .stdout(predicate::str::contains("commit and push"))
+        .stdout(predicate::str::contains("floo apps github connect"))
         .stdout(predicate::str::contains(r#""success":true"#));
 
     // Service is now inline in floo.app.toml — no separate floo.service.toml
     assert!(project.path().join("floo.app.toml").exists());
     assert!(!project.path().join("floo.service.toml").exists());
+
+    let agents = std::fs::read_to_string(project.path().join("AGENTS.md")).unwrap();
+    assert!(agents.contains("floo commands\n  --json"));
+    assert!(agents.contains("floo docs <topic> --json"));
+    assert!(agents.contains("commit, and push before connecting"));
+    assert!(!agents.contains("Read the latest docs"));
 }
 
 #[test]
@@ -1014,10 +1027,14 @@ fn test_init_writes_header_with_access_mode_and_autodeploy_signal() {
         toml.starts_with("# floo.app.toml"),
         "header should lead the file"
     );
-    // git push auto-deploy contract is mentioned by name.
+    // The push auto-deploy contract is explicit.
     assert!(
-        toml.contains("git push"),
-        "git push contract must be in header"
+        toml.contains("Commit and push"),
+        "push contract must be in header"
+    );
+    assert!(
+        toml.contains("Commit and push this file before `floo apps github connect`"),
+        "header must put the pushed source before the first connect"
     );
     // access_mode is shown under [app] — the placement that actually applies
     // on push today. Per-env overrides via [environments.<name>] are parsed

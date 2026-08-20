@@ -8,9 +8,10 @@ deployable. floo distinguishes two kinds by lifecycle:
                       with explicit CLI lifecycle actions for stored data
 
 The split matters: git owns auditable intent, but a deploy never infers
-permission to destroy stored data. Removing a managed-service declaration
-does not delete the resource. Destruction is always an explicit CLI action
-with confirmation for the exact app, environment, type, and name.
+permission to destroy stored data. Removing a managed-service declaration is
+a tier-3 proposed change that requires human approval and schedules a
+rescindable teardown. It does not delete provider data. Terminal deletion is
+still an explicit CLI action with confirmation for the exact resource.
 
 ## App Services (your code)
 
@@ -36,9 +37,8 @@ with confirmation for the exact app, environment, type, and name.
 
   Managed services are stateful. Declare auditable intent in floo.app.toml:
 
-    [managed.primary]
+    [managed.default]
     type = "postgres"
-    tier = "basic"
 
     [managed.cache]
     type = "redis"
@@ -46,13 +46,14 @@ with confirmation for the exact app, environment, type, and name.
     [managed.uploads]
     type = "storage"
 
-  A git-triggered deploy provisions a declared service that is missing and
-  applies supported declared settings such as tier. Omission is orphan-safe:
-  it never destroys an existing database, cache, or bucket.
+  A git-triggered deploy provisions a declared service that is missing.
+  Removing a previously deployed declaration appears in preflight as a tier-3
+  deprovision proposal. The approval gate schedules a rescindable teardown,
+  but no automated path destroys the database, cache, or bucket.
 
   Read and explicit lifecycle surfaces:
 
-    floo services show primary --app <name>       # inspect
+    floo services show default --app <name>       # inspect
     floo services list --app <name>               # see everything
     floo services add postgres --app <name>       # explicit provision
     floo services remove postgres --app <name>    # tier-3 destructive
@@ -64,9 +65,9 @@ with confirmation for the exact app, environment, type, and name.
 
   Connection credentials are injected at runtime, never stored in the
   lock file or in your repo:
-    postgres → DATABASE_URL + PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD
-    redis    → REDIS_URL
-    storage  → STORAGE_BUCKET (read/write via the GCS SDK over ADC)
+    default postgres → DATABASE_URL + PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD
+    named redis cache → REDIS_URL_CACHE
+    named storage uploads → STORAGE_BUCKET_UPLOADS + STORAGE_URL_UPLOADS
 
   Your app reaches storage with the native GCS SDK (Rails Active Storage
   `:google` in proxy mode). floo runs your container as a service account
@@ -101,7 +102,7 @@ with confirmation for the exact app, environment, type, and name.
 
   In multi-service apps, attach credentials by managed handle:
     [services.api.env]
-    managed = ["postgres:primary", "redis:cache"]
+    managed = ["postgres", "redis:cache"]
 
     [services.web.env]
     managed = []
@@ -109,22 +110,13 @@ with confirmation for the exact app, environment, type, and name.
   Single-service apps can use top-level [env] managed = [] in
   floo.service.toml to opt out of managed credentials entirely.
 
-## Managed Service Tiers
+## Managed Service Capacity
 
-  All tiers are available on every plan. Only Postgres tiers have
-  functional differences today:
-
-                Basic (default)   Standard        Performance
-  Connections   5                 15              50
-  Query timeout 30s               60s             120s
-  Idle timeout  60s               120s            300s
-  work_mem      64 MB             128 MB          256 MB
-
-  Start with basic. Upgrade to standard for multi-service apps or
-  reporting queries. Use performance for high-concurrency workloads.
-
-  Set `tier = "standard"` in the matching [managed.<name>] declaration.
-  For an explicit operational provision, inspect `floo services add --help`.
+  Managed Postgres uses one capacity profile: 25 connections and a 60-second
+  statement timeout. The optional `tier` field and `floo services add --tier`
+  remain compatible, but their value is recorded and ignored. Redis and
+  Storage also have one profile. For sustained higher Postgres concurrency,
+  contact team@getfloo.com about dedicated infrastructure.
 
 ## Legacy [postgres] / [redis] / [storage] in floo.app.toml
 
@@ -203,4 +195,4 @@ default behind an explicit development-only guard.
   floo services show <service> --app <name>  - details (no credentials in output)
   floo services add <type> --app <name>      - provision a managed service
   floo services remove <type> --app <name>   - permanently destroy (tier-3)
-  floo services migrate --app <name>         - move legacy TOML → CLI state
+  floo services migrate --app <name>         - preserve legacy resource identity in lock state

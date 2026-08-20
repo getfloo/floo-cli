@@ -1003,7 +1003,7 @@ pub fn get(key: &str, app_flag: Option<&str>, service_flag: Option<&str>, env: &
             // recovery paths instead of leaving a bare API error.
             let suggestion = if e.code == "ENV_VAR_WRITE_ONLY" {
                 Some(format!(
-                    "Set a new value with `floo env set {key}=<value>` or remove it with `floo env unset {key}`."
+                    "Set a new value with `floo env set {key} --stdin --secret` or remove it with `floo env unset {key}`."
                 ))
             } else {
                 None

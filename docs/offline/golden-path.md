@@ -13,16 +13,20 @@ floo - Golden Path
   (floo.service.toml or floo.app.toml). Use it when running commands from
   outside your project directory.
 
-## First-Time Setup (4 commands)
+## First-Time Setup
 
   1. floo auth login                         # sign up or log in (opens browser)
   2. floo init my-app
   3. floo preflight                          # validate config (local only, no auth)
-  4. floo apps github connect owner/repo     # creates app + triggers first deploy
+  4. git add floo.app.toml Dockerfile AGENTS.md
+  5. git commit -m "chore: configure floo"
+  6. git push origin main
+  7. floo apps github connect owner/repo     # creates app + deploys pushed source
 
   The `floo auth login` command opens a browser. New users create an account automatically.
   In headless/CI environments, use: floo auth login --api-key <key>
 
+  Connect reads from GitHub, so push the generated config before running it.
   floo installs a GitHub webhook when you connect. After that, every
   git push triggers a build and deploy automatically.
 
@@ -44,16 +48,15 @@ floo - Golden Path
 
 ## How to Add Env Vars
 
-  floo env set KEY=value --app my-app
+  floo env set API_KEY --stdin --secret --app my-app
   floo redeploy --app my-app                # pick up new vars
 
 ## How to Add a Database
 
   Declare it in floo.app.toml:
 
-  [managed.primary]
+  [managed.default]
   type = "postgres"
-  tier = "basic"
 
   Commit the declaration and push to GitHub:
   git add floo.app.toml && git commit -m "feat: add postgres"
@@ -110,7 +113,7 @@ floo - Golden Path
   Watch a deploy in progress            | floo deploys watch --app my-app
   See deploy history                    | floo deploys list --app my-app
   Roll back to a previous version       | floo deploys rollback my-app <id>
-  Set an env var                        | floo env set KEY=val --app my-app
+  Set a secret env var                 | floo env set API_KEY --stdin --secret --app my-app
   Add a custom domain                   | floo domains add example.com --app my-app (then add CNAME at DNS provider)
   Verify a custom domain                | floo domains verify example.com --app my-app
   View logs                             | floo logs query --app my-app

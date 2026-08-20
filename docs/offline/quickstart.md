@@ -14,10 +14,12 @@ floo Quickstart - End-to-End Walkthrough
   1. A human installs the floo GitHub App on the org (one-time):
      https://github.com/apps/getfloo/installations/new
   2. The agent authenticates: floo auth login --api-key <key>
-  3. The agent connects: floo apps github connect owner/repo --no-browser
+  3. The agent runs floo init, edits floo.app.toml, and runs floo preflight
+  4. The agent commits and pushes the generated config to GitHub
+  5. The agent connects: floo apps github connect owner/repo --no-browser
      (--no-browser errors cleanly if the app is not installed, instead of
      trying to open a browser)
-  4. Subsequent deploys: git push triggers automatic deploys via webhook
+  6. Subsequent deploys: git push triggers automatic deploys via webhook
 
 ## 1. Install and Sign Up
 
@@ -39,9 +41,8 @@ floo Quickstart - End-to-End Walkthrough
 
   Declare auditable intent in floo.app.toml:
 
-  [managed.primary]
+  [managed.default]
   type = "postgres"
-  tier = "basic"
 
   [managed.cache]
   type = "redis"
@@ -49,11 +50,12 @@ floo Quickstart - End-to-End Walkthrough
   [managed.uploads]
   type = "storage"
 
-  The first git-triggered deploy provisions missing declarations.
-  Credentials arrive as runtime env vars (Postgres: DATABASE_URL + PG*,
-  Redis: REDIS_URL, Storage: STORAGE_BUCKET). Removing a declaration does
-  not destroy stored data. Use the explicit services lifecycle only after
-  confirming the exact resource.
+  The first git-triggered deploy provisions missing declarations. The optional
+  tier field is retained for compatibility but does not change capacity.
+  Credentials arrive as runtime env vars. The default Postgres block owns
+  DATABASE_URL + PG*. Named resources own suffixed keys: REDIS_URL_CACHE,
+  STORAGE_BUCKET_UPLOADS, and STORAGE_URL_UPLOADS. Removing a declaration
+  does not perform terminal data deletion.
 
 ## 4. Validate Config
 
@@ -62,7 +64,15 @@ floo Quickstart - End-to-End Walkthrough
   Checks config files, service graph, ports, and Dockerfiles locally - no
   auth or GitHub connection required. Fix any warnings before deploying.
 
-## 5. Connect to GitHub and Deploy
+## 5. Push, Connect to GitHub, and Deploy
+
+  Commit and push the files that floo init created:
+
+  git add floo.app.toml Dockerfile AGENTS.md
+  git commit -m "chore: configure floo"
+  git push origin main
+
+  Then connect the repository:
 
   floo apps github connect owner/my-project
 
@@ -71,7 +81,8 @@ floo Quickstart - End-to-End Walkthrough
   2. Connects your GitHub repo as the source
   3. Triggers the first deploy (source pulled from GitHub, built, deployed)
 
-  Use --no-deploy to skip the automatic deploy.
+  Connect pulls source from GitHub. If the generated config is only local, the
+  first deploy cannot see it. Use --no-deploy to skip the automatic deploy.
 
 ## 6. Check Status
 

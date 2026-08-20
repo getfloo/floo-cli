@@ -51,8 +51,15 @@ floo update --version v0.1.0
 # Authenticate
 floo auth login
 
-# Connect and deploy your project
+# Initialize, validate, and push the config GitHub will deploy
 cd my-project
+floo init my-app
+floo preflight
+git add floo.app.toml Dockerfile AGENTS.md
+git commit -m "chore: configure floo"
+git push origin main
+
+# Create the floo app, connect GitHub, and deploy the pushed commit
 floo apps github connect owner/repo
 
 # Manage apps
@@ -61,7 +68,7 @@ floo apps show my-app
 floo apps delete my-app
 
 # Environment variables
-floo env set DATABASE_URL=postgres://... --app my-app
+floo env set DATABASE_URL --stdin --secret --app my-app
 floo env list --app my-app
 
 # Custom domains

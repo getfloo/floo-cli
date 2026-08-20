@@ -27,7 +27,10 @@ Do not copy service syntax from memory or search the web until these offline sur
 
 ## Application code
 
-Consume the platform-provided connection value as-is:
+Consume the platform-provided connection value as-is. A resource named
+`default` receives the conventional unsuffixed key. Named resources receive
+suffixes, so inspect `floo services show` or `floo docs services` instead of
+guessing:
 
 - Postgres: `DATABASE_URL`
 - Redis: `REDIS_URL`

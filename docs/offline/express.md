@@ -29,14 +29,15 @@ won't get set behind floo's edge.
   ingress = "public"
   dev_command = "node --watch server.js"
 
+  floo preflight
+  git add . && git commit -m "chore: configure floo"
   git push origin main
   floo apps github connect owner/my-express-app
 
 ## 4. Postgres
 
-  [managed.primary]
+  [managed.default]
   type = "postgres"
-  tier = "basic"
 
   import pg from "pg";
   export const pool = new pg.Pool({
