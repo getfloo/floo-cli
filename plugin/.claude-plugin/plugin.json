@@ -1,9 +1,9 @@
 {
   "name": "floo",
   "version": "0.1.0",
-  "description": "Floo deployment platform — CLI usage, managed services, and security patterns for AI agents",
+  "description": "CLI guidance for the floo deployment platform, including managed services and security patterns for agents",
   "author": {
-    "name": "Floo",
+    "name": "floo",
     "url": "https://github.com/getfloo"
   },
   "repository": "https://github.com/getfloo/floo-cli",

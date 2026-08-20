@@ -125,7 +125,7 @@ pub fn connect(
             if no_browser {
                 let setup_url = manual_setup_url(&client, install_url);
                 output::error(
-                    &format!("Floo GitHub App not installed on \"{owner}\"."),
+                    &format!("floo GitHub App not installed on \"{owner}\"."),
                     &ErrorCode::from_api("GITHUB_APP_NOT_INSTALLED"),
                     Some(&format!(
                         "Open the GitHub App setup URL and grant access to \"{repo}\": {setup_url}\n\
@@ -136,7 +136,7 @@ pub fn connect(
             }
 
             if !output::is_json_mode() {
-                output::warn(&format!("Floo GitHub App not installed on \"{owner}\""));
+                output::warn(&format!("floo GitHub App not installed on \"{owner}\""));
             }
 
             run_installation_flow(&client, install_url, &rerun_command);
@@ -170,7 +170,7 @@ pub fn connect(
             if no_browser {
                 let setup_url = manual_setup_url(&client, install_url);
                 output::error(
-                    &format!("Floo GitHub App does not have access to \"{repo}\"."),
+                    &format!("floo GitHub App does not have access to \"{repo}\"."),
                     &ErrorCode::from_api("GITHUB_REPO_NOT_IN_INSTALLATION"),
                     Some(&repo_access_manual_suggestion(
                         repo,
@@ -184,7 +184,7 @@ pub fn connect(
 
             if !output::is_json_mode() {
                 output::warn(&format!(
-                    "Floo GitHub App does not have access to \"{repo}\"."
+                    "floo GitHub App does not have access to \"{repo}\"."
                 ));
                 output::info("Opening GitHub App setup to grant repo access...", None);
             }

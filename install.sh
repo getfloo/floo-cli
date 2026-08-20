@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Floo CLI installer
+# floo CLI installer
 # Usage: curl -fsSL https://getfloo.com/install.sh | bash
 
 set -euo pipefail

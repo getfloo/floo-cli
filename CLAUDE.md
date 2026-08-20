@@ -2,7 +2,7 @@
 
 ## What This Repo Is
 
-This is the **open-source Rust CLI** for [Floo](https://getfloo.com) — deploy, manage, and observe web apps from the terminal. The CLI is a thin HTTP client that calls the Floo API. Licensed under MIT.
+This is the **open-source Rust CLI** for [floo](https://getfloo.com). It deploys, manages, and observes web apps from the terminal. The CLI is a thin HTTP client that calls the floo API. Licensed under MIT.
 
 ## Development Commands
 
@@ -83,6 +83,7 @@ Packs source into `.tar.gz`, respects `.flooignore`. 500MB size limit.
 ## Key Conventions
 
 - Rust 2021 edition, **cargo** for build/deps, **clap** derive for CLI
+- Always write the product name as `floo` in user-visible text.
 - Lint: **clippy** (`-D warnings`). Format: **cargo fmt**. Test: **`./scripts/test`** (canonical entry point; wraps fmt + clippy + `cargo test` and self-heals the #204 corrupt-harness artifact class)
 - No `println!` — use `output` module functions
 - No `unwrap()` in production paths — use `?` operator

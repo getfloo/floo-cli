@@ -178,7 +178,7 @@ fn init_dry_run(project_path: &std::path::Path, name: Option<String>, detection:
 /// The content mirrors the public app-auth checklist on getfloo.com so
 /// the same advice is available to a coding agent reading local files
 /// AND to a human reading the docs site. Closes feedback 9494ea44
-/// (floo-artifact, 2026-04-30): "Floo should publish an agent-safe
+/// (floo-artifact, 2026-04-30): "floo should publish an agent-safe
 /// checklist/template for apps using accounts mode... could live in
 /// docs and/or be generated into AGENTS.md by floo init."
 const AGENTS_MD_TEMPLATE: &str = r#"# Agent operating notes

@@ -53,7 +53,7 @@ pub enum Commands {
         period: String,
     },
 
-    /// Initialize a new Floo project (creates config files).
+    /// Initialize a new floo project (creates config files).
     #[command(after_help = "\
 Examples:
   floo init my-app                         Scaffold config in current directory
@@ -535,7 +535,7 @@ pub enum LogsSubcommands {
 
 #[derive(Subcommand)]
 pub enum AuthCommands {
-    /// Authenticate with the Floo API (opens browser).
+    /// Authenticate with the floo API (opens browser).
     Login {
         /// Use an existing API key instead of browser auth.
         #[arg(long)]
@@ -551,7 +551,7 @@ pub enum AuthCommands {
     Whoami,
     /// Print the current API key to stdout.
     Token,
-    /// Create a new Floo account.
+    /// Create a new floo account.
     Register {
         /// Account email address.
         email: String,

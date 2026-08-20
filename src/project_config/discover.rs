@@ -211,7 +211,7 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
             return Err(FlooError::with_suggestion(
                 ErrorCode::NoDeployableServices,
                 format!(
-                    "{} has no deployable services (only Floo-managed services like postgres/redis).",
+                    "{} has no deployable services (only floo-managed services like postgres/redis).",
                     super::APP_CONFIG_FILE,
                 ),
                 "Add a [services.<name>] block with type, port, and path. Run 'floo docs config' for the schema.".to_string(),

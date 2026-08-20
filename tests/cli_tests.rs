@@ -241,7 +241,7 @@ fn test_auth_login_help() {
         .args(["auth", "login", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Authenticate with the Floo API"));
+        .stdout(predicate::str::contains("Authenticate with the floo API"));
 }
 
 /// Regression: the dev stack has no WorkOS, so `floo-dev auth login`
@@ -271,7 +271,7 @@ fn test_auth_register_help() {
         .args(["auth", "register", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Create a new Floo account"));
+        .stdout(predicate::str::contains("Create a new floo account"));
 }
 
 #[test]
@@ -958,7 +958,7 @@ fn test_init_help() {
         .args(["init", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Initialize a new Floo project"));
+        .stdout(predicate::str::contains("Initialize a new floo project"));
 }
 
 #[test]
