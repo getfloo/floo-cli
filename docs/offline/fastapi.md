@@ -24,14 +24,15 @@ Bind to 0.0.0.0 - 127.0.0.1 won't accept Cloud Run traffic.
   dev_command = "uvicorn app.main:app --reload --port 8000"
   migrate_command = "alembic upgrade head"   # if you use Alembic
 
+  floo preflight
+  git add . && git commit -m "chore: configure floo"
   git push origin main
   floo apps github connect owner/my-fastapi-app
 
 ## 3. Postgres
 
-  [managed.primary]
+  [managed.default]
   type = "postgres"
-  tier = "basic"
 
   # Async SQLAlchemy - convert to asyncpg URL:
   DATABASE_URL = os.environ["DATABASE_URL"].replace(

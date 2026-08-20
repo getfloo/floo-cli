@@ -22,9 +22,8 @@ floo Templates - Copy-Paste App Structures
   [app]
   name = "my-app"
 
-  [managed.primary]
+  [managed.default]
   type = "postgres"
-  tier = "basic"
 
   [services.web]
   path = "./web"
@@ -42,7 +41,7 @@ floo Templates - Copy-Paste App Structures
   migrate_command = "alembic upgrade head"
 
   [services.api.env]
-  managed = ["postgres:primary"]
+  managed = ["postgres"]
 
   [services.web.env]
   managed = []
@@ -78,14 +77,14 @@ floo Templates - Copy-Paste App Structures
 ### Deploy
 
   PREREQUISITE: Your code must be in a GitHub repo. floo pulls source
-  from GitHub - it does not upload local files. Push your code first.
+  from GitHub - it does not upload local files.
 
   1. floo auth login
   2. floo init my-app                          # from root directory
   3. floo preflight                            # validate both services
-  4. git push origin main                      # push to GitHub first
-  5. floo apps github connect owner/my-app     # triggers first deploy
-  6. floo env set DATABASE_URL=<url> --service api  # managed postgres auto-sets this
+  4. git add . && git commit -m "chore: configure floo"
+  5. git push origin main                      # push config before connecting
+  6. floo apps github connect owner/my-app     # creates app and deploys pushed source
   7. floo apps show my-app                     # get your URL
 
 ### Local Development (two terminals)
@@ -103,9 +102,9 @@ floo Templates - Copy-Paste App Structures
 ### Env Vars
 
   Backend secrets (api service only):
-    floo env set SECRET_KEY=... --service api
+    floo env set SECRET_KEY --stdin --secret --service api
 
-  DATABASE_URL is injected from the `postgres:primary` attachment.
+  DATABASE_URL is injected from the default `postgres` attachment.
 
   Frontend config (web service only, public - baked into JS bundle):
     floo env set VITE_API_URL=/api --service web
@@ -156,4 +155,7 @@ floo Templates - Copy-Paste App Structures
   Deploy:
     floo auth login
     floo init my-app
+    floo preflight
+    git add . && git commit -m "chore: configure floo"
+    git push origin main
     floo apps github connect owner/my-app

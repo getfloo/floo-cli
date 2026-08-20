@@ -98,9 +98,8 @@ floo Config Files
 
 ## Managed Services (in floo.app.toml)
 
-  [managed.primary]
+  [managed.default]
   type = "postgres"
-  tier = "basic"
 
   [managed.cache]
   type = "redis"
@@ -109,9 +108,11 @@ floo Config Files
   type = "storage"
 
   Missing declared resources are provisioned by a git-triggered deploy.
-  Credentials are injected as env vars. Removing a declaration never
-  destroys stored data; use the explicit services lifecycle only after
-  resolving and confirming the exact resource.
+  Credentials are injected as env vars. Removing a deployed declaration is
+  a tier-3 change that requires human approval and schedules a rescindable
+  teardown; it does not delete provider data. Terminal deletion still uses
+  the explicit services lifecycle after resolving and confirming the exact
+  resource.
 
   Legacy [postgres], [redis], and [storage] sections remain readable for
   existing apps. Use `floo docs services` and the installed migration help
@@ -140,11 +141,10 @@ floo Config Files
 
 ## Environment Overrides (in floo.app.toml)
 
-  [environments.dev]
-  access_mode = "public"
-
-  [environments.prod]
-  access_mode = "accounts"
+  Per-environment access_mode values are accepted by the parser but are not
+  applied by push deploys today. Set one access_mode under [app] for both
+  environments. Per-environment edge policy is supported under
+  [environments.dev.edge] and [environments.prod.edge].
 
 ## Cron Jobs ([cron.<name>])
 
@@ -185,7 +185,7 @@ floo Config Files
   declaratively by handle:
 
     [services.api.env]
-    managed = ["postgres:primary", "redis:cache"]
+    managed = ["postgres", "redis:cache"]
 
     [services.worker.env]
     managed = ["redis:cache"]
@@ -207,7 +207,7 @@ floo Config Files
   Recommended pattern for multi-service apps:
 
     # Backend secrets - api/worker only
-    floo env set LINEAR_API_KEY=lin_... --service api
+    floo env set LINEAR_API_KEY --stdin --secret --service api
 
     # Frontend config - web only (public, not secret)
     floo env set VITE_API_URL=https://my-app.getfloo.com/api --service web

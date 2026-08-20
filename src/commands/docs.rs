@@ -374,6 +374,38 @@ mod tests {
         assert!(QUICKSTART.contains("init"));
         assert!(QUICKSTART.contains("github connect"));
         assert!(QUICKSTART.contains("apps show"));
+        let preflight = QUICKSTART
+            .find("floo preflight --json")
+            .expect("quickstart must validate before the first deploy");
+        let push = QUICKSTART
+            .find("git push origin main")
+            .expect("quickstart must push generated config");
+        let connect = QUICKSTART
+            .find("floo apps github connect owner/my-project")
+            .expect("quickstart must connect GitHub");
+        assert!(preflight < push && push < connect);
+    }
+
+    #[test]
+    fn test_first_deploy_guidance_pushes_generated_config_before_connect() {
+        for (name, content) in [
+            ("overview", OVERVIEW),
+            ("golden-path", HOWTO),
+            ("templates", TEMPLATES),
+            ("rails", RAILS),
+            ("nextjs", NEXTJS),
+            ("fastapi", FASTAPI),
+            ("django", DJANGO),
+            ("express", EXPRESS),
+        ] {
+            let push = content
+                .find("git push origin main")
+                .unwrap_or_else(|| panic!("{name} must push the generated config"));
+            let connect = content
+                .find("floo apps github connect")
+                .unwrap_or_else(|| panic!("{name} must connect GitHub"));
+            assert!(push < connect, "{name} must push before GitHub connect");
+        }
     }
 
     #[test]
@@ -454,12 +486,15 @@ mod tests {
             ("templates", TEMPLATES),
         ] {
             assert!(
-                content.contains("[managed.primary]"),
-                "{name} must use the current named managed-service declaration"
+                content.contains("[managed.default]"),
+                "{name} must use the default managed-service declaration when promising conventional env names"
             );
         }
-        assert!(SERVICES.contains("does not delete the resource"));
-        assert!(CONFIG.contains("Removing a declaration never"));
+        assert!(SERVICES.contains("does not delete provider data"));
+        assert!(CONFIG.contains("Removing a deployed declaration"));
+        assert!(SERVICES.contains("value is recorded and ignored"));
+        assert!(QUICKSTART.contains("REDIS_URL_CACHE"));
+        assert!(QUICKSTART.contains("STORAGE_BUCKET_UPLOADS"));
         assert!(!QUICKSTART.contains("authored via the CLI, not floo.app.toml"));
     }
 
@@ -500,7 +535,7 @@ mod tests {
     fn test_rails_topic_covers_full_journey() {
         // Stack-journey shape: deploy → local dev → DB → auth → domain
         assert!(RAILS.contains("floo init"));
-        assert!(RAILS.contains("[managed.primary]"));
+        assert!(RAILS.contains("[managed.default]"));
         assert!(RAILS.contains("access_mode = \"accounts\""));
         assert!(RAILS.contains("domains add"));
         assert!(RAILS.contains("floo dev"));
@@ -537,7 +572,7 @@ mod tests {
                 "{stack}: missing 'floo init'"
             );
             assert!(
-                content.contains("[managed.primary]"),
+                content.contains("[managed.default]"),
                 "{stack}: missing the managed Postgres declaration"
             );
             assert!(

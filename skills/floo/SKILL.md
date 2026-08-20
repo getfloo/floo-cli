@@ -28,6 +28,8 @@ Deploys are git-driven:
 - A push or merge to the connected branch deploys dev.
 - A GitHub release promotes prod.
 - The CLI never uploads source and `floo init` only writes local config.
+- `floo apps github connect` creates the app and triggers its first deploy
+  from GitHub. Run preflight, commit, and push generated config before connect.
 - `floo redeploy` is for a no-code rebuild from connected GitHub source, such as applying changed environment values.
 
 There is no normal deploy command. Validate with `floo preflight`, push through git, then observe with the current `deploys` and `logs` help surfaces.

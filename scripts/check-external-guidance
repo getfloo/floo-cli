@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -ne 1 ]]; then
+    echo "usage: scripts/check-external-guidance <documentation-directory>" >&2
+    exit 2
+fi
+
+guidance_dir="$1"
+if [[ ! -d "$guidance_dir" ]]; then
+    echo "error: documentation directory does not exist: $guidance_dir" >&2
+    exit 2
+fi
+guidance_dir="$(cd "$guidance_dir" && pwd)"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cli_root="$(cd "$script_dir/.." && pwd)"
+
+FLOO_EXTERNAL_GUIDANCE_DIR="$guidance_dir" \
+    cargo test --manifest-path "$cli_root/Cargo.toml" first_party_guidance_matches_clap

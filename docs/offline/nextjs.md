@@ -32,14 +32,15 @@ Skipping this is the most common Next.js footgun on floo.
   dev_command = "npm run dev"
   migrate_command = "npx prisma migrate deploy"   # if you use Prisma
 
+  floo preflight
+  git add . && git commit -m "chore: configure floo"
   git push origin main
   floo apps github connect owner/my-nextjs-app
 
 ## 4. Postgres
 
-  [managed.primary]
+  [managed.default]
   type = "postgres"
-  tier = "basic"
 
   # Prisma reads DATABASE_URL automatically
 

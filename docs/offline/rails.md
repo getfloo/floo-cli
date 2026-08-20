@@ -35,6 +35,7 @@ promote (against prod). Rails migrations stay in sync with deploys.
 
 ## 3. Connect repo and deploy
 
+  floo preflight
   git add . && git commit -m "feat: floo config"
   git push origin main
   floo apps github connect owner/my-rails-app
@@ -77,9 +78,8 @@ path.
 
 ## 5. Add Postgres
 
-  [managed.primary]
+  [managed.default]
   type = "postgres"
-  tier = "basic"
 
   git add floo.app.toml && git commit -m "feat: add postgres"
   git push origin main

@@ -14,13 +14,16 @@ observation. All source comes from GitHub - the CLI never uploads code.
 
   1. `floo auth login` - authenticate
   2. `floo init <name>` - scaffold config files (local only)
-  3. `floo apps github connect owner/repo` - connect to GitHub (triggers first deploy)
-  4. `floo apps show <name>` - see your app's URL and status
+  3. `floo preflight` - validate the config locally
+  4. Commit the generated files and run `git push origin main`
+  5. `floo apps github connect owner/repo` - create the app and deploy the pushed commit
+  6. `floo apps show <name>` - see your app's URL and status
 
+  Connect pulls from GitHub, so the generated config must be pushed first.
   After the first deploy, push to GitHub to deploy: `git push origin main`.
   Watch progress with `floo deploys watch --app <name>`.
   Use `floo redeploy` only to force a redeploy (e.g., after updating env vars).
-  Use `floo preflight` to validate config before pushing.
+  Keep using `floo preflight` to validate config before pushing.
 
   floo --help          - all available commands
   floo <command> --help - details for a specific command

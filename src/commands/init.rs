@@ -23,10 +23,11 @@ use crate::project_config::{self, AppFileAppSection, AppFileConfig, AppServiceEn
 /// becomes noise. Anchor to canonical doc URLs for depth.
 const APP_TOML_HEADER: &str = r#"# floo.app.toml — see https://getfloo.com/docs/reference/config-spec.md
 #
-# Deploys happen on `git push`. After `floo apps github connect`, every
-# push to your default branch builds and deploys to the dev environment
-# automatically (no manual deploy command needed). Cutting a GitHub release
-# promotes that build to production. See
+# Commit and push this file before `floo apps github connect`. Connect creates
+# the floo app and triggers the first deploy from the pushed GitHub source.
+# After that, every push to your default branch builds and deploys to the dev
+# environment automatically (no manual deploy command needed). Cutting a
+# GitHub release promotes that build to production. See
 # https://getfloo.com/docs/guides/golden-path.md.
 #
 # Common knobs to add when you need them (under [app], applies to every env):
@@ -190,9 +191,15 @@ captures the floo-specific gotchas that aren't obvious from the code.
 - **Run `floo preflight` before every deploy.** Catches config drift,
   missing managed-service env vars, runtime detection issues, and
   destructive plan changes — most deploy failures are preventable here.
-- **Read the latest docs at `https://getfloo.com/docs/*.md`.** The
-  Markdown URLs are agent-friendly. `floo docs <topic>` also prints
-  cheatsheets locally.
+- **Discover the installed CLI locally first.** Run `floo commands
+  --json`, `floo <command> --help`, then `floo docs <topic> --json`.
+  These surfaces match the installed version. Use the hosted docs for
+  longer explanations after checking them.
+- **Commit before connecting GitHub.** `floo apps github connect`
+  creates the floo app and triggers its first deploy from GitHub. Run
+  preflight, commit, and push before connecting. For a fresh app,
+  declare managed services with `[managed.<name>]` in `floo.app.toml`;
+  `floo services add` requires an existing app.
 - **Deploy by pushing to GitHub.** `git push` to your default branch
   triggers a dev deploy; cutting a GitHub release promotes to prod.
   Don't shell out to `gcloud run deploy` — it bypasses the floo
@@ -403,7 +410,7 @@ fn init_non_interactive(
         "dockerfile_generated": dockerfile_generated,
         "agents_md_written": agents_md_written,
         "hint": "Edit floo.app.toml to configure your services — run 'floo docs config' for the schema",
-        "next_step": "Connect GitHub with 'floo apps github connect <owner/repo>'. Every git push to your default branch then deploys to dev automatically.",
+        "next_step": "Run 'floo preflight --json', commit and push the generated files, then connect GitHub with 'floo apps github connect <owner/repo>'.",
     });
 
     // Add suggestion when Dockerfile was not generated due to low confidence
@@ -414,9 +421,10 @@ fn init_non_interactive(
     }
 
     if !output::is_json_mode() {
-        eprintln!("  Next: 'floo apps github connect <owner/repo>' wires the repo so");
-        eprintln!("        every 'git push' to your default branch deploys to dev.");
-        eprintln!("  Edit floo.app.toml to configure services; run 'floo preflight' to validate.");
+        eprintln!("  Next: edit floo.app.toml, then run 'floo preflight'.");
+        eprintln!("        Commit and push these files before running");
+        eprintln!("        'floo apps github connect <owner/repo>'.");
+        eprintln!("        Connect deploys the pushed commit; later pushes deploy automatically.");
     }
     output::success(&format!("Initialized app '{app_name}'."), Some(json_data));
 }
@@ -562,8 +570,9 @@ fn init_interactive(
         output::info("Wrote AGENTS.md (agent operating notes)", None);
     }
 
-    eprintln!("  Next: 'floo apps github connect <owner/repo>' wires the repo so");
-    eprintln!("        every 'git push' to your default branch deploys to dev.");
-    eprintln!("  Edit floo.app.toml to configure services; run 'floo preflight' to validate.");
+    eprintln!("  Next: edit floo.app.toml, then run 'floo preflight'.");
+    eprintln!("        Commit and push these files before running");
+    eprintln!("        'floo apps github connect <owner/repo>'.");
+    eprintln!("        Connect deploys the pushed commit; later pushes deploy automatically.");
     output::success(&format!("Initialized app '{app_name}'."), None);
 }

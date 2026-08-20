@@ -36,7 +36,7 @@ floo Deploy Flow
   without a new commit, such as updated environment values. It resolves
   source from the connected GitHub repository and never uploads local files:
 
-    floo env set API_KEY=new-value --app myapp --service api
+    floo env set API_KEY --stdin --secret --app myapp --service api
     floo redeploy --app myapp
 
   A no-rebuild redeploy replays only the immutable contract captured by the
@@ -54,9 +54,10 @@ floo Deploy Flow
 
 ## First Deploy
 
-  Use `floo apps github connect owner/repo`. This connects GitHub and
-  triggers the first deploy in one step. The app is auto-created if
-  it doesn't exist.
+  Run `floo init`, edit and preflight the generated config, then commit and
+  push it to GitHub. Use `floo apps github connect owner/repo` only after the
+  push. Connect creates the app, connects GitHub, and triggers the first
+  deploy from that pushed source.
 
 ## Do I Need a Dockerfile?
 

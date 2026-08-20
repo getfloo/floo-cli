@@ -887,10 +887,10 @@ pub enum EnvCommands {
 
     /// Get an environment variable's plaintext value.
     ///
-    /// Secret-shaped values (by key name or value content) are refused unless
-    /// you pass `--reveal-secrets`, in both human and `--json` output, so a
-    /// secret is never echoed to a terminal or transcript by accident. Plain,
-    /// non-secret values print without the flag.
+    /// Human output refuses secret-shaped values unless you pass
+    /// `--reveal-secrets`. JSON output redacts them by default and stamps the
+    /// envelope with `contains_secrets: true`; reveal only when you control the
+    /// destination. Plain, non-secret values print without the flag.
     Get {
         /// Environment variable key.
         key: String,

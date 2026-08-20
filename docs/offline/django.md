@@ -41,18 +41,19 @@ Use whitenoise for static files, gunicorn for the WSGI server.
   dev_command = "python manage.py runserver 0.0.0.0:8000"
   migrate_command = "python manage.py migrate --noinput"
 
+  floo preflight
+  git add . && git commit -m "chore: configure floo"
   git push origin main
   floo apps github connect owner/my-django-app
 
   # Set the secret key after first deploy
-  floo env set DJANGO_SECRET_KEY="$(python -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())')" --app my-django-app
+  python -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())' | floo env set DJANGO_SECRET_KEY --stdin --secret --app my-django-app
   floo redeploy --app my-django-app
 
 ## 4. Postgres
 
-  [managed.primary]
+  [managed.default]
   type = "postgres"
-  tier = "basic"
 
   # dj-database-url parses DATABASE_URL automatically
 
