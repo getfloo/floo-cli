@@ -13,6 +13,7 @@ const GITHUB_WAIT_TIMEOUT: Duration = Duration::from_secs(900);
 const INSTALLATION_POLL_INTERVAL: Duration = Duration::from_secs(3);
 const REPO_ACCESS_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const APPROVAL_HINT_AFTER: Duration = Duration::from_secs(60);
+const DEFAULT_INSTALL_URL: &str = "https://github.com/apps/getfloo/installations/new";
 
 pub fn connect(
     repo: &str,
@@ -118,7 +119,7 @@ pub fn connect(
                 .as_ref()
                 .and_then(|v| v.get("install_url"))
                 .and_then(|v| v.as_str())
-                .unwrap_or("https://github.com/apps/getfloo/installations/new");
+                .unwrap_or(DEFAULT_INSTALL_URL);
 
             let owner = repo.split('/').next().unwrap_or(repo);
 
@@ -155,7 +156,7 @@ pub fn connect(
                 .as_ref()
                 .and_then(|v| v.get("install_url"))
                 .and_then(|v| v.as_str())
-                .unwrap_or("https://github.com/apps/getfloo/installations/new");
+                .unwrap_or(DEFAULT_INSTALL_URL);
             let settings_url = e
                 .extra
                 .as_ref()
@@ -209,6 +210,13 @@ pub fn connect(
                 "GITHUB_REPO_NOT_ACCESSIBLE" => {
                     Some("Ensure the GitHub App is installed on the repo's organization.")
                 }
+                // Installed on GitHub, unlinked in floo. Without this the error
+                // named no command at all and the only exit anyone found was
+                // uninstalling the App (getfloo/floo#2189).
+                "GITHUB_INSTALLATION_NOT_AUTHORIZED" => Some(
+                    "The App is installed on GitHub but not linked to this floo org. \
+                     Link it: floo apps github setup",
+                ),
                 _ => None,
             };
             output::error(&e.message, &ErrorCode::from_api(&e.code), suggestion);
@@ -315,6 +323,53 @@ pub fn disconnect(app: Option<&str>) {
     output::success(
         &format!("Disconnected {name} from GitHub."),
         Some(serde_json::json!({"app": name})),
+    );
+}
+
+/// Mint a fresh GitHub App setup link regardless of install state.
+///
+/// `connect` mints one only on the `GITHUB_APP_NOT_INSTALLED` and
+/// `GITHUB_REPO_NOT_IN_INSTALLATION` branches. Once the App IS installed but
+/// floo holds no binding for the org, every connect returns
+/// `GITHUB_INSTALLATION_NOT_AUTHORIZED` and nothing re-mints the handshake —
+/// the dead end in getfloo/floo#2189, whose only exit was uninstalling the App
+/// from the GitHub org. This command is that exit.
+pub fn setup(no_browser: bool) {
+    super::require_auth();
+    let client = super::init_client(None);
+
+    // In JSON mode, never open a browser — agents can't use one.
+    let no_browser = no_browser || output::is_json_mode();
+
+    if no_browser {
+        // Minted here only on this branch: run_installation_flow begins its own
+        // session, so hoisting this above the `if` would burn two setup tokens
+        // per interactive run and leave the first orphaned in Redis.
+        let setup_url = begin_setup_or_exit(&client, DEFAULT_INSTALL_URL);
+        // The URL goes in the message, not only the JSON payload: human mode
+        // prints the message and drops the data, so a payload-only link is an
+        // instruction to open nothing.
+        output::success(
+            &format!(
+                "Open this link to link the floo GitHub App to your org:\n  {setup_url}\n\n\
+                 Then run: floo apps github connect <owner>/<repo>"
+            ),
+            Some(serde_json::json!({
+                "setup_url": setup_url,
+                "next": "floo apps github connect <owner>/<repo>",
+            })),
+        );
+        return;
+    }
+
+    run_installation_flow(&client, DEFAULT_INSTALL_URL, "floo apps github setup");
+
+    output::success(
+        "Linked the floo GitHub App to your org.",
+        Some(serde_json::json!({
+            "linked": true,
+            "next": "floo apps github connect <owner>/<repo>",
+        })),
     );
 }
 

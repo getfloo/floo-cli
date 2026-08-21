@@ -4,16 +4,25 @@ floo Quickstart - End-to-End Walkthrough
 
   - Your code must be in a **GitHub repository** (public or private).
     floo pulls source from GitHub - it does not upload local files.
-  - The floo GitHub App must be installed on your GitHub org/account.
-    The CLI opens GitHub to grant access during `floo apps github connect`.
+  - The floo GitHub App must be installed on your GitHub org/account, and
+    installed through a link floo minted. The CLI opens GitHub to grant access
+    during `floo apps github connect`, and that redirect is what binds the
+    installation to your floo org.
+
+    Installing from github.com directly skips the redirect, so floo ends up
+    with no binding: GitHub shows the App installed while every connect fails
+    with GITHUB_INSTALLATION_NOT_AUTHORIZED. Run `floo apps github setup` to
+    mint a fresh link and recover — no need to uninstall anything.
 
 ## Agents & CI (headless environments)
 
   Agents and CI pipelines can deploy without a browser:
 
-  1. A human installs the floo GitHub App on the org (one-time):
-     https://github.com/apps/getfloo/installations/new
-  2. The agent authenticates: floo auth login --api-key <key>
+  1. The agent authenticates: floo auth login --api-key <key>
+  2. The agent mints an install link: floo apps github setup --no-browser
+     A human opens that link once and grants access to the repo. Use this link
+     rather than github.com/apps/getfloo — only the minted link carries the
+     handshake that binds the installation to your floo org.
   3. The agent runs floo init, edits floo.app.toml, and runs floo preflight
   4. The agent commits and pushes the generated config to GitHub
   5. The agent connects: floo apps github connect owner/repo --no-browser

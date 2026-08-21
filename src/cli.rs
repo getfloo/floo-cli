@@ -823,6 +823,18 @@ pub enum GitHubCommands {
         #[arg(short, long)]
         app: Option<String>,
     },
+
+    /// Link the floo GitHub App to this org, whether or not it is installed.
+    ///
+    /// `connect` only mints a setup link when the App is NOT installed, so an
+    /// App installed straight from GitHub's UI — or installed more than 15
+    /// minutes before the connect — left the org with no way to link it
+    /// (getfloo/floo#2189). This always mints a fresh link.
+    Setup {
+        /// Never open a browser (for agents/CI). Prints the link instead.
+        #[arg(long)]
+        no_browser: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2299,6 +2311,7 @@ pub fn run() {
                 ),
                 GitHubCommands::Disconnect { app } => commands::github::disconnect(app.as_deref()),
                 GitHubCommands::Status { app } => commands::github::status(app.as_deref()),
+                GitHubCommands::Setup { no_browser } => commands::github::setup(no_browser),
             },
             AppsCommands::Password { app_name } => commands::apps::show_password(&app_name),
             AppsCommands::Invite { email, app, role } => {
