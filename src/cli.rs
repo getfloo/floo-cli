@@ -18,10 +18,6 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
 
-    /// Preview what a command would do without executing it.
-    #[arg(long = "preflight", alias = "dry-run", global = true)]
-    pub dry_run: bool,
-
     /// Emit secret-shaped values verbatim in `--json` output instead of
     /// `***REDACTED***`. The default redaction protects agents that pipe
     /// stdout into transcripts and logs. Use this only when you control
@@ -34,6 +30,13 @@ pub struct Cli {
 
     #[command(subcommand)]
     pub command: Commands,
+}
+
+#[derive(Args)]
+pub struct PreflightArgs {
+    /// Preview what the command would do without executing it.
+    #[arg(long = "preflight", alias = "dry-run")]
+    pub dry_run: bool,
 }
 
 #[derive(Subcommand)]
@@ -65,6 +68,9 @@ Examples:
         /// Project directory.
         #[arg(short, long, default_value = ".")]
         path: PathBuf,
+
+        #[command(flatten)]
+        preflight: PreflightArgs,
     },
 
     /// Run all services locally with managed-service credentials.
@@ -110,6 +116,9 @@ Examples:
         /// Fixture user role to inject as X-Floo-User-Role (default: "member").
         #[arg(long, value_name = "ROLE", requires = "fixture_user")]
         fixture_role: Option<String>,
+
+        #[command(flatten)]
+        preflight: PreflightArgs,
     },
 
     /// Run a one-shot command with a service's managed env vars injected.
@@ -167,6 +176,9 @@ Examples:
         /// Environment whose server-side runtime defaults should be resolved.
         #[arg(long, default_value = "dev", value_parser = ["dev", "prod", "preview"])]
         env: String,
+
+        #[command(flatten)]
+        preflight: PreflightArgs,
     },
 
     /// Force a redeploy (after env var changes, config updates, or to rebuild).
@@ -217,6 +229,9 @@ no-rebuild restart reports an unavailable immutable contract, run the exact
         /// because the image was previously migrated.
         #[arg(long)]
         skip_migrations: bool,
+
+        #[command(flatten)]
+        preflight: PreflightArgs,
     },
 
     /// View and manage deploy history.
@@ -454,6 +469,9 @@ material, no Cloud Run audit payloads. Those live on dedicated surfaces."
         /// Specific release tag to install (e.g. v0.2.0).
         #[arg(long)]
         version: Option<String>,
+
+        #[command(flatten)]
+        preflight: PreflightArgs,
     },
 }
 
@@ -680,6 +698,9 @@ pub enum AppsCommands {
         /// using it must have user authorization for this specific app.
         #[arg(long = "yes-i-know-this-destroys-data", alias = "force")]
         confirmed: bool,
+
+        #[command(flatten)]
+        preflight: PreflightArgs,
     },
 
     /// Manage GitHub integration.
@@ -845,6 +866,9 @@ pub enum EnvCommands {
         /// Omitting the flag on a later set keeps an existing write-only marker.
         #[arg(long)]
         secret: bool,
+
+        #[command(flatten)]
+        preflight: PreflightArgs,
     },
 
     /// List environment variables for an app.
@@ -883,6 +907,9 @@ pub enum EnvCommands {
         /// Environment: dev or prod.
         #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
         env: String,
+
+        #[command(flatten)]
+        preflight: PreflightArgs,
     },
 
     /// Get an environment variable's plaintext value.
@@ -939,6 +966,9 @@ pub enum EnvCommands {
         /// Environment: dev or prod.
         #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
         env: String,
+
+        #[command(flatten)]
+        preflight: PreflightArgs,
     },
 }
 
@@ -1195,6 +1225,9 @@ pub enum DomainsCommands {
         /// Route this domain to a specific service (required for multi-service apps).
         #[arg(long = "service", visible_alias = "services")]
         services: Option<String>,
+
+        #[command(flatten)]
+        preflight: PreflightArgs,
     },
 
     /// List custom domains for an app.
@@ -1232,6 +1265,9 @@ pub enum DomainsCommands {
         /// Skip the y/N prompt. Required in non-interactive contexts.
         #[arg(long)]
         yes: bool,
+
+        #[command(flatten)]
+        preflight: PreflightArgs,
     },
 
     /// Show detailed status for a single custom domain.
@@ -1309,6 +1345,9 @@ pub enum ReleasesCommands {
         /// Skip the y/N prompt. Required in non-interactive contexts.
         #[arg(long, alias = "force")]
         yes: bool,
+
+        #[command(flatten)]
+        preflight: PreflightArgs,
     },
 }
 
@@ -1386,6 +1425,9 @@ pub enum DeploysSubcommands {
         /// Skip the y/N prompt. Required in non-interactive contexts.
         #[arg(long, alias = "force")]
         yes: bool,
+
+        #[command(flatten)]
+        preflight: PreflightArgs,
     },
 }
 
@@ -1416,6 +1458,9 @@ pub enum PreviewsSubcommands {
         /// Remote git ref to record on the deploy.
         #[arg(long = "ref")]
         ref_name: Option<String>,
+
+        #[command(flatten)]
+        preflight: PreflightArgs,
     },
 
     /// List active preview sandboxes for an app.
@@ -1465,6 +1510,9 @@ pub enum PreviewsSubcommands {
         /// Skip the y/N prompt. Required in non-interactive contexts.
         #[arg(long, alias = "force")]
         yes: bool,
+
+        #[command(flatten)]
+        preflight: PreflightArgs,
     },
 
     /// Inspect and reset preview managed-resource branches.
@@ -1529,6 +1577,9 @@ do not yet support reset fail closed with the API's named reset blocker.")]
         /// Skip the y/N prompt. Required in non-interactive contexts.
         #[arg(long, alias = "force")]
         yes: bool,
+
+        #[command(flatten)]
+        preflight: PreflightArgs,
     },
 }
 
@@ -1578,6 +1629,9 @@ Examples:
         /// Maximum number of rows to return.
         #[arg(long, default_value = "1000")]
         limit: u32,
+
+        #[command(flatten)]
+        preflight: PreflightArgs,
     },
 
     /// Show the database schema for an app.
@@ -1600,6 +1654,9 @@ Examples:
         /// Environment to migrate: dev or prod.
         #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
         env: String,
+
+        #[command(flatten)]
+        preflight: PreflightArgs,
     },
 
     /// Show current Postgres connection usage versus the role's limit.
@@ -1744,6 +1801,9 @@ prod databases.")]
         /// Skip the y/N prompt. Required in non-interactive contexts.
         #[arg(long)]
         yes: bool,
+
+        #[command(flatten)]
+        preflight: PreflightArgs,
     },
 }
 
@@ -1835,6 +1895,9 @@ pub enum CronCommands {
         /// Cron job name. Mutually exclusive with the positional form.
         #[arg(long = "name", conflicts_with = "name")]
         name_flag: Option<String>,
+
+        #[command(flatten)]
+        preflight: PreflightArgs,
     },
 }
 
@@ -1898,88 +1961,43 @@ fn rewrite_bare_version_flag(args: Vec<OsString>) -> Vec<OsString> {
     rewritten
 }
 
-/// Mutating commands that have not implemented `--dry-run`.
+/// Move preview flags to the selected leaf command before clap parses argv.
 ///
-/// Read-only commands silently ignore the flag (they don't mutate, so a
-/// preview of "do nothing" is a no-op). Mutating commands either implement
-/// `--dry-run` themselves (handled in their own command module) or are
-/// listed here so we error early instead of partially executing.
-///
-/// Tested via `dry_run_supported_names_are_real_subcommands` (which pins
-/// the listed-supported set against parseable subcommands) and
-/// `dry_run_unsupported_for_known_mutator` (a spot-check that a known
-/// mutator stays in the unsupported set). A stale entry here fails fast.
-fn dry_run_is_unsupported(command: &Commands) -> bool {
-    matches!(
-        command,
-        Commands::Apps(AppsCommands::Github(
-            GitHubCommands::Connect { .. } | GitHubCommands::Disconnect { .. },
-        )) | Commands::Releases(ReleasesCommands::Promote { .. })
-            | Commands::Orgs(
-                OrgsCommands::Members(MembersCommands::SetRole { .. })
-                    | OrgsCommands::Switch { .. },
-            )
-            | Commands::Apps(
-                AppsCommands::Invite { .. }
-                    | AppsCommands::InviteResend { .. }
-                    | AppsCommands::InviteRevoke { .. }
-                    | AppsCommands::MemberRole { .. }
-                    | AppsCommands::MemberRemove { .. }
-            )
-            | Commands::Billing(BillingCommands::SpendCap(SpendCapCommands::Set { .. }))
-            | Commands::Run { .. }
-            | Commands::Feedback { .. }
-            | Commands::Skills(SkillsCommands::Install { .. })
-            | Commands::Auth(
-                AuthCommands::Login { .. }
-                    | AuthCommands::Logout
-                    | AuthCommands::Register { .. }
-                    | AuthCommands::UpdateProfile { .. }
-            )
-    )
-}
+/// `--preflight` used to be global, so existing scripts may place it before
+/// the subcommand (`floo --preflight env set ...`). Leaf commands now own the
+/// argument so help visibility and acceptance cannot drift. Normalizing the
+/// old position preserves compatible invocations while still letting clap
+/// reject the flag when the selected leaf does not implement preview mode.
+fn rewrite_preflight_flag_position(args: Vec<OsString>) -> Vec<OsString> {
+    let mut rewritten = Vec::with_capacity(args.len());
+    let mut preview_flags = Vec::new();
+    let mut passthrough = false;
 
-/// Comma-joinable names of mutating commands that DO support `--dry-run`.
-///
-/// Single source of truth used in the error suggestion. Each entry must be
-/// a real subcommand path (parseable by clap) — guarded by
-/// `dry_run_supported_names_are_real_subcommands`.
-///
-/// **When you add a new `--dry-run` handler in a `commands/*.rs` module,
-/// add an entry here AND a matching invocation row in the test.** Otherwise
-/// the suggestion text in the error will silently lie about what's supported
-/// — that drift class is exactly what this PR was opened to fix.
-const DRY_RUN_SUPPORTED_COMMANDS: &[&str] = &[
-    "init",
-    "redeploy",
-    "preflight",
-    "dev",
-    "update",
-    "env set",
-    "env unset",
-    "env import",
-    "apps delete",
-    "domains add",
-    "domains remove",
-    "cron run",
-    "deploys rollback",
-    "db migrate",
-    "db query",
-    "db branches reset",
-    "previews resources reset",
-];
+    for (idx, arg) in args.into_iter().enumerate() {
+        if idx == 0 {
+            rewritten.push(arg);
+            continue;
+        }
 
-fn reject_unsupported_dry_run(command: &Commands) {
-    if !dry_run_is_unsupported(command) {
-        return;
+        if !passthrough {
+            match arg.to_str() {
+                Some("--preflight" | "--dry-run") => {
+                    preview_flags.push(arg);
+                    continue;
+                }
+                Some("--") => {
+                    rewritten.append(&mut preview_flags);
+                    passthrough = true;
+                }
+                _ => {}
+            }
+        }
+
+        rewritten.push(arg);
     }
-    let suggestion = format!("Supported: {}.", DRY_RUN_SUPPORTED_COMMANDS.join(", "));
-    output::error(
-        "--preflight is not supported for this command.",
-        &crate::errors::ErrorCode::InvalidFormat,
-        Some(&suggestion),
-    );
-    std::process::exit(1);
+
+    rewritten.append(&mut preview_flags);
+    rewritten
 }
 
 /// Scan raw argv for the global `--json` flag, stopping at the `--`
@@ -1991,6 +2009,21 @@ fn json_flag_in_argv(args: &[OsString]) -> bool {
         match arg.to_str() {
             Some("--") => return false,
             Some("--json") => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Detect the leaf-command preview flag before consuming the parsed command.
+/// Clap remains the authority for where the flag is accepted; this scan only
+/// enables the shared preview output mode after parsing succeeds. Passthrough
+/// arguments after `--` must not switch the CLI into preview mode.
+fn preflight_flag_in_argv(args: &[OsString]) -> bool {
+    for arg in args.iter().skip(1) {
+        match arg.to_str() {
+            Some("--") => return false,
+            Some("--preflight" | "--dry-run") => return true,
             _ => {}
         }
     }
@@ -2030,6 +2063,7 @@ fn exit_with_clap_error_json(err: &clap::Error) -> ! {
 
 pub fn run() {
     let args = rewrite_bare_version_flag(std::env::args_os().collect());
+    let args = rewrite_preflight_flag_position(args);
 
     // Detect `--json` from raw argv BEFORE clap parses. A parse failure makes
     // clap exit with plain-text usage on stderr (exit 2) *before* the parsed
@@ -2038,6 +2072,7 @@ pub fn run() {
     // --json` (missing subcommand) (#1156). This fixes the whole class, not
     // just `doctor`.
     let json_requested = json_flag_in_argv(&args);
+    let preflight_requested = preflight_flag_in_argv(&args);
     let cli = match Cli::try_parse_from(args) {
         Ok(cli) => cli,
         Err(err) => {
@@ -2059,9 +2094,8 @@ pub fn run() {
     if cli.json {
         output::set_json_mode(true);
     }
-    if cli.dry_run {
+    if preflight_requested {
         output::set_dry_run_mode(true);
-        reject_unsupported_dry_run(&cli.command);
     }
     if cli.reveal_secrets {
         crate::redact::set_reveal_secrets(true);
@@ -2087,7 +2121,11 @@ pub fn run() {
             period,
         } => commands::analytics::analytics(app_flag.or(app), &period),
 
-        Commands::Init { name, path } => commands::init::init(name, path),
+        Commands::Init {
+            name,
+            path,
+            preflight: _,
+        } => commands::init::init(name, path),
 
         Commands::Dev {
             app,
@@ -2095,6 +2133,7 @@ pub fn run() {
             fixture_id,
             fixture_name,
             fixture_role,
+            preflight: _,
         } => commands::dev::dev(commands::dev::DevArgs {
             app,
             fixture_user,
@@ -2114,6 +2153,7 @@ pub fn run() {
             app,
             services,
             env,
+            preflight: _,
         } => commands::deploy::preflight(path, app, services, env),
 
         Commands::Redeploy {
@@ -2123,6 +2163,7 @@ pub fn run() {
             rebuild,
             sync_env,
             skip_migrations,
+            preflight: _,
         } => commands::deploy::deploy(path, app, services, rebuild, sync_env, skip_migrations),
 
         Commands::Deploys(sub) => match sub {
@@ -2144,6 +2185,7 @@ pub fn run() {
                 app,
                 deploy_id,
                 yes,
+                preflight: _,
             } => commands::rollbacks::rollback(&app, &deploy_id, yes),
         },
         Commands::Previews(sub) => match sub {
@@ -2154,6 +2196,7 @@ pub fn run() {
                 runtime,
                 commit_sha,
                 ref_name,
+                preflight: _,
             } => commands::previews::up(
                 app.as_deref(),
                 &branch,
@@ -2172,9 +2215,12 @@ pub fn run() {
                 follow,
                 tail,
             } => commands::previews::logs(app.as_deref(), &preview, follow, tail),
-            PreviewsSubcommands::Delete { preview, app, yes } => {
-                commands::previews::delete(app.as_deref(), &preview, yes)
-            }
+            PreviewsSubcommands::Delete {
+                preview,
+                app,
+                yes,
+                preflight: _,
+            } => commands::previews::delete(app.as_deref(), &preview, yes),
             PreviewsSubcommands::Resources(sub) => match sub {
                 PreviewResourcesSubcommands::List { preview, app } => {
                     commands::previews::resources_list(app.as_deref(), &preview)
@@ -2189,6 +2235,7 @@ pub fn run() {
                     app,
                     resource,
                     yes,
+                    preflight: _,
                 } => commands::previews::resources_reset(app.as_deref(), &preview, &resource, yes),
             },
         },
@@ -2232,6 +2279,7 @@ pub fn run() {
             AppsCommands::Delete {
                 app_name,
                 confirmed,
+                preflight: _,
             } => commands::apps::delete(&app_name, confirmed),
             AppsCommands::Github(gh_sub) => match gh_sub {
                 GitHubCommands::Connect {
@@ -2288,6 +2336,7 @@ pub fn run() {
                 stdin,
                 value_file,
                 secret,
+                preflight: _,
             } => {
                 let value_source = if stdin {
                     commands::env::ValueSource::Stdin
@@ -2314,6 +2363,7 @@ pub fn run() {
                 app,
                 services,
                 env,
+                preflight: _,
             } => commands::env::remove(&key, app.as_deref(), &services, &env),
             EnvCommands::Get {
                 key,
@@ -2328,6 +2378,7 @@ pub fn run() {
                 all,
                 secret,
                 env,
+                preflight: _,
             } => {
                 if all {
                     commands::env::import_all_services(app.as_deref(), &env, secret);
@@ -2422,14 +2473,18 @@ pub fn run() {
                 hostname,
                 app,
                 services,
+                preflight: _,
             } => commands::domains::add(&hostname, app.as_deref(), services.as_deref()),
             DomainsCommands::List { app } => commands::domains::list(app.as_deref()),
             DomainsCommands::Verify { hostname, app } => {
                 commands::domains::verify(&hostname, app.as_deref())
             }
-            DomainsCommands::Remove { hostname, app, yes } => {
-                commands::domains::remove(&hostname, app.as_deref(), yes)
-            }
+            DomainsCommands::Remove {
+                hostname,
+                app,
+                yes,
+                preflight: _,
+            } => commands::domains::remove(&hostname, app.as_deref(), yes),
             DomainsCommands::Show { hostname, app } => {
                 commands::domains::status(&hostname, app.as_deref())
             }
@@ -2453,9 +2508,12 @@ pub fn run() {
             // same backend (`POST /v1/apps/{id}/rollback`) which re-points
             // gateway routes at the previous deploy's image without
             // rebuilding source.
-            ReleasesCommands::Rollback { app, to, yes } => {
-                commands::rollbacks::rollback(&app, &to, yes)
-            }
+            ReleasesCommands::Rollback {
+                app,
+                to,
+                yes,
+                preflight: _,
+            } => commands::rollbacks::rollback(&app, &to, yes),
         },
 
         Commands::Skills(sub) => match sub {
@@ -2468,9 +2526,14 @@ pub fn run() {
                 app,
                 env,
                 limit,
+                preflight: _,
             } => commands::db::query(app.as_deref(), &sql, &env, limit),
             DbCommands::Schema { app } => commands::db::schema(app.as_deref()),
-            DbCommands::Migrate { app, env } => commands::db::migrate(app.as_deref(), &env),
+            DbCommands::Migrate {
+                app,
+                env,
+                preflight: _,
+            } => commands::db::migrate(app.as_deref(), &env),
             DbCommands::Connections { app, env } => commands::db::connections(app.as_deref(), &env),
             DbCommands::Backup { app, name, env } => {
                 commands::db::backup(app.as_deref(), &name, &env)
@@ -2496,6 +2559,7 @@ pub fn run() {
                     app,
                     name,
                     yes,
+                    preflight: _,
                 } => commands::db::branches_reset(app.as_deref(), &preview, &name, yes),
             },
         },
@@ -2521,6 +2585,7 @@ pub fn run() {
                 name,
                 app,
                 name_flag,
+                preflight: _,
             } => {
                 let resolved = name.or(name_flag).unwrap_or_else(|| {
                     output::error(
@@ -2609,7 +2674,10 @@ pub fn run() {
             }
         }
         Commands::Version => commands::update::version(),
-        Commands::Update { version } => commands::update::update(version.as_deref()),
+        Commands::Update {
+            version,
+            preflight: _,
+        } => commands::update::update(version.as_deref()),
     }
 
     // Post-command: apply any update that was downloaded during this run
@@ -2677,13 +2745,19 @@ mod tests {
     fn deprecated_dry_run_flag_is_a_hidden_compatibility_alias() {
         let cli = Cli::try_parse_from(["floo", "redeploy", "--dry-run", "--app", "my-app"])
             .unwrap_or_else(|error| panic!("deprecated --dry-run alias must parse: {error}"));
-        assert!(cli.dry_run);
+        let Commands::Redeploy { preflight, .. } = cli.command else {
+            panic!("expected redeploy command");
+        };
+        assert!(preflight.dry_run);
 
-        let root = Cli::command();
-        let preflight = root
+        let mut root = Cli::command();
+        let redeploy = root
+            .find_subcommand_mut("redeploy")
+            .expect("redeploy command");
+        let preflight = redeploy
             .get_arguments()
             .find(|argument| argument.get_id() == "dry_run")
-            .expect("global preflight argument");
+            .expect("redeploy preflight argument");
         assert_eq!(preflight.get_long(), Some("preflight"));
         assert!(
             preflight
@@ -2750,15 +2824,50 @@ mod tests {
         assert_eq!(strs(&out), vec!["floo", "--help"]);
     }
 
-    /// Each entry in DRY_RUN_SUPPORTED_COMMANDS must be a real subcommand path
-    /// (parseable by clap) AND must NOT be in the unsupported set. This catches
-    /// drift between the suggestion text and the matches! list — the original
-    /// 2026-04-30 bug where the error string listed `cron add` (no such
-    /// subcommand) and the matches! list rejected `cron run` (which actually
-    /// implements --dry-run).
     #[test]
-    fn dry_run_supported_names_are_real_subcommands() {
-        // Minimal required positionals so each invocation parses.
+    fn rewrite_moves_legacy_global_preflight_to_the_leaf() {
+        let out = rewrite_preflight_flag_position(argv(&[
+            "floo",
+            "--json",
+            "--dry-run",
+            "env",
+            "set",
+            "K=V",
+        ]));
+        assert_eq!(
+            strs(&out),
+            vec!["floo", "--json", "env", "set", "K=V", "--dry-run"]
+        );
+        Cli::try_parse_from(out).expect("normalized supported invocation must parse");
+    }
+
+    #[test]
+    fn rewrite_keeps_passthrough_preflight_with_the_child_process() {
+        let out = rewrite_preflight_flag_position(argv(&[
+            "floo",
+            "run",
+            "--service",
+            "api",
+            "--",
+            "echo",
+            "--preflight",
+        ]));
+        assert_eq!(
+            strs(&out),
+            vec![
+                "floo",
+                "run",
+                "--service",
+                "api",
+                "--",
+                "echo",
+                "--preflight"
+            ]
+        );
+    }
+
+    #[test]
+    fn preflight_supported_commands_accept_the_flag() {
         let invocations: &[(&str, &[&str])] = &[
             ("init", &["floo", "init", "--preflight"]),
             ("redeploy", &["floo", "redeploy", "--preflight"]),
@@ -2787,6 +2896,19 @@ mod tests {
             (
                 "deploys rollback",
                 &["floo", "deploys", "rollback", "myapp", "abc", "--preflight"],
+            ),
+            (
+                "releases rollback",
+                &[
+                    "floo",
+                    "releases",
+                    "rollback",
+                    "--app",
+                    "myapp",
+                    "--to",
+                    "abc",
+                    "--preflight",
+                ],
             ),
             (
                 "db migrate",
@@ -2818,6 +2940,21 @@ mod tests {
                 ],
             ),
             (
+                "previews up",
+                &[
+                    "floo",
+                    "previews",
+                    "up",
+                    "--branch",
+                    "feat/example",
+                    "--preflight",
+                ],
+            ),
+            (
+                "previews delete",
+                &["floo", "previews", "delete", "feat-example", "--preflight"],
+            ),
+            (
                 "previews resources reset",
                 &[
                     "floo",
@@ -2834,41 +2971,57 @@ mod tests {
             ),
         ];
 
-        let listed: std::collections::HashSet<&str> =
-            DRY_RUN_SUPPORTED_COMMANDS.iter().copied().collect();
-        let invoked: std::collections::HashSet<&str> =
-            invocations.iter().map(|(name, _)| *name).collect();
-        assert_eq!(
-            listed, invoked,
-            "DRY_RUN_SUPPORTED_COMMANDS and the test invocation table must list the same names",
-        );
-
         for (label, args) in invocations {
-            let cli = Cli::try_parse_from(args.iter().copied())
+            Cli::try_parse_from(args.iter().copied())
                 .unwrap_or_else(|e| panic!("clap rejected '{label}' invocation {args:?}: {e}"));
-            assert!(cli.dry_run, "expected --preflight set for '{label}'");
-            assert!(
-                !dry_run_is_unsupported(&cli.command),
-                "'{label}' is listed as supported but dry_run_is_unsupported() returns true",
-            );
         }
     }
 
     #[test]
-    fn dry_run_unsupported_for_known_mutator() {
-        // `floo apps github connect` does not implement --dry-run; the
-        // gate must catch it. (Replaces the prior `floo init` spot-check
-        // since `init` now implements --dry-run.)
-        let cli = Cli::try_parse_from([
+    fn unsupported_commands_neither_advertise_nor_accept_preflight() {
+        let mut root = Cli::command();
+        let feedback_help = root
+            .find_subcommand_mut("feedback")
+            .expect("feedback command")
+            .render_long_help()
+            .to_string();
+        assert!(!feedback_help.contains("--preflight"));
+
+        let mut root = Cli::command();
+        let apps = root.find_subcommand_mut("apps").expect("apps command");
+        let github = apps
+            .find_subcommand_mut("github")
+            .expect("apps github command");
+        let connect_help = github
+            .find_subcommand_mut("connect")
+            .expect("apps github connect command")
+            .render_long_help()
+            .to_string();
+        assert!(!connect_help.contains("--preflight"));
+
+        assert!(Cli::try_parse_from(["floo", "feedback", "message", "--preflight"]).is_err());
+        assert!(Cli::try_parse_from([
             "floo",
             "apps",
             "github",
             "connect",
             "owner/repo",
-            "--dry-run",
+            "--preflight",
         ])
-        .unwrap();
-        assert!(dry_run_is_unsupported(&cli.command));
+        .is_err());
+    }
+
+    #[test]
+    fn passthrough_preflight_flag_does_not_enable_preview_mode() {
+        assert!(!preflight_flag_in_argv(&argv(&[
+            "floo",
+            "run",
+            "--service",
+            "api",
+            "--",
+            "echo",
+            "--preflight",
+        ])));
     }
 
     #[test]

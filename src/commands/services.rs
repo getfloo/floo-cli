@@ -430,7 +430,7 @@ pub fn remove(service_type: &str, app: Option<&str>, name: &str, confirmed: bool
     };
 
     let mut preamble = vec![
-        format!("\u{26a0} You are about to permanently destroy the following managed service:"),
+        "\u{26a0} You are about to permanently destroy the following managed service:".to_string(),
         format!("    app:   {app_name}"),
         format!("    type:  {service_type}"),
         format!("    name:  {name}"),
