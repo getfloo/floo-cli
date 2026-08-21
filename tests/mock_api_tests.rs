@@ -6928,3 +6928,108 @@ fn test_org_analytics_renders_rejection_breakdown() {
         .stderr(predicate::str::contains("Gateway Rejections"))
         .stderr(predicate::str::contains("edge_policy"));
 }
+
+// ─────────────── GitHub setup re-mint (getfloo/floo#2189) ───────────────
+//
+// `connect` mints a setup link only when the App is NOT installed. Once it IS
+// installed but floo holds no binding for the org, every connect returned
+// GITHUB_INSTALLATION_NOT_AUTHORIZED and no surface re-minted the handshake.
+// The only exit anyone found was uninstalling the App from the GitHub org.
+
+#[test]
+fn test_github_setup_mints_a_link_regardless_of_install_state() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+
+    let begin = server
+        .mock("POST", "/v1/github/setup/begin")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"install_url":"https://api.floo.dev/v1/github/setup/install?setup_token=tok-123"}"#,
+        )
+        .create();
+
+    floo()
+        .args(["--json", "apps", "github", "setup"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("setup_token=tok-123"))
+        .stdout(predicate::str::contains(
+            r#""next":"floo apps github connect <owner>/<repo>""#,
+        ));
+
+    begin.assert();
+}
+
+#[test]
+fn test_github_setup_no_browser_prints_link_without_polling() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+
+    let begin = server
+        .mock("POST", "/v1/github/setup/begin")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"install_url":"https://api.floo.dev/v1/github/setup/install?setup_token=tok-456"}"#,
+        )
+        .create();
+    // No /setup/poll mock: --no-browser must return the link and stop. If it
+    // polled, mockito would 501 the unmatched request and this would fail.
+    let poll = server
+        .mock("GET", "/v1/github/setup/poll")
+        .expect(0)
+        .create();
+
+    floo()
+        .args(["apps", "github", "setup", "--no-browser"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("setup_token=tok-456"));
+
+    begin.assert();
+    poll.assert();
+}
+
+#[test]
+fn test_connect_unauthorized_installation_names_the_setup_command() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let connect = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/github/connection").as_str(),
+        )
+        .with_status(403)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"detail":{"code":"GITHUB_INSTALLATION_NOT_AUTHORIZED","message":"The floo GitHub App is installed on \"myorg\" but is not linked to floo org \"acme-1234\"."}}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "apps",
+            "github",
+            "connect",
+            "myorg/myrepo",
+            "--app",
+            TEST_APP_NAME,
+            "--no-browser",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            r#""code":"GITHUB_INSTALLATION_NOT_AUTHORIZED""#,
+        ))
+        .stdout(predicate::str::contains("floo apps github setup"));
+
+    connect.assert();
+}
