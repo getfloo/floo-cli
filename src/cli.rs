@@ -384,7 +384,7 @@ Examples:
         #[arg(short, long)]
         app: Option<String>,
 
-        /// Extra context (error output, steps to reproduce, etc.).
+        /// Extra context, up to 10,000 characters (error output, reproduction steps, etc.).
         #[arg(long)]
         context: Option<String>,
     },

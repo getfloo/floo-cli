@@ -96,6 +96,40 @@ fn test_no_args_shows_help() {
         .stderr(predicate::str::contains("Usage: floo"));
 }
 
+#[test]
+fn test_feedback_help_documents_context_limit() {
+    floo()
+        .args(["feedback", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("up to 10,000 characters"));
+}
+
+#[test]
+fn test_feedback_rejects_oversized_context_before_auth_or_request() {
+    let context = "x".repeat(10_001);
+
+    floo()
+        .env("FLOO_NO_UPDATE_CHECK", "1")
+        .args([
+            "--json",
+            "feedback",
+            "Detailed report",
+            "--context",
+            &context,
+        ])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            r#""code":"FEEDBACK_CONTEXT_TOO_LONG""#,
+        ))
+        .stdout(predicate::str::contains(
+            "Feedback context is 10001 characters; the maximum is 10000.",
+        ))
+        .stdout(predicate::str::contains(context.clone()).not())
+        .stderr(predicate::str::is_empty());
+}
+
 // --- Offline documentation ---
 
 fn offline_docs() -> Command {

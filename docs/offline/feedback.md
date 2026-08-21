@@ -28,6 +28,7 @@ the CLI. Feedback is routed to the floo team in real-time.
 
 ## Context
 
-  Use --context to attach extra detail (error output, steps to reproduce):
+  Use --context to attach up to 10,000 characters of extra detail (error
+  output, steps to reproduce). The CLI validates the length before submitting:
 
   floo feedback --category bug "deploy fails" --context "error: no Dockerfile found"
