@@ -340,9 +340,12 @@ pub fn setup(no_browser: bool) {
 
     // In JSON mode, never open a browser — agents can't use one.
     let no_browser = no_browser || output::is_json_mode();
-    let setup_url = begin_setup_or_exit(&client, DEFAULT_INSTALL_URL);
 
     if no_browser {
+        // Minted here only on this branch: run_installation_flow begins its own
+        // session, so hoisting this above the `if` would burn two setup tokens
+        // per interactive run and leave the first orphaned in Redis.
+        let setup_url = begin_setup_or_exit(&client, DEFAULT_INSTALL_URL);
         // The URL goes in the message, not only the JSON payload: human mode
         // prints the message and drops the data, so a payload-only link is an
         // instruction to open nothing.

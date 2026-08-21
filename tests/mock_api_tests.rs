@@ -6968,8 +6968,11 @@ fn test_github_setup_no_browser_prints_link_without_polling() {
     let mut server = Server::new();
     let home = setup_config(&server);
 
+    // expect(1): exactly one setup token per run. Minting a second and
+    // discarding it orphans the first in Redis.
     let begin = server
         .mock("POST", "/v1/github/setup/begin")
+        .expect(1)
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
