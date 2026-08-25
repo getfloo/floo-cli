@@ -1048,7 +1048,10 @@ pub fn deploy(
     let app_id = app_data.id.clone();
 
     // Auto-import env vars on first deploy (or force with --sync-env)
-    sync_env_vars_if_needed(&client, &app_id, &resolved, sync_env);
+    if let Err(msg) = sync_env_vars_if_needed(&client, &app_id, &resolved, sync_env) {
+        output::error(&msg, &ErrorCode::InvalidPath, None);
+        process::exit(1);
+    }
 
     // Extract access_mode: [environments.dev] override > [app] level > service_config
     let access_mode: Option<AppAccessMode> = resolved
@@ -3012,33 +3015,33 @@ pub(crate) fn deploy_imported_env_files(
     entries
 }
 
+/// Import env files declared in `floo.app.toml`.
+///
+/// Returns the validation message instead of exiting so a caller that created
+/// state on the way here (`apps github connect` creates the app) can undo it
+/// before the error is reported.
 pub(crate) fn sync_env_vars_if_needed(
     client: &FlooClient,
     app_id: &str,
     resolved: &project_config::ResolvedApp,
     force_sync: bool,
-) {
+) -> Result<(), String> {
     // Resolve+validate each imported env_file to an absolute path (the shared
     // helper decides WHICH files are imported; this loop validates them).
     let mut env_file_entries: Vec<(String, PathBuf)> = Vec::new();
     for (svc_name, env_file, base_dir) in deploy_imported_env_files(resolved) {
-        match super::env::validate_env_file_path(&env_file, &base_dir) {
-            Ok(path) => env_file_entries.push((svc_name, path)),
-            Err(msg) => {
-                output::error(&msg, &ErrorCode::InvalidPath, None);
-                process::exit(1);
-            }
-        }
+        let path = super::env::validate_env_file_path(&env_file, &base_dir)?;
+        env_file_entries.push((svc_name, path));
     }
 
     if env_file_entries.is_empty() {
-        return;
+        return Ok(());
     }
 
     // Get server-side services — silently return on API error (services may not exist on first deploy)
     let server_services = match client.list_services(app_id, None) {
         Ok(r) => r.services,
-        Err(_) => return,
+        Err(_) => return Ok(()),
     };
 
     for (svc_name, env_file_path) in &env_file_entries {
@@ -3099,6 +3102,8 @@ pub(crate) fn sync_env_vars_if_needed(
             ));
         }
     }
+
+    Ok(())
 }
 
 fn fetch_remote_preflight(
