@@ -15,6 +15,95 @@ const REPO_ACCESS_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const APPROVAL_HINT_AFTER: Duration = Duration::from_secs(60);
 const DEFAULT_INSTALL_URL: &str = "https://github.com/apps/getfloo/installations/new";
 
+/// An app **this invocation created**, eligible to be undone if connect never
+/// links it to GitHub.
+///
+/// Only apps created here are tracked. An app the user already had is never
+/// removed: it can hold services, env vars, deploys, and team access that this
+/// command did not create and has no business destroying.
+struct CreatedApp {
+    id: String,
+    name: String,
+}
+
+/// A failure that has not been reported to the user yet.
+///
+/// Helpers return this instead of calling `process::exit` directly so the
+/// command can undo the app it created *before* the error is emitted.
+/// Reporting first would either lose the cleanup entirely (exit never
+/// returns) or print a second JSON object after the error, breaking the
+/// one-object stdout contract agents parse.
+struct ConnectFailure {
+    message: String,
+    code: ErrorCode,
+    suggestion: Option<String>,
+}
+
+impl ConnectFailure {
+    fn new(message: impl Into<String>, code: ErrorCode, suggestion: Option<String>) -> Self {
+        Self {
+            message: message.into(),
+            code,
+            suggestion,
+        }
+    }
+
+    fn from_api(e: &FlooApiError, suggestion: Option<String>) -> Self {
+        Self::new(e.message.clone(), ErrorCode::from_api(&e.code), suggestion)
+    }
+}
+
+/// Undo an app this run created, then report `failure` and exit non-zero.
+///
+/// A connect that never linked the repo used to leave the app behind, so the
+/// operator had to delete it by hand before retrying: the second attempt hit
+/// APP_NAME_TAKEN on creation and stopped. Cleaning up here makes a failed
+/// connect retryable as-is.
+fn abort_connect(
+    client: &crate::api_client::FlooClient,
+    created_app: Option<&CreatedApp>,
+    failure: ConnectFailure,
+) -> ! {
+    let mut suggestion = failure.suggestion;
+
+    if let Some(created) = created_app {
+        match client.delete_app(&created.id) {
+            Ok(()) => {
+                if !output::is_json_mode() {
+                    output::info(
+                        &format!(
+                            "Removed the app \"{}\" floo created for this attempt.",
+                            created.name
+                        ),
+                        None,
+                    );
+                }
+            }
+            Err(e) => {
+                // Folded into the suggestion rather than printed separately:
+                // in JSON mode the error below is the only object on stdout,
+                // and a stranded app the operator does not know about is worse
+                // than a long suggestion.
+                let note = format!(
+                    "floo also could not remove the app \"{}\" it created for this attempt ({}). \
+                     Delete it before retrying: floo apps delete {}",
+                    created.name, e.message, created.name
+                );
+                if !output::is_json_mode() {
+                    output::warn(&note);
+                }
+                suggestion = Some(match suggestion {
+                    Some(existing) => format!("{existing}\n{note}"),
+                    None => note,
+                });
+            }
+        }
+    }
+
+    output::error(&failure.message, &failure.code, suggestion.as_deref());
+    process::exit(1);
+}
+
 pub fn connect(
     repo: &str,
     app: Option<&str>,
@@ -33,6 +122,9 @@ pub fn connect(
 
     let cwd = super::read_cwd_or_exit();
 
+    // Apps this run creates are undone if connect never links the repo.
+    let mut created_app: Option<CreatedApp> = None;
+
     // Resolve app — skip config file reads when --app is provided
     let (app_data, resolved) = if let Some(app_flag) = app {
         // --app provided: look up directly, no local config needed
@@ -46,6 +138,10 @@ pub fn connect(
                 match client.create_app(app_flag, Some(&runtime)) {
                     Ok(a) => {
                         spinner.finish();
+                        created_app = Some(CreatedApp {
+                            id: a.id.clone(),
+                            name: a.name.clone(),
+                        });
                         a
                     }
                     Err(e) => {
@@ -83,6 +179,10 @@ pub fn connect(
                 match client.create_app(&app_name, Some(&detection.runtime)) {
                     Ok(a) => {
                         spinner.finish();
+                        created_app = Some(CreatedApp {
+                            id: a.id.clone(),
+                            name: a.name.clone(),
+                        });
                         a
                     }
                     Err(e) => {
@@ -107,7 +207,9 @@ pub fn connect(
 
     // Phase 1: Import env vars from local env_file before connecting
     if let Some(ref r) = resolved {
-        import_env_vars_for_connect(&client, &app_id, r);
+        if let Err(failure) = import_env_vars_for_connect(&client, &app_id, r) {
+            abort_connect(&client, created_app.as_ref(), failure);
+        }
     }
 
     // Phase 2: Connect to GitHub (handles installation + repo access)
@@ -125,29 +227,35 @@ pub fn connect(
 
             if no_browser {
                 let setup_url = manual_setup_url(&client, install_url);
-                output::error(
-                    &format!("floo GitHub App not installed on \"{owner}\"."),
-                    &ErrorCode::from_api("GITHUB_APP_NOT_INSTALLED"),
-                    Some(&format!(
-                        "Open the GitHub App setup URL and grant access to \"{repo}\": {setup_url}\n\
-                         Then re-run: {rerun_command}"
-                    )),
+                abort_connect(
+                    &client,
+                    created_app.as_ref(),
+                    ConnectFailure::new(
+                        format!("floo GitHub App not installed on \"{owner}\"."),
+                        ErrorCode::from_api("GITHUB_APP_NOT_INSTALLED"),
+                        Some(format!(
+                            "Open the GitHub App setup URL and grant access to \"{repo}\": {setup_url}\n\
+                             Then re-run: {rerun_command}"
+                        )),
+                    ),
                 );
-                process::exit(1);
             }
 
             if !output::is_json_mode() {
                 output::warn(&format!("floo GitHub App not installed on \"{owner}\""));
             }
 
-            run_installation_flow(&client, install_url, &rerun_command);
+            if let Err(failure) = run_installation_flow(&client, install_url, &rerun_command) {
+                abort_connect(&client, created_app.as_ref(), failure);
+            }
 
             match client.github_connect(&app_id, repo, branch, skip_env_check) {
                 Ok(r) => r,
-                Err(e2) => {
-                    output::error(&e2.message, &ErrorCode::from_api(&e2.code), None);
-                    process::exit(1);
-                }
+                Err(e2) => abort_connect(
+                    &client,
+                    created_app.as_ref(),
+                    ConnectFailure::from_api(&e2, None),
+                ),
             }
         }
         Err(e) if e.code == "GITHUB_REPO_NOT_IN_INSTALLATION" => {
@@ -170,17 +278,20 @@ pub fn connect(
 
             if no_browser {
                 let setup_url = manual_setup_url(&client, install_url);
-                output::error(
-                    &format!("floo GitHub App does not have access to \"{repo}\"."),
-                    &ErrorCode::from_api("GITHUB_REPO_NOT_IN_INSTALLATION"),
-                    Some(&repo_access_manual_suggestion(
-                        repo,
-                        &setup_url,
-                        url,
-                        &rerun_command,
-                    )),
+                abort_connect(
+                    &client,
+                    created_app.as_ref(),
+                    ConnectFailure::new(
+                        format!("floo GitHub App does not have access to \"{repo}\"."),
+                        ErrorCode::from_api("GITHUB_REPO_NOT_IN_INSTALLATION"),
+                        Some(repo_access_manual_suggestion(
+                            repo,
+                            &setup_url,
+                            url,
+                            &rerun_command,
+                        )),
+                    ),
                 );
-                process::exit(1);
             }
 
             if !output::is_json_mode() {
@@ -190,16 +301,21 @@ pub fn connect(
                 output::info("Opening GitHub App setup to grant repo access...", None);
             }
 
-            run_installation_flow(&client, install_url, &rerun_command);
-            poll_repo_access(&client, repo, url, &rerun_command);
+            if let Err(failure) = run_installation_flow(&client, install_url, &rerun_command) {
+                abort_connect(&client, created_app.as_ref(), failure);
+            }
+            if let Err(failure) = poll_repo_access(&client, repo, url, &rerun_command) {
+                abort_connect(&client, created_app.as_ref(), failure);
+            }
 
             // Repo is now accessible — connect
             match client.github_connect(&app_id, repo, branch, skip_env_check) {
                 Ok(r) => r,
-                Err(e2) => {
-                    output::error(&e2.message, &ErrorCode::from_api(&e2.code), None);
-                    process::exit(1);
-                }
+                Err(e2) => abort_connect(
+                    &client,
+                    created_app.as_ref(),
+                    ConnectFailure::from_api(&e2, None),
+                ),
             }
         }
         Err(e) => {
@@ -219,8 +335,11 @@ pub fn connect(
                 ),
                 _ => None,
             };
-            output::error(&e.message, &ErrorCode::from_api(&e.code), suggestion);
-            process::exit(1);
+            abort_connect(
+                &client,
+                created_app.as_ref(),
+                ConnectFailure::from_api(&e, suggestion.map(str::to_string)),
+            );
         }
     };
     let connected_branch = result.default_branch.as_deref().unwrap_or("(unknown)");
@@ -345,7 +464,13 @@ pub fn setup(no_browser: bool) {
         // Minted here only on this branch: run_installation_flow begins its own
         // session, so hoisting this above the `if` would burn two setup tokens
         // per interactive run and leave the first orphaned in Redis.
-        let setup_url = begin_setup_or_exit(&client, DEFAULT_INSTALL_URL);
+        let setup_url = match begin_setup(&client, DEFAULT_INSTALL_URL) {
+            Ok(url) => url,
+            Err(failure) => {
+                // No app is created on this path, so there is nothing to undo.
+                abort_connect(&client, None, failure);
+            }
+        };
         // The URL goes in the message, not only the JSON payload: human mode
         // prints the message and drops the data, so a payload-only link is an
         // instruction to open nothing.
@@ -362,7 +487,13 @@ pub fn setup(no_browser: bool) {
         return;
     }
 
-    run_installation_flow(&client, DEFAULT_INSTALL_URL, "floo apps github setup");
+    // `setup` creates no app, so a failure here has nothing to undo — but it
+    // must still abort. Falling through would report a link that never landed.
+    if let Err(failure) =
+        run_installation_flow(&client, DEFAULT_INSTALL_URL, "floo apps github setup")
+    {
+        abort_connect(&client, None, failure);
+    }
 
     output::success(
         "Linked the floo GitHub App to your org.",
@@ -433,7 +564,7 @@ fn poll_repo_access(
     repo: &str,
     settings_url: &str,
     rerun_command: &str,
-) {
+) -> Result<(), ConnectFailure> {
     let mut spinner = output::Spinner::new(&format!(
         "Waiting for repo access (grant at {settings_url})..."
     ));
@@ -457,27 +588,25 @@ fn poll_repo_access(
 
         if start.elapsed() > GITHUB_WAIT_TIMEOUT {
             spinner.finish();
-            output::error(
+            return Err(ConnectFailure::new(
                 "Timed out waiting for repository access.",
-                &ErrorCode::Other("REPO_ACCESS_TIMEOUT".into()),
-                Some(&repo_access_timeout_suggestion(settings_url, rerun_command)),
-            );
-            process::exit(1);
+                ErrorCode::Other("REPO_ACCESS_TIMEOUT".into()),
+                Some(repo_access_timeout_suggestion(settings_url, rerun_command)),
+            ));
         }
 
         match client.github_check_repo_access(repo) {
             Ok(resp) => {
                 if resp.get("accessible").and_then(|v| v.as_bool()) == Some(true) {
                     spinner.finish();
-                    return;
+                    return Ok(());
                 }
             }
             Err(e) => {
                 let is_transient = e.status_code == 0 || e.status_code >= 500;
                 if !is_transient {
                     spinner.finish();
-                    output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-                    process::exit(1);
+                    return Err(ConnectFailure::from_api(&e, None));
                 }
             }
         }
@@ -488,9 +617,9 @@ fn run_installation_flow(
     client: &crate::api_client::FlooClient,
     install_url: &str,
     rerun_command: &str,
-) {
+) -> Result<(), ConnectFailure> {
     // Begin the setup session (stores pending state in Redis)
-    let setup_url = begin_setup_or_exit(client, install_url);
+    let setup_url = begin_setup(client, install_url)?;
 
     // Open browser for installation
     if !output::is_json_mode() {
@@ -510,12 +639,11 @@ fn run_installation_flow(
 
         if start.elapsed() > GITHUB_WAIT_TIMEOUT {
             spinner.finish();
-            output::error(
+            return Err(ConnectFailure::new(
                 "Timed out waiting for GitHub App installation.",
-                &ErrorCode::Other("SETUP_TIMEOUT".into()),
-                Some(&setup_timeout_suggestion(rerun_command)),
-            );
-            process::exit(1);
+                ErrorCode::Other("SETUP_TIMEOUT".into()),
+                Some(setup_timeout_suggestion(rerun_command)),
+            ));
         }
 
         match client.github_setup_poll() {
@@ -523,16 +651,16 @@ fn run_installation_flow(
                 GitHubSetupStatus::Ready => {
                     spinner.finish();
                     if resp.installation_id.is_none() {
-                        output::error(
+                        return Err(ConnectFailure::new(
                             "GitHub App was installed but the server did not return an installation ID.",
-                            &ErrorCode::InvalidResponse,
+                            ErrorCode::InvalidResponse,
                             Some(
-                                "Try running the command again. The installation should be detected automatically.",
+                                "Try running the command again. The installation should be detected automatically."
+                                    .to_string(),
                             ),
-                        );
-                        process::exit(1);
+                        ));
                     }
-                    return;
+                    return Ok(());
                 }
                 GitHubSetupStatus::AwaitingOrgApproval => {
                     if !approval_notice_shown {
@@ -552,12 +680,11 @@ fn run_installation_flow(
                 GitHubSetupStatus::AwaitingInstallation => {}
                 GitHubSetupStatus::None => {
                     spinner.finish();
-                    output::error(
+                    return Err(ConnectFailure::new(
                         "GitHub setup session disappeared while waiting for installation.",
-                        &ErrorCode::Other("SETUP_TIMEOUT".into()),
-                        Some(&setup_session_lost_suggestion(rerun_command)),
-                    );
-                    process::exit(1);
+                        ErrorCode::Other("SETUP_TIMEOUT".into()),
+                        Some(setup_session_lost_suggestion(rerun_command)),
+                    ));
                 }
             },
             Err(e) => {
@@ -566,12 +693,11 @@ fn run_installation_flow(
                 let is_transient = e.status_code == 0 || e.status_code >= 500;
                 if !is_transient {
                     spinner.finish();
-                    output::error(
-                        &format!("Poll failed: {}", e.message),
-                        &ErrorCode::from_api(&e.code),
+                    return Err(ConnectFailure::new(
+                        format!("Poll failed: {}", e.message),
+                        ErrorCode::from_api(&e.code),
                         None,
-                    );
-                    process::exit(1);
+                    ));
                 }
             }
         }
@@ -582,8 +708,9 @@ fn import_env_vars_for_connect(
     client: &crate::api_client::FlooClient,
     app_id: &str,
     resolved: &project_config::ResolvedApp,
-) {
-    super::deploy::sync_env_vars_if_needed(client, app_id, resolved, true);
+) -> Result<(), ConnectFailure> {
+    super::deploy::sync_env_vars_if_needed(client, app_id, resolved, true)
+        .map_err(|message| ConnectFailure::new(message, ErrorCode::InvalidPath, None))
 }
 
 fn setup_spinner_message(status: &GitHubSetupStatus) -> &'static str {
@@ -664,13 +791,16 @@ fn repo_access_timeout_suggestion(settings_url: &str, rerun_command: &str) -> St
     )
 }
 
-fn begin_setup_or_exit(client: &crate::api_client::FlooClient, fallback_url: &str) -> String {
+fn begin_setup(
+    client: &crate::api_client::FlooClient,
+    fallback_url: &str,
+) -> Result<String, ConnectFailure> {
     match client.github_setup_begin() {
-        Ok(resp) => resp
+        Ok(resp) => Ok(resp
             .get("install_url")
             .and_then(|v| v.as_str())
             .unwrap_or(fallback_url)
-            .to_string(),
+            .to_string()),
         Err(e) => handle_setup_begin_error(client, e, fallback_url),
     }
 }
@@ -679,16 +809,15 @@ fn handle_setup_begin_error(
     client: &crate::api_client::FlooClient,
     e: FlooApiError,
     fallback_url: &str,
-) -> String {
+) -> Result<String, ConnectFailure> {
     let is_transient = e.status_code == 0 || e.status_code >= 500;
     // Permanent errors (4xx) mean the flow is doomed — abort early.
     if !is_transient {
-        output::error(
-            &format!("Failed to start setup session: {}", e.message),
-            &ErrorCode::from_api(&e.code),
-            Some("Check your authentication with: floo auth whoami"),
-        );
-        process::exit(1);
+        return Err(ConnectFailure::new(
+            format!("Failed to start setup session: {}", e.message),
+            ErrorCode::from_api(&e.code),
+            Some("Check your authentication with: floo auth whoami".to_string()),
+        ));
     }
 
     let setup_session_exists = matches!(
@@ -696,21 +825,21 @@ fn handle_setup_begin_error(
         Ok(resp) if resp.status != GitHubSetupStatus::None
     );
     if !setup_session_exists {
-        output::error(
-            &format!("Failed to start setup session: {}", e.message),
-            &ErrorCode::from_api(&e.code),
+        return Err(ConnectFailure::new(
+            format!("Failed to start setup session: {}", e.message),
+            ErrorCode::from_api(&e.code),
             Some(
-                "Retry the command. If this keeps happening, check API health with `floo auth whoami`.",
+                "Retry the command. If this keeps happening, check API health with `floo auth whoami`."
+                    .to_string(),
             ),
-        );
-        process::exit(1);
+        ));
     }
 
     output::warn(&format!(
         "Setup session start was inconclusive: {}. Continuing because an active setup session still exists...",
         e.message
     ));
-    fallback_url.to_string()
+    Ok(fallback_url.to_string())
 }
 
 fn manual_setup_url(client: &crate::api_client::FlooClient, fallback_url: &str) -> String {

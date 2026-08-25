@@ -7036,3 +7036,178 @@ fn test_connect_unauthorized_installation_names_the_setup_command() {
 
     connect.assert();
 }
+
+// --- #252: a failed connect must not strand the app it created ------------
+//
+// `apps github connect` creates the floo app and then links it, as two API
+// calls. When the link leg failed the app survived, so the retry hit
+// APP_NAME_TAKEN on creation and stopped: the operator had to delete the app
+// by hand before every attempt. Reported against getfloo/floo#2232, where a
+// clean install produced GITHUB_INSTALLATION_NOT_AUTHORIZED and left `athena`
+// behind in status `created` with no services.
+
+/// Mock the name lookup `resolve_app` performs, returning no match so the
+/// command takes its create-the-app branch.
+fn mock_app_lookup_miss(server: &mut Server) -> Mock {
+    server
+        .mock("GET", "/v1/apps")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"apps":[]}"#)
+        .create()
+}
+
+fn mock_connect_unauthorized(server: &mut Server) -> Mock {
+    server
+        .mock("POST", &format!("/v1/apps/{TEST_APP_ID}/github/connection")[..])
+        .with_status(403)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"detail":{"code":"GITHUB_INSTALLATION_NOT_AUTHORIZED","message":"The floo GitHub App is installed on \"acme\" but is not linked to floo org \"acme-org\"."}}"#,
+        )
+        .create()
+}
+
+#[test]
+fn test_failed_connect_removes_the_app_it_created() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+
+    let lookup = mock_app_lookup_miss(&mut server);
+    let create = server
+        .mock("POST", "/v1/apps")
+        .expect(1)
+        .with_status(201)
+        .with_header("content-type", "application/json")
+        .with_body(app_json())
+        .create();
+    let connect = mock_connect_unauthorized(&mut server);
+    let delete = server
+        .mock("DELETE", &format!("/v1/apps/{TEST_APP_ID}")[..])
+        .expect(1)
+        .with_status(204)
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "apps",
+            "github",
+            "connect",
+            "acme/widgets",
+            "--app",
+            TEST_APP_NAME,
+            "--no-browser",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            "GITHUB_INSTALLATION_NOT_AUTHORIZED",
+        ));
+
+    lookup.assert();
+    create.assert();
+    connect.assert();
+    delete.assert();
+}
+
+#[test]
+fn test_failed_connect_keeps_an_app_it_did_not_create() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+
+    // The app already exists, so this run did not create it. It can hold
+    // services, env vars, and deploy history; a failed link is no licence to
+    // delete any of that.
+    let lookup = server
+        .mock("GET", "/v1/apps")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(r#"{{"apps":[{app}]}}"#, app = app_json()))
+        .create();
+    let create = server.mock("POST", "/v1/apps").expect(0).create();
+    let connect = mock_connect_unauthorized(&mut server);
+    let delete = server
+        .mock("DELETE", &format!("/v1/apps/{TEST_APP_ID}")[..])
+        .expect(0)
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "apps",
+            "github",
+            "connect",
+            "acme/widgets",
+            "--app",
+            TEST_APP_NAME,
+            "--no-browser",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            "GITHUB_INSTALLATION_NOT_AUTHORIZED",
+        ));
+
+    lookup.assert();
+    create.assert();
+    connect.assert();
+    delete.assert();
+}
+
+#[test]
+fn test_failed_connect_reports_a_cleanup_it_could_not_perform() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+
+    let lookup = mock_app_lookup_miss(&mut server);
+    let create = server
+        .mock("POST", "/v1/apps")
+        .with_status(201)
+        .with_header("content-type", "application/json")
+        .with_body(app_json())
+        .create();
+    let connect = mock_connect_unauthorized(&mut server);
+    // Cleanup itself fails. Silence here would strand an app the operator does
+    // not know exists, so the delete command must reach them in the error.
+    let delete = server
+        .mock("DELETE", &format!("/v1/apps/{TEST_APP_ID}")[..])
+        .expect(1)
+        .with_status(500)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":{"code":"INTERNAL","message":"boom"}}"#)
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "apps",
+            "github",
+            "connect",
+            "acme/widgets",
+            "--app",
+            TEST_APP_NAME,
+            "--no-browser",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            &format!("floo apps delete {TEST_APP_NAME}")[..],
+        ));
+
+    lookup.assert();
+    create.assert();
+    connect.assert();
+    delete.assert();
+}

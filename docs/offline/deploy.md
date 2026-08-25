@@ -59,6 +59,11 @@ floo Deploy Flow
   push. Connect creates the app, connects GitHub, and triggers the first
   deploy from that pushed source.
 
+  If connect fails before the repo is linked, it removes the app it created,
+  so you can fix the cause and re-run the same command. An app that already
+  existed is left alone. If the cleanup itself fails, the error names the
+  `floo apps delete` command to run before retrying.
+
 ## Do I Need a Dockerfile?
 
   Yes - every service deploys from a Dockerfile. floo does not deploy
