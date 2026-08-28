@@ -641,6 +641,67 @@ pub enum OrgsCommands {
         /// Org slug or ID.
         org_slug: String,
     },
+
+    /// Inspect and manage Enterprise SSO for an organization.
+    #[command(subcommand)]
+    Sso(OrganizationSsoCommands),
+}
+
+#[derive(Subcommand)]
+pub enum OrganizationSsoCommands {
+    /// Show the live SSO connection and enforcement state.
+    Status {
+        /// Organization slug or ID. Uses the current organization when omitted.
+        #[arg(long)]
+        org: Option<String>,
+    },
+
+    /// Open a short-lived provider setup portal.
+    Portal {
+        /// Organization slug or ID. Uses the current organization when omitted.
+        #[arg(long)]
+        org: Option<String>,
+
+        /// Print the portal URL without opening a browser.
+        #[arg(long)]
+        no_browser: bool,
+    },
+
+    /// Verify with SSO in the dashboard and enable enforcement.
+    Enforce {
+        /// Organization slug or ID. Uses the current organization when omitted.
+        #[arg(long)]
+        org: Option<String>,
+
+        /// Print the dashboard handoff URL without opening a browser.
+        #[arg(long)]
+        no_browser: bool,
+    },
+
+    /// Manage the SSO enforcement policy.
+    #[command(subcommand)]
+    Enforcement(OrganizationSsoEnforcementCommands),
+
+    /// Diagnose provider reachability and current credential compatibility.
+    Doctor {
+        /// Organization slug or ID. Uses the current organization when omitted.
+        #[arg(long)]
+        org: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum OrganizationSsoEnforcementCommands {
+    /// Verify with SSO in the dashboard and make SSO optional.
+    Disable {
+        /// Organization slug or ID. Uses the current organization when omitted.
+        #[arg(long)]
+        org: Option<String>,
+
+        /// Print the dashboard handoff URL without opening a browser.
+        #[arg(long)]
+        no_browser: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2281,6 +2342,25 @@ pub fn run() {
             },
             OrgsCommands::Invite { email, role } => commands::orgs::invite(&email, &role),
             OrgsCommands::Switch { org_slug } => commands::orgs::switch(&org_slug),
+            OrgsCommands::Sso(sso_sub) => match sso_sub {
+                OrganizationSsoCommands::Status { org } => {
+                    commands::organization_sso::status(org.as_deref())
+                }
+                OrganizationSsoCommands::Portal { org, no_browser } => {
+                    commands::organization_sso::portal(org.as_deref(), no_browser)
+                }
+                OrganizationSsoCommands::Enforce { org, no_browser } => {
+                    commands::organization_sso::enforce(org.as_deref(), no_browser)
+                }
+                OrganizationSsoCommands::Enforcement(enforcement_sub) => match enforcement_sub {
+                    OrganizationSsoEnforcementCommands::Disable { org, no_browser } => {
+                        commands::organization_sso::disable_enforcement(org.as_deref(), no_browser)
+                    }
+                },
+                OrganizationSsoCommands::Doctor { org } => {
+                    commands::organization_sso::doctor(org.as_deref())
+                }
+            },
         },
 
         Commands::Apps(sub) => match sub {

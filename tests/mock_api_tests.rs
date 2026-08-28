@@ -405,6 +405,319 @@ fn test_orgs_invite_json_assigns_role_and_redacts_url() {
         .stdout(predicate::str::contains("contains_secrets"));
 }
 
+fn sso_status_json() -> &'static str {
+    r#"{"id":"sso-config-1","lifecycle":"enabled","status":"active","provider_type":"saml","domains":[{"domain":"example.com","state":"verified"}],"enforcement_ready":true,"enforcement_policy":"optional","recovery_ready":true,"observed_at":"2026-08-28T12:00:00Z"}"#
+}
+
+#[test]
+fn test_orgs_sso_status_json_uses_exact_org_header() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _org = mock_org_me(&mut server);
+    let _status = server
+        .mock(
+            "GET",
+            format!("/v1/organizations/{TEST_ORG_ID}/sso").as_str(),
+        )
+        .match_header("x-floo-org-id", TEST_ORG_ID)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(sso_status_json())
+        .create();
+
+    floo()
+        .args(["--json", "orgs", "sso", "status"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""status":"active""#))
+        .stdout(predicate::str::contains(
+            r#""enforcement_policy":"optional""#,
+        ))
+        .stdout(predicate::str::contains("example.com"));
+}
+
+#[test]
+fn test_orgs_sso_doctor_json_preserves_codes_and_drops_unknown_provider_ids() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _org = mock_org_me(&mut server);
+    let _doctor = server
+        .mock(
+            "GET",
+            format!("/v1/organizations/{TEST_ORG_ID}/sso/doctor").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"credential_status":"not_exact_current_sso","credential_reason":"POLICY_ENFORCED_CREDENTIAL_INCOMPATIBLE","enforcement_access":"step_up_required","provider_reachability":"reachable","next_action":"CLI_REAUTHENTICATE_WITH_ORG_SSO","status":null,"workos_organization_id":"org_provider_secret"}"#,
+        )
+        .create();
+
+    floo()
+        .args(["--json", "orgs", "sso", "doctor"])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(
+            r#""next_action":"CLI_REAUTHENTICATE_WITH_ORG_SSO""#,
+        ))
+        .stdout(predicate::str::contains("org_provider_secret").not());
+}
+
+#[test]
+fn test_orgs_sso_doctor_healthy_json_exits_zero() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _org = mock_org_me(&mut server);
+    let _doctor = server
+        .mock(
+            "GET",
+            format!("/v1/organizations/{TEST_ORG_ID}/sso/doctor").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"credential_status":"exact_current_sso","credential_reason":"EXACT_CURRENT_BINDING","enforcement_access":"allowed","provider_reachability":"reachable","next_action":null,"status":{}}}"#,
+            sso_status_json()
+        ))
+        .create();
+
+    floo()
+        .args(["--json", "orgs", "sso", "doctor"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(
+            r#""enforcement_access":"allowed""#,
+        ));
+}
+
+#[test]
+fn test_orgs_sso_portal_json_returns_short_lived_url_once() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _org = mock_org_me(&mut server);
+    let _portal = server
+        .mock(
+            "POST",
+            format!("/v1/organizations/{TEST_ORG_ID}/sso/portal-session").as_str(),
+        )
+        .match_header("x-floo-org-id", TEST_ORG_ID)
+        .match_body(Matcher::Json(serde_json::json!({})))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"id":"sso-config-1","url":"https://setup.example.test/launch/ephemeral","expires_in_seconds":300}"#,
+        )
+        .create();
+
+    floo()
+        .args(["--json", "orgs", "sso", "portal"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "https://setup.example.test/launch/ephemeral",
+        ))
+        .stdout(predicate::str::contains(r#""expires_in_seconds":300"#));
+}
+
+#[test]
+fn test_orgs_sso_enforce_json_returns_browser_handoff_without_opening() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _org = mock_org_me(&mut server);
+    let _doctor = server
+        .mock(
+            "GET",
+            format!("/v1/organizations/{TEST_ORG_ID}/sso/doctor").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"credential_status":"not_applicable","credential_reason":"SESSION_CREDENTIAL","enforcement_access":"not_required","provider_reachability":"reachable","next_action":null,"status":null}"#,
+        )
+        .create();
+
+    floo()
+        .args(["--json", "orgs", "sso", "enforce"])
+        .env("HOME", home.path())
+        .env("FLOO_APP_URL", "https://dashboard.example.test")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""action":"enable""#))
+        .stdout(predicate::str::contains(format!(
+            "https://dashboard.example.test/sso/manage?org={TEST_ORG_ID}&action=enable"
+        )));
+}
+
+#[test]
+fn test_orgs_sso_disable_explicit_slug_resolves_and_targets_that_org() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _orgs = server
+        .mock("GET", "/v1/orgs")
+        .match_header("x-floo-org-id", Matcher::Missing)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(r#"{{"orgs":[{}],"total":1}}"#, org_json()))
+        .create();
+    let _doctor = server
+        .mock(
+            "GET",
+            format!("/v1/organizations/{TEST_ORG_ID}/sso/doctor").as_str(),
+        )
+        .match_header("x-floo-org-id", TEST_ORG_ID)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"credential_status":"not_exact_current_sso","credential_reason":"POLICY_ENFORCED_CREDENTIAL_INCOMPATIBLE","enforcement_access":"step_up_required","provider_reachability":"reachable","next_action":"CLI_REAUTHENTICATE_WITH_ORG_SSO","status":null}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "orgs",
+            "sso",
+            "enforcement",
+            "disable",
+            "--org",
+            "test-org",
+        ])
+        .env("HOME", home.path())
+        .env("FLOO_APP_URL", "https://dashboard.example.test")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""action":"disable""#))
+        .stdout(predicate::str::contains(TEST_ORG_ID));
+}
+
+#[test]
+fn test_orgs_sso_doctor_error_preserves_recovery_metadata() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _org = mock_org_me(&mut server);
+    let _doctor = server
+        .mock(
+            "GET",
+            format!("/v1/organizations/{TEST_ORG_ID}/sso/doctor").as_str(),
+        )
+        .with_status(503)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"detail":{{"code":"SSO_UNAVAILABLE","message":"SSO is unavailable.","next_action":"USE_ORGANIZATION_SSO_RECOVERY","organization_id":"{TEST_ORG_ID}"}}}}"#
+        ))
+        .create();
+
+    floo()
+        .args(["--json", "orgs", "sso", "doctor"])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            r#""next_action":"USE_ORGANIZATION_SSO_RECOVERY""#,
+        ))
+        .stdout(predicate::str::contains(format!(
+            r#""organization_id":"{TEST_ORG_ID}""#
+        )));
+}
+
+#[test]
+fn test_orgs_sso_explicit_unknown_org_fails_before_sso_request() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _orgs = server
+        .mock("GET", "/v1/orgs")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(r#"{{"orgs":[{}],"total":1}}"#, org_json()))
+        .create();
+
+    floo()
+        .args(["--json", "orgs", "sso", "status", "--org", "another-org"])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"ORG_NOT_FOUND""#));
+}
+
+#[test]
+fn test_orgs_sso_portal_non_enterprise_preserves_plan_code() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _org = mock_org_me(&mut server);
+    let _portal = server
+        .mock(
+            "POST",
+            format!("/v1/organizations/{TEST_ORG_ID}/sso/portal-session").as_str(),
+        )
+        .with_status(403)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"detail":{"code":"ENTERPRISE_SSO_REQUIRED","message":"Enterprise SSO requires an Enterprise organization plan."}}"#,
+        )
+        .create();
+
+    floo()
+        .args(["--json", "orgs", "sso", "portal"])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            r#""code":"ENTERPRISE_SSO_REQUIRED""#,
+        ));
+}
+
+#[test]
+fn test_orgs_sso_doctor_restricted_identity_preserves_authority_code() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _org = mock_org_me(&mut server);
+    let _doctor = server
+        .mock(
+            "GET",
+            format!("/v1/organizations/{TEST_ORG_ID}/sso/doctor").as_str(),
+        )
+        .with_status(403)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"detail":{"code":"CONTROL_PLANE_ACCESS_REQUIRED","message":"Control-plane access is required."}}"#,
+        )
+        .create();
+
+    floo()
+        .args(["--json", "orgs", "sso", "doctor"])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            r#""code":"CONTROL_PLANE_ACCESS_REQUIRED""#,
+        ));
+}
+
+#[test]
+fn test_orgs_sso_status_expired_auth_preserves_authentication_code() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _org = server
+        .mock("GET", "/v1/orgs/me")
+        .with_status(401)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":{"code":"NOT_AUTHENTICATED","message":"Authentication expired."}}"#)
+        .create();
+
+    floo()
+        .args(["--json", "orgs", "sso", "status"])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"NOT_AUTHENTICATED""#));
+}
+
 #[test]
 fn test_apps_list_human() {
     let mut server = Server::new();
