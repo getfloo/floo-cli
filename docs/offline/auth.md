@@ -92,8 +92,32 @@ the old role; removing a member revokes their app sessions and keys.
   password  - shared password for simple protection (Pay as you go+)
   accounts  - per-user auth, gateway-managed (Pay as you go+)
 
-Enterprise SSO (SAML/OIDC) is a sales-assisted setup, not a self-serve
-access_mode value - email sales@getfloo.com if your team needs it.
+## Enterprise organization SSO
+
+Enterprise admins configure one SAML or OIDC connection for their
+organization. The connection and enforcement policy are organization state;
+they never belong in floo.app.toml or the local CLI config.
+
+  floo orgs sso status [--org SLUG]
+  floo orgs sso portal [--org SLUG]
+  floo orgs sso doctor [--org SLUG]
+  floo orgs sso enforce [--org SLUG]
+  floo orgs sso enforcement disable [--org SLUG]
+
+`portal` creates a short-lived provider setup URL. `enforce` and
+`enforcement disable` open a purpose-bound dashboard handoff because those
+policy changes require a fresh browser ceremony through the organization's
+exact SSO connection. In `--json` mode, browser-opening commands return the
+URL without opening it so an agent can hand the action to a human.
+
+Before enforcement, create and securely store the show-once recovery token in
+the dashboard. It can only make SSO optional; it cannot grant access or reveal
+organization data. `doctor` reports stable provider, credential, access, and
+next-action codes without exposing provider IDs, metadata, certificates, or
+customer identity.
+`doctor` exits non-zero when setup, reauthentication, recovery, or provider
+repair is required; its JSON envelope still uses `success: true` when the
+diagnosis itself completed.
 
 Per-environment overrides work too:
 

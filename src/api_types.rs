@@ -125,6 +125,125 @@ pub struct CreateInviteResponse {
     pub expires_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrganizationSsoDomain {
+    pub domain: String,
+    pub state: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrganizationSsoLifecycle {
+    Enabled,
+    Disabled,
+    Removed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrganizationSsoProviderState {
+    Pending,
+    Active,
+    Inactive,
+    Deleted,
+    Invalid,
+    ProviderUnavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrganizationSsoProviderType {
+    Saml,
+    Oidc,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrganizationSsoEnforcementPolicy {
+    Optional,
+    Enforced,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrganizationSsoCredentialStatus {
+    ExactCurrentSso,
+    NotExactCurrentSso,
+    NotApplicable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum OrganizationSsoCredentialReason {
+    NoBinding,
+    SessionCredential,
+    ExactCurrentBinding,
+    PolicyEnforcedCredentialIncompatible,
+    CredentialNotExactCurrentSso,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrganizationSsoEnforcementAccess {
+    NotRequired,
+    Allowed,
+    StepUpRequired,
+    BindingUnavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrganizationSsoProviderReachability {
+    Reachable,
+    Unavailable,
+    NotConfigured,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum OrganizationSsoNextAction {
+    OpenSsoSetup,
+    UseOrganizationSsoRecovery,
+    CliReauthenticateWithOrgSso,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrganizationSsoStatusResponse {
+    pub id: String,
+    pub lifecycle: OrganizationSsoLifecycle,
+    pub status: OrganizationSsoProviderState,
+    pub provider_type: Option<OrganizationSsoProviderType>,
+    pub domains: Vec<OrganizationSsoDomain>,
+    pub enforcement_ready: bool,
+    pub enforcement_policy: OrganizationSsoEnforcementPolicy,
+    pub recovery_ready: bool,
+    pub observed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrganizationSsoDoctorResponse {
+    pub credential_status: OrganizationSsoCredentialStatus,
+    pub credential_reason: OrganizationSsoCredentialReason,
+    pub enforcement_access: OrganizationSsoEnforcementAccess,
+    pub provider_reachability: OrganizationSsoProviderReachability,
+    pub next_action: Option<OrganizationSsoNextAction>,
+    pub status: Option<OrganizationSsoStatusResponse>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrganizationSsoPortalSessionResponse {
+    pub id: String,
+    pub url: String,
+    pub expires_in_seconds: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrganizationSsoBrowserHandoff {
+    pub organization_id: String,
+    pub action: String,
+    pub url: String,
+}
+
 // --- App ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

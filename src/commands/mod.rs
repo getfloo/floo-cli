@@ -26,6 +26,7 @@ pub mod github;
 pub mod init;
 pub mod logs;
 pub mod notifications;
+pub mod organization_sso;
 pub mod orgs;
 pub mod previews;
 pub mod releases;

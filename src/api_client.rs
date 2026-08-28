@@ -357,6 +357,33 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn get_organization_sso_status(
+        &self,
+        org_id: &str,
+    ) -> Result<OrganizationSsoStatusResponse, FlooApiError> {
+        let resp = self.get(&format!("/v1/organizations/{org_id}/sso"))?;
+        self.handle_response(resp)
+    }
+
+    pub fn get_organization_sso_doctor(
+        &self,
+        org_id: &str,
+    ) -> Result<OrganizationSsoDoctorResponse, FlooApiError> {
+        let resp = self.get(&format!("/v1/organizations/{org_id}/sso/doctor"))?;
+        self.handle_response(resp)
+    }
+
+    pub fn create_organization_sso_portal(
+        &self,
+        org_id: &str,
+    ) -> Result<OrganizationSsoPortalSessionResponse, FlooApiError> {
+        let resp = self.post_json(
+            &format!("/v1/organizations/{org_id}/sso/portal-session"),
+            &serde_json::json!({}),
+        )?;
+        self.handle_response(resp)
+    }
+
     // --- Access ---
 
     pub fn create_app_invite(
