@@ -9,7 +9,7 @@ Rails 7.1+ ships a production Dockerfile from `rails new`. Otherwise:
 
   bin/rails generate dockerfile
 
-Bind to 0.0.0.0 (not localhost). Cloud Run only routes traffic to
+Bind to 0.0.0.0 (not localhost). floo only routes traffic to
 processes bound to all interfaces. Expose the same port you set in
 floo.app.toml (3000 below).
 
@@ -51,7 +51,7 @@ Local dev server with prod-shaped env:
   floo dev --app my-rails-app
 
 Runs your dev_command locally with DATABASE_URL and other env vars
-sourced from floo. Real Cloud SQL connection, no exported credentials.
+sourced from floo. Real managed Postgres connection, no exported credentials.
 
 Add --fixture-user to test signed-in (accounts-mode) flows locally:
 
@@ -85,7 +85,7 @@ path.
   git push origin main
 
 Rails reads DATABASE_URL automatically. floo injects a normal PostgreSQL
-URI, so ActiveRecord can parse it without custom Cloud SQL socket code.
+URI, so ActiveRecord can parse it without custom socket code.
 `floo preflight` warns if a local env file still contains the old Cloud
 SQL socket-style DATABASE_URL that Ruby's URI parser rejects.
 Confirm config/database.yml has:
@@ -129,7 +129,7 @@ Add the CNAME shown in the output at your DNS provider.
 
 ## Common gotchas
 
-  - /healthz is reserved by Cloud Run - use /health or /livez
+  - /healthz is reserved by floo - use /health or /livez
   - bind: 0.0.0.0 (Rails defaults vary)
   - asset compilation runs in the Dockerfile (RAILS_SERVE_STATIC_FILES=1)
   - Rails 7+ force_ssl works correctly behind floo's edge (X-Forwarded-Proto)

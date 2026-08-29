@@ -25,7 +25,7 @@ JSON output is stable for agents:
   floo edge routes list --app my-app --env prod --json 2>/dev/null |
     jq '.data.routes[] | {host, path_prefix, access_mode, api_key_enabled, required_scope}'
 
-The output deliberately omits raw Cloud Run backend URLs. Treat floo hosts and
+The output deliberately omits raw internal backend URLs. Treat floo hosts and
 custom domains as the public contract.
 
 ## Edge policy (IP/CIDR firewall, Team plan)

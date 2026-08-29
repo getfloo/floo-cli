@@ -195,8 +195,8 @@ captures the floo-specific gotchas that aren't obvious from the code.
   cheatsheets locally.
 - **Deploy by pushing to GitHub.** `git push` to your default branch
   triggers a dev deploy; cutting a GitHub release promotes to prod.
-  Don't shell out to `gcloud run deploy` — it bypasses the floo
-  pipeline.
+  Don't deploy with another cloud provider's CLI — it bypasses
+  the floo pipeline.
 
 ## Agent-safe deploy debugging
 
@@ -205,26 +205,25 @@ captures the floo-specific gotchas that aren't obvious from the code.
   booleans, gateway URL, next recommended command) without dumping
   build logs that may contain audit payloads. `watch` is fine for
   humans; for scripts and agents, prefer `status`.
-- **`/health` on the direct Cloud Run URL is for infrastructure
-  probes, not authenticated requests.** Cloud Run liveness/startup
+- **`/health` on the direct runtime URL is for infrastructure
+  probes, not authenticated requests.** Platform liveness/startup
   probes hit it without any session, so don't infer auth state from
   whatever can reach `/health`.
 - **Test the floo gateway URL after every deploy.** A 502 on
   `*.on.getfloo.com` (or your custom domain) means the deploy didn't
-  finalize even if the direct Cloud Run URL serves new code. `floo
+  finalize even if the direct runtime URL serves new code. `floo
   deploys status --json` reports `host_bound: false` in that state.
 
 ## If you set `access_mode = "accounts"` (or `"password"`)
 
 - **Trust `X-Floo-User-Email`, `X-Floo-User-Id`, `X-Floo-User-Name`,
   and `X-Floo-User-Role` on every request your app receives.** The
-  floo gateway is the only path into your container — Cloud Run
-  ingress is locked to `INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER` and
-  there's no `allUsers` invoker grant. The deploy pipeline raises if
-  that combination would somehow ship as `INGRESS_TRAFFIC_ALL`.
-- **Don't curl your `*.run.app` URL in scripts or tests.** It
-  returns 403 from Cloud Run before reaching your container — by
-  design.
+  floo gateway is the only path into your container. Ingress is
+  locked to the internal load balancer and there is no public
+  invoker grant. The deploy pipeline raises if a deploy would
+  somehow ship with public ingress.
+- **Don't curl the direct runtime URL in scripts or tests.** It
+  returns 403 before reaching your container — by design.
 - **Don't accept identity headers from any other path.** The trust
   boundary is the gateway, not the network in general. Authenticate
   inter-service or internal-cron calls separately.
@@ -566,4 +565,80 @@ fn init_interactive(
     eprintln!("        every 'git push' to your default branch deploys to dev.");
     eprintln!("  Edit floo.app.toml to configure services; run 'floo preflight' to validate.");
     output::success(&format!("Initialized app '{app_name}'."), None);
+}
+
+#[cfg(test)]
+mod substrate_naming_tests {
+    //! Customer-facing text names floo, never the cloud floo runs on.
+    //!
+    //! Naming the substrate hands the reader the premise for "just deploy on
+    //! the underlying provider yourself". See the invariant in the floo repo's
+    //! `docs/knowledge/running-the-firm/icp-and-positioning.md`.
+    //!
+    //! `AGENTS_MD_TEMPLATE` matters most: `floo init` writes it into the
+    //! customer's own repository, where their agent reads it on every task.
+
+    const BANNED: &[&str] = &[
+        "Cloud Run",
+        "cloud run",
+        "Cloud SQL",
+        "Artifact Registry",
+        "Memorystore",
+        "Google Cloud",
+        "GCP",
+        "gcloud",
+        "run.app",
+        "INGRESS_TRAFFIC",
+        "allUsers",
+    ];
+
+    fn offenders(haystack: &str) -> Vec<&'static str> {
+        BANNED
+            .iter()
+            .copied()
+            .filter(|needle| haystack.contains(needle))
+            .collect()
+    }
+
+    #[test]
+    fn agents_md_template_never_names_the_substrate() {
+        let found = offenders(super::AGENTS_MD_TEMPLATE);
+        assert!(
+            found.is_empty(),
+            "AGENTS_MD_TEMPLATE is written into customer repositories and names \
+the substrate: {found:?}"
+        );
+    }
+
+    #[test]
+    fn app_toml_header_never_names_the_substrate() {
+        let found = offenders(super::APP_TOML_HEADER);
+        assert!(
+            found.is_empty(),
+            "APP_TOML_HEADER is written into customer repositories and names \
+the substrate: {found:?}"
+        );
+    }
+
+    #[test]
+    fn bundled_offline_docs_never_name_the_substrate() {
+        // `floo docs <topic>` prints these verbatim.
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/docs/offline");
+        let mut checked = 0usize;
+        for entry in std::fs::read_dir(dir).expect("docs/offline is readable") {
+            let path = entry.expect("readable dir entry").path();
+            if path.extension().is_none_or(|ext| ext != "md") {
+                continue;
+            }
+            let body = std::fs::read_to_string(&path).expect("readable doc");
+            let found = offenders(&body);
+            assert!(
+                found.is_empty(),
+                "{} names the substrate: {found:?}",
+                path.display()
+            );
+            checked += 1;
+        }
+        assert!(checked > 0, "no offline docs were scanned from {dir}");
+    }
 }

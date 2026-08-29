@@ -1720,7 +1720,7 @@ fn validate_preflight(
                             PreflightFinding::warning(
                                 "RAILS_DATABASE_URL_SOCKET_DSN",
                                 format!(
-                                    "Service '{}' looks like Rails and {env_label} contains a Cloud SQL socket-style DATABASE_URL. Rails parses DATABASE_URL with Ruby's URI parser before app code runs, so a host-less DSN like postgresql:///db?host=/cloudsql/... can fail at boot. Remove the stale local override or use floo's framework-compatible managed Postgres URL.",
+                                    "Service '{}' looks like Rails and {env_label} contains a socket-style DATABASE_URL. Rails parses DATABASE_URL with Ruby's URI parser before app code runs, so a host-less DSN like postgresql:///db?host=/cloudsql/... can fail at boot. Remove the stale local override or use floo's framework-compatible managed Postgres URL.",
                                     svc.name
                                 ),
                             )

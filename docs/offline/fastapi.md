@@ -10,7 +10,7 @@ published guide.
   ...
   CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
-Bind to 0.0.0.0 - 127.0.0.1 won't accept Cloud Run traffic.
+Bind to 0.0.0.0 - floo cannot reach 127.0.0.1.
 
 ## 2. floo init + deploy
 
@@ -64,7 +64,7 @@ Then a FastAPI dependency:
 
 ## Gotchas
 
-  - /healthz is reserved by Cloud Run - use /health
+  - /healthz is reserved by floo - use /health
   - Bind to 0.0.0.0
   - Don't mix asyncpg and psycopg2 - pick one
   - X-Forwarded-Proto: build absolute URLs from forwarded scheme

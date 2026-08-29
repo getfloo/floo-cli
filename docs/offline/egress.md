@@ -1,7 +1,7 @@
 floo Egress and Networking
 
 floo puts your app behind the floo gateway for inbound traffic. Your app's
-outbound traffic uses Cloud Run's normal internet egress today.
+outbound traffic uses floo's normal internet egress today.
 
 ## Inbound traffic
 
@@ -9,9 +9,9 @@ outbound traffic uses Cloud Run's normal internet egress today.
     -> *.on.getfloo.com or custom domain
     -> floo gateway
     -> edge policy and managed auth
-    -> your Cloud Run app service
+    -> your app service
 
-Do not expose or depend on raw *.run.app backend URLs. Treat floo hosts and
+Do not expose or depend on raw backend URLs. Treat floo hosts and
 custom domains as the public contract.
 
 Inspect the live route table with:

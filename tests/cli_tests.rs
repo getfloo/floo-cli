@@ -1199,9 +1199,7 @@ ingress = "public"
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            "Cloud SQL socket-style DATABASE_URL",
-        ))
+        .stdout(predicate::str::contains("socket-style DATABASE_URL"))
         .stdout(predicate::str::contains("Rails parses DATABASE_URL"));
 }
 
