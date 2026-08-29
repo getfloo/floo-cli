@@ -1,22 +1,48 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 const CAPITALIZED_PRODUCT_NAME: &str = concat!("Fl", "oo");
 
-fn collect_files(directory: &Path, files: &mut Vec<PathBuf>) {
-    for entry in fs::read_dir(directory).expect("read repository directory") {
-        let entry = entry.expect("read repository entry");
-        let path = entry.path();
-        let file_name = entry.file_name();
+/// Every file Git tracks, and nothing else.
+///
+/// A directory walk that skips only `.git` and `target` still descends into
+/// `.claude/worktrees/`, where this repo keeps its agent worktrees. Those hold
+/// older checkouts of this same repository, so the walk reported their stale
+/// capitalizations as violations of the current tree. That failed for anyone
+/// using a worktree while passing in CI, where a fresh clone has no such
+/// directory.
+///
+/// Asking Git keeps the scan to what the repository actually ships, and needs
+/// no exclusion list to maintain as new tooling directories appear.
+fn tracked_files(root: &Path) -> Vec<PathBuf> {
+    let output = Command::new("git")
+        .args(["ls-files", "-z"])
+        .current_dir(root)
+        .output()
+        .expect("run `git ls-files` from the repository root");
 
-        if path.is_dir() {
-            if file_name != ".git" && file_name != "target" {
-                collect_files(&path, files);
-            }
-        } else if path.is_file() {
-            files.push(path);
-        }
-    }
+    assert!(
+        output.status.success(),
+        "`git ls-files` failed in {}: {}",
+        root.display(),
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("`git ls-files` emits UTF-8 paths");
+    let files: Vec<PathBuf> = stdout
+        .split('\0')
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| root.join(entry))
+        .collect();
+
+    assert!(
+        !files.is_empty(),
+        "`git ls-files` returned no files in {}; the scan would pass vacuously",
+        root.display()
+    );
+
+    files
 }
 
 fn has_non_protocol_product_name(line: &str) -> bool {
@@ -36,8 +62,7 @@ fn has_non_protocol_product_name(line: &str) -> bool {
 #[test]
 fn product_name_is_lowercase_across_the_cli_repository() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut files = Vec::new();
-    collect_files(root, &mut files);
+    let files = tracked_files(root);
 
     let mut violations = Vec::new();
     for path in files {
