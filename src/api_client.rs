@@ -1457,9 +1457,12 @@ impl FlooClient {
         self.handle_response_value(resp)
     }
 
-    // --- Reparo ---
+    // --- Agent events ---
 
-    pub fn reparo_events(&self, app_id: &str, status: Option<&str>) -> Result<Value, FlooApiError> {
+    pub fn agent_events(&self, app_id: &str, status: Option<&str>) -> Result<Value, FlooApiError> {
+        // The server route still carries the old feature name. It is internal
+        // (customers reach this through `floo events list`), so it is renamed
+        // server-side separately rather than blocking the CLI surface.
         let path = format!("/v1/apps/{app_id}/reparo/events");
         let resp = if let Some(s) = status {
             self.get_with_query(&path, &[("status", s)])?

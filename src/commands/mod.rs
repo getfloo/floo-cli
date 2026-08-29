@@ -21,6 +21,7 @@ pub mod doctor;
 pub mod domains;
 pub mod edge;
 pub mod env;
+pub mod events;
 pub mod feedback;
 pub mod github;
 pub mod init;
@@ -30,7 +31,6 @@ pub mod organization_sso;
 pub mod orgs;
 pub mod previews;
 pub mod releases;
-pub mod reparo;
 pub mod rollbacks;
 pub mod run;
 
