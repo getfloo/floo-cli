@@ -433,9 +433,9 @@ read-only + manual trigger; new jobs are added by editing config and deploying."
     )]
     Cron(CronCommands),
 
-    /// Manage Reparo auto-recovery events.
+    /// Inspect agent events: failed deploys and repeating runtime errors.
     #[command(subcommand)]
-    Reparo(ReparoCommands),
+    Events(EventsCommands),
 
     /// Diagnose an app's posture in one round trip.
     #[command(
@@ -1881,9 +1881,9 @@ prod databases.")]
 }
 
 #[derive(Subcommand)]
-pub enum ReparoCommands {
-    /// List Reparo auto-recovery events for an app.
-    Events {
+pub enum EventsCommands {
+    /// List agent events for an app.
+    List {
         /// App name or ID (reads from config if omitted).
         #[arg(short, long)]
         app: Option<String>,
@@ -2692,9 +2692,9 @@ pub fn run() {
             }
         },
 
-        Commands::Reparo(sub) => match sub {
-            ReparoCommands::Events { app, status } => {
-                commands::reparo::events(app.as_deref(), status.as_deref())
+        Commands::Events(sub) => match sub {
+            EventsCommands::List { app, status } => {
+                commands::events::list(app.as_deref(), status.as_deref())
             }
         },
 

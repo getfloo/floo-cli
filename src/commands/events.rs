@@ -3,12 +3,12 @@ use std::process;
 use crate::errors::ErrorCode;
 use crate::output;
 
-pub fn events(app_flag: Option<&str>, status_filter: Option<&str>) {
+pub fn list(app_flag: Option<&str>, status_filter: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);
     let (app_id, _app_name) = super::resolve_app_from_config(&client, app_flag);
 
-    let result = match client.reparo_events(&app_id, status_filter) {
+    let result = match client.agent_events(&app_id, status_filter) {
         Ok(r) => r,
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
@@ -17,18 +17,18 @@ pub fn events(app_flag: Option<&str>, status_filter: Option<&str>) {
     };
 
     if output::is_json_mode() {
-        output::success("Reparo events.", Some(result));
+        output::success("Agent events.", Some(result));
         return;
     }
 
     let events_arr = result.get("events").and_then(|v| v.as_array());
     let Some(events) = events_arr else {
-        output::info("No Reparo events.", None);
+        output::info("No agent events.", None);
         return;
     };
 
     if events.is_empty() {
-        output::info("No Reparo events.", None);
+        output::info("No agent events.", None);
         return;
     }
 
