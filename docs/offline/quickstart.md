@@ -112,7 +112,7 @@ floo Quickstart - End-to-End Walkthrough
 
   floo dev --app my-app
 
-  Runs your service locally with live Cloud SQL access and the same env vars
+  Runs your service locally with live managed Postgres access and the same env vars
   as the deployed version. Requires dev_command set on the service in floo.app.toml.
 
 ## What Creates What

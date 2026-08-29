@@ -8,7 +8,7 @@ code in the published guide.
 
 Set output: "standalone" in next.config.js, then a multi-stage Dockerfile
 ending with `CMD ["node", "server.js"]`. Set HOSTNAME=0.0.0.0 (Next.js
-standalone defaults to localhost - Cloud Run won't reach it).
+standalone defaults to localhost - floo cannot reach it).
 
 ## 2. NEXT_PUBLIC_* build-arg trap
 
@@ -65,7 +65,7 @@ Then in a Server Component or Route Handler:
 
 ## Gotchas
 
-  - /healthz is reserved by Cloud Run - use /health
+  - /healthz is reserved by floo - use /health
   - HOSTNAME=0.0.0.0 (standalone defaults to localhost)
   - NEXT_PUBLIC_* changes require floo redeploy --rebuild
   - output: "standalone" in next.config.js

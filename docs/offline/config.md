@@ -44,7 +44,7 @@ floo Config Files
   [services.worker]
   type = "worker"
   path = "."                          # same build as web -> same Dockerfile + CMD
-  port = 3000                          # required even for workers (Cloud Run needs a port)
+  port = 3000                          # required even for workers (the runtime needs a port)
   ingress = "internal"                # no public HTTP
   command = "bundle exec sidekiq"     # REQUIRED: without it the worker boots the web command
 
@@ -73,7 +73,7 @@ floo Config Files
   dev_command      - command to run locally for `floo dev`
                      e.g., "npm run dev", "uvicorn app.main:app --reload"
 
-  migrate_command  - optional command run as a Cloud Run Job after every
+  migrate_command  - optional command run as a one-off job after every
                      deploy (against the dev schema) and after every promote
                      (against the prod schema). Non-fatal: a failure is logged
                      but does not block the deploy from going live.

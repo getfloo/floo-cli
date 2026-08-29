@@ -514,7 +514,7 @@ mod tests {
     #[test]
     fn test_egress_topic_documents_network_boundary_contract() {
         assert!(render_overview().contains("floo docs egress"));
-        assert!(EGRESS.contains("Cloud Run's normal internet egress"));
+        assert!(EGRESS.contains("floo's normal internet egress"));
         assert!(EGRESS.contains("Stable outbound source IP"));
         assert!(EGRESS.contains("SMTP port 25"));
         assert!(EGRESS.contains("customer-side connector"));

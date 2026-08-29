@@ -85,7 +85,7 @@ headers with HTTP_ and uppercases them):
 
 ## Gotchas
 
-  - /healthz is reserved by Cloud Run - use /health
+  - /healthz is reserved by floo - use /health
   - Bind to 0.0.0.0 in gunicorn
   - DEBUG=False in prod (the default above is False)
   - DJANGO_SECRET_KEY must be set or sessions can be forged

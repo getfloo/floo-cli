@@ -65,7 +65,7 @@ won't get set behind floo's edge.
 
 ## Gotchas
 
-  - /healthz is reserved by Cloud Run - use /health
+  - /healthz is reserved by floo - use /health
   - app.listen(port, "0.0.0.0", ...) explicitly
   - app.set("trust proxy", true) is required
   - SESSION_SECRET required for cookie-session

@@ -93,7 +93,7 @@ The resource key is shaped `type:name`, for example `postgres:default`,
 `redis:cache`, or `storage:uploads`. Reset is preview-scoped and fails closed
 with the API's named blocker when a provider cannot reset that resource yet.
 
-`floo previews delete` tears down preview-owned Cloud Run services, managed
+`floo previews delete` tears down preview-owned services, managed
 resources, gateway routes, and env vars. Dev and prod are untouched.
 
 ## Related commands

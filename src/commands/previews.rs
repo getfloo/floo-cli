@@ -201,7 +201,7 @@ pub fn delete(app_flag: Option<&str>, preview_identifier: &str, yes: bool) {
         let risk: RiskMetadata = Tier::Two.into();
         output::dry_run_preview(
             &format!(
-                "Would delete preview sandbox '{preview}'. Cloud Run services, preview-owned resources, routes, and env vars would be torn down; dev and prod are untouched."
+                "Would delete preview sandbox '{preview}'. Preview-owned services, resources, routes, and env vars would be torn down; dev and prod are untouched."
             ),
             serde_json::json!({
                 "action": "preview_delete",

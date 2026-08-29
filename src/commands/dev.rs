@@ -357,7 +357,7 @@ pub fn dev(args: DevArgs) {
                 output::warn(&format!(
                     "  Postgres: authorization was accepted but the database was still \
 unreachable after {:.0}s. Starting anyway — direct connections may fail until \
-Cloud SQL finishes applying it.",
+the database finishes applying it.",
                     waited.as_secs_f32()
                 ));
             }

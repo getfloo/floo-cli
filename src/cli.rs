@@ -448,7 +448,7 @@ mode active?' without requiring agents to curl the gateway, parse request
 logs, and join four database tables by hand.
 
 The endpoint is intentionally narrow: no env-var values, no secret
-material, no Cloud Run audit payloads. Those live on dedicated surfaces."
+material, no runtime audit payloads. Those live on dedicated surfaces."
     )]
     Doctor(DoctorCommands),
 
@@ -1470,7 +1470,7 @@ pub enum DeploysSubcommands {
     ///
     /// Emits the latest deploy's id, commit, derived phase booleans
     /// (image_built / service_ready / host_bound), the gateway URL, and a
-    /// next recommended command — without dumping build logs, Cloud Run
+    /// next recommended command — without dumping build logs, runtime
     /// audit payloads, or env-var values. Use this from agents and
     /// scripts that need to know "what state is the deploy in?" without
     /// risking secret exfiltration through verbose log output.
