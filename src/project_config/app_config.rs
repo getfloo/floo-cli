@@ -305,6 +305,12 @@ pub struct AppServiceEntry {
     pub service_type: AppServiceType,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    /// Dockerfile location relative to the repository root. Setting it moves the
+    /// build context to the root, so a service can reach files outside its own
+    /// directory. Required for workspace repos where a service imports shared
+    /// packages; without it the context is `path` and siblings are unreachable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dockerfile: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -393,6 +399,7 @@ impl AppServiceEntry {
         Self {
             service_type,
             path: Some(path.into()),
+            dockerfile: None,
             repo: None,
             version: None,
             plan: None,

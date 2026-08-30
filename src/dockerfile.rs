@@ -144,10 +144,44 @@ fn detect_python_version(path: &Path) -> String {
     "3.13".to_string()
 }
 
+/// True when the directory is the root of a package-manager workspace.
+///
+/// The generated templates copy only the root manifest and lockfile, so a
+/// workspace whose packages import each other cannot install from them. Writing
+/// a Dockerfile that is guaranteed to fail is worse than writing none: the user
+/// debugs our guess instead of their build. See getfloo/floo#2282.
+pub fn is_workspace_root(path: &Path) -> bool {
+    if path.join("pnpm-workspace.yaml").exists() {
+        return true;
+    }
+    for manifest in ["package.json", "deno.json", "deno.jsonc"] {
+        let Ok(text) = std::fs::read_to_string(path.join(manifest)) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+            continue;
+        };
+        if value.get("workspaces").is_some() {
+            return true;
+        }
+    }
+    if let Ok(text) = std::fs::read_to_string(path.join("Cargo.toml")) {
+        if text.contains("[workspace]") {
+            return true;
+        }
+    }
+    false
+}
+
 /// Generate a Dockerfile for the detected runtime/framework.
 /// Returns None if a Dockerfile already exists (runtime == "docker") or runtime is unknown.
 pub fn generate_dockerfile(detection: &DetectionResult, project_path: &Path) -> Option<String> {
     if detection.runtime == "docker" || detection.runtime == "unknown" {
+        return None;
+    }
+
+    // A workspace needs a Dockerfile these templates cannot write.
+    if is_workspace_root(project_path) {
         return None;
     }
 
@@ -687,5 +721,89 @@ mod tests {
     fn test_detect_python_version_default() {
         let dir = TempDir::new().unwrap();
         assert_eq!(detect_python_version(dir.path()), "3.13");
+    }
+}
+
+#[cfg(test)]
+mod workspace_detection_tests {
+    use super::*;
+    use std::fs;
+
+    fn detection(runtime: &str, framework: Option<&str>) -> DetectionResult {
+        DetectionResult {
+            runtime: runtime.to_string(),
+            framework: framework.map(str::to_string),
+            confidence: "high".to_string(),
+            version: None,
+            reason: String::new(),
+        }
+    }
+
+    #[test]
+    fn pnpm_workspace_is_detected() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("pnpm-workspace.yaml"),
+            "packages:\n  - 'apps/*'\n",
+        )
+        .unwrap();
+        assert!(is_workspace_root(dir.path()));
+    }
+
+    #[test]
+    fn npm_workspaces_field_is_detected() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("package.json"),
+            r#"{"name":"root","workspaces":["apps/*"]}"#,
+        )
+        .unwrap();
+        assert!(is_workspace_root(dir.path()));
+    }
+
+    #[test]
+    fn cargo_workspace_is_detected() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("Cargo.toml"),
+            "[workspace]\nmembers = [\"a\"]\n",
+        )
+        .unwrap();
+        assert!(is_workspace_root(dir.path()));
+    }
+
+    #[test]
+    fn plain_package_is_not_a_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("package.json"),
+            r#"{"name":"app","dependencies":{"express":"^4"}}"#,
+        )
+        .unwrap();
+        assert!(!is_workspace_root(dir.path()));
+    }
+
+    #[test]
+    fn generation_declines_for_a_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("pnpm-workspace.yaml"),
+            "packages:\n  - 'apps/*'\n",
+        )
+        .unwrap();
+        fs::write(dir.path().join("package.json"), r#"{"name":"root"}"#).unwrap();
+
+        assert!(generate_dockerfile(&detection("nodejs", Some("Express")), dir.path()).is_none());
+    }
+
+    #[test]
+    fn generation_still_works_for_a_single_package_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("package.json"), r#"{"name":"app"}"#).unwrap();
+        fs::write(dir.path().join("index.js"), "").unwrap();
+
+        let content =
+            generate_dockerfile(&detection("nodejs", Some("Express")), dir.path()).unwrap();
+        assert!(content.contains("FROM node:"));
     }
 }

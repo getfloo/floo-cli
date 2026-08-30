@@ -850,6 +850,7 @@ mod tests {
         AppServiceEntry {
             service_type: AppServiceType::Web,
             path: Some(".".into()),
+            dockerfile: None,
             repo: repo.map(String::from),
             version: None,
             plan: None,
