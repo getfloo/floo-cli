@@ -6,7 +6,7 @@ user-invocable: false
 
 # floo CLI
 
-The installed `floo` binary is the version-matched source for command syntax and offline platform guidance. Do not rely on remembered flags or make a web request before checking it.
+The installed `floo` binary is the version-matched source for command syntax. Check it before relying on remembered flags. Platform guidance lives at https://getfloo.com/docs; `floo docs <topic>` prints the canonical page for a topic so the binary and the site cannot disagree.
 
 ## Discover before acting
 
@@ -14,7 +14,7 @@ Use these local surfaces in order:
 
 1. `floo commands --json` for the machine-readable command tree.
 2. `floo <command> --help` for exact flags, arguments, and examples.
-3. `floo docs --json` for the offline topic catalog.
+3. `floo docs --json` for the topic catalog and its documentation URLs.
 4. `floo docs <topic> --json` for version-matched platform guidance.
 
 The JSON docs index includes `schema_version`, `cli_version`, topic summaries, and aliases. If the installed binary lacks a needed capability, run `floo update` and check again. Use getfloo.com only when the bundled knowledge is insufficient and website access is permitted.

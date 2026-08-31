@@ -641,25 +641,8 @@ the substrate: {found:?}"
         );
     }
 
-    #[test]
-    fn bundled_offline_docs_never_name_the_substrate() {
-        // `floo docs <topic>` prints these verbatim.
-        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/docs/offline");
-        let mut checked = 0usize;
-        for entry in std::fs::read_dir(dir).expect("docs/offline is readable") {
-            let path = entry.expect("readable dir entry").path();
-            if path.extension().is_none_or(|ext| ext != "md") {
-                continue;
-            }
-            let body = std::fs::read_to_string(&path).expect("readable doc");
-            let found = offenders(&body);
-            assert!(
-                found.is_empty(),
-                "{} names the substrate: {found:?}",
-                path.display()
-            );
-            checked += 1;
-        }
-        assert!(checked > 0, "no offline docs were scanned from {dir}");
-    }
+    // `bundled_offline_docs_never_name_the_substrate` was removed with
+    // docs/offline. The rule it enforced still holds; it is enforced where the
+    // prose now lives, by floo-docs/scripts/check_docs.py, which bans the same
+    // substrate terms across every published page.
 }

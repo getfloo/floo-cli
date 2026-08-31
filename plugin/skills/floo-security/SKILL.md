@@ -5,14 +5,14 @@ description: Security invariants for applications deployed on floo. Use for auth
 
 # floo application security
 
-Start with the installed, offline guidance:
+Start with the installed binary; `floo docs` routes to the canonical page for each topic:
 
 - `floo docs auth --json` for hosted-app identity.
 - `floo docs edge --json` for network admission and access policy.
 - `floo docs config --json` for environment and write-only secret behavior.
 - `floo <command> --help` for exact current syntax.
 
-Use the website only if the binary's version-matched guidance is insufficient and website access is permitted.
+`floo <command> --help` is version-matched and authoritative for syntax. The topics above resolve to pages on https://getfloo.com/docs, which is the single source for platform guidance.
 
 ## Secrets
 

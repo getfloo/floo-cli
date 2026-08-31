@@ -411,7 +411,7 @@ fn validate_path_and_options(invocation: &str) -> Result<(), String> {
 fn first_party_guidance_matches_clap() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut markdown = vec![root.join("README.md")];
-    for directory in ["docs/offline", "skills", "plugin/skills"] {
+    for directory in ["skills", "plugin/skills"] {
         collect_markdown_files(&root.join(directory), &mut markdown);
     }
     if let Some(external_root) = std::env::var_os("FLOO_EXTERNAL_GUIDANCE_DIR") {
@@ -481,8 +481,22 @@ fn first_party_guidance_matches_clap() {
         }
     }
 
-    assert!(guidance.len() > 100, "too few guidance references found");
-    assert!(full_examples > 50, "too few complete examples found");
+    // These floors are ratchets against a corpus silently emptying, not targets.
+    // The complete-example floor dropped from 50 to 15 when docs/offline moved
+    // to floo-docs: this validator parses every example against the live Clap
+    // tree, and the pages that left are now checked only by hand-maintained
+    // regexes in floo-docs/scripts/check_docs.py. That is a real reduction in
+    // what is mechanically verified. Raise this floor if the bundled corpus
+    // grows; do not lower it to make a failure go away.
+    assert!(
+        guidance.len() > 100,
+        "too few guidance references found: {}",
+        guidance.len()
+    );
+    assert!(
+        full_examples > 15,
+        "too few complete examples found: {full_examples}"
+    );
     assert!(
         failures.is_empty(),
         "first-party guidance contains stale CLI syntax:\n{}",
