@@ -285,6 +285,18 @@ fn generate_dockerfile_if_needed(
         }
     }
 
+    // Say why, rather than silently skipping. A workspace repo that gets no
+    // Dockerfile and no explanation looks like init half-finished.
+    if dockerfile::is_workspace_root(project_path) {
+        output::warn(
+            "Skipped the Dockerfile: this is a workspace repository, and a generated \
+one would copy only the root manifest and fail to install shared packages. Write \
+one per service and point at it with `dockerfile` in floo.app.toml. See \
+https://getfloo.com/docs/reference/container-contract",
+        );
+        return false;
+    }
+
     let content = match dockerfile::generate_dockerfile(detection, project_path) {
         Some(c) => c,
         None => return false,

@@ -511,6 +511,7 @@ ingress = "public"
             AppServiceEntry {
                 service_type: AppServiceType::Api,
                 path: Some("./backend".to_string()),
+                dockerfile: None,
                 repo: None,
                 version: None,
                 plan: None,
@@ -534,6 +535,7 @@ ingress = "public"
             AppServiceEntry {
                 service_type: AppServiceType::Web,
                 path: Some("./frontend".to_string()),
+                dockerfile: None,
                 repo: None,
                 version: None,
                 plan: None,
@@ -640,6 +642,7 @@ ingress = "public"
             AppServiceEntry {
                 service_type: AppServiceType::Api,
                 path: Some("backend".to_string()),
+                dockerfile: None,
                 repo: None,
                 version: None,
                 plan: None,
@@ -775,6 +778,7 @@ ingress = "public"
             AppServiceEntry {
                 service_type: AppServiceType::Api,
                 path: Some("./backend".to_string()),
+                dockerfile: None,
                 repo: None,
                 version: None,
                 plan: None,
@@ -845,6 +849,7 @@ ingress = "public"
             AppServiceEntry {
                 service_type: AppServiceType::Api,
                 path: Some("backend".to_string()),
+                dockerfile: None,
                 repo: None,
                 version: None,
                 plan: None,
@@ -941,6 +946,7 @@ ingress = "public"
             AppServiceEntry {
                 service_type: AppServiceType::Api,
                 path: Some("backend".to_string()),
+                dockerfile: None,
                 repo: None,
                 version: None,
                 plan: None,
@@ -1048,6 +1054,7 @@ ingress = "public"
             AppServiceEntry {
                 service_type: AppServiceType::Api,
                 path: Some("./backend/".to_string()),
+                dockerfile: None,
                 repo: None,
                 version: None,
                 plan: None,
@@ -1258,6 +1265,7 @@ ingress = "public"
             AppServiceEntry {
                 service_type: AppServiceType::Api,
                 path: Some("./backend".to_string()),
+                dockerfile: None,
                 repo: None,
                 version: None,
                 plan: None,
@@ -1353,6 +1361,7 @@ ingress = "internal"
             AppServiceEntry {
                 service_type: AppServiceType::Api,
                 path: Some("./backend".to_string()),
+                dockerfile: None,
                 repo: None,
                 version: None,
                 plan: None,
@@ -1376,6 +1385,7 @@ ingress = "internal"
             AppServiceEntry {
                 service_type: AppServiceType::Worker,
                 path: Some("./worker".to_string()),
+                dockerfile: None,
                 repo: None,
                 version: None,
                 plan: None,
@@ -1455,6 +1465,7 @@ domain = "svc.example.com"
             AppServiceEntry {
                 service_type: AppServiceType::Api,
                 path: Some("./backend".to_string()),
+                dockerfile: None,
                 repo: None,
                 version: None,
                 plan: None,
@@ -1535,6 +1546,7 @@ domain = "svc.example.com"
             AppServiceEntry {
                 service_type: AppServiceType::Api,
                 path: Some("./backend".to_string()),
+                dockerfile: None,
                 repo: None,
                 version: None,
                 plan: None,
@@ -1605,6 +1617,7 @@ domain = "svc.example.com"
             AppServiceEntry {
                 service_type: AppServiceType::Api,
                 path: Some("./backend".to_string()),
+                dockerfile: None,
                 repo: None,
                 version: None,
                 plan: None,
@@ -1628,6 +1641,7 @@ domain = "svc.example.com"
             AppServiceEntry {
                 service_type: AppServiceType::Web,
                 path: Some("./frontend".to_string()),
+                dockerfile: None,
                 repo: None,
                 version: None,
                 plan: None,
@@ -1704,6 +1718,7 @@ domain = "svc.example.com"
             AppServiceEntry {
                 service_type: AppServiceType::Api,
                 path: Some("./backend".to_string()),
+                dockerfile: None,
                 repo: None,
                 version: None,
                 plan: None,
@@ -1823,6 +1838,7 @@ domain = "svc.example.com"
         let app_override = AppServiceEntry {
             service_type: AppServiceType::Api,
             path: Some("backend".to_string()),
+            dockerfile: None,
             repo: None,
             version: None,
             plan: None,
@@ -1869,6 +1885,7 @@ domain = "svc.example.com"
         let app_override = AppServiceEntry {
             service_type: AppServiceType::Worker,
             path: Some("jobs".to_string()),
+            dockerfile: None,
             repo: None,
             version: None,
             plan: None,
@@ -1911,6 +1928,7 @@ domain = "svc.example.com"
             AppServiceEntry {
                 service_type: AppServiceType::Api,
                 path: Some("./backend".to_string()),
+                dockerfile: None,
                 repo: None,
                 version: None,
                 plan: None,
@@ -1978,6 +1996,7 @@ domain = "svc.example.com"
             AppServiceEntry {
                 service_type: AppServiceType::Worker,
                 path: Some("./worker".to_string()),
+                dockerfile: None,
                 repo: None,
                 version: None,
                 plan: None,
@@ -2001,6 +2020,7 @@ domain = "svc.example.com"
             AppServiceEntry {
                 service_type: AppServiceType::Web,
                 path: Some("./web".to_string()),
+                dockerfile: None,
                 repo: None,
                 version: None,
                 plan: None,
@@ -2133,6 +2153,7 @@ domain = "svc.example.com"
                     AppServiceEntry {
                         service_type: AppServiceType::Web,
                         path: Some("./frontend".to_string()),
+                        dockerfile: None,
                         repo: None,
                         version: None,
                         plan: None,
@@ -2198,6 +2219,7 @@ domain = "svc.example.com"
                     AppServiceEntry {
                         service_type: AppServiceType::Web,
                         path: Some(".".to_string()),
+                        dockerfile: None,
                         repo: None,
                         version: None,
                         plan: None,
