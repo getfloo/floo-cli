@@ -23,11 +23,21 @@ floo Quickstart - End-to-End Walkthrough
      A human opens that link once and grants access to the repo. Use this link
      rather than github.com/apps/getfloo — only the minted link carries the
      handshake that binds the installation to your floo org.
+     The human must install on the account that OWNS the repository. GitHub
+     scopes an installation to one account, so installing on an organization
+     grants nothing for a repo owned by a personal account, and vice versa.
+     On the grant page, the repository must appear under "Repository access" —
+     an installation with the repo unselected reports success and still fails
+     to connect.
   3. The agent runs floo init, edits floo.app.toml, and runs floo preflight
   4. The agent commits and pushes the generated config to GitHub
   5. The agent connects: floo apps github connect owner/repo --no-browser
-     (--no-browser errors cleanly if the app is not installed, instead of
-     trying to open a browser)
+     Instead of opening a browser, --no-browser fails with the complete grant
+     instruction: the account to install on, the exact URL, the repository to
+     select there, and the command to re-run. Completing it requires a human in
+     a browser — an agent cannot grant GitHub access, and re-running before the
+     grant lands will fail identically. Escalate the instruction to a human
+     rather than retrying.
   6. Subsequent deploys: git push triggers automatic deploys via webhook
 
 ## 1. Install and Sign Up
