@@ -1247,6 +1247,21 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    /// Bind one installation from the candidate list the poll returned.
+    ///
+    /// The API refuses an installation absent from that list, so the caller
+    /// must select a candidate rather than construct an ID.
+    pub fn github_setup_select(
+        &self,
+        installation_id: i64,
+    ) -> Result<GitHubSetupPollResponse, FlooApiError> {
+        let resp = self.post_json(
+            "/v1/github/setup/select",
+            &serde_json::json!({ "installation_id": installation_id }),
+        )?;
+        self.handle_response(resp)
+    }
+
     pub fn github_check_repo_access(&self, repo: &str) -> Result<Value, FlooApiError> {
         let encoded = repo.replace('/', "%2F");
         let resp = self.get(&format!("/v1/github/check-repo-access?repo={encoded}"))?;

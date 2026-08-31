@@ -866,7 +866,9 @@ pub enum GitHubCommands {
         #[arg(long)]
         no_deploy: bool,
 
-        /// Never open a browser (for agents/CI). Errors if GitHub App is not installed.
+        /// Never open a browser (for agents/CI). If the floo GitHub App cannot
+        /// reach the repo, errors with the full grant instruction: which account
+        /// to install on, the URL, the repo to select, and the command to re-run.
         #[arg(long)]
         no_browser: bool,
     },
