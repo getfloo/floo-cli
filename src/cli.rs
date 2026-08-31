@@ -765,6 +765,10 @@ pub enum AppsCommands {
     },
 
     /// Manage GitHub integration.
+    ///
+    /// Granting the App access to a repository is a browser-only action a human
+    /// must perform. Full instructions, including which account to install on:
+    /// https://getfloo.com/docs/cli/github
     #[command(subcommand)]
     Github(GitHubCommands),
 
@@ -846,6 +850,11 @@ pub enum AppsCommands {
 #[derive(Subcommand)]
 pub enum GitHubCommands {
     /// Connect a GitHub repo to an app for auto-deploy.
+    ///
+    /// Requires the floo GitHub App installed on the account that OWNS the repo,
+    /// with that repo selected. GitHub scopes an installation to one account, so
+    /// installing on an organization grants nothing for a personal-account repo.
+    /// https://getfloo.com/docs/cli/github#granting-the-floo-github-app-access-to-a-repository
     Connect {
         /// GitHub repo (owner/repo).
         repo: String,
@@ -888,6 +897,11 @@ pub enum GitHubCommands {
     },
 
     /// Link the floo GitHub App to this org, whether or not it is installed.
+    ///
+    /// This BINDS an installation to your floo org. It does not install the App
+    /// and does not select repositories — do that on GitHub first, on the
+    /// account that owns the repo:
+    /// https://getfloo.com/docs/cli/github#granting-the-floo-github-app-access-to-a-repository
     ///
     /// `connect` only mints a setup link when the App is NOT installed, so an
     /// App installed straight from GitHub's UI — or installed more than 15
