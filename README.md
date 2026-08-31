@@ -35,7 +35,7 @@ curl -fsSL https://getfloo.com/install.sh | FLOO_INSTALL_DIR="$HOME/.local/bin" 
 ## Updating
 
 ```bash
-# Show installed version
+# Check for updates and show the installed version
 floo version
 
 # Update to latest release
