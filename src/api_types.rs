@@ -976,13 +976,35 @@ pub enum GitHubSetupStatus {
     None,
     AwaitingInstallation,
     AwaitingOrgApproval,
+    /// The authorizing GitHub identity can reach more than one floo
+    /// installation, so the API refuses to guess which one the caller meant
+    /// and returns the candidate list instead.
+    AwaitingSelection,
     Ready,
+    /// A status this CLI predates. Without this arm serde fails the whole
+    /// response and the caller reports an undiagnosable parse error at HTTP
+    /// 200 — which is exactly how `awaiting_selection` presented before this
+    /// variant existed. An unknown status must degrade to a version-skew
+    /// message, never to a decoding failure.
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GitHubInstallationCandidate {
+    pub installation_id: i64,
+    pub owner_login: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitHubSetupPollResponse {
     pub status: GitHubSetupStatus,
     pub installation_id: Option<i64>,
+    /// Populated only for `AwaitingSelection`. The API treats this list as the
+    /// proof of what the authorizing user may bind; an installation outside it
+    /// is refused, so the CLI must select from it rather than invent an ID.
+    #[serde(default)]
+    pub candidates: Vec<GitHubInstallationCandidate>,
 }
 
 // --- Dev Session ---
