@@ -148,8 +148,11 @@ fn test_docs_overview_works_without_api_access() {
         .assert()
         .success()
         .stdout(predicate::str::is_empty())
-        .stderr(predicate::str::contains("## Offline topics"))
+        .stderr(predicate::str::contains("## Topics"))
         .stderr(predicate::str::contains("floo docs services"))
+        .stderr(predicate::str::contains(
+            "https://getfloo.com/docs/guides/managed-services",
+        ))
         .stderr(predicate::str::contains("floo commands --json"));
 }
 
@@ -166,19 +169,15 @@ fn test_docs_json_exposes_versioned_topic_catalog_offline() {
         serde_json::from_slice(&output.stdout).expect("docs output must be JSON");
     let data = &response["data"];
     assert_eq!(response["success"], true);
-    assert_eq!(data["schema_version"], 1);
+    assert_eq!(data["schema_version"], 2);
     assert_eq!(data["cli_version"], "0.0.0-dev");
     assert_eq!(data["topic"], "overview");
-    assert!(data["content"]
-        .as_str()
-        .unwrap()
-        .contains("## Offline topics"));
-    assert!(data["topics"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|topic| topic["name"] == "services"
-            && topic["aliases"] == serde_json::json!(["storage"])));
+    assert!(data["content"].as_str().unwrap().contains("## Topics"));
+    assert!(data["topics"].as_array().unwrap().iter().any(|topic| {
+        topic["name"] == "services"
+            && topic["aliases"] == serde_json::json!(["storage"])
+            && topic["url"] == "https://getfloo.com/docs/guides/managed-services"
+    }));
 }
 
 #[test]
@@ -193,9 +192,13 @@ fn test_docs_alias_json_names_canonical_topic() {
     let response: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("docs output must be JSON");
     let data = &response["data"];
-    assert_eq!(data["schema_version"], 1);
+    assert_eq!(data["schema_version"], 2);
     assert_eq!(data["cli_version"], "0.0.0-dev");
     assert_eq!(data["topic"], "services");
+    assert_eq!(
+        data["url"],
+        "https://getfloo.com/docs/guides/managed-services"
+    );
     assert_eq!(data["requested_topic"], "storage");
     assert_eq!(data["alias"], true);
 }
