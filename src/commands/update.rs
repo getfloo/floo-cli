@@ -57,8 +57,12 @@ fn refresh_and_announce_skills() -> Vec<String> {
 /// Respects `FLOO_NO_UPDATE_CHECK` and `floo-local` dev builds.
 pub fn version() {
     if should_skip_network_check() {
-        emit_version(None);
+        emit_version(None, false);
         return;
+    }
+
+    if !output::is_json_mode() {
+        output::info("Checking for floo updates...", None);
     }
 
     // Call run_update unconditionally — it knows how to say "already up to
@@ -68,11 +72,11 @@ pub fn version() {
     match updater::run_update(None) {
         Ok(result) => {
             refresh_and_announce_skills();
-            emit_version(Some(&result.version));
+            emit_version(Some(&result.version), true);
         }
         Err(err) if err.code == ErrorCode::AlreadyUpToDate => {
             refresh_and_announce_skills();
-            emit_version(None);
+            emit_version(None, true);
         }
         // Release assets not yet uploaded (race between release creation and
         // the CI workflow finishing). Transient — silently skip so `floo version`
@@ -81,7 +85,7 @@ pub fn version() {
             if err.code == ErrorCode::ReleaseAssetMissing
                 || err.code == ErrorCode::ChecksumMissing =>
         {
-            emit_version(None);
+            emit_version(None, false);
         }
         Err(err) => {
             // Network/checksum/permission failure. Surface the reason so
@@ -92,7 +96,7 @@ pub fn version() {
             if let Some(sug) = &err.suggestion {
                 output::warn(sug);
             }
-            emit_version(None);
+            emit_version(None, false);
         }
     }
 }
@@ -116,7 +120,7 @@ pub fn version() {
 ///     non-empty and machine-parseable. The bare tag on stdout also
 ///     matches what users get from `git --version`, `curl --version`,
 ///     etc.
-fn emit_version(freshly_installed: Option<&str>) {
+fn emit_version(freshly_installed: Option<&str>, checked_for_updates: bool) {
     let (installed, payload) = match freshly_installed {
         Some(new_tag) => {
             let installed = display_tag(new_tag);
@@ -144,7 +148,24 @@ fn emit_version(freshly_installed: Option<&str>) {
     if !output::is_json_mode() {
         output::raw_value(&installed);
     }
-    output::success(&format!("floo {installed}"), Some(payload));
+    output::success(
+        &version_success_message(&installed, freshly_installed, checked_for_updates),
+        Some(payload),
+    );
+}
+
+fn version_success_message(
+    installed: &str,
+    freshly_installed: Option<&str>,
+    checked_for_updates: bool,
+) -> String {
+    if freshly_installed.is_some() {
+        format!("Updated floo from {} to {installed}.", display_tag(VERSION))
+    } else if checked_for_updates {
+        format!("floo {installed} is up to date.")
+    } else {
+        format!("floo {installed}")
+    }
 }
 
 pub fn update(version: Option<&str>) {
@@ -253,6 +274,25 @@ mod tests {
         assert_eq!(super::display_tag("0.4.2"), "0.4.2");
         assert_eq!(super::display_tag("v2026.04.12"), "2026.04.12");
         assert_eq!(super::display_tag(""), "");
+    }
+
+    #[test]
+    fn test_version_success_message_distinguishes_update_outcomes() {
+        assert_eq!(
+            super::version_success_message("2026.08.31", Some("v2026.08.31"), true),
+            format!(
+                "Updated floo from {} to 2026.08.31.",
+                super::display_tag(crate::constants::VERSION)
+            )
+        );
+        assert_eq!(
+            super::version_success_message("2026.08.31", None, true),
+            "floo 2026.08.31 is up to date."
+        );
+        assert_eq!(
+            super::version_success_message("2026.08.31", None, false),
+            "floo 2026.08.31"
+        );
     }
 
     /// `FLOO_NO_UPDATE_CHECK=1` MUST cause `should_skip_network_check()`

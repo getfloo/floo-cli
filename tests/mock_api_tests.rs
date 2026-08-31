@@ -15,6 +15,11 @@ fn floo() -> Command {
     Command::cargo_bin("floo-local").unwrap()
 }
 
+#[allow(deprecated)]
+fn installed_floo() -> Command {
+    Command::cargo_bin("floo").unwrap()
+}
+
 /// Create temp HOME with config pointing at mock server.
 fn setup_config(server: &Server) -> TempDir {
     let home = TempDir::new().unwrap();
@@ -5729,6 +5734,47 @@ fn test_deploy_json_mode_uses_polling() {
 }
 
 // ───────────────────────── Update ─────────────────────────
+
+#[test]
+fn test_version_human_reports_up_to_date_after_successful_check() {
+    let Some(asset_name) = update_asset_name() else {
+        return;
+    };
+
+    let mut server = Server::new();
+    let release = serde_json::json!({
+        "tag_name": "v0.0.0-dev",
+        "assets": [
+            {"name": asset_name, "browser_download_url": "https://example.com/binary"},
+            {"name": format!("{asset_name}.sha256"), "browser_download_url": "https://example.com/checksum"},
+            {"name": format!("{asset_name}.sig"), "browser_download_url": "https://example.com/signature"}
+        ],
+    });
+    let release_mock = server
+        .mock("GET", "/releases/latest")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(release.to_string())
+        .create();
+
+    let home = TempDir::new().unwrap();
+    let install_dir = TempDir::new().unwrap();
+    let install_path = install_dir.path().join("floo");
+
+    installed_floo()
+        .arg("version")
+        .env("HOME", home.path())
+        .env("FLOO_UPDATE_API_BASE", format!("{}/releases", server.url()))
+        .env("FLOO_UPDATE_TARGET_PATH", install_path.as_os_str())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("0.0.0-dev"))
+        .stderr(predicate::str::contains("Checking for floo updates..."))
+        .stderr(predicate::str::contains("floo 0.0.0-dev is up to date."))
+        .stderr(predicate::str::contains("Updated floo from").not());
+
+    release_mock.assert();
+}
 
 #[test]
 fn test_update_json_release_lookup_failure() {

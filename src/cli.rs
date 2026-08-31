@@ -456,7 +456,7 @@ material, no runtime audit payloads. Those live on dedicated surfaces."
     #[command(name = "commands")]
     Discover,
 
-    /// Print installed CLI version.
+    /// Check for updates and print the installed CLI version.
     Version,
 
     /// Update the CLI binary in-place.
