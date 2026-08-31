@@ -96,10 +96,28 @@ pub struct ManagedServiceBlock {
 
 const VALID_MANAGED_SERVICE_TYPES: &[&str] = &["postgres", "redis", "storage"];
 
+/// Who terminates TLS and routes a declared custom domain.
+///
+/// `gateway` (the default) is floo's own path: floo mints the certificate and the
+/// gateway routes the hostname. `external` means something floo does not control
+/// terminates it — a Cloud Run domain mapping, Cloudflare, Fastly, a corporate load
+/// balancer. floo still records the domain so routing intent stays auditable, but it
+/// does not provision a certificate and does not report the domain broken. Certificate
+/// provisioning for an externally-served host is unsatisfiable, not merely redundant:
+/// floo's certificate validates through a DNS authorization nobody has reason to
+/// publish when floo is not terminating the connection.
+#[derive(Debug, Deserialize, Serialize, Default, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DomainServing {
+    #[default]
+    Gateway,
+    External,
+}
+
 /// A custom domain declared as `[domains."<hostname>"]`. The hostname is the table key;
 /// `service` names which service backs it (None defers to the interactive/verify path),
-/// `enabled` defaults to true. Mirrors the API `DomainConfig` so local preflight
-/// predicts what the deploy accepts.
+/// `enabled` defaults to true, `serving` defaults to `gateway`. Mirrors the API
+/// `DomainConfig` so local preflight predicts what the deploy accepts.
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct DomainBlock {
@@ -107,6 +125,8 @@ pub struct DomainBlock {
     pub service: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub serving: Option<DomainServing>,
 }
 
 /// Validate `[domains."<hostname>"]` blocks against the same hostname rules the API parser
@@ -1674,6 +1694,63 @@ service = "web"
             Some("web")
         );
         assert!(config.domains.contains_key("api.example.com"));
+    }
+
+    #[test]
+    fn test_load_app_config_domain_serving() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[domains."app.example.com"]
+service = "web"
+serving = "external"
+
+[domains."api.example.com"]
+service = "api"
+serving = "gateway"
+
+[domains."www.example.com"]
+service = "web"
+"#,
+        )
+        .unwrap();
+
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        assert_eq!(
+            config.domains["app.example.com"].serving,
+            Some(DomainServing::External)
+        );
+        assert_eq!(
+            config.domains["api.example.com"].serving,
+            Some(DomainServing::Gateway)
+        );
+        // Omitted is None here; the API applies the gateway default, so an old
+        // config keeps provisioning exactly as before.
+        assert_eq!(config.domains["www.example.com"].serving, None);
+    }
+
+    #[test]
+    fn test_load_app_config_rejects_unknown_domain_serving() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join(super::super::APP_CONFIG_FILE),
+            r#"
+[app]
+name = "my-app"
+
+[domains."app.example.com"]
+serving = "cloudflare"
+"#,
+        )
+        .unwrap();
+
+        // A typo must fail preflight, never silently fall back to provisioning a
+        // certificate the operator did not ask for.
+        assert!(load_app_config(dir.path()).is_err());
     }
 
     #[test]
