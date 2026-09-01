@@ -2013,6 +2013,75 @@ ingress = "public"
         ));
 }
 
+/// Several web services may deliberately share one root env file. Preflight
+/// reports the real file once, names every affected service, and never invents
+/// a backend service for the remedy.
+#[test]
+fn test_preflight_deduplicates_shared_web_env_file_warning() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        r#"[app]
+name = "myapp"
+
+[services.web]
+type = "web"
+path = "."
+port = 3000
+ingress = "public"
+
+[services.blog]
+type = "web"
+path = "."
+port = 3001
+ingress = "public"
+
+[services.publisher]
+type = "web"
+path = "."
+port = 3002
+ingress = "public"
+
+[services.mcp]
+type = "api"
+path = "."
+port = 8000
+ingress = "public"
+"#,
+    )
+    .unwrap();
+    let env_path = project.path().join(".env");
+    std::fs::write(&env_path, "STRIPE_SECRET_KEY=sk_live_abc\n").unwrap();
+
+    let output = floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let payload: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("preflight output must be JSON");
+    let secret_findings: Vec<&serde_json::Value> = payload["data"]["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|finding| finding["code"] == "SECRET_IN_WEB_SERVICE")
+        .collect();
+    assert_eq!(secret_findings.len(), 1);
+
+    let finding = secret_findings[0];
+    let expected_path = env_path.canonicalize().unwrap().display().to_string();
+    assert_eq!(finding["path"], expected_path);
+    let message = finding["message"].as_str().unwrap();
+    assert!(message.contains(&expected_path));
+    assert!(message.contains("used by web services: blog, publisher, web"));
+    assert!(!message.contains("web/.env"));
+    assert!(!message.contains("blog/.env"));
+    assert!(!message.contains("publisher/.env"));
+    assert!(!message.contains("--service api"));
+}
+
 /// An allowlisted public key (`PUBLIC_KEY`) must NOT be flagged as a secret —
 /// preflight's scan uses the same allowlist as the redaction boundary, so it
 /// doesn't stamp `contains_secrets` for a value the redactor would let through.
