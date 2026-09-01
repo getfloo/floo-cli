@@ -2305,8 +2305,11 @@ fn generate_security_findings(
     }
 
     // Secret-shaped vars sitting in a web service's env file — they may ship to
-    // the browser. This is the finding that stamps the top-level
-    // `contains_secrets` marker on the JSON payload.
+    // the browser. Group shared env files before scanning so one root `.env`
+    // used by several web services produces one finding per key, with the real
+    // path and every affected service. This is the finding that stamps the
+    // top-level `contains_secrets` marker on the JSON payload.
+    let mut web_env_files: Vec<(PathBuf, String, Vec<String>)> = Vec::new();
     for svc in services {
         if svc.service_type != ServiceType::Web {
             continue;
@@ -2337,35 +2340,59 @@ fn generate_security_findings(
         }
         for env_filename in env_filenames {
             let env_path = svc_dir.join(env_filename);
-            if let Ok(contents) = std::fs::read_to_string(&env_path) {
-                for line in contents.lines() {
-                    let Some((key, _)) = parse_env_line(line) else {
-                        continue;
-                    };
-                    // Check against the deployed (uppercase) form: deploy-sync
-                    // uppercases keys on import, so a lowercase `stripe_secret_key`
-                    // becomes the secret STRIPE_SECRET_KEY at runtime and must be
-                    // flagged. The canonical redactor rule carries the PUBLIC_KEY /
-                    // AWS_REGION allowlist, so preflight flags exactly what
-                    // `--json` would redact — no parallel heuristic that drifts.
-                    // The message keeps the var as written for recognizability.
-                    let key_upper = key.to_uppercase();
-                    let is_frontend_var = key_upper.starts_with("VITE_")
-                        || key_upper.starts_with("NEXT_PUBLIC_")
-                        || key_upper.starts_with("REACT_APP_");
-                    if !is_frontend_var && crate::redact::env_var_key_is_secret(&key_upper) {
-                        findings.push(
-                                PreflightFinding::warning(
-                                    "SECRET_IN_WEB_SERVICE",
-                                    format!(
-                                        "Secret-looking var '{}' in {}/{} — if this is a backend secret, remove it from the web service and set it on the api service: floo env set {}=<val> --service api",
-                                        key, svc.name, env_filename, key
-                                    ),
-                                )
-                                .with_path(&svc.path),
-                            );
-                    }
+            let resolved_env_path = env_path.canonicalize().unwrap_or(env_path);
+            if let Some((_, _, affected_services)) = web_env_files
+                .iter_mut()
+                .find(|(path, _, _)| path == &resolved_env_path)
+            {
+                if !affected_services.contains(&svc.name) {
+                    affected_services.push(svc.name.clone());
                 }
+                continue;
+            }
+            if let Ok(contents) = std::fs::read_to_string(&resolved_env_path) {
+                web_env_files.push((resolved_env_path, contents, vec![svc.name.clone()]));
+            }
+        }
+    }
+
+    for (env_path, contents, mut affected_services) in web_env_files {
+        affected_services.sort();
+        let service_label = if affected_services.len() == 1 {
+            "web service"
+        } else {
+            "web services"
+        };
+        for line in contents.lines() {
+            let Some((key, _)) = parse_env_line(line) else {
+                continue;
+            };
+            // Check against the deployed (uppercase) form: deploy-sync
+            // uppercases keys on import, so a lowercase `stripe_secret_key`
+            // becomes the secret STRIPE_SECRET_KEY at runtime and must be
+            // flagged. The canonical redactor rule carries the PUBLIC_KEY /
+            // AWS_REGION allowlist, so preflight flags exactly what `--json`
+            // would redact — no parallel heuristic that drifts. The message
+            // keeps the var as written for recognizability.
+            let key_upper = key.to_uppercase();
+            let is_frontend_var = key_upper.starts_with("VITE_")
+                || key_upper.starts_with("NEXT_PUBLIC_")
+                || key_upper.starts_with("REACT_APP_");
+            if !is_frontend_var && crate::redact::env_var_key_is_secret(&key_upper) {
+                let path = env_path.to_string_lossy().into_owned();
+                findings.push(
+                    PreflightFinding::warning(
+                        "SECRET_IN_WEB_SERVICE",
+                        format!(
+                            "Secret-looking var '{}' in {} (used by {}: {}) — if this is a backend secret, remove it from this env file and set it only on the backend service that needs it.",
+                            key,
+                            env_path.display(),
+                            service_label,
+                            affected_services.join(", "),
+                        ),
+                    )
+                    .with_path(path),
+                );
             }
         }
     }
