@@ -475,7 +475,7 @@ pub fn logs(app_flag: Option<&str>, preview_identifier: &str, follow: bool, tail
         let streamed = if output::is_json_mode() {
             crate::commands::deploy::stream_deploy_json(&client, &app_id, deploy_id)
         } else {
-            crate::commands::deploy::stream_deploy(&client, &app_id, deploy_id)
+            crate::commands::deploy::stream_deploy(&client, &app_id, deploy_id).map(|s| s.deploy)
         };
         match streamed {
             Ok(_) => return,

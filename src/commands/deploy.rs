@@ -2727,12 +2727,13 @@ pub(crate) fn stream_deploy(
     client: &FlooClient,
     app_id: &str,
     deploy_id: &str,
-) -> Result<Deploy, FlooApiError> {
+) -> Result<StreamedDeploy, FlooApiError> {
     let response = client.stream_deploy_logs(app_id, deploy_id)?;
     let reader = std::io::BufReader::new(response);
 
     let mut event_type = String::new();
     let mut data_buf = String::new();
+    let mut printed = StreamedOutput::default();
 
     for line_result in reader.lines() {
         let line = match line_result {
@@ -2756,15 +2757,18 @@ pub(crate) fn stream_deploy(
                     Ok(parsed) => {
                         let status = parsed.get("status").and_then(|v| v.as_str()).unwrap_or("");
                         output::bold_line(status_label(status));
+                        printed.status = Some(status.to_string());
                     }
                     Err(e) => eprintln!("Malformed SSE status event: {e}"),
                 },
                 "log" => match serde_json::from_str::<serde_json::Value>(&data_buf) {
                     Ok(parsed) => {
                         if let Some(text) = parsed.get("text").and_then(|v| v.as_str()) {
-                            for log_line in text.trim().lines() {
+                            let lines = log_lines(text);
+                            for log_line in &lines {
                                 output::dim_line(log_line);
                             }
+                            printed.log_lines += lines.len();
                         }
                     }
                     Err(e) => eprintln!("Malformed SSE log event: {e}"),
@@ -2793,7 +2797,10 @@ pub(crate) fn stream_deploy(
     }
 
     // After stream ends, fetch final deploy state for success/error output
-    client.get_deploy(app_id, deploy_id)
+    Ok(StreamedDeploy {
+        deploy: client.get_deploy(app_id, deploy_id)?,
+        printed,
+    })
 }
 
 /// Stream deploy events via SSE and emit NDJSON to stdout for JSON mode.
@@ -2878,7 +2885,8 @@ pub(crate) fn stream_deploy_json(
             client.get_deploy(app_id, deploy_id)?
         }
     };
-    let final_deploy = settle_to_terminal(client, app_id, fetched);
+    // JSON mode printed no human log lines, so the settle poll resumes from zero.
+    let final_deploy = settle_to_terminal(client, app_id, fetched.into());
     output::print_json(&serde_json::json!({
         "event": "done",
         "status": final_deploy.status.as_deref().unwrap_or(""),
@@ -2893,37 +2901,112 @@ pub(crate) fn stream_deploy_json(
 /// status=deploying at stream end (floo-cli#208: reported as "Deploy ended in
 /// unexpected state: deploying" on a healthy rollout). Every stream consumer
 /// funnels through here; only the watch command had this fallback before.
-pub(crate) fn settle_to_terminal(client: &FlooClient, app_id: &str, streamed: Deploy) -> Deploy {
-    let status = streamed.status.as_deref().unwrap_or("");
+pub(crate) fn settle_to_terminal(
+    client: &FlooClient,
+    app_id: &str,
+    mut streamed: StreamedDeploy,
+) -> Deploy {
+    let status = streamed.deploy.status.as_deref().unwrap_or("");
     if deploy_status::is_terminal(status) {
-        return streamed;
+        return streamed.deploy;
     }
     if !output::is_json_mode() {
         eprintln!("Stream ended in non-terminal state ({status}), falling back to polling...");
     }
-    poll_deploy(client, app_id, &streamed)
+    poll_deploy_resuming(client, app_id, &streamed.deploy, &mut streamed.printed)
+}
+
+/// Split one chunk of build-log text into the lines it contains.
+///
+/// Exactly one trailing newline is consumed as the chunk terminator, so
+/// interior blank lines survive and the counts are ADDITIVE: summing this over
+/// newline-aligned chunks equals the count over the concatenated text. That is
+/// what lets a poll resume from a line the stream already printed. The previous
+/// `text.trim().lines()` was neither — it ate the log's own spacing at every
+/// chunk boundary.
+fn log_lines(text: &str) -> Vec<&str> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+    text.strip_suffix('\n')
+        .unwrap_or(text)
+        .split('\n')
+        .collect()
+}
+
+/// Print the lines of `build_logs` past the first `printed_lines`, and return
+/// the new printed-line count.
+fn print_log_tail(build_logs: &str, printed_lines: usize) -> usize {
+    let lines = log_lines(build_logs);
+    if lines.len() <= printed_lines {
+        return printed_lines;
+    }
+    for line in &lines[printed_lines..] {
+        output::dim_line(line);
+    }
+    lines.len()
+}
+
+/// What a finished SSE stream already put on screen, so a poll that takes over
+/// continues the output instead of replaying it.
+#[derive(Default)]
+pub(crate) struct StreamedOutput {
+    /// Lines of the deploy's build log already printed.
+    log_lines: usize,
+    /// Last status label printed.
+    status: Option<String>,
+}
+
+/// A stream's result: the deploy it settled on, plus what it printed getting
+/// there. Pass it straight to `settle_to_terminal`.
+pub(crate) struct StreamedDeploy {
+    pub deploy: Deploy,
+    printed: StreamedOutput,
+}
+
+impl From<Deploy> for StreamedDeploy {
+    /// A deploy nothing has been printed for yet.
+    fn from(deploy: Deploy) -> Self {
+        Self {
+            deploy,
+            printed: StreamedOutput::default(),
+        }
+    }
 }
 
 /// Poll the deploy endpoint until it reaches a terminal status.
 pub(crate) fn poll_deploy(client: &FlooClient, app_id: &str, initial_data: &Deploy) -> Deploy {
+    poll_deploy_resuming(client, app_id, initial_data, &mut StreamedOutput::default())
+}
+
+/// Poll to terminal, continuing output a stream already started.
+///
+/// `printed` is what the SSE stream put on screen. Without it the poll replayed
+/// the whole build log from line 0 and restated the status label every 2s tick
+/// — on the COMMON path, because the stream routinely ends before the deploy is
+/// terminal (floo-cli#208, see `settle_to_terminal`).
+fn poll_deploy_resuming(
+    client: &FlooClient,
+    app_id: &str,
+    initial_data: &Deploy,
+    printed: &mut StreamedOutput,
+) -> Deploy {
     let deploy_id = initial_data.id.clone();
     let poll_start = Instant::now();
-    let mut last_log_len: usize = 0;
     let mut deploy_data = initial_data.clone();
 
     while !deploy_status::is_terminal(deploy_data.status.as_deref().unwrap_or("")) {
         if !output::is_json_mode() {
-            let build_logs = deploy_data.build_logs.as_deref().unwrap_or("");
-            if build_logs.len() > last_log_len {
-                let new_logs = &build_logs[last_log_len..];
-                for line in new_logs.trim().lines() {
-                    output::dim_line(line);
-                }
-                last_log_len = build_logs.len();
-            }
+            printed.log_lines = print_log_tail(
+                deploy_data.build_logs.as_deref().unwrap_or(""),
+                printed.log_lines,
+            );
 
             let status = deploy_data.status.as_deref().unwrap_or("");
-            output::bold_line(status_label(status));
+            if printed.status.as_deref() != Some(status) {
+                output::bold_line(status_label(status));
+                printed.status = Some(status.to_string());
+            }
         }
 
         thread::sleep(POLL_INTERVAL);
@@ -2951,13 +3034,10 @@ pub(crate) fn poll_deploy(client: &FlooClient, app_id: &str, initial_data: &Depl
 
     // Print any remaining build logs for the final state
     if !output::is_json_mode() {
-        let build_logs = deploy_data.build_logs.as_deref().unwrap_or("");
-        if build_logs.len() > last_log_len {
-            let new_logs = &build_logs[last_log_len..];
-            for line in new_logs.trim().lines() {
-                output::dim_line(line);
-            }
-        }
+        printed.log_lines = print_log_tail(
+            deploy_data.build_logs.as_deref().unwrap_or(""),
+            printed.log_lines,
+        );
     }
 
     deploy_data
@@ -3384,6 +3464,108 @@ mod tests {
         assert!(plan[0].notes[0].contains("min_instances = 0"));
     }
 
+    // The stream prints in chunks and the poll prints from the whole log. The
+    // resume only works if both count lines the same way, so this is the
+    // load-bearing property: line counts are additive across chunk boundaries.
+    #[test]
+    fn log_line_counts_are_additive_across_chunk_boundaries() {
+        output::set_json_mode(false);
+
+        let whole = "[web] Restarting...\n\n[api] Restarting...\nHealth check passed.\n";
+        // Every newline-aligned split of the same text, chunked as SSE would.
+        for chunk_at in [1usize, 2, 3] {
+            let mut chunks: Vec<String> = Vec::new();
+            let mut current = String::new();
+            for (i, line) in whole.split_inclusive('\n').enumerate() {
+                current.push_str(line);
+                if (i + 1) % chunk_at == 0 {
+                    chunks.push(std::mem::take(&mut current));
+                }
+            }
+            if !current.is_empty() {
+                chunks.push(current);
+            }
+
+            let streamed: usize = chunks.iter().map(|c| log_lines(c).len()).sum();
+            assert_eq!(streamed, log_lines(whole).len(), "chunked by {chunk_at}");
+        }
+    }
+
+    #[test]
+    fn log_lines_keeps_blank_lines_and_eats_one_terminator() {
+        output::set_json_mode(false);
+
+        assert_eq!(log_lines(""), Vec::<&str>::new());
+        assert_eq!(log_lines("a\n"), vec!["a"]);
+        assert_eq!(log_lines("a"), vec!["a"]);
+        // An interior blank line is the log's own spacing, not a terminator.
+        assert_eq!(log_lines("a\n\nb\n"), vec!["a", "", "b"]);
+        // Only ONE trailing newline is the terminator; the rest are content.
+        assert_eq!(log_lines("a\n\n"), vec!["a", ""]);
+    }
+
+    // The regression: settle_to_terminal polls on the COMMON path (see below),
+    // and poll_deploy used to start at log offset 0 — replaying every line the
+    // stream had just printed.
+    #[test]
+    fn poll_does_not_replay_lines_the_stream_already_printed() {
+        output::set_json_mode(false);
+
+        let streamed = "[web] Restarting...\n[api] Restarting...\n";
+        let already_printed = log_lines(streamed).len();
+        assert_eq!(already_printed, 2);
+
+        // The poll reads the same log the stream rendered, plus one new line.
+        let polled = format!("{streamed}Health check passed.\n");
+        // Returned count - resume point = lines actually printed: just the new one.
+        assert_eq!(
+            print_log_tail(&polled, already_printed),
+            already_printed + 1
+        );
+        // The next tick has nothing to add.
+        assert_eq!(
+            print_log_tail(&polled, already_printed + 1),
+            already_printed + 1
+        );
+        // Resuming from zero (a stream that never printed) shows everything.
+        assert_eq!(print_log_tail(&polled, 0), already_printed + 1);
+    }
+
+    // The wiring half of the regression: the poll must CONTINUE the stream's
+    // progress record, not start a fresh one.
+    #[test]
+    fn poll_resumes_the_stream_line_count_and_status() {
+        output::set_json_mode(false);
+
+        let mut server = mockito::Server::new();
+        let m = server
+            .mock("GET", "/v1/apps/app-1/deploys/dep-1")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"id":"dep-1","status":"live","build_logs":"[web] Restarting...\n[api] Restarting...\nHealth check passed.\n","created_at":"2024-01-01T00:00:00Z"}"#,
+            )
+            .expect(1)
+            .create();
+
+        let client = mock_client(&server.url());
+        let mut initial = deploy_with_status("deploying");
+        initial.build_logs = Some("[web] Restarting...\n[api] Restarting...\n".to_string());
+        let mut printed = StreamedOutput {
+            log_lines: 2,
+            status: Some("deploying".to_string()),
+        };
+
+        let settled = poll_deploy_resuming(&client, "app-1", &initial, &mut printed);
+
+        assert_eq!(settled.status.as_deref(), Some("live"));
+        // 2 streamed + 1 new: the streamed lines are not replayed.
+        assert_eq!(printed.log_lines, 3);
+        // The status the stream already showed is not restated per tick.
+        assert_eq!(printed.status.as_deref(), Some("deploying"));
+        m.assert();
+    }
+
     // floo-cli#208: the SSE stream closes when the executor job exits, which
     // races the worker's LIVE commit — the post-stream read can say
     // "deploying" on a deploy that is seconds from LIVE. settle_to_terminal
@@ -3401,7 +3583,7 @@ mod tests {
             .create();
 
         let client = mock_client(&server.url());
-        let settled = settle_to_terminal(&client, "app-1", deploy_with_status("deploying"));
+        let settled = settle_to_terminal(&client, "app-1", deploy_with_status("deploying").into());
 
         assert_eq!(settled.status.as_deref(), Some("live"));
         m.assert();
@@ -3414,7 +3596,7 @@ mod tests {
 
         let client = mock_client(&server.url());
         for status in ["live", "failed", "superseded"] {
-            let settled = settle_to_terminal(&client, "app-1", deploy_with_status(status));
+            let settled = settle_to_terminal(&client, "app-1", deploy_with_status(status).into());
             assert_eq!(settled.status.as_deref(), Some(status));
         }
         m.assert();
