@@ -1,6 +1,6 @@
 use std::fs;
-use std::io::Write;
-use std::path::PathBuf;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 use std::process;
 
 use colored::Colorize;
@@ -180,7 +180,40 @@ pub fn install(path: Option<PathBuf>, print: bool) {
     }
 }
 
-/// Refresh all tracked skill files. Returns the list of paths that were refreshed.
+/// Write embedded content only when the file is missing or differs on disk.
+fn write_if_changed(path: &Path, content: &str) -> io::Result<bool> {
+    if fs::read(path).is_ok_and(|existing| existing == content.as_bytes()) {
+        return Ok(false);
+    }
+
+    fs::write(path, content)?;
+    Ok(true)
+}
+
+/// Refresh one tracked skill bundle. Returns whether any bundled file changed.
+fn refresh_skill_bundle(path: &Path) -> io::Result<bool> {
+    let mut changed = write_if_changed(path, SKILL_CONTENT)?;
+
+    if let Some(parent) = path.parent() {
+        for (skill_name, skill_content) in PLUGIN_SKILLS {
+            let skill_dir = parent.join(skill_name);
+            let _ = fs::create_dir_all(&skill_dir);
+            let skill_path = skill_dir.join("SKILL.md");
+            match write_if_changed(&skill_path, skill_content) {
+                Ok(plugin_changed) => changed |= plugin_changed,
+                Err(e) => {
+                    if !output::is_json_mode() {
+                        eprintln!("  Warning: failed to refresh {skill_name} skill: {e}");
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(changed)
+}
+
+/// Refresh changed tracked skill bundles. Returns the list of paths that changed.
 /// Removes stale paths (directories that no longer exist) from tracking.
 /// Reports errors for write failures without removing those paths.
 pub fn refresh_skill_files() -> Vec<String> {
@@ -204,24 +237,12 @@ pub fn refresh_skill_files() -> Vec<String> {
             continue;
         }
 
-        match fs::write(&path, SKILL_CONTENT) {
-            Ok(()) => {
-                refreshed.push(path_str.clone());
-                still_valid.push(path_str.clone());
-
-                // Refresh plugin skills as sibling directories
-                if let Some(parent) = path.parent() {
-                    for (skill_name, skill_content) in PLUGIN_SKILLS {
-                        let skill_dir = parent.join(skill_name);
-                        let _ = fs::create_dir_all(&skill_dir);
-                        let skill_path = skill_dir.join("SKILL.md");
-                        if let Err(e) = fs::write(&skill_path, skill_content) {
-                            if !output::is_json_mode() {
-                                eprintln!("  Warning: failed to refresh {skill_name} skill: {e}");
-                            }
-                        }
-                    }
+        match refresh_skill_bundle(&path) {
+            Ok(changed) => {
+                if changed {
+                    refreshed.push(path_str.clone());
                 }
+                still_valid.push(path_str.clone());
             }
             Err(e) => {
                 // Write failed but directory exists — keep tracking, report error
@@ -421,6 +442,37 @@ mod tests {
                 "{name} skill frontmatter name mismatch"
             );
         }
+    }
+
+    #[test]
+    fn test_skill_bundle_refresh_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let skill_path = dir.path().join("SKILL.md");
+
+        assert!(refresh_skill_bundle(&skill_path).unwrap());
+        assert_eq!(fs::read_to_string(&skill_path).unwrap(), SKILL_CONTENT);
+        for (name, content) in PLUGIN_SKILLS {
+            assert_eq!(
+                fs::read_to_string(dir.path().join(name).join("SKILL.md")).unwrap(),
+                *content
+            );
+        }
+
+        assert!(!refresh_skill_bundle(&skill_path).unwrap());
+    }
+
+    #[test]
+    fn test_skill_bundle_refresh_repairs_plugin_drift_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let skill_path = dir.path().join("SKILL.md");
+        refresh_skill_bundle(&skill_path).unwrap();
+
+        let plugin_path = dir.path().join("floo-services").join("SKILL.md");
+        fs::write(&plugin_path, "stale skill").unwrap();
+
+        assert!(refresh_skill_bundle(&skill_path).unwrap());
+        assert_eq!(fs::read_to_string(plugin_path).unwrap(), SKILL_SERVICES);
+        assert!(!refresh_skill_bundle(&skill_path).unwrap());
     }
 
     #[test]

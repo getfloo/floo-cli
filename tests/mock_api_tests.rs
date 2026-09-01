@@ -5760,6 +5760,31 @@ fn test_version_human_reports_up_to_date_after_successful_check() {
     let home = TempDir::new().unwrap();
     let install_dir = TempDir::new().unwrap();
     let install_path = install_dir.path().join("floo");
+    let skill_dir = home.path().join("skills").join("floo");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    let skill_path = skill_dir.join("SKILL.md");
+    std::fs::write(&skill_path, include_str!("../skills/floo/SKILL.md")).unwrap();
+    for (name, content) in [
+        (
+            "floo-services",
+            include_str!("../plugin/skills/floo-services/SKILL.md"),
+        ),
+        (
+            "floo-security",
+            include_str!("../plugin/skills/floo-security/SKILL.md"),
+        ),
+    ] {
+        let plugin_dir = skill_dir.join(name);
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        std::fs::write(plugin_dir.join("SKILL.md"), content).unwrap();
+    }
+    let config_dir = home.path().join(".floo");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("config.json"),
+        serde_json::json!({"skill_paths": [skill_path]}).to_string(),
+    )
+    .unwrap();
 
     installed_floo()
         .arg("version")
@@ -5771,6 +5796,7 @@ fn test_version_human_reports_up_to_date_after_successful_check() {
         .stdout(predicate::str::contains("0.0.0-dev"))
         .stderr(predicate::str::contains("Checking for floo updates..."))
         .stderr(predicate::str::contains("floo 0.0.0-dev is up to date."))
+        .stderr(predicate::str::contains("Refreshed agent skill").not())
         .stderr(predicate::str::contains("Updated floo from").not());
 
     release_mock.assert();
