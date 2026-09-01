@@ -374,6 +374,7 @@ Examples:
   floo feedback --json \"friction with env var sync\" --category friction")]
     Feedback {
         /// Your feedback message.
+        #[arg(allow_hyphen_values = true)]
         message: String,
 
         /// Category: bug, friction, feature_request, or general.
@@ -3118,6 +3119,33 @@ mod tests {
             "--preflight",
         ])
         .is_err());
+    }
+
+    #[test]
+    fn feedback_accepts_flag_shaped_messages_with_trailing_options() {
+        let cli = Cli::try_parse_from([
+            "floo",
+            "feedback",
+            "--no-deploy",
+            "--category",
+            "bug",
+            "--context",
+            "deploy unexpectedly ran",
+        ])
+        .expect("flag-shaped feedback message must parse");
+
+        let Commands::Feedback {
+            message,
+            category,
+            context,
+            ..
+        } = cli.command
+        else {
+            panic!("expected feedback command");
+        };
+        assert_eq!(message, "--no-deploy");
+        assert_eq!(category, "bug");
+        assert_eq!(context.as_deref(), Some("deploy unexpectedly ran"));
     }
 
     #[test]
