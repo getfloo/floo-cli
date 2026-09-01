@@ -82,7 +82,12 @@ pub fn list(app: Option<&str>, env: &str) {
             s.service_type.as_deref().unwrap_or("-").to_string(),
             s.status.as_deref().unwrap_or("-").to_string(),
             s.ingress.as_deref().unwrap_or("-").to_string(),
-            s.cloud_run_url.as_deref().unwrap_or("-").to_string(),
+            // The edge hostname, never `cloud_run_url` — that column is a
+            // debug origin, and it is not env-scoped, so a column labelled
+            // "URL" was pointing users past the gateway at (usually) the dev
+            // origin. Services with no public surface get an em dash, like
+            // the managed rows below.
+            s.url.as_deref().unwrap_or("\u{2014}").to_string(),
         ]);
     }
     for ms in &managed_services {
@@ -195,7 +200,7 @@ fn render_app_service(svc: &crate::api_types::ApiService, service_name: &str, ap
     let svc_type = svc.service_type.as_deref().unwrap_or("-");
     let status = svc.status.as_deref().unwrap_or("-");
     let ingress = svc.ingress.as_deref().unwrap_or("-");
-    let url = svc.cloud_run_url.as_deref().unwrap_or("-");
+    let url = svc.url.as_deref().unwrap_or("\u{2014}");
     let port = svc
         .port
         .map(|p| p.to_string())
@@ -224,6 +229,10 @@ fn render_app_service(svc: &crate::api_types::ApiService, service_name: &str, ap
     output::info(&format!("  Status:  {status}"), None);
     output::info(&format!("  Ingress: {ingress}"), None);
     output::info(&format!("  URL:     {url}"), None);
+    if let Some(runtime_url) = svc.cloud_run_url.as_deref() {
+        output::info(&format!("  Runtime URL:  {runtime_url}"), None);
+        output::dim_line("              \u{21b3} direct runtime URL — debug only, not for clients");
+    }
     output::info(&format!("  Port:    {port}"), None);
     output::info("  Configured resources:", None);
     output::info(&format!("    CPU:              {cpu}"), None);

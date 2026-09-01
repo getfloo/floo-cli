@@ -146,7 +146,20 @@ fn mock_services_single_for_env(server: &mut Server, environment: Option<&str>) 
         .match_query(Matcher::AllOf(query))
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"services":[{"id":"svc-web-1","name":"web","type":"web","status":"live","cloud_run_url":"https://web.floo.app","port":3000,"cpu":"2","memory":"1Gi","max_instances":10,"min_instances":1,"instances":null,"max_request_body_mb":32,"runtime_plan":{"environment":"dev","service_type":"web","availability":"warm","declared":{"cpu":"2","memory":"1Gi","min_instances":1,"max_instances":10,"instances":null},"effective":{"cpu":"2","memory":"1Gi","min_instances":1,"max_instances":10,"instances":null},"sources":{"cpu":"configured","memory":"configured","min_instances":"configured","max_instances":"configured","instances":null},"cpu_allocation":"request_based","cpu_allocation_reason":"http_request_scoped","warnings":[]}}]}"#)
+        .with_body(r#"{"services":[{"id":"svc-web-1","name":"web","type":"web","status":"live","url":"https://my-app-dev-web.on.getfloo.com","cloud_run_url":"https://floo-my-app-dev-web-l3txcgkazq-uc.a.run.app","port":3000,"cpu":"2","memory":"1Gi","max_instances":10,"min_instances":1,"instances":null,"max_request_body_mb":32,"runtime_plan":{"environment":"dev","service_type":"web","availability":"warm","declared":{"cpu":"2","memory":"1Gi","min_instances":1,"max_instances":10,"instances":null},"effective":{"cpu":"2","memory":"1Gi","min_instances":1,"max_instances":10,"instances":null},"sources":{"cpu":"configured","memory":"configured","min_instances":"configured","max_instances":"configured","instances":null},"cpu_allocation":"request_based","cpu_allocation_reason":"http_request_scoped","warnings":[]}}]}"#)
+        .create()
+}
+
+/// Mock GET managed-services with an empty set — `services list` always calls it.
+fn mock_managed_services_empty(server: &mut Server) -> Mock {
+    server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"managed_services":[],"total":0}"#)
         .create()
 }
 
@@ -4007,6 +4020,84 @@ fn test_services_list_partial_view_when_managed_services_fetch_fails() {
 }
 
 #[test]
+fn test_services_list_human_shows_edge_host_not_cloud_run_origin() {
+    // Regression: the URL column used to render `cloud_run_url`, telling users
+    // to hit the Cloud Run origin directly and bypass the gateway. The column
+    // is the edge hostname the server resolved; the origin is not in the table.
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_services_single_env(&mut server, "dev");
+    let _managed = mock_managed_services_empty(&mut server);
+
+    floo()
+        .args(["services", "list", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("my-app-dev-web.on.getfloo.com"))
+        .stderr(predicate::str::contains(".run.app").not());
+}
+
+#[test]
+fn test_services_list_human_renders_em_dash_when_service_has_no_public_url() {
+    // A worker has no public surface, so the server sends `url: null` while
+    // still reporting the internal Cloud Run origin. The table must show an
+    // em dash rather than falling back to the origin.
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/services").as_str())
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+            Matcher::UrlEncoded("environment".into(), "dev".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"services":[{"id":"svc-worker-1","name":"worker","type":"worker","status":"live","ingress":"internal","url":null,"cloud_run_url":"https://floo-my-app-dev-worker-l3txcgkazq-uc.a.run.app","port":null}]}"#,
+        )
+        .create();
+    let _managed = mock_managed_services_empty(&mut server);
+
+    floo()
+        .args(["services", "list", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("worker"))
+        .stderr(predicate::str::contains("\u{2014}"))
+        .stderr(predicate::str::contains(".run.app").not());
+}
+
+#[test]
+fn test_services_show_human_labels_cloud_run_origin_as_debug_only() {
+    // `services show` keeps the origin — operators need it — but under its own
+    // label and caveat, never as the service's URL.
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_services_single_env(&mut server, "dev");
+
+    floo()
+        .args(["services", "show", "web", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "URL:     https://my-app-dev-web.on.getfloo.com",
+        ))
+        .stderr(predicate::str::contains(
+            "Runtime URL:  https://floo-my-app-dev-web-l3txcgkazq-uc.a.run.app",
+        ))
+        .stderr(predicate::str::contains(
+            "direct runtime URL — debug only, not for clients",
+        ));
+}
+
+#[test]
 fn test_services_list_empty_when_no_services_of_either_kind() {
     let mut server = Server::new();
     let home = setup_config(&server);
@@ -4132,7 +4223,11 @@ fn test_services_show_user_managed() {
     assert_eq!(json["success"], true);
     let service = &json["data"];
     assert_eq!(service["name"], "web");
-    assert_eq!(service["cloud_run_url"], "https://web.floo.app");
+    assert_eq!(service["url"], "https://my-app-dev-web.on.getfloo.com");
+    assert_eq!(
+        service["cloud_run_url"],
+        "https://floo-my-app-dev-web-l3txcgkazq-uc.a.run.app"
+    );
     assert_eq!(service["cpu"], "2");
     assert_eq!(service["memory"], "1Gi");
     assert_eq!(service["max_instances"], 10);
