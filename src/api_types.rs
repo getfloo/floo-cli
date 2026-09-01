@@ -495,6 +495,15 @@ pub struct ApiService {
     pub service_type: Option<String>,
     pub status: Option<String>,
     pub ingress: Option<String>,
+    /// The address clients actually use: the floo edge hostname for the
+    /// selected environment, or an active custom domain. The server resolves
+    /// it (`compute_service_display_urls`), which never returns a raw Cloud
+    /// Run host. `None` when the service has no public surface — internal
+    /// ingress, a worker/cron type, or an environment with no live surface.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Direct Cloud Run origin behind the edge.
+    /// Debug-only — clients should hit `url` (the gateway URL).
     pub cloud_run_url: Option<String>,
     pub port: Option<u64>,
     #[serde(default)]
