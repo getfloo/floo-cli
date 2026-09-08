@@ -3096,3 +3096,75 @@ fn test_init_prefers_floo_env_over_dot_env() {
         "Expected .floo.env to win over .env, got:\n{app_toml}"
     );
 }
+
+#[test]
+fn test_preflight_max_request_body_mb_valid_and_invalid_manifests() {
+    for section in ["resources", "services.api", "service-file"] {
+        for value in [1, 32, 100, 0, 101] {
+            let project = tempfile::TempDir::new().unwrap();
+            let (file, manifest) = if section == "service-file" {
+                (
+                    "floo.service.toml",
+                    format!(
+                        r#"[app]
+name = "myapp"
+[service]
+name = "api"
+type = "api"
+port = 8000
+[resources]
+max_request_body_mb = {value}
+"#
+                    ),
+                )
+            } else {
+                let resource = format!("max_request_body_mb = {value}");
+                let global = if section == "resources" {
+                    resource.as_str()
+                } else {
+                    ""
+                };
+                let inline = if section == "services.api" {
+                    resource.as_str()
+                } else {
+                    ""
+                };
+                (
+                    "floo.app.toml",
+                    format!(
+                        r#"[app]
+name = "myapp"
+[resources]
+{global}
+[services.api]
+type = "api"
+path = "."
+port = 8000
+{inline}
+"#
+                    ),
+                )
+            };
+            std::fs::write(project.path().join(file), manifest).unwrap();
+            std::fs::write(project.path().join("Dockerfile"), "FROM scratch\n").unwrap();
+            let output = floo()
+                .args(["--json", "preflight", project.path().to_str().unwrap()])
+                .env("HOME", project.path())
+                .output()
+                .unwrap();
+            let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            if (1..=100).contains(&value) {
+                assert!(output.status.success(), "{section}, {value}: {json}");
+                assert_eq!(json["data"]["valid"], true);
+            } else {
+                assert!(!output.status.success(), "{section}, {value}: {json}");
+                assert_eq!(json["success"], false);
+                assert!(
+                    json.to_string()
+                        .contains("max_request_body_mb must be an integer between 1 and 100"),
+                    "{json}"
+                );
+            }
+        }
+    }
+}

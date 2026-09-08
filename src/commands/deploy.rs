@@ -3410,9 +3410,111 @@ mod tests {
             cpu: None,
             memory: None,
             max_instances,
+            max_request_body_mb: None,
             min_instances,
             instances,
             migrate_command: None,
+        }
+    }
+
+    #[test]
+    fn test_max_request_body_mb_manifest_reaches_deploy_request() {
+        output::set_json_mode(false);
+        output::set_dry_run_mode(false);
+        // Exercise all discovery paths and each level of resource precedence.
+        for (mode, global, service_file, inline, expected) in [
+            ("inline", Some(16), None, Some(32), Some(32)),
+            ("inline", Some(16), None, None, Some(16)),
+            ("inline", None, None, None, None),
+            ("delegated", Some(16), Some(24), Some(32), Some(32)),
+            ("delegated", Some(16), Some(24), None, Some(24)),
+            ("delegated", Some(16), None, None, Some(16)),
+            ("single", None, Some(32), None, Some(32)),
+            ("single", None, None, None, None),
+        ] {
+            let dir = TempDir::new().unwrap();
+            let resource = |value: Option<u64>| {
+                value.map_or(String::new(), |v| format!("max_request_body_mb = {v}"))
+            };
+            let path = if mode == "delegated" { "api" } else { "." };
+            fs::create_dir_all(dir.path().join(path)).unwrap();
+            if mode != "single" {
+                let port = if mode == "inline" { "port = 8000" } else { "" };
+                fs::write(
+                    dir.path().join("floo.app.toml"),
+                    format!(
+                        r#"[app]
+name = "my-app"
+[resources]
+{}
+[services.api]
+type = "api"
+path = "{path}"
+{port}
+{}
+"#,
+                        resource(global),
+                        resource(inline)
+                    ),
+                )
+                .unwrap();
+            }
+            if mode != "inline" {
+                fs::write(
+                    dir.path().join(path).join("floo.service.toml"),
+                    format!(
+                        r#"[app]
+name = "my-app"
+[service]
+name = "api"
+type = "api"
+port = 8000
+[resources]
+{}
+"#,
+                        resource(service_file)
+                    ),
+                )
+                .unwrap();
+            }
+            let resolved = project_config::resolve_app_context(dir.path(), None).unwrap();
+            let services = project_config::discover_services(&resolved).unwrap();
+            assert_eq!(services.len(), 1);
+            assert_eq!(services[0].max_request_body_mb, expected, "{mode}");
+            let mut server = mockito::Server::new();
+            let mut body = serde_json::json!({
+                "runtime": "python",
+                "services": [{
+                    "name": "api", "service_type": "api", "path": path,
+                    "port": 8000, "ingress": "public"
+                }]
+            });
+            if let Some(value) = expected {
+                body["services"][0]["max_request_body_mb"] = serde_json::json!(value);
+            }
+            let request = server
+                .mock("POST", "/v1/apps/app-1/deploys")
+                .match_body(mockito::Matcher::Json(body))
+                .with_status(200)
+                .with_body(
+                    r#"{"id":"dep-1","status":"pending","created_at":"2024-01-01T00:00:00Z"}"#,
+                )
+                .create();
+            mock_client(&server.url())
+                .create_deploy(
+                    "app-1",
+                    "python",
+                    None,
+                    Some(&services),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    false,
+                )
+                .unwrap();
+            request.assert();
         }
     }
 

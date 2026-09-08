@@ -861,6 +861,7 @@ mod tests {
             cpu: None,
             memory: None,
             max_instances: None,
+            max_request_body_mb: None,
             min_instances: None,
             instances: None,
             dev_command: dev_command.map(String::from),

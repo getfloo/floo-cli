@@ -6,7 +6,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::errors::{ErrorCode, FlooError};
 
-use super::service_config::{ResourceConfig, ServiceEnvContract, ServiceIngress};
+use super::service_config::{
+    deserialize_max_request_body_mb, validate_max_request_body_mb, ResourceConfig,
+    ServiceEnvContract, ServiceIngress,
+};
 use super::SCHEMA_URL;
 
 /// A single scheduled cron job declared in `[cron.<name>]`.
@@ -351,6 +354,12 @@ pub struct AppServiceEntry {
     pub memory: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_instances: Option<u32>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_max_request_body_mb"
+    )]
+    pub max_request_body_mb: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_instances: Option<u32>,
     /// Exact always-on instance count for a `worker` service (getfloo/floo#1801).
@@ -430,6 +439,7 @@ impl AppServiceEntry {
             cpu: None,
             memory: None,
             max_instances: None,
+            max_request_body_mb: None,
             min_instances: None,
             instances: None,
             dev_command: None,
@@ -463,10 +473,14 @@ pub fn load_app_config(dir: &Path) -> Result<Option<AppFileConfig>, FlooError> {
 }
 
 fn validate_app_config(config: &AppFileConfig) -> Result<(), FlooError> {
+    if let Some(ref resources) = config.resources {
+        validate_max_request_body_mb(resources.max_request_body_mb)?;
+    }
     // Detect inline mode: any user-managed service has `port` set
     let has_inline = config.services.values().any(|e| e.port.is_some());
 
     for (name, entry) in &config.services {
+        validate_max_request_body_mb(entry.max_request_body_mb)?;
         // In inline mode, all services require port and path
         // (path is optional when repo is set — defaults to "." on the server)
         if has_inline {
@@ -705,6 +719,94 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn test_max_request_body_mb_app_manifest_round_trip_and_omission() {
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
+        let dir = TempDir::new().unwrap();
+        for value in [
+            None,
+            Some(1),
+            Some(32),
+            Some(super::super::service_config::MAX_REQUEST_BODY_MB_LIMIT),
+        ] {
+            let resource = value.map_or(String::new(), |v| format!("max_request_body_mb = {v}"));
+            fs::write(
+                dir.path().join(super::super::APP_CONFIG_FILE),
+                format!(
+                    r#"[app]
+name = "my-app"
+[resources]
+{resource}
+[services.api]
+type = "api"
+path = "."
+port = 8000
+{resource}
+"#
+                ),
+            )
+            .unwrap();
+            let config = load_app_config(dir.path()).unwrap().unwrap();
+            let serialized = toml::to_string(&config).unwrap();
+            assert_eq!(serialized.contains("max_request_body_mb"), value.is_some());
+            let reloaded: AppFileConfig = toml::from_str(&serialized).unwrap();
+            assert_eq!(reloaded.resources.unwrap().max_request_body_mb, value);
+            assert_eq!(reloaded.services["api"].max_request_body_mb, value);
+            let json = serde_json::to_value(&config).unwrap();
+            for resource in [&json["resources"], &json["services"]["api"]] {
+                assert_eq!(
+                    resource.get("max_request_body_mb").is_some(),
+                    value.is_some()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_max_request_body_mb_app_manifest_rejects_invalid_values() {
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
+        let dir = TempDir::new().unwrap();
+        let limit = super::super::service_config::MAX_REQUEST_BODY_MB_LIMIT;
+        for section in ["resources", "services.api"] {
+            for value in [
+                "0".to_string(),
+                (limit + 1).to_string(),
+                "-1".to_string(),
+                "1.5".to_string(),
+                "true".to_string(),
+                "\"32\"".to_string(),
+            ] {
+                let service = if section == "services.api" {
+                    "type = \"api\"\npath = \".\"\nport = 8000"
+                } else {
+                    ""
+                };
+                fs::write(
+                    dir.path().join(super::super::APP_CONFIG_FILE),
+                    format!(
+                        r#"[app]
+name = "my-app"
+[{section}]
+{service}
+max_request_body_mb = {value}
+"#
+                    ),
+                )
+                .unwrap();
+                let error = load_app_config(dir.path()).unwrap_err();
+                assert_eq!(error.code, ErrorCode::InvalidProjectConfig);
+                assert!(
+                    error.message.contains(&format!(
+                        "max_request_body_mb must be an integer between 1 and {limit}"
+                    )),
+                    "{section}, {value}: {error}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn test_load_app_config_with_edge_policy() {
