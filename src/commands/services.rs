@@ -108,6 +108,11 @@ pub fn list(app: Option<&str>, env: &str) {
     }
 
     output::table(&["Name", "Type", "Status", "Ingress", "URL"], &rows, None);
+    for service in &app_services.services {
+        if let Some(runtime) = &service.runtime_plan {
+            render_instance_total(runtime, Some(&service.name));
+        }
+    }
 }
 
 pub fn info(service_name: &str, app: Option<&str>, env: &str) {
@@ -272,6 +277,7 @@ fn render_app_service(svc: &crate::api_types::ApiService, service_name: &str, ap
             None,
         );
         output::info(&format!("    CPU / memory: {cpu} / {memory}"), None);
+        render_instance_total(runtime, None);
         output::info(
             &format!(
                 "    CPU allocation: {} ({cpu_reason})",
@@ -282,6 +288,40 @@ fn render_app_service(svc: &crate::api_types::ApiService, service_name: &str, ap
         for warning in &runtime.warnings {
             output::warn(&format!("Runtime adjustment: {warning}"));
         }
+    }
+}
+
+fn render_instance_total(runtime: &crate::api_types::ApiRuntimePlan, service_name: Option<&str>) {
+    let Some(total) = &runtime.instance_total else {
+        return;
+    };
+    if runtime.effective.cpu.as_deref() == Some(total.cpu.as_str())
+        && runtime.effective.memory.as_deref() == Some(total.memory.as_str())
+    {
+        return;
+    }
+
+    if let Some(name) = service_name {
+        output::info(&format!("  Service {name}:"), None);
+    }
+    output::info(
+        &format!(
+            "    Instance total:   {} vCPU / {}",
+            total.cpu, total.memory
+        ),
+        None,
+    );
+    for component in runtime.components.iter().filter(|c| c.name != "app") {
+        output::info(
+            &format!(
+                "      + {}: {} vCPU / {} ({})",
+                component.name,
+                component.cpu,
+                component.memory,
+                component.source.replace('_', " ")
+            ),
+            None,
+        );
     }
 }
 

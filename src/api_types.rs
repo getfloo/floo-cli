@@ -474,12 +474,30 @@ pub struct ApiRuntimeSources {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiRuntimeInstanceTotal {
+    pub cpu: String,
+    pub memory: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiRuntimeComponent {
+    pub name: String,
+    pub cpu: String,
+    pub memory: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiRuntimePlan {
     pub environment: Option<String>,
     pub service_type: String,
     pub availability: String,
     pub declared: ApiRuntimeValues,
     pub effective: ApiRuntimeValues,
+    #[serde(default)]
+    pub instance_total: Option<ApiRuntimeInstanceTotal>,
+    #[serde(default)]
+    pub components: Vec<ApiRuntimeComponent>,
     pub sources: ApiRuntimeSources,
     pub cpu_allocation: String,
     pub cpu_allocation_reason: String,
