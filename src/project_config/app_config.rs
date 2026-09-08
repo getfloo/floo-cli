@@ -293,32 +293,12 @@ impl AppAccessMode {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum AppAgentMode {
-    Readonly,
-    Supervised,
-    Autonomous,
-}
-
-impl AppAgentMode {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            AppAgentMode::Readonly => "readonly",
-            AppAgentMode::Supervised => "supervised",
-            AppAgentMode::Autonomous => "autonomous",
-        }
-    }
-}
-
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppFileAppSection {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub access_mode: Option<AppAccessMode>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent_mode: Option<AppAgentMode>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1140,7 +1120,6 @@ type = "mysql"
             app: AppFileAppSection {
                 name: "roundtrip-app".to_string(),
                 access_mode: None,
-                agent_mode: None,
             },
             auth: None,
             github: None,

@@ -24,7 +24,6 @@ fn build_deploy_body(
     framework: Option<&str>,
     services: Option<&[ServiceConfig]>,
     access_mode: Option<&str>,
-    agent_mode: Option<&str>,
     auth_redirect_uris: Option<&[String]>,
     cron_jobs: Option<&[crate::project_config::CronJobEntry]>,
     github_config: Option<&crate::project_config::GitHubConfig>,
@@ -50,9 +49,6 @@ fn build_deploy_body(
     }
     if let Some(mode) = access_mode {
         body["access_mode"] = Value::String(mode.to_string());
-    }
-    if let Some(mode) = agent_mode {
-        body["agent_mode"] = Value::String(mode.to_string());
     }
     if let Some(uris) = auth_redirect_uris {
         body["auth_redirect_uris"] = serde_json::to_value(uris).map_err(|e| {
@@ -552,7 +548,6 @@ impl FlooClient {
         framework: Option<&str>,
         services: Option<&[ServiceConfig]>,
         access_mode: Option<&str>,
-        agent_mode: Option<&str>,
         auth_redirect_uris: Option<&[String]>,
         cron_jobs: Option<&[crate::project_config::CronJobEntry]>,
         github_config: Option<&crate::project_config::GitHubConfig>,
@@ -563,7 +558,6 @@ impl FlooClient {
             framework,
             services,
             access_mode,
-            agent_mode,
             auth_redirect_uris,
             cron_jobs,
             github_config,
@@ -1530,18 +1524,8 @@ mod tests {
             preview_environments: Some(true),
             preview_ttl_hours: Some(48),
         };
-        let body = build_deploy_body(
-            "nodejs",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(&gh),
-            false,
-        )
-        .expect("body builds");
+        let body = build_deploy_body("nodejs", None, None, None, None, None, Some(&gh), false)
+            .expect("body builds");
         let obj = body.as_object().expect("body is a JSON object");
 
         assert_eq!(obj.get("deploy_on_push"), Some(&Value::Bool(true)));
@@ -1564,18 +1548,8 @@ mod tests {
             preview_environments: Some(true),
             preview_ttl_hours: Some(24),
         };
-        let body = build_deploy_body(
-            "python",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(&gh),
-            false,
-        )
-        .expect("body builds");
+        let body = build_deploy_body("python", None, None, None, None, None, Some(&gh), false)
+            .expect("body builds");
         let obj = body.as_object().expect("body is a JSON object");
 
         assert!(!obj.contains_key("preview_environments"), "{body}");
@@ -1592,18 +1566,8 @@ mod tests {
             preview_environments: None,
             preview_ttl_hours: None,
         };
-        let body = build_deploy_body(
-            "nodejs",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(&gh),
-            false,
-        )
-        .expect("body builds");
+        let body = build_deploy_body("nodejs", None, None, None, None, None, Some(&gh), false)
+            .expect("body builds");
         assert_eq!(body.get("deploy_on_push"), Some(&Value::Bool(false)));
     }
 }

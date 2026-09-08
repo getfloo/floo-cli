@@ -14,8 +14,8 @@ use crate::detection::{detect_for_services, DetectionResult};
 use crate::errors::{ErrorCode, FlooApiError};
 use crate::output;
 use crate::project_config::{
-    self, validate_service_name, AppAccessMode, AppAgentMode, AppSource, ServiceConfig,
-    ServiceIngress, ServiceType,
+    self, validate_service_name, AppAccessMode, AppSource, ServiceConfig, ServiceIngress,
+    ServiceType,
 };
 use crate::resolve::resolve_app;
 
@@ -1070,10 +1070,6 @@ pub fn deploy(
                 .and_then(|c| c.app.access_mode)
         });
 
-    // Extract agent_mode from [app] section
-    let agent_mode: Option<AppAgentMode> =
-        resolved.app_config.as_ref().and_then(|c| c.app.agent_mode);
-
     // Extract auth redirect URIs from [auth] toml section
     let auth_redirect_uris: Option<Vec<String>> = resolved
         .app_config
@@ -1116,7 +1112,6 @@ pub fn deploy(
         detection.framework.as_deref(),
         svc_slice,
         access_mode.as_ref().map(|m| m.as_str()),
-        agent_mode.as_ref().map(|m| m.as_str()),
         auth_redirect_uris.as_deref(),
         cron_jobs_arg,
         github_config,
@@ -3506,7 +3501,6 @@ port = 8000
                     "python",
                     None,
                     Some(&services),
-                    None,
                     None,
                     None,
                     None,

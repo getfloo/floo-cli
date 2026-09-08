@@ -573,7 +573,6 @@ ingress = "public"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
-                agent_mode: None,
             },
             auth: None,
             github: None,
@@ -681,7 +680,6 @@ ingress = "public"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
-                agent_mode: None,
             },
             auth: None,
             github: None,
@@ -749,7 +747,6 @@ ingress = "public"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
-                agent_mode: None,
             },
             auth: None,
             github: None,
@@ -818,7 +815,6 @@ ingress = "public"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
-                agent_mode: None,
             },
             auth: None,
             github: None,
@@ -890,7 +886,6 @@ ingress = "public"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
-                agent_mode: None,
             },
             auth: None,
             github: None,
@@ -988,7 +983,6 @@ ingress = "public"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
-                agent_mode: None,
             },
             auth: None,
             github: None,
@@ -1026,7 +1020,6 @@ ingress = "public"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
-                agent_mode: None,
             },
             auth: None,
             github: None,
@@ -1097,7 +1090,6 @@ ingress = "public"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
-                agent_mode: None,
             },
             auth: None,
             github: None,
@@ -1315,7 +1307,6 @@ ingress = "public"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
-                agent_mode: None,
             },
             auth: None,
             github: None,
@@ -1437,7 +1428,6 @@ ingress = "internal"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
-                agent_mode: None,
             },
             auth: None,
             github: None,
@@ -1518,7 +1508,6 @@ domain = "svc.example.com"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
-                agent_mode: None,
             },
             auth: None,
             github: None,
@@ -1600,7 +1589,6 @@ domain = "svc.example.com"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
-                agent_mode: None,
             },
             auth: None,
             github: None,
@@ -1697,7 +1685,6 @@ domain = "svc.example.com"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
-                agent_mode: None,
             },
             auth: None,
             github: None,
@@ -1776,7 +1763,6 @@ domain = "svc.example.com"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
-                agent_mode: None,
             },
             auth: None,
             github: None,
@@ -1995,7 +1981,6 @@ domain = "svc.example.com"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
-                agent_mode: None,
             },
             auth: None,
             github: None,
@@ -2089,7 +2074,6 @@ domain = "svc.example.com"
             app: AppFileAppSection {
                 name: "my-app".to_string(),
                 access_mode: None,
-                agent_mode: None,
             },
             auth: None,
             github: None,
@@ -2179,7 +2163,6 @@ domain = "svc.example.com"
             app: AppFileAppSection {
                 name: "test-app".to_string(),
                 access_mode: None,
-                agent_mode: None,
             },
             auth: None,
             github: None,
@@ -2248,7 +2231,6 @@ domain = "svc.example.com"
             app: AppFileAppSection {
                 name: "test-app".to_string(),
                 access_mode: None,
-                agent_mode: None,
             },
             auth: None,
             github: None,
