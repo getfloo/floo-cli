@@ -431,7 +431,10 @@ pub fn connect(
     // Phase 4: Deploy and wait (unless --no-deploy)
     if no_deploy {
         output::success(
-            &format!("Connected {name} to {repo} (branch: {connected_branch})"),
+            &format!(
+                "Connected {name} to {repo} (branch: {connected_branch}). \
+                 Push a commit to `{connected_branch}` to run the first deploy."
+            ),
             Some(serde_json::json!({
                 "connected": true,
                 "app": name,
@@ -497,7 +500,7 @@ pub fn connect(
             output::error_with_data(
                 &format!("Connected {name} to {repo} but deploy failed."),
                 &ErrorCode::DeployFailed,
-                Some("Run `floo redeploy` to retry."),
+                Some("Fix the failure and push a commit to retry. `floo redeploy` only restarts an app that already has a dev deploy."),
                 Some(serde_json::json!({
                     "connected": true,
                     "app": name,
