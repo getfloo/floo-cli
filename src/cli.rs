@@ -189,10 +189,7 @@ Examples:
   floo redeploy                            Redeploy from current project directory
   floo redeploy --service api              Redeploy specific services only
 
-Note: The primary way to deploy is `git push`. Use `floo redeploy` when you
-need to apply env var changes or rebuild the unchanged GitHub commit. If a
-no-rebuild restart reports an unavailable immutable contract, run the exact
-`--rebuild` command it returns.")]
+Note: Deploys are triggered by `git push`. Use `floo redeploy` to apply env var changes or rebuild the unchanged GitHub commit once the app has a dev deploy. If a no-rebuild restart reports an unavailable immutable contract, run the exact `--rebuild` command it returns.")]
     Redeploy {
         /// Project directory (only needed when --app is not provided).
         #[arg(default_value = ".")]
@@ -246,7 +243,7 @@ Examples:
   floo deploys watch --app my-app           Stream deploy progress
   floo deploys rollback my-app abc123       Rollback to a previous deploy
 
-Note: To trigger a deploy, use `floo redeploy` or push to GitHub.
+Note: Push to the connected GitHub branch to deploy. `floo redeploy` restarts an app that already has a dev deploy; it cannot run the first one.
 `floo deploy ...` is a backwards-compatible alias for `floo deploys ...`."
     )]
     Deploys(DeploysSubcommands),
@@ -872,7 +869,7 @@ pub enum GitHubCommands {
         #[arg(long)]
         skip_env_check: bool,
 
-        /// Skip triggering a deploy after connecting.
+        /// Connect without deploying. The first deploy runs on the next push to the connected branch; `floo redeploy` cannot start it.
         #[arg(long)]
         no_deploy: bool,
 
