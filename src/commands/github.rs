@@ -67,6 +67,12 @@ fn installation_settings_url(owner: &str, installation_id: Option<i64>) -> Strin
     }
 }
 
+enum GrantAccessPage {
+    Setup,
+    InstallWhileWaiting,
+    Settings,
+}
+
 /// The single explanation of how to connect the floo GitHub App to a repo.
 ///
 /// Every message names four things in order: what is wrong, the exact URL that
@@ -76,16 +82,20 @@ fn installation_settings_url(owner: &str, installation_id: Option<i64>) -> Strin
 /// Omitting the account is what turned a correct "not installed" report into
 /// four identical retries: the App was installed, on a different account, and
 /// nothing said that installing elsewhere grants nothing here.
+/// Installation and linking to the floo org are both required: the setup
+/// link handles both; during interactive installation the running command
+/// completes the link when GitHub reports the install.
 fn grant_access_instructions(
     repo: &str,
     owner: &str,
     grant_url: &str,
     rerun_command: &str,
     installed_elsewhere: bool,
+    page: GrantAccessPage,
 ) -> String {
     let mut steps = String::new();
     steps.push_str(&format!(
-        "The floo GitHub App must be installed on the account \"{owner}\" and granted access to \"{repo}\".\n"
+        "The floo GitHub App must be installed on the account \"{owner}\", granted access to \"{repo}\", and linked to your floo org.\n"
     ));
     if installed_elsewhere {
         steps.push_str(&format!(
@@ -96,16 +106,40 @@ fn grant_access_instructions(
     steps.push_str(
         "A human must do this in a browser; it cannot be done from the CLI or by an agent.\n",
     );
-    steps.push_str(&format!("  1. Open: {grant_url}\n"));
-    steps.push_str(&format!(
-        "  2. Choose the account \"{owner}\" (not a different organization).\n"
+    let mut actions = vec![format!("Open: {grant_url}")];
+    if matches!(page, GrantAccessPage::Setup) {
+        actions.push(
+            "Authorize floo when GitHub asks. This ties the installation to your floo org; floo then sends you to GitHub's install page."
+                .to_string(),
+        );
+    }
+    actions.push(format!(
+        "Choose the account \"{owner}\" (not a different organization)."
     ));
-    steps.push_str(&format!(
-        "  3. Under \"Repository access\", select \"{repo}\". If \"Only select repositories\" \
-         is set, \"{repo}\" must appear in that list.\n"
+    actions.push(format!(
+        "Under \"Repository access\", select \"{repo}\". If \"Only select repositories\" \
+         is set, \"{repo}\" must appear in that list."
     ));
-    steps.push_str("  4. Save / Install.\n");
-    steps.push_str(&format!("  5. Re-run: {rerun_command}"));
+    actions.push("Save / Install.".to_string());
+    if matches!(page, GrantAccessPage::InstallWhileWaiting) {
+        actions.push(
+            "Leave this command running: it links the installation to your floo org as soon as GitHub reports the install."
+                .to_string(),
+        );
+        actions.push(format!(
+            "If this command has timed out, re-run: {rerun_command}"
+        ));
+    } else {
+        actions.push(format!("Re-run: {rerun_command}"));
+    }
+    steps.push_str(
+        &actions
+            .iter()
+            .enumerate()
+            .map(|(i, action)| format!("  {}. {action}", i + 1))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
     steps
 }
 
@@ -301,6 +335,7 @@ pub fn connect(
                             &setup_url,
                             &rerun_command,
                             true,
+                            GrantAccessPage::Setup,
                         )),
                     ),
                 );
@@ -311,13 +346,20 @@ pub fn connect(
                     "The floo GitHub App is not installed on the GitHub account \"{owner}\"."
                 ));
                 output::info(
-                    &grant_access_instructions(repo, owner, install_url, &rerun_command, true),
+                    &grant_access_instructions(
+                        repo,
+                        owner,
+                        install_url,
+                        &rerun_command,
+                        true,
+                        GrantAccessPage::InstallWhileWaiting,
+                    ),
                     None,
                 );
             }
 
             if let Err(failure) =
-                run_installation_flow(&client, install_url, &rerun_command, Some(owner))
+                run_installation_flow(&client, install_url, &rerun_command, Some(repo))
             {
                 abort_connect(&client, created_app.as_ref(), failure);
             }
@@ -368,6 +410,7 @@ pub fn connect(
                             url,
                             &rerun_command,
                             false,
+                            GrantAccessPage::Settings,
                         )),
                     ),
                 );
@@ -378,13 +421,20 @@ pub fn connect(
                     "The floo GitHub App is installed on \"{owner}\" but does not have access to \"{repo}\"."
                 ));
                 output::info(
-                    &grant_access_instructions(repo, owner, url, &rerun_command, false),
+                    &grant_access_instructions(
+                        repo,
+                        owner,
+                        url,
+                        &rerun_command,
+                        false,
+                        GrantAccessPage::Settings,
+                    ),
                     None,
                 );
             }
 
             if let Err(failure) =
-                run_installation_flow(&client, install_url, &rerun_command, Some(owner))
+                run_installation_flow(&client, install_url, &rerun_command, Some(repo))
             {
                 abort_connect(&client, created_app.as_ref(), failure);
             }
@@ -708,12 +758,15 @@ fn poll_repo_access(
 /// owner names the account, and exactly one candidate can serve it. When no
 /// candidate matches, the operator has installed the App somewhere that cannot
 /// reach this repo — which is the single most common way this flow fails, and
-/// is worth saying in full rather than reporting as ambiguity.
+/// is worth saying in full rather than reporting as ambiguity. Keep polling
+/// so the installation webhook can complete the existing setup intent.
 fn select_installation(
     client: &crate::api_client::FlooClient,
     candidates: Vec<GitHubInstallationCandidate>,
-    repo_owner: Option<&str>,
+    repo: Option<&str>,
     rerun_command: &str,
+    spinner: &mut output::Spinner,
+    installation_notice_shown: &mut bool,
 ) -> Result<(), ConnectFailure> {
     let known: Vec<String> = candidates
         .iter()
@@ -725,7 +778,7 @@ fn select_installation(
         known.join(", ")
     };
 
-    let Some(owner) = repo_owner else {
+    let Some(repo) = repo else {
         return Err(ConnectFailure::new(
             "Your GitHub account can reach more than one floo App installation, so floo cannot \
              tell which one to use.",
@@ -737,6 +790,7 @@ fn select_installation(
             )),
         ));
     };
+    let owner = repo.split('/').next().unwrap_or(repo);
 
     let matched = candidates.iter().find(|c| {
         c.owner_login
@@ -745,21 +799,28 @@ fn select_installation(
     });
 
     let Some(candidate) = matched else {
-        return Err(ConnectFailure::new(
-            format!(
-                "The floo GitHub App is not installed on the GitHub account \"{owner}\". \
-                 It is installed on: {known_list}."
-            ),
-            ErrorCode::from_api("GITHUB_APP_NOT_INSTALLED"),
-            Some(format!(
-                "An installation on another account grants floo nothing for a repository owned \
-                 by \"{owner}\". Install the floo GitHub App on \"{owner}\" itself: {}\n\
-                 Then re-run: {rerun_command}",
-                installation_settings_url(owner, None)
-            )),
-        ));
+        if !*installation_notice_shown {
+            spinner.finish();
+            if !output::is_json_mode() {
+                output::info(
+                    &missing_owner_installation_instructions(
+                        repo,
+                        owner,
+                        &known_list,
+                        rerun_command,
+                    ),
+                    None,
+                );
+            }
+            *spinner = output::Spinner::new(&format!(
+                "Waiting for the floo GitHub App to be installed on \"{owner}\"..."
+            ));
+            *installation_notice_shown = true;
+        }
+        return Ok(());
     };
 
+    spinner.finish();
     if !output::is_json_mode() {
         output::info(
             &format!(
@@ -775,14 +836,36 @@ fn select_installation(
         .map(|_| ())
         .map_err(|e| {
             ConnectFailure::from_api(&e, Some(format!("Re-run once resolved: {rerun_command}")))
-        })
+        })?;
+    *spinner = output::Spinner::new("Waiting for GitHub installation...");
+    Ok(())
+}
+
+fn missing_owner_installation_instructions(
+    repo: &str,
+    owner: &str,
+    known_list: &str,
+    rerun_command: &str,
+) -> String {
+    format!(
+        "The floo GitHub App is not installed on the GitHub account \"{owner}\". \
+         It is installed on: {known_list}.\n{}",
+        grant_access_instructions(
+            repo,
+            owner,
+            &installation_settings_url(owner, None),
+            rerun_command,
+            true,
+            GrantAccessPage::InstallWhileWaiting,
+        )
+    )
 }
 
 fn run_installation_flow(
     client: &crate::api_client::FlooClient,
     install_url: &str,
     rerun_command: &str,
-    repo_owner: Option<&str>,
+    repo: Option<&str>,
 ) -> Result<(), ConnectFailure> {
     // Begin the setup session (stores pending state in Redis)
     let setup_url = begin_setup(client, install_url)?;
@@ -799,6 +882,7 @@ fn run_installation_flow(
     let mut spinner = output::Spinner::new("Waiting for GitHub installation...");
     let start = Instant::now();
     let mut approval_notice_shown = false;
+    let mut installation_notice_shown = false;
 
     loop {
         std::thread::sleep(INSTALLATION_POLL_INTERVAL);
@@ -844,18 +928,19 @@ fn run_installation_flow(
                     }
                 }
                 GitHubSetupStatus::AwaitingSelection => {
-                    spinner.finish();
                     // The authorizing identity can reach several installations,
                     // so the API refuses to guess. When this flow was started
                     // for a specific repo we are not guessing: that repo's
                     // owner names exactly one installation, and picking it is
                     // the answer to the question the API asked.
-                    match select_installation(client, resp.candidates, repo_owner, rerun_command) {
-                        Ok(()) => {
-                            spinner = output::Spinner::new("Waiting for GitHub installation...");
-                        }
-                        Err(failure) => return Err(failure),
-                    }
+                    select_installation(
+                        client,
+                        resp.candidates,
+                        repo,
+                        rerun_command,
+                        &mut spinner,
+                        &mut installation_notice_shown,
+                    )?;
                 }
                 GitHubSetupStatus::AwaitingInstallation => {}
                 GitHubSetupStatus::None => {
@@ -1151,8 +1236,9 @@ fn run_initial_deploy(
 mod tests {
     use super::{
         connect_rerun_command, grant_access_instructions, installation_settings_url,
-        repo_access_timeout_suggestion, setup_session_lost_suggestion, setup_spinner_message,
-        setup_timeout_suggestion,
+        missing_owner_installation_instructions, repo_access_timeout_suggestion,
+        setup_session_lost_suggestion, setup_spinner_message, setup_timeout_suggestion,
+        GrantAccessPage,
     };
     use crate::api_types::{GitHubSetupPollResponse, GitHubSetupStatus};
 
@@ -1197,6 +1283,7 @@ mod tests {
             "https://github.com/settings/installations/777",
             "floo apps github connect pdonohoe02/galleon",
             false,
+            GrantAccessPage::Settings,
         );
         assert!(steps.contains("pdonohoe02/galleon"));
         assert!(steps.contains("\"pdonohoe02\""));
@@ -1204,6 +1291,8 @@ mod tests {
         assert!(steps.contains("floo apps github connect pdonohoe02/galleon"));
         assert!(steps.contains("Repository access"));
         assert!(steps.contains("human"));
+        assert!(steps.ends_with("5. Re-run: floo apps github connect pdonohoe02/galleon"));
+        assert!(!steps.contains("floo apps github setup"));
     }
 
     #[test]
@@ -1216,9 +1305,58 @@ mod tests {
             "https://github.com/apps/getfloo/installations/new",
             "floo apps github connect pdonohoe02/galleon",
             true,
+            GrantAccessPage::InstallWhileWaiting,
         );
         assert!(steps.contains("does NOT grant access"));
         assert!(steps.contains("not a different organization"));
+        assert!(steps.contains("4. Save / Install.\n  5. Leave this command running: it links the installation to your floo org as soon as GitHub reports the install."));
+        assert!(!steps.contains("floo apps github setup"));
+        assert!(steps.ends_with(
+            "6. If this command has timed out, re-run: floo apps github connect pdonohoe02/galleon"
+        ));
+    }
+
+    #[test]
+    fn test_setup_link_instructions_cover_authorization_before_installing() {
+        let steps = grant_access_instructions(
+            "pdonohoe02/galleon",
+            "pdonohoe02",
+            "https://example.test/github/setup?intent=123",
+            "floo apps github connect pdonohoe02/galleon --no-browser",
+            true,
+            GrantAccessPage::Setup,
+        );
+        assert!(steps.starts_with("The floo GitHub App must be installed on the account \"pdonohoe02\", granted access to \"pdonohoe02/galleon\", and linked to your floo org."));
+        assert!(steps.contains("does NOT grant access"));
+        assert!(steps.ends_with(
+            "  1. Open: https://example.test/github/setup?intent=123\n  \
+             2. Authorize floo when GitHub asks. This ties the installation to your floo org; floo then sends you to GitHub's install page.\n  \
+             3. Choose the account \"pdonohoe02\" (not a different organization).\n  \
+             4. Under \"Repository access\", select \"pdonohoe02/galleon\". If \"Only select repositories\" is set, \"pdonohoe02/galleon\" must appear in that list.\n  \
+             5. Save / Install.\n  \
+             6. Re-run: floo apps github connect pdonohoe02/galleon --no-browser"
+        ));
+        assert!(!steps.contains("floo apps github setup"));
+    }
+
+    #[test]
+    fn test_no_matching_installation_instructions_cover_owner_repo_and_link() {
+        let steps = missing_owner_installation_instructions(
+            "pdonohoe02/galleon",
+            "pdonohoe02",
+            "other-account, other-org",
+            "floo apps github connect pdonohoe02/galleon --app galleon --no-deploy",
+        );
+        assert!(steps.starts_with(
+            "The floo GitHub App is not installed on the GitHub account \"pdonohoe02\". It is installed on: other-account, other-org."
+        ));
+        assert!(steps.contains("1. Open: https://github.com/apps/getfloo/installations/new/permissions?suggested_target_id=pdonohoe02\n"));
+        assert!(steps.contains("2. Choose the account \"pdonohoe02\""));
+        assert!(steps.contains("3. Under \"Repository access\", select \"pdonohoe02/galleon\""));
+        assert!(steps.contains("5. Leave this command running: it links the installation to your floo org as soon as GitHub reports the install."));
+        assert!(steps.ends_with(
+            "6. If this command has timed out, re-run: floo apps github connect pdonohoe02/galleon --app galleon --no-deploy"
+        ));
     }
 
     #[test]
@@ -1261,6 +1399,8 @@ mod tests {
 
     #[test]
     fn test_connect_rerun_command_preserves_flags() {
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
         let command = connect_rerun_command(
             "getfloo/example",
             Some("demo-app"),
