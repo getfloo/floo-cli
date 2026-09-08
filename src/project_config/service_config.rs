@@ -11,6 +11,33 @@ use super::SCHEMA_URL;
 
 // --- Resource limits ---
 
+// Mirrors floo/api/app/utils/tarball.py::_MAX_REQUEST_BODY_MB_LIMIT.
+pub(super) const MAX_REQUEST_BODY_MB_LIMIT: u64 = 100;
+
+fn max_request_body_mb_error() -> String {
+    format!("max_request_body_mb must be an integer between 1 and {MAX_REQUEST_BODY_MB_LIMIT}")
+}
+
+pub(super) fn deserialize_max_request_body_mb<'de, D>(
+    deserializer: D,
+) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<u64>::deserialize(deserializer)
+        .map_err(|_| serde::de::Error::custom(max_request_body_mb_error()))
+}
+
+pub(super) fn validate_max_request_body_mb(value: Option<u64>) -> Result<(), FlooError> {
+    if value.is_some_and(|value| !(1..=MAX_REQUEST_BODY_MB_LIMIT).contains(&value)) {
+        return Err(FlooError::new(
+            ErrorCode::InvalidProjectConfig,
+            max_request_body_mb_error(),
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceConfig {
@@ -20,6 +47,12 @@ pub struct ResourceConfig {
     pub memory: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_instances: Option<u32>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_max_request_body_mb"
+    )]
+    pub max_request_body_mb: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_instances: Option<u32>,
 }
@@ -212,6 +245,12 @@ pub struct ServiceConfig {
     pub memory: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_instances: Option<u32>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_max_request_body_mb"
+    )]
+    pub max_request_body_mb: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_instances: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -329,6 +368,7 @@ impl ServiceSection {
             cpu: None,
             memory: None,
             max_instances: None,
+            max_request_body_mb: None,
             min_instances: self.min_instances,
             instances: self.instances,
             migrate_command: self.migrate_command.clone(),
@@ -353,6 +393,9 @@ pub fn load_service_config(dir: &Path) -> Result<Option<ServiceFileConfig>, Floo
     let config: ServiceFileConfig = toml::from_str(&content)
         .map_err(|e| super::toml_parse_error(super::SERVICE_CONFIG_FILE, e))?;
 
+    if let Some(ref resources) = config.resources {
+        validate_max_request_body_mb(resources.max_request_body_mb)?;
+    }
     if let Some(ref env) = config.env {
         env.validate(&format!("[env] in {}", super::SERVICE_CONFIG_FILE))?;
     }
@@ -417,6 +460,83 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn test_max_request_body_mb_service_manifest_round_trip_and_omission() {
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
+        let dir = TempDir::new().unwrap();
+        for value in [None, Some(1), Some(32), Some(MAX_REQUEST_BODY_MB_LIMIT)] {
+            let resource = value.map_or(String::new(), |v| format!("max_request_body_mb = {v}"));
+            fs::write(
+                dir.path().join(super::super::SERVICE_CONFIG_FILE),
+                format!(
+                    r#"[app]
+name = "my-app"
+[service]
+name = "api"
+type = "api"
+port = 8000
+[resources]
+{resource}
+"#
+                ),
+            )
+            .unwrap();
+            let config = load_service_config(dir.path()).unwrap().unwrap();
+            assert_eq!(
+                config.resources.as_ref().unwrap().max_request_body_mb,
+                value
+            );
+            let serialized = toml::to_string(&config).unwrap();
+            assert_eq!(serialized.contains("max_request_body_mb"), value.is_some());
+            let json = serde_json::to_value(&config).unwrap();
+            assert_eq!(
+                json["resources"].get("max_request_body_mb").is_some(),
+                value.is_some()
+            );
+            write_service_config(dir.path(), &config).unwrap();
+            let reloaded = load_service_config(dir.path()).unwrap().unwrap();
+            assert_eq!(reloaded.resources.unwrap().max_request_body_mb, value);
+        }
+    }
+
+    #[test]
+    fn test_max_request_body_mb_service_manifest_rejects_invalid_values() {
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
+        let dir = TempDir::new().unwrap();
+        for value in [
+            "0".to_string(),
+            (MAX_REQUEST_BODY_MB_LIMIT + 1).to_string(),
+            "-1".to_string(),
+            "1.5".to_string(),
+            "true".to_string(),
+            "\"32\"".to_string(),
+        ] {
+            fs::write(
+                dir.path().join(super::super::SERVICE_CONFIG_FILE),
+                format!(
+                    r#"[app]
+name = "my-app"
+[service]
+name = "api"
+type = "api"
+port = 8000
+[resources]
+max_request_body_mb = {value}
+"#
+                ),
+            )
+            .unwrap();
+            let error = load_service_config(dir.path()).unwrap_err();
+            assert_eq!(error.code, ErrorCode::InvalidProjectConfig);
+            assert!(
+                error.message.contains(&max_request_body_mb_error()),
+                "{value}: {error}"
+            );
+        }
+    }
 
     #[test]
     fn test_load_service_config_valid() {
@@ -663,6 +783,7 @@ ingress = "internal"
             cpu: None,
             memory: None,
             max_instances: None,
+            max_request_body_mb: None,
             min_instances: None,
             instances: None,
             migrate_command: None,
@@ -866,6 +987,7 @@ port = 8000
             cpu: None,
             memory: None,
             max_instances: None,
+            max_request_body_mb: None,
             min_instances: None,
             instances: None,
             migrate_command: None,
@@ -886,6 +1008,7 @@ port = 8000
             cpu: None,
             memory: None,
             max_instances: None,
+            max_request_body_mb: None,
             min_instances: None,
             instances: None,
             migrate_command: None,
@@ -987,6 +1110,7 @@ port = 8000
             cpu: None,
             memory: None,
             max_instances: None,
+            max_request_body_mb: None,
             min_instances: None,
             instances: None,
             migrate_command: None,
@@ -1009,6 +1133,7 @@ port = 8000
             cpu: Some("2".to_string()),
             memory: Some("4Gi".to_string()),
             max_instances: Some(5),
+            max_request_body_mb: None,
             min_instances: None,
             instances: None,
             migrate_command: None,

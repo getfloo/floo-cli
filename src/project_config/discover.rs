@@ -79,6 +79,9 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
             let max_instances = entry
                 .max_instances
                 .or_else(|| global_resources.and_then(|r| r.max_instances));
+            let max_request_body_mb = entry
+                .max_request_body_mb
+                .or_else(|| global_resources.and_then(|r| r.max_request_body_mb));
             let min_instances = entry.min_instances.or_else(|| {
                 (service_type != ServiceType::Worker)
                     .then(|| global_resources.and_then(|r| r.min_instances))
@@ -95,6 +98,7 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
                 cpu,
                 memory,
                 max_instances,
+                max_request_body_mb,
                 min_instances,
                 instances: entry.instances,
                 migrate_command: entry.migrate_command.clone(),
@@ -242,6 +246,7 @@ fn apply_service_file_resources(
         svc.cpu = res.cpu.clone();
         svc.memory = res.memory.clone();
         svc.max_instances = res.max_instances;
+        svc.max_request_body_mb = res.max_request_body_mb;
         svc.min_instances = (!is_worker).then_some(res.min_instances).flatten();
     }
     // Fall back to global for any fields still None
@@ -254,6 +259,9 @@ fn apply_service_file_resources(
         }
         if svc.max_instances.is_none() {
             svc.max_instances = global.max_instances;
+        }
+        if svc.max_request_body_mb.is_none() {
+            svc.max_request_body_mb = global.max_request_body_mb;
         }
         if !is_worker && svc.min_instances.is_none() {
             svc.min_instances = global.min_instances;
@@ -272,6 +280,9 @@ fn apply_app_service_overrides(svc: &mut ServiceConfig, entry: &AppServiceEntry)
     }
     if entry.max_instances.is_some() {
         svc.max_instances = entry.max_instances;
+    }
+    if entry.max_request_body_mb.is_some() {
+        svc.max_request_body_mb = entry.max_request_body_mb;
     }
     if svc.service_type != ServiceType::Worker && entry.min_instances.is_some() {
         svc.min_instances = entry.min_instances;
@@ -522,6 +533,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                max_request_body_mb: None,
                 min_instances: None,
                 instances: None,
                 dev_command: None,
@@ -546,6 +558,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                max_request_body_mb: None,
                 min_instances: None,
                 instances: None,
                 dev_command: None,
@@ -653,6 +666,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                max_request_body_mb: None,
                 min_instances: None,
                 instances: None,
                 dev_command: None,
@@ -789,6 +803,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                max_request_body_mb: None,
                 min_instances: None,
                 instances: None,
                 dev_command: None,
@@ -860,6 +875,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                max_request_body_mb: None,
                 min_instances: None,
                 instances: None,
                 dev_command: None,
@@ -957,6 +973,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                max_request_body_mb: None,
                 min_instances: None,
                 instances: None,
                 dev_command: None,
@@ -1065,6 +1082,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                max_request_body_mb: None,
                 min_instances: None,
                 instances: None,
                 dev_command: None,
@@ -1120,6 +1138,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                max_request_body_mb: None,
                 min_instances: None,
                 instances: None,
                 migrate_command: None,
@@ -1134,6 +1153,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                max_request_body_mb: None,
                 min_instances: None,
                 instances: None,
                 migrate_command: None,
@@ -1157,6 +1177,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                max_request_body_mb: None,
                 min_instances: None,
                 instances: None,
                 migrate_command: None,
@@ -1171,6 +1192,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                max_request_body_mb: None,
                 min_instances: None,
                 instances: None,
                 migrate_command: None,
@@ -1195,6 +1217,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                max_request_body_mb: None,
                 min_instances: None,
                 instances: None,
                 migrate_command: None,
@@ -1209,6 +1232,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                max_request_body_mb: None,
                 min_instances: None,
                 instances: None,
                 migrate_command: None,
@@ -1276,6 +1300,7 @@ ingress = "public"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                max_request_body_mb: None,
                 min_instances: None,
                 instances: None,
                 dev_command: None,
@@ -1372,6 +1397,7 @@ ingress = "internal"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                max_request_body_mb: None,
                 min_instances: None,
                 instances: None,
                 dev_command: None,
@@ -1396,6 +1422,7 @@ ingress = "internal"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                max_request_body_mb: None,
                 min_instances: None,
                 instances: None,
                 dev_command: None,
@@ -1476,6 +1503,7 @@ domain = "svc.example.com"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                max_request_body_mb: None,
                 min_instances: None,
                 instances: None,
                 dev_command: None,
@@ -1557,6 +1585,7 @@ domain = "svc.example.com"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                max_request_body_mb: None,
                 min_instances: None,
                 instances: None,
                 dev_command: None,
@@ -1628,6 +1657,7 @@ domain = "svc.example.com"
                 cpu: Some("2".to_string()),
                 memory: Some("4Gi".to_string()),
                 max_instances: Some(5),
+                max_request_body_mb: None,
                 min_instances: None,
                 instances: None,
                 dev_command: None,
@@ -1652,6 +1682,7 @@ domain = "svc.example.com"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                max_request_body_mb: None,
                 min_instances: None,
                 instances: None,
                 dev_command: None,
@@ -1729,6 +1760,7 @@ domain = "svc.example.com"
                 cpu: Some("4".to_string()), // per-service override
                 memory: None,               // will inherit global
                 max_instances: None,
+                max_request_body_mb: None,
                 min_instances: None,
                 instances: None,
                 dev_command: None,
@@ -1756,6 +1788,7 @@ domain = "svc.example.com"
                 cpu: Some("1".to_string()),
                 memory: Some("2Gi".to_string()),
                 max_instances: Some(3),
+                max_request_body_mb: None,
                 min_instances: None,
             }),
             services: services_map,
@@ -1790,6 +1823,7 @@ domain = "svc.example.com"
             cpu: None,
             memory: None,
             max_instances: None,
+            max_request_body_mb: None,
             min_instances: None,
             instances: None,
             migrate_command: None,
@@ -1798,6 +1832,7 @@ domain = "svc.example.com"
             cpu: Some("1".to_string()),
             memory: Some("512Mi".to_string()),
             max_instances: Some(3),
+            max_request_body_mb: None,
             min_instances: Some(1),
         };
 
@@ -1819,6 +1854,7 @@ domain = "svc.example.com"
             cpu: None,
             memory: None,
             max_instances: None,
+            max_request_body_mb: None,
             min_instances: None,
             instances: None,
             migrate_command: None,
@@ -1827,12 +1863,14 @@ domain = "svc.example.com"
             cpu: Some("1".to_string()),
             memory: Some("512Mi".to_string()),
             max_instances: Some(2),
+            max_request_body_mb: None,
             min_instances: Some(0),
         };
         let service_file = Some(ResourceConfig {
             cpu: Some("2".to_string()),
             memory: None,
             max_instances: Some(4),
+            max_request_body_mb: None,
             min_instances: Some(1),
         });
         let app_override = AppServiceEntry {
@@ -1849,6 +1887,7 @@ domain = "svc.example.com"
             cpu: Some("4".to_string()),
             memory: Some("2Gi".to_string()),
             max_instances: Some(8),
+            max_request_body_mb: None,
             min_instances: Some(2),
             instances: None,
             dev_command: None,
@@ -1878,6 +1917,7 @@ domain = "svc.example.com"
             cpu: None,
             memory: None,
             max_instances: None,
+            max_request_body_mb: None,
             min_instances: None,
             instances: Some(2),
             migrate_command: None,
@@ -1896,6 +1936,7 @@ domain = "svc.example.com"
             cpu: None,
             memory: None,
             max_instances: None,
+            max_request_body_mb: None,
             min_instances: None,
             instances: Some(0),
             dev_command: None,
@@ -1939,6 +1980,7 @@ domain = "svc.example.com"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                max_request_body_mb: None,
                 min_instances: None,
                 instances: None,
                 dev_command: None,
@@ -2007,6 +2049,7 @@ domain = "svc.example.com"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                max_request_body_mb: None,
                 min_instances: None,
                 instances: None,
                 dev_command: None,
@@ -2031,6 +2074,7 @@ domain = "svc.example.com"
                 cpu: None,
                 memory: None,
                 max_instances: None,
+                max_request_body_mb: None,
                 min_instances: None,
                 instances: None,
                 dev_command: None,
@@ -2103,6 +2147,7 @@ domain = "svc.example.com"
                 cpu: Some("2".to_string()),
                 memory: Some("4Gi".to_string()),
                 max_instances: Some(5),
+                max_request_body_mb: None,
                 min_instances: None,
             }),
             env: None,
@@ -2164,6 +2209,7 @@ domain = "svc.example.com"
                         cpu: None,
                         memory: None,
                         max_instances: None,
+                        max_request_body_mb: None,
                         min_instances: None,
                         instances: None,
                         dev_command: None,
@@ -2230,6 +2276,7 @@ domain = "svc.example.com"
                         cpu: None,
                         memory: None,
                         max_instances: None,
+                        max_request_body_mb: None,
                         min_instances: None,
                         instances: None,
                         dev_command: None,
