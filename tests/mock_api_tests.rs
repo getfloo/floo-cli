@@ -4306,6 +4306,179 @@ fn test_services_show_human_renders_configured_resources() {
         ));
 }
 
+// Each invocation starts a fresh CLI process: JSON_MODE and DRY_RUN both
+// initialize to false, so these integration tests cannot leak output modes.
+fn service_runtime_fixture() -> serde_json::Value {
+    serde_json::json!({
+        "id": "svc-web-1", "name": "web", "type": "web",
+        "status": "live", "ingress": "public", "port": 3000,
+        "runtime_plan": {
+            "environment": "dev", "service_type": "web", "availability": "on_demand",
+            "declared": {
+                "cpu": null, "memory": null, "min_instances": null,
+                "max_instances": null, "instances": null
+            },
+            "effective": {
+                "cpu": "1", "memory": "512Mi", "min_instances": 0,
+                "max_instances": 3, "instances": null
+            },
+            "sources": {
+                "cpu": "platform_default", "memory": "platform_default",
+                "min_instances": "platform_default", "max_instances": "platform_default",
+                "instances": null
+            },
+            "cpu_allocation": "request_based",
+            "cpu_allocation_reason": "http_request_scoped", "warnings": []
+        }
+    })
+}
+
+fn mock_service_runtime(server: &mut Server, service: &serde_json::Value) -> Mock {
+    server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/services").as_str())
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+            Matcher::UrlEncoded("environment".into(), "dev".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(serde_json::json!({"services": [service]}).to_string())
+        .expect_at_least(1)
+        .create()
+}
+
+fn run_services_runtime(home: &TempDir, command: &str, json: bool) -> std::process::Output {
+    let mut cli = floo();
+    cli.args(["services", command]);
+    if command == "show" {
+        cli.arg("web");
+    }
+    if json {
+        cli.arg("--json");
+    }
+    let output = cli
+        .args(["--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    output
+}
+
+#[test]
+fn test_services_runtime_proxy_breakdown_and_json_passthrough() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _managed = mock_managed_services_empty(&mut server);
+    let mut service = service_runtime_fixture();
+    service["runtime_plan"]["instance_total"] =
+        serde_json::json!({"cpu": "1.5", "memory": "768Mi"});
+    service["runtime_plan"]["components"] = serde_json::json!([
+        {"name": "app", "cpu": "1", "memory": "512Mi", "source": "platform_default"},
+        {"name": "cloud-sql-proxy", "cpu": "0.5", "memory": "256Mi", "source": "managed_postgres"}
+    ]);
+    let services = mock_service_runtime(&mut server, &service);
+
+    for command in ["list", "show"] {
+        let human = run_services_runtime(&home, command, false);
+        assert!(human.stdout.is_empty());
+        let stderr = String::from_utf8(human.stderr).unwrap();
+        assert!(
+            stderr.contains(concat!(
+                "    Instance total:   1.5 vCPU / 768Mi\n",
+                "      + cloud-sql-proxy: 0.5 vCPU / 256Mi (managed postgres)\n"
+            )),
+            "{stderr}"
+        );
+        assert!(!stderr.contains("+ app:"), "{stderr}");
+        if command == "show" {
+            assert!(stderr.contains("CPU / memory: 1 / 512Mi\n    Instance total:"));
+        } else {
+            assert!(stderr.contains("Service web:\n    Instance total:"));
+        }
+
+        let output = run_services_runtime(&home, command, true);
+        assert!(output.stderr.is_empty());
+        let json = parse_single_json_object(&output.stdout);
+        assert_eq!(json["success"], true);
+        let returned = if command == "list" {
+            &json["data"]["app_services"][0]
+        } else {
+            &json["data"]
+        };
+        assert_eq!(returned["runtime_plan"], service["runtime_plan"]);
+    }
+    services.assert();
+}
+
+#[test]
+fn test_services_runtime_without_new_fields_preserves_human_output() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _managed = mock_managed_services_empty(&mut server);
+    let mut service = service_runtime_fixture();
+    let services = mock_service_runtime(&mut server, &service);
+
+    let show = run_services_runtime(&home, "show", false);
+    assert!(show.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(show.stderr).unwrap(),
+        concat!(
+            "Service web (my-app):\n",
+            "  Type:    web\n  Status:  live\n  Ingress: public\n  URL:     —\n",
+            "  Port:    3000\n  Configured resources:\n",
+            "    CPU:              -\n    Memory:           -\n",
+            "    Min instances:    -\n    Max instances:    -\n",
+            "    Worker instances: -\n    Max request body: -\n",
+            "  Effective runtime (dev):\n",
+            "    Availability: on demand (0–3 instances)\n",
+            "    CPU / memory: 1 / 512Mi\n",
+            "    CPU allocation: request based (http request scoped)\n"
+        )
+    );
+    let list = run_services_runtime(&home, "list", false);
+    assert!(list.stdout.is_empty());
+    services.assert();
+    services.remove();
+
+    // A legacy runtime plan adds nothing to the existing list table.
+    service.as_object_mut().unwrap().remove("runtime_plan");
+    let services = mock_service_runtime(&mut server, &service);
+    let baseline = run_services_runtime(&home, "list", false);
+    assert_eq!(list.stderr, baseline.stderr);
+    services.assert();
+}
+
+#[test]
+fn test_services_runtime_equal_instance_total_preserves_human_output() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _managed = mock_managed_services_empty(&mut server);
+    let mut service = service_runtime_fixture();
+    let services = mock_service_runtime(&mut server, &service);
+    let show = run_services_runtime(&home, "show", false);
+    let list = run_services_runtime(&home, "list", false);
+    services.assert();
+    services.remove();
+
+    service["runtime_plan"]["instance_total"] = serde_json::json!({"cpu": "1", "memory": "512Mi"});
+    service["runtime_plan"]["components"] = serde_json::json!([
+        {"name": "app", "cpu": "1", "memory": "512Mi", "source": "platform_default"}
+    ]);
+    let services = mock_service_runtime(&mut server, &service);
+    for (command, baseline) in [("show", show), ("list", list)] {
+        let output = run_services_runtime(&home, command, false);
+        assert!(output.stdout.is_empty());
+        assert_eq!(output.stderr, baseline.stderr);
+    }
+    services.assert();
+}
+
 #[test]
 fn test_services_show_selects_prod_runtime_plan() {
     let mut server = Server::new();
