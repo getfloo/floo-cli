@@ -1149,7 +1149,6 @@ fn run_initial_deploy(
         detection.framework.as_deref(),
         None,  // API discovers services from GitHub tarball
         None,  // access_mode
-        None,  // agent_mode
         None,  // auth_redirect_uris
         None,  // cron_jobs
         None,  // github_config

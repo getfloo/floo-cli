@@ -21,7 +21,7 @@ const QUERY_LIMIT_RANGE: std::ops::RangeInclusive<u32> = 1..=10_000;
 /// A malformed request must fail with a floo-shaped error that honors `--json`
 /// — never reach the API to bounce back a raw Pydantic/FastAPI validation blob,
 /// and never execute under `--dry-run`. Empty/whitespace SQL is caught here too
-/// so it surfaces as "query is empty" rather than the API's agent-mode DDL gate
+/// so it surfaces as "query is empty" rather than the API's key-scope DDL check
 /// (an empty string classifies as DDL server-side). Pure and unit-tested so the
 /// preview and the real run share one notion of "valid".
 fn validate_query_args(sql: &str, limit: u32) -> Result<(), FlooError> {
@@ -305,24 +305,7 @@ pub fn migrate(app_flag: Option<&str>, env: &str) {
     let result = match client.db_migrate(&app_id, env) {
         Ok(r) => r,
         Err(e) => {
-            let suggestion = match e.code.as_str() {
-                "AGENT_MODE_DDL_BLOCKED" => Some(
-                    "Migrations run DDL, which requires agent_mode = \"autonomous\". \
-                     Set agent_mode in [app] in floo.app.toml (or omit it to default \
-                     to autonomous), commit, then push to redeploy before re-running.",
-                ),
-                "AGENT_MODE_READONLY" => Some(
-                    "Agent mode is \"readonly\". Set agent_mode = \"autonomous\" in \
-                     [app] in floo.app.toml to run migrations.",
-                ),
-                "AGENT_MODE_SUPERVISED" => Some(
-                    "Agent mode is \"supervised\", which blocks prod migrations. \
-                     Run against --env dev, or set agent_mode = \"autonomous\" in \
-                     [app] in floo.app.toml.",
-                ),
-                _ => None,
-            };
-            output::error(&e.message, &ErrorCode::from_api(&e.code), suggestion);
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };

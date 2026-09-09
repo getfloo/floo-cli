@@ -375,7 +375,6 @@ fn init_non_interactive(
         app: AppFileAppSection {
             name: app_name.clone(),
             access_mode: None,
-            agent_mode: None,
         },
         auth: None,
         github: None,
@@ -554,7 +553,6 @@ fn init_interactive(
         app: AppFileAppSection {
             name: app_name.clone(),
             access_mode: None,
-            agent_mode: None,
         },
         auth: None,
         github: None,
