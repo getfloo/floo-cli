@@ -292,6 +292,40 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    // --- Managed projects ---
+
+    pub fn create_project(&self, name: &str) -> Result<ProjectResponse, FlooApiError> {
+        let response = self.post_json("/v1/projects", &serde_json::json!({ "name": name }))?;
+        self.handle_response(response)
+    }
+
+    pub fn list_projects(&self) -> Result<ListProjectsResponse, FlooApiError> {
+        self.handle_response(self.get("/v1/projects")?)
+    }
+
+    /// The projects API exposes a list endpoint, not a single-project GET.
+    pub fn get_project(&self, name_or_id: &str) -> Result<ProjectResponse, FlooApiError> {
+        self.list_projects()?
+            .projects
+            .into_iter()
+            .find(|project| project.name == name_or_id || project.app_id == name_or_id)
+            .ok_or_else(|| {
+                FlooApiError::new(
+                    404,
+                    "PROJECT_NOT_FOUND",
+                    format!("Project '{name_or_id}' not found."),
+                )
+            })
+    }
+
+    pub fn project_git_token(&self, app_id: &str) -> Result<ProjectGitTokenResponse, FlooApiError> {
+        let response = self.post_json(
+            &format!("/v1/projects/{app_id}/git-token"),
+            &serde_json::json!({}),
+        )?;
+        self.handle_response(response)
+    }
+
     // --- Org ---
 
     pub fn list_orgs(&self) -> Result<ListOrgsResponse, FlooApiError> {

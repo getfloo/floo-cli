@@ -298,6 +298,23 @@ pub fn raw_value(value: &str) {
     println!("{value}");
 }
 
+/// Git is the sole consumer of this plaintext credential. Never route it through
+/// JSON, human output, logging, or persistent config. Validate before any write
+/// so a malformed token cannot inject additional credential protocol fields.
+pub fn git_credentials(token: &str) -> std::io::Result<()> {
+    use std::io::Write;
+
+    if token.is_empty() || token.chars().any(char::is_control) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Invalid git credential response",
+        ));
+    }
+    let mut stdout = std::io::stdout().lock();
+    writeln!(stdout, "username=x-access-token\npassword={token}\n")?;
+    stdout.flush()
+}
+
 pub fn warn(message: &str) {
     if !is_json_mode() {
         eprintln!("  {} {}", "\u{26a0}".yellow(), message);

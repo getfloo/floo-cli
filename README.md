@@ -85,9 +85,31 @@ floo edge policy check 203.0.113.7 --env prod
 
 All commands are invoked with the production alias: `floo`.
 
+### Managed projects without a GitHub account
+
+With a floo API key, create a managed app with hosted, invite-only login and
+postgres, then clone its source into your workspace:
+
+```bash
+floo projects create client-portal
+floo projects list
+floo projects clone client-portal
+cd client-portal
+# Read AGENTS.md before editing, then commit and push with git.
+floo deploys watch --app client-portal
+```
+
+Create starts the first deploy and prints the watch command without waiting.
+Clone accepts a project name or app ID and an optional destination directory.
+It configures git only in the cloned repository, using the absolute path of the
+current floo binary. Keep that binary in place for later fetches and pushes.
+The helper fetches one-hour tokens per git operation through floo; no GitHub
+account or stored GitHub credential is needed. Only the floo API key is stored.
+Inherited credential helpers are reset for the repository to prevent caching.
+
 ## Agent / programmatic use
 
-Every command supports `--json` for structured output:
+User-facing commands support `--json` for structured output:
 
 ```bash
 # JSON to stdout, human output to stderr
@@ -96,6 +118,10 @@ floo redeploy --json 2>/dev/null | jq '.data.deploy.url'
 # Success: {"success": true, "data": {...}}
 # Error:   {"success": false, "error": {"code": "...", "message": "...", "suggestion": "..."}}
 ```
+
+The internal `floo projects git-credential get` command is used by git and emits
+only git's credential protocol, even with `--json`. Its `store` and `erase`
+operations are no-ops. Never capture its password output in logs or files.
 
 ## Building from source
 

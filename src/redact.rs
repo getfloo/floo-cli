@@ -828,6 +828,25 @@ mod snapshots {
         );
     }
 
+    /// Managed-project credentials must also be protected by the JSON boundary.
+    #[test]
+    fn project_git_token_response_is_redacted_if_serialized() {
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
+        let _g = lock_default_redact();
+        // The helper uses a dedicated git protocol writer, never print_json.
+        // Guard the boundary if a future command serializes the typed response.
+        let response = crate::api_types::ProjectGitTokenResponse {
+            token: "supersecretvaluethatshouldnotleak".to_string(),
+            expires_at: "2026-09-09T13:00:00Z".to_string(),
+            clone_url: "https://github.com/floo-managed/repo.git".to_string(),
+        };
+        let out = through_print_json(json!({ "success": true, "data": response }));
+        assert!(collect_leaks(&out).is_empty());
+        assert_eq!(out["data"]["token"], REDACTED_PLACEHOLDER);
+        assert_eq!(out["contains_secrets"], true);
+    }
+
     /// `floo auth token` — stored API key.
     #[test]
     fn floo_auth_token_api_key_redacted_by_default() {

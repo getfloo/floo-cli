@@ -209,6 +209,9 @@ mod tests {
         tree_paths(&build_tree(), "", &mut paths);
         // Real commands the hand-maintained index used to omit (#1160).
         for real in [
+            "projects create",
+            "projects list",
+            "projects clone",
             "storage",
             "doctor",
             "services add",
@@ -226,6 +229,7 @@ mod tests {
         }
         // The index used to invent `apps status`; the real command is `apps show`.
         assert!(paths.contains("apps show"), "index is missing `apps show`");
+        assert!(!paths.contains("projects git-credential"));
         assert!(
             !paths.contains("apps status"),
             "index lists phantom command `apps status`"

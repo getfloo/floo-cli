@@ -274,6 +274,20 @@ dirty local files are not uploaded."
     #[command(subcommand)]
     Orgs(OrgsCommands),
 
+    /// Create, list, and clone managed apps without a GitHub account.
+    #[command(
+        subcommand,
+        after_help = "\
+Examples:
+  floo projects create client-portal      Create an app with hosted login and postgres
+  floo projects list --json               Find managed projects
+  floo projects clone client-portal       Clone, then read AGENTS.md
+
+Clones use a repo-local credential helper at the current floo binary's absolute
+path. Git fetches one-hour push tokens through floo; tokens are never cached."
+    )]
+    Projects(ProjectsCommands),
+
     /// Manage billing and spend caps.
     #[command(subcommand)]
     Billing(BillingCommands),
@@ -612,6 +626,30 @@ pub enum SpendCapCommands {
     Set {
         /// Spend cap amount in dollars (e.g., 20.00). Use 0 for no cap.
         amount: f64,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ProjectsCommands {
+    /// Create and deploy a managed app with hosted, invite-only login and postgres.
+    Create {
+        /// Project name.
+        name: String,
+    },
+    /// List managed projects in the current organization.
+    List,
+    /// Clone a managed project and configure credentials only in that repository.
+    Clone {
+        /// Project name or app ID.
+        name_or_id: String,
+        /// Destination directory (defaults to the project name).
+        dir: Option<PathBuf>,
+    },
+    /// Credential helper used by git; stdout is the git protocol, even with --json.
+    #[command(hide = true)]
+    GitCredential {
+        #[arg(value_parser = ["get", "store", "erase"])]
+        operation: String,
     },
 }
 
@@ -2188,6 +2226,14 @@ pub fn run() {
         crate::redact::set_reveal_secrets(true);
     }
 
+    // Git's protocol must stay quiet and never stage/apply updates or emit JSON.
+    // Fallthrough and store/erase also work without authentication.
+    if let Commands::Projects(ProjectsCommands::GitCredential { operation }) = &cli.command {
+        output::set_json_mode(false);
+        commands::projects::git_credential(operation);
+        return;
+    }
+
     // Phase 2: Always apply staged updates (safe for any command, including --json)
     if !crate::config::is_local_binary() {
         crate::version_check::apply_staged_update(VERSION);
@@ -2345,6 +2391,17 @@ pub fn run() {
             BillingCommands::Upgrade { plan } => commands::billing::upgrade(plan),
             BillingCommands::Usage { period } => commands::billing::usage(&period),
             BillingCommands::Contact => commands::billing::contact(),
+        },
+
+        Commands::Projects(sub) => match sub {
+            ProjectsCommands::Create { name } => commands::projects::create(&name),
+            ProjectsCommands::List => commands::projects::list(),
+            ProjectsCommands::Clone { name_or_id, dir } => {
+                commands::projects::clone(&name_or_id, dir.as_deref())
+            }
+            ProjectsCommands::GitCredential { operation } => {
+                commands::projects::git_credential(&operation)
+            }
         },
 
         Commands::Orgs(sub) => match sub {

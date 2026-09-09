@@ -30,6 +30,7 @@ pub mod notifications;
 pub mod organization_sso;
 pub mod orgs;
 pub mod previews;
+pub mod projects;
 pub mod releases;
 pub mod rollbacks;
 pub mod run;
