@@ -2,6 +2,32 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+// --- Managed projects ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectResponse {
+    pub app_id: String,
+    pub name: String,
+    pub app_url: String,
+    pub repo_full_name: String,
+    pub clone_url: String,
+    pub default_branch: String,
+    pub first_deploy_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ListProjectsResponse {
+    pub projects: Vec<ProjectResponse>,
+}
+
+// Deliberately no Debug: this credential belongs only on git's password line.
+#[derive(Serialize, Deserialize)]
+pub struct ProjectGitTokenResponse {
+    pub token: String,
+    pub expires_at: String,
+    pub clone_url: String,
+}
+
 // --- Auth ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

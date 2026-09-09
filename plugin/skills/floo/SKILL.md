@@ -23,6 +23,17 @@ For automation, pass `--json`. JSON responses go to stdout; human output goes to
 
 ## Deploy invariant
 
+For an app without a user-owned GitHub repo, use `floo projects create <name>`,
+`floo projects list`, and `floo projects clone <name-or-id> [dir]`; check
+`floo projects --help` for details. Create starts the first deploy; follow the
+printed watch command. After cloning, read the project's `AGENTS.md` before
+editing. Keep the floo binary at its installed path: the repo-local git helper
+uses that absolute path and fetches one-hour tokens through floo per operation.
+Only the floo API key is stored; never cache GitHub tokens or configure global
+git credentials. The internal `floo projects git-credential get` is used by git,
+emits a plaintext password protocol rather than JSON, and must not be logged.
+Its `store` and `erase` operations do nothing.
+
 Deploys are git-driven:
 
 - A push or merge to the connected branch deploys dev.
