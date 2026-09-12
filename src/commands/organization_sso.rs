@@ -434,6 +434,7 @@ mod tests {
             id: "org-id".to_string(),
             name: Some("Example".to_string()),
             slug: Some("example".to_string()),
+            my_role: None,
             plan: None,
             spend_cap: None,
             current_period_spend_cents: None,

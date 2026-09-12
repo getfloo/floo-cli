@@ -656,6 +656,9 @@ pub enum ProjectsCommands {
 
 #[derive(Subcommand)]
 pub enum OrgsCommands {
+    /// List your organizations and mark the server-resolved current org.
+    List,
+
     /// Manage org members.
     #[command(subcommand)]
     Members(MembersCommands),
@@ -2409,6 +2412,7 @@ pub fn run() {
         },
 
         Commands::Orgs(sub) => match sub {
+            OrgsCommands::List => commands::orgs::list(),
             OrgsCommands::Members(members_sub) => match members_sub {
                 MembersCommands::List => commands::orgs::list_members(),
                 MembersCommands::SetRole { user_id, role } => {

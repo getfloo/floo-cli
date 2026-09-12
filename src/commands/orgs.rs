@@ -4,6 +4,115 @@ use crate::config::{load_config, save_config};
 use crate::errors::ErrorCode;
 use crate::output;
 
+pub fn list() {
+    super::require_auth();
+    let config = load_config();
+    let client = super::init_client(Some(config.clone()));
+
+    let result = match client.list_orgs() {
+        Ok(result) => result,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+
+    let warning = config
+        .default_org
+        .as_deref()
+        .filter(|id| !result.orgs.iter().any(|org| org.id == *id))
+        .map(|id| {
+            format!(
+                "Saved default org '{id}' is not in your organization memberships. Run 'floo orgs switch <slug-or-id>' to select an available org."
+            )
+        });
+
+    if result.orgs.is_empty() {
+        if !output::is_json_mode() {
+            if let Some(warning) = &warning {
+                output::warn(warning);
+            }
+        }
+        output::info(
+            "No organization memberships found.",
+            Some(serde_json::json!({
+                "orgs": [],
+                "total": result.total,
+                "current_org_id": null,
+                "warning": warning,
+            })),
+        );
+        return;
+    }
+
+    // Resolve through the same client and headers as other API calls. Neither
+    // the saved preference nor membership order is authoritative on its own.
+    let current = match client.get_org_me() {
+        Ok(org) => org,
+        Err(e) => {
+            output::error(
+                &e.message,
+                &ErrorCode::from_api(&e.code),
+                warning.as_deref(),
+            );
+            process::exit(1);
+        }
+    };
+
+    let orgs: Vec<_> = result
+        .orgs
+        .iter()
+        .map(|org| {
+            serde_json::json!({
+                "name": org.name,
+                "slug": org.slug,
+                "id": org.id,
+                "role": org.my_role,
+                "current": org.id == current.id,
+            })
+        })
+        .collect();
+
+    if !output::is_json_mode() {
+        if let Some(warning) = &warning {
+            output::warn(warning);
+        }
+        output::info(
+            &format!(
+                "Current org: {} ({})",
+                current.display_name().unwrap_or(&current.id),
+                current.id
+            ),
+            None,
+        );
+    }
+
+    let rows = result
+        .orgs
+        .iter()
+        .map(|org| {
+            vec![
+                org.name.as_deref().unwrap_or("-").to_string(),
+                org.slug.as_deref().unwrap_or("-").to_string(),
+                org.id.clone(),
+                org.my_role.as_deref().unwrap_or("-").to_string(),
+                if org.id == current.id { "*" } else { "" }.to_string(),
+            ]
+        })
+        .collect::<Vec<_>>();
+
+    output::table(
+        &["NAME", "SLUG", "ID", "ROLE", "CURRENT"],
+        &rows,
+        Some(serde_json::json!({
+            "orgs": orgs,
+            "total": result.total,
+            "current_org_id": current.id,
+            "warning": warning,
+        })),
+    );
+}
+
 pub fn list_members() {
     super::require_auth();
     let client = super::init_client(None);

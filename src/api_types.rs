@@ -101,6 +101,8 @@ pub struct OrgResponse {
     pub id: String,
     pub name: Option<String>,
     pub slug: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub my_role: Option<String>,
     pub plan: Option<String>,
     pub spend_cap: Option<u64>,
     pub current_period_spend_cents: Option<u64>,
