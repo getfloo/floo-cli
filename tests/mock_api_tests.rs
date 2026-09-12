@@ -382,6 +382,219 @@ fn test_billing_usage_period_scopes_derived_fields() {
         .stdout(predicate::str::contains("current_period_spend_cents").not());
 }
 
+// Each invocation starts a fresh CLI process with output modes reset.
+#[test]
+fn test_orgs_list_current_memberships_and_read_only_config() {
+    // Put the API default second, so choosing the first membership cannot pass.
+    // Also exercise a server resolution differing from a valid saved preference.
+    for (saved, current_id) in [
+        (None, "org-second"),
+        (Some("org-first"), "org-first"),
+        (Some("org-first"), "org-second"),
+        (Some("org-stale"), "org-second"),
+    ] {
+        for json_mode in [false, true] {
+            let mut server = Server::new();
+            let home = setup_config(&server);
+            let config_path = home.path().join(".floo-local/config.json");
+            let mut config: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+            if let Some(saved) = saved {
+                config["default_org"] = saved.into();
+            }
+            config["unknown_preserved_field"] = "keep me".into();
+            std::fs::write(&config_path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+            let before = std::fs::read(&config_path).unwrap();
+            let header = saved.map_or(Matcher::Missing, |id| Matcher::Exact(id.to_string()));
+            let memberships = server
+                .mock("GET", "/v1/orgs")
+                .match_header("authorization", "Bearer floo_test123")
+                .match_header("x-floo-org-id", header.clone())
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(r#"{"orgs":[{"id":"org-first","name":"First Org","slug":"first","my_role":"admin"},{"id":"org-second","name":"Second Org","slug":"second"}],"total":2}"#)
+                .expect(1)
+                .create();
+            let current = server
+                .mock("GET", "/v1/orgs/me")
+                .match_header("authorization", "Bearer floo_test123")
+                .match_header("x-floo-org-id", header)
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(serde_json::json!({"id": current_id}).to_string())
+                .expect(1)
+                .create();
+
+            let mut cmd = floo();
+            cmd.args(["orgs", "list"])
+                .env("HOME", home.path())
+                .env_remove("FLOO_CONFIG_DIR")
+                .env_remove("FLOO_API_URL")
+                .env_remove("FORCE_COLOR");
+            if json_mode {
+                cmd.arg("--json");
+            }
+            let assertion = cmd.assert().success();
+            let output = assertion.get_output();
+            let stale = saved == Some("org-stale");
+            if json_mode {
+                // Parsing the entire stdout rejects multiple JSON envelopes.
+                let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+                assert_eq!(value["success"], true);
+                let data = &value["data"];
+                assert_eq!(
+                    data["orgs"],
+                    serde_json::json!([
+                        {"id":"org-first", "name":"First Org", "slug":"first", "role":"admin", "current": current_id == "org-first"},
+                        {"id":"org-second", "name":"Second Org", "slug":"second", "role":null, "current": current_id == "org-second"}
+                    ])
+                );
+                assert_eq!(data["total"], 2);
+                assert_eq!(data["current_org_id"], current_id);
+                if stale {
+                    let warning = data["warning"].as_str().unwrap();
+                    assert!(warning.contains("org-stale"));
+                    assert!(warning.contains("not in your organization memberships"));
+                    assert!(warning.contains("floo orgs switch"));
+                } else {
+                    assert!(data["warning"].is_null());
+                }
+                assert!(output.stderr.is_empty());
+            } else {
+                assert!(output.stdout.is_empty());
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                assert!(stderr.contains(&format!("Current org: {current_id} ({current_id})")));
+                assert!(stderr.contains("CURRENT"));
+                for id in ["org-first", "org-second"] {
+                    let row = stderr
+                        .lines()
+                        .find(|line| line.contains('│') && line.contains(id))
+                        .unwrap();
+                    assert_eq!(row.contains('*'), id == current_id);
+                    if id == "org-first" {
+                        assert!(
+                            row.contains("First Org")
+                                && row.contains("first")
+                                && row.contains("admin")
+                        );
+                    } else {
+                        assert!(
+                            row.contains("Second Org")
+                                && row.contains("second")
+                                && row.contains('-')
+                        );
+                    }
+                }
+                assert_eq!(
+                    stderr.contains("not in your organization memberships"),
+                    stale
+                );
+                assert_eq!(stderr.contains("floo orgs switch"), stale);
+            }
+            memberships.assert();
+            current.assert();
+            assert_eq!(std::fs::read(&config_path).unwrap(), before);
+        }
+    }
+}
+
+#[test]
+fn test_orgs_list_empty_memberships_keeps_server_current_org() {
+    for json_mode in [false, true] {
+        let mut server = Server::new();
+        let home = setup_config(&server);
+        let config_path = home.path().join(".floo-local/config.json");
+        let before = std::fs::read(&config_path).unwrap();
+        let memberships = server
+            .mock("GET", "/v1/orgs")
+            .with_status(200)
+            .with_body(r#"{"orgs":[],"total":0}"#)
+            .create();
+        let current = mock_org_me(&mut server);
+        let mut cmd = floo();
+        cmd.args(["orgs", "list"])
+            .env("HOME", home.path())
+            .env_remove("FLOO_CONFIG_DIR")
+            .env_remove("FLOO_API_URL");
+        if json_mode {
+            cmd.arg("--json");
+        }
+        let assertion = cmd.assert().success();
+        let output = assertion.get_output();
+        if json_mode {
+            let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(
+                value["data"],
+                serde_json::json!({
+                    "orgs": [], "total": 0, "current_org_id": TEST_ORG_ID, "warning": null
+                })
+            );
+        } else {
+            assert!(output.stdout.is_empty());
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(stderr.contains("No organization memberships found."));
+            assert!(stderr.contains(&format!("Current org: test-org ({TEST_ORG_ID})")));
+        }
+        memberships.assert();
+        current.assert();
+        assert_eq!(std::fs::read(&config_path).unwrap(), before);
+    }
+}
+
+#[test]
+fn test_orgs_list_stale_default_resolution_error_does_not_guess_or_write() {
+    for json_mode in [false, true] {
+        let mut server = Server::new();
+        let home = setup_config(&server);
+        let config_path = home.path().join(".floo-local/config.json");
+        let config = serde_json::json!({
+            "api_key": "floo_test123", "api_url": server.url(), "default_org": "org-stale"
+        });
+        std::fs::write(&config_path, config.to_string()).unwrap();
+        let before = std::fs::read(&config_path).unwrap();
+        let memberships = server
+            .mock("GET", "/v1/orgs")
+            .match_header("x-floo-org-id", "org-stale")
+            .with_status(200)
+            .with_body(format!(r#"{{"orgs":[{}],"total":1}}"#, org_json()))
+            .create();
+        let current = server
+            .mock("GET", "/v1/orgs/me")
+            .match_header("x-floo-org-id", "org-stale")
+            .with_status(403)
+            .with_body(r#"{"detail":{"code":"ORG_ACCESS_DENIED","message":"Organization access denied."}}"#)
+            .create();
+        let mut cmd = floo();
+        cmd.args(["orgs", "list"])
+            .env("HOME", home.path())
+            .env_remove("FLOO_CONFIG_DIR")
+            .env_remove("FLOO_API_URL");
+        if json_mode {
+            cmd.arg("--json");
+        }
+        let assertion = cmd.assert().failure();
+        let output = assertion.get_output();
+        let diagnostic = if json_mode {
+            let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(value["success"], false);
+            assert_eq!(value["error"]["message"], "Organization access denied.");
+            assert!(value.get("data").is_none());
+            value["error"]["suggestion"].as_str().unwrap().to_string()
+        } else {
+            assert!(output.stdout.is_empty());
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            assert!(!stderr.contains("Current org:"));
+            stderr
+        };
+        assert!(diagnostic.contains("org-stale"));
+        assert!(diagnostic.contains("not in your organization memberships"));
+        assert!(diagnostic.contains("floo orgs switch"));
+        memberships.assert();
+        current.assert();
+        assert_eq!(std::fs::read(&config_path).unwrap(), before);
+    }
+}
+
 #[test]
 fn test_orgs_invite_json_assigns_role_and_redacts_url() {
     // #1161: `orgs invite` resolves the current org, POSTs email + role in one
