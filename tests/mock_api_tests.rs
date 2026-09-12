@@ -5686,15 +5686,149 @@ fn test_deploy_failed_json_includes_logs_and_suggestion() {
 // ───────────────────────── App Not Found ─────────────────────────
 
 #[test]
+fn test_apps_show_uuid_preserves_owning_org_hint() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let app_id = "11111111-1111-1111-1111-111111111111";
+    let message = "This app is in your other organization 'Other Org'. Switch in the dashboard, or run `floo orgs switch other-org`.";
+    let owning_org = serde_json::json!({
+        "id": "other-org-id",
+        "slug": "other-org",
+        "name": "Other Org",
+    });
+    let lookup = server
+        .mock("GET", format!("/v1/apps/{app_id}").as_str())
+        .with_status(404)
+        .with_header("content-type", "application/json")
+        .with_body(
+            serde_json::json!({
+                "detail": {
+                    "code": "APP_NOT_FOUND",
+                    "message": message,
+                    "owning_org": owning_org,
+                }
+            })
+            .to_string(),
+        )
+        .expect(2)
+        .create();
+    let list = server
+        .mock("GET", "/v1/apps")
+        .match_query(Matcher::Any)
+        .expect(0)
+        .create();
+    let org = server.mock("GET", "/v1/orgs/me").expect(0).create();
+
+    for json_mode in [false, true] {
+        let mut command = floo();
+        if json_mode {
+            command.arg("--json");
+        }
+        let result = command
+            .args(["apps", "show", app_id])
+            .env("HOME", home.path())
+            .env("NO_COLOR", "1")
+            .env_remove("FORCE_COLOR")
+            .assert()
+            .failure();
+        if json_mode {
+            let output: serde_json::Value =
+                serde_json::from_slice(&result.get_output().stdout).unwrap();
+            assert_eq!(output["success"], false);
+            assert_eq!(output["error"]["code"], "APP_NOT_FOUND");
+            assert_eq!(output["error"]["message"], message);
+            assert_eq!(output["error"]["owning_org"], owning_org);
+        } else {
+            result
+                .stdout(predicate::str::is_empty())
+                .stderr(predicate::str::contains(format!("Error: {message}\n")));
+        }
+    }
+    lookup.assert();
+    list.assert();
+    org.assert();
+}
+
+#[test]
+fn test_apps_show_name_miss_names_searched_org() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    // Pin both requests to the selected org, which may differ from the user's
+    // default org. A miss must describe the same scope as the app list.
+    std::fs::write(
+        home.path().join(".floo-local/config.json"),
+        serde_json::json!({
+            "api_key": "floo_test123",
+            "api_url": server.url(),
+            "default_org": TEST_ORG_ID,
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let org = server
+        .mock("GET", "/v1/orgs/me")
+        .match_header("X-Floo-Org-Id", TEST_ORG_ID)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(org_json())
+        .expect(4)
+        .create();
+    let message = "App 'nonexistent' not found in org 'test-org'. Run 'floo orgs list' to see your organizations, or 'floo orgs switch <slug>' to search another org.";
+
+    for apps in [
+        r#"{"apps":[]}"#.to_string(),
+        format!(r#"{{"apps":[{}]}}"#, app_json()),
+    ] {
+        let list = server
+            .mock("GET", "/v1/apps")
+            .match_query(Matcher::AllOf(vec![
+                Matcher::UrlEncoded("page".into(), "1".into()),
+                Matcher::UrlEncoded("per_page".into(), "100".into()),
+            ]))
+            .match_header("X-Floo-Org-Id", TEST_ORG_ID)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(apps)
+            .expect(2)
+            .create();
+        for json_mode in [false, true] {
+            let mut command = floo();
+            if json_mode {
+                command.arg("--json");
+            }
+            let result = command
+                .args(["apps", "show", "nonexistent"])
+                .env("HOME", home.path())
+                .env("NO_COLOR", "1")
+                .env_remove("FORCE_COLOR")
+                .assert()
+                .failure();
+            if json_mode {
+                let output: serde_json::Value =
+                    serde_json::from_slice(&result.get_output().stdout).unwrap();
+                assert_eq!(output["error"]["code"], "APP_NOT_FOUND");
+                assert_eq!(output["error"]["message"], message);
+            } else {
+                result
+                    .stdout(predicate::str::is_empty())
+                    .stderr(predicate::str::contains(format!("Error: {message}\n")));
+            }
+        }
+        list.assert();
+    }
+    org.assert();
+}
+
+#[test]
 fn test_app_not_found_json() {
     let mut server = Server::new();
     let home = setup_config(&server);
 
-    let _m_get = server
-        .mock("GET", "/v1/apps/nonexistent")
-        .with_status(404)
+    let org = server
+        .mock("GET", "/v1/orgs/me")
+        .with_status(503)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"detail":{"code":"NOT_FOUND","message":"Not found"}}"#)
+        .with_body(r#"{"detail":{"code":"API_ERROR","message":"Org lookup unavailable"}}"#)
         .create();
 
     let _m_list = server
@@ -5713,7 +5847,13 @@ fn test_app_not_found_json() {
         .env("HOME", home.path())
         .assert()
         .failure()
-        .stdout(predicate::str::contains("APP_NOT_FOUND"));
+        .stdout(predicate::str::contains("APP_NOT_FOUND"))
+        .stdout(predicate::str::contains(
+            "App 'nonexistent' not found in the current org.",
+        ))
+        .stdout(predicate::str::contains("floo orgs list"))
+        .stdout(predicate::str::contains("floo orgs switch"));
+    org.assert();
 }
 
 #[test]

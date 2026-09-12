@@ -88,13 +88,14 @@ pub(crate) fn resolve_app_or_exit(client: &FlooClient, app_name: &str) -> App {
     match crate::resolve::resolve_app(client, app_name) {
         Ok(a) => a,
         Err(e) => {
-            // A 404 from resolving a single app means the app doesn't exist;
-            // match on status, not a drift-prone code string (see is_not_found).
+            // Normalize 404 codes, but preserve the API's message and details:
+            // an app in another org may carry a membership-gated owning-org hint.
             if e.is_not_found() {
-                output::error(
-                    &format!("App '{app_name}' not found."),
+                output::error_with_details(
+                    &e.message,
                     &ErrorCode::AppNotFound,
                     Some("Check the app name or ID and try again."),
+                    e.extra.as_ref(),
                 );
             } else {
                 output::error(&e.message, &ErrorCode::from_api(&e.code), None);
