@@ -339,8 +339,13 @@ Run `floo notifications list` to see the available categories."
     #[command(subcommand)]
     Storage(StorageCommands),
 
-    /// Manage custom domains.
-    #[command(subcommand)]
+    /// Inspect custom domains declared in floo.app.toml.
+    #[command(
+        subcommand,
+        after_help = "Declare [domains.\"<host>\"] in floo.app.toml and release to prod.
+Publish the DNS records printed by the deploy or `floo domains show <host>`,
+then run `floo domains watch <host>`. Remove the block to retire the domain."
+    )]
     Domains(DomainsCommands),
 
     /// Inspect edge routing and access policy for an app.
@@ -1342,23 +1347,6 @@ pub enum StorageCommands {
 
 #[derive(Subcommand)]
 pub enum DomainsCommands {
-    /// Add a custom domain to an app.
-    Add {
-        /// Domain hostname (e.g. app.example.com).
-        hostname: String,
-
-        /// App name or ID (uses config file if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-
-        /// Route this domain to a specific service (required for multi-service apps).
-        #[arg(long = "service", visible_alias = "services")]
-        services: Option<String>,
-
-        #[command(flatten)]
-        preflight: PreflightArgs,
-    },
-
     /// List custom domains for an app.
     ///
     /// Custom domains are app/ingress-level, so this lists every domain on the
@@ -1369,37 +1357,10 @@ pub enum DomainsCommands {
         app: Option<String>,
     },
 
-    /// Verify DNS for a pending custom domain.
-    Verify {
-        /// Domain hostname to verify.
-        hostname: String,
-
-        /// App name or ID (uses config file if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-    },
-
-    /// Remove a custom domain from an app.
+    /// Show domain status and the exact DNS records to publish.
     ///
-    /// Tier-2 destructive: interactive prompts `y/N`; non-interactive
-    /// requires `--yes` to confirm.
-    Remove {
-        /// Domain hostname to remove.
-        hostname: String,
-
-        /// App name or ID (uses config file if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-
-        /// Skip the y/N prompt. Required in non-interactive contexts.
-        #[arg(long)]
-        yes: bool,
-
-        #[command(flatten)]
-        preflight: PreflightArgs,
-    },
-
-    /// Show detailed status for a single custom domain.
+    /// Pending means waiting on DNS. Removed domains retain their certificate
+    /// for 7 days; re-declare the block in floo.app.toml to restore.
     Show {
         /// Domain hostname.
         hostname: String,
@@ -1409,7 +1370,10 @@ pub enum DomainsCommands {
         app: Option<String>,
     },
 
-    /// Poll until a domain is active, failed, or the timeout expires.
+    /// Read domain status until active, failed, removed, or timed out.
+    ///
+    /// Publish the records from `floo domains show <host>` first. The platform
+    /// automatically activates the domain when DNS and its certificate are ready.
     Watch {
         /// Domain hostname to watch.
         hostname: String,
@@ -1526,7 +1490,7 @@ pub enum DeploysSubcommands {
     ///
     /// Emits the latest deploy's id, commit, derived phase booleans
     /// (image_built / service_ready / host_bound), the gateway URL, and a
-    /// next recommended command — without dumping build logs, runtime
+    /// next recommended command, plus deploy diagnostics — without dumping build logs, runtime
     /// audit payloads, or env-var values. Use this from agents and
     /// scripts that need to know "what state is the deploy in?" without
     /// risking secret exfiltration through verbose log output.
@@ -2641,22 +2605,7 @@ pub fn run() {
         },
 
         Commands::Domains(sub) => match sub {
-            DomainsCommands::Add {
-                hostname,
-                app,
-                services,
-                preflight: _,
-            } => commands::domains::add(&hostname, app.as_deref(), services.as_deref()),
             DomainsCommands::List { app } => commands::domains::list(app.as_deref()),
-            DomainsCommands::Verify { hostname, app } => {
-                commands::domains::verify(&hostname, app.as_deref())
-            }
-            DomainsCommands::Remove {
-                hostname,
-                app,
-                yes,
-                preflight: _,
-            } => commands::domains::remove(&hostname, app.as_deref(), yes),
             DomainsCommands::Show { hostname, app } => {
                 commands::domains::status(&hostname, app.as_deref())
             }
@@ -3056,14 +3005,6 @@ mod tests {
                 "apps delete",
                 &["floo", "apps", "delete", "myapp", "--preflight"],
             ),
-            (
-                "domains add",
-                &["floo", "domains", "add", "x.com", "--preflight"],
-            ),
-            (
-                "domains remove",
-                &["floo", "domains", "remove", "x.com", "--preflight"],
-            ),
             ("cron run", &["floo", "cron", "run", "myjob", "--preflight"]),
             (
                 "deploys rollback",
@@ -3290,18 +3231,6 @@ mod tests {
     }
 
     #[test]
-    fn domains_add_accepts_both_service_spellings() {
-        for flag in ["--service", "--services"] {
-            let cli = Cli::try_parse_from(["floo", "domains", "add", "x.com", flag, "api"])
-                .unwrap_or_else(|e| panic!("clap rejected `domains add {flag}`: {e}"));
-            let Commands::Domains(DomainsCommands::Add { services, .. }) = cli.command else {
-                panic!("expected Domains::Add");
-            };
-            assert_eq!(services.as_deref(), Some("api"), "domains add {flag}");
-        }
-    }
-
-    #[test]
     fn logs_accepts_both_service_spellings_and_repeats() {
         for flag in ["--service", "--services"] {
             let cli = Cli::try_parse_from(["floo", "logs", flag, "api", flag, "web"])
@@ -3399,22 +3328,13 @@ mod tests {
     }
 
     #[test]
-    fn domains_list_and_remove_reject_service_flag() {
-        // #1161: custom domains are app/ingress-level, so `list`/`remove` no
+    fn domains_list_rejects_service_flag() {
+        // #1161: custom domains are app/ingress-level, so `list` no
         // longer accept a service target (it was required-but-ignored before).
         // clap must reject the removed flag in either spelling.
         let invocations: &[&[&str]] = &[
             &["floo", "domains", "list", "--service", "api"],
             &["floo", "domains", "list", "--services", "api"],
-            &[
-                "floo",
-                "domains",
-                "remove",
-                "x.com",
-                "--service",
-                "api",
-                "--yes",
-            ],
         ];
         for args in invocations {
             let err = parse_err(args);

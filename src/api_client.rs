@@ -1135,44 +1135,9 @@ impl FlooClient {
 
     // --- Domains ---
 
-    pub fn add_domain(
-        &self,
-        app_id: &str,
-        hostname: &str,
-        service: Option<&str>,
-    ) -> Result<AddDomainResponse, FlooApiError> {
-        let mut body = serde_json::json!({"hostname": hostname});
-        if let Some(svc) = service {
-            body["service"] = serde_json::Value::String(svc.to_string());
-        }
-        let resp = self.post_json(&format!("/v1/apps/{app_id}/domains"), &body)?;
-        self.handle_response(resp)
-    }
-
     pub fn list_domains(&self, app_id: &str) -> Result<ListDomainsResponse, FlooApiError> {
         let resp = self.get(&format!("/v1/apps/{app_id}/domains"))?;
         self.handle_response(resp)
-    }
-
-    pub fn verify_domain(
-        &self,
-        app_id: &str,
-        hostname: &str,
-    ) -> Result<AddDomainResponse, FlooApiError> {
-        let resp = self.post_json(
-            &format!("/v1/apps/{app_id}/domains/{hostname}/verify"),
-            &serde_json::json!({}),
-        )?;
-        self.handle_response(resp)
-    }
-
-    pub fn delete_domain(&self, app_id: &str, hostname: &str) -> Result<(), FlooApiError> {
-        let resp = self.delete(&format!("/v1/apps/{app_id}/domains/{hostname}"))?;
-        if resp.status().as_u16() == 204 {
-            return Ok(());
-        }
-        self.handle_response_value(resp)?;
-        Ok(())
     }
 
     // --- Rollbacks ---

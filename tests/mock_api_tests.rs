@@ -2734,41 +2734,6 @@ fn test_env_list_human_no_scope_column_when_serviceless() {
 // ───────────────────────── Domains ─────────────────────────
 
 #[test]
-fn test_domains_add_json() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let _resolve = mock_resolve_app(&mut server);
-    let _services = mock_services_single(&mut server);
-
-    let _m_add = server
-        .mock(
-            "POST",
-            format!("/v1/apps/{TEST_APP_ID}/domains").as_str(),
-        )
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(
-            r#"{"hostname":"app.example.com","status":"PENDING","dns_instructions":"Add a CNAME record pointing to test.floo.app"}"#,
-        )
-        .create();
-
-    floo()
-        .args([
-            "--json",
-            "domains",
-            "add",
-            "app.example.com",
-            "--app",
-            TEST_APP_NAME,
-        ])
-        .env("HOME", home.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""success":true"#))
-        .stdout(predicate::str::contains("app.example.com"));
-}
-
-#[test]
 fn test_domains_list_json() {
     let mut server = Server::new();
     let home = setup_config(&server);
@@ -2795,64 +2760,6 @@ fn test_domains_list_json() {
         .stdout(predicate::str::contains(r#""success":true"#))
         .stdout(predicate::str::contains("domains"))
         .stdout(predicate::str::contains("app.example.com"));
-}
-
-#[test]
-fn test_domains_remove_refuses_without_yes_flag_in_json_mode() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let _resolve = mock_resolve_app(&mut server);
-    let _services = mock_services_single(&mut server);
-
-    // No DELETE mock — command must refuse before reaching that endpoint.
-    floo()
-        .args([
-            "--json",
-            "domains",
-            "remove",
-            "app.example.com",
-            "--app",
-            TEST_APP_NAME,
-        ])
-        .env("HOME", home.path())
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains("CONFIRMATION_REQUIRED"));
-}
-
-#[test]
-fn test_domains_remove_json_with_yes_flag() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let _resolve = mock_resolve_app(&mut server);
-    let _services = mock_services_single(&mut server);
-
-    let _m_del = server
-        .mock(
-            "DELETE",
-            format!("/v1/apps/{TEST_APP_ID}/domains/app.example.com").as_str(),
-        )
-        .with_status(204)
-        .create();
-
-    floo()
-        .args([
-            "--json",
-            "domains",
-            "remove",
-            "app.example.com",
-            "--app",
-            TEST_APP_NAME,
-            "--yes",
-        ])
-        .env("HOME", home.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""success":true"#))
-        .stdout(predicate::str::contains("app.example.com"))
-        .stdout(predicate::str::contains(r#""destructive":true"#))
-        .stdout(predicate::str::contains(r#""data_loss":false"#))
-        .stdout(predicate::str::contains(r#""tier":2"#));
 }
 
 #[test]
@@ -2952,14 +2859,14 @@ fn test_domains_watch_becomes_active() {
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
 
-    let _m_verify = server
+    let _m_list = server
         .mock(
-            "POST",
-            format!("/v1/apps/{TEST_APP_ID}/domains/app.example.com/verify").as_str(),
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/domains").as_str(),
         )
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"hostname":"app.example.com","status":"active","dns_instructions":null}"#)
+        .with_body(r#"{"domains":[{"hostname":"app.example.com","status":"active","dns_instructions":null}]}"#)
         .create();
 
     floo()
@@ -2986,14 +2893,14 @@ fn test_domains_watch_fails_on_failed_status() {
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
 
-    let _m_verify = server
+    let _m_list = server
         .mock(
-            "POST",
-            format!("/v1/apps/{TEST_APP_ID}/domains/app.example.com/verify").as_str(),
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/domains").as_str(),
         )
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"hostname":"app.example.com","status":"failed","dns_instructions":null}"#)
+        .with_body(r#"{"domains":[{"hostname":"app.example.com","status":"failed","dns_instructions":null}]}"#)
         .create();
 
     floo()
@@ -3020,17 +2927,17 @@ fn test_domains_watch_timeout() {
     let _resolve = mock_resolve_app(&mut server);
 
     // Always returns pending — watch should time out.
-    let _m_verify = server
+    let _m_list = server
         .mock(
-            "POST",
-            format!("/v1/apps/{TEST_APP_ID}/domains/app.example.com/verify").as_str(),
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/domains").as_str(),
         )
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"hostname":"app.example.com","status":"pending","dns_instructions":"CNAME app.example.com -> test.getfloo.com"}"#)
+        .with_body(r#"{"domains":[{"hostname":"app.example.com","status":"pending","dns_instructions":"CNAME app.example.com -> test.getfloo.com"}]}"#)
         .create();
 
-    // --timeout 0 means the deadline is already expired after the first verify call.
+    // --timeout 0 means the deadline is already expired after the first read.
     floo()
         .args([
             "--json",
@@ -6264,9 +6171,11 @@ fn test_deploy_with_sse_streaming() {
         )
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(
-            r#"{"id":"deploy-001","status":"live","url":"https://test-stream.floo.app","build_logs":"Building image...\nPushing to registry..."}"#,
-        )
+        .with_body({
+            let mut deploy: serde_json::Value = serde_json::from_str(r#"{"id":"deploy-001","status":"live","url":"https://test-stream.floo.app","build_logs":"Building image...\nPushing to registry..."}"#).unwrap();
+            deploy["diagnostics"] = diagnostic_fixture();
+            deploy.to_string()
+        })
         .create();
 
     floo()
@@ -6275,6 +6184,7 @@ fn test_deploy_with_sse_streaming() {
         .assert()
         .success()
         .stderr(predicate::str::contains("Building"))
+        .stderr(predicate::str::contains(RENDERED_DIAGNOSTICS))
         .stderr(predicate::str::contains("https://test-stream.floo.app"));
 }
 
@@ -6339,9 +6249,11 @@ fn test_deploy_sse_fallback_to_polling() {
         )
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(
-            r#"{"id":"deploy-002","status":"live","url":"https://test-fallback.floo.app","build_logs":"done"}"#,
-        )
+        .with_body({
+            let mut deploy: serde_json::Value = serde_json::from_str(r#"{"id":"deploy-002","status":"live","url":"https://test-fallback.floo.app","build_logs":"done"}"#).unwrap();
+            deploy["diagnostics"] = diagnostic_fixture();
+            deploy.to_string()
+        })
         .create();
 
     floo()
@@ -6349,6 +6261,7 @@ fn test_deploy_sse_fallback_to_polling() {
         .env("HOME", home.path())
         .assert()
         .success()
+        .stderr(predicate::str::contains(RENDERED_DIAGNOSTICS))
         .stderr(predicate::str::contains("https://test-fallback.floo.app"));
 }
 
@@ -8303,4 +8216,201 @@ fn test_failed_connect_reports_a_cleanup_it_could_not_perform() {
     create.assert();
     connect.assert();
     delete.assert();
+}
+
+// Domain reads preserve the API's multiline DNS instructions exactly.
+const DOMAIN_DNS: &str = "CNAME app.example.com -> edge.example.com\nApex: use ALIAS/ANAME\nCNAME _acme.app.example.com -> auth.example.net";
+
+fn run_domain_read(args: &[&str], status: &str) -> std::process::Output {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let read = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/domains").as_str())
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            serde_json::json!({"domains": [{
+                "hostname": "app.example.com", "status": status, "dns_instructions": DOMAIN_DNS
+            }]})
+            .to_string(),
+        )
+        .expect(1)
+        .create();
+    let result = floo()
+        .args(args)
+        .args(["--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    read.assert();
+    result
+}
+
+#[test]
+fn domains_list_pending_prints_verbatim_dns_beneath_status() {
+    let result = run_domain_read(&["domains", "list"], "pending");
+    assert!(result.status.success());
+    assert!(result.stdout.is_empty());
+    assert!(String::from_utf8(result.stderr)
+        .unwrap()
+        .contains(&format!("app.example.com: waiting on DNS\n{DOMAIN_DNS}\n")));
+}
+
+#[test]
+fn domains_show_pending_prints_verbatim_dns() {
+    let result = run_domain_read(&["domains", "show", "app.example.com"], "pending");
+    assert!(result.status.success());
+    assert!(result.stdout.is_empty());
+    let stderr = String::from_utf8(result.stderr).unwrap();
+    assert!(stderr.contains("Status:   waiting on DNS"));
+    assert!(stderr.contains(&format!("\n{DOMAIN_DNS}\n")));
+}
+
+#[test]
+fn domains_list_explains_retirement_and_restoration() {
+    let result = run_domain_read(&["domains", "list"], "removed");
+    assert!(result.status.success());
+    assert!(String::from_utf8(result.stderr)
+        .unwrap()
+        .contains("retired (certificate kept 7 days; re-declare in floo.app.toml to restore)"));
+}
+
+#[test]
+fn domains_show_explains_retirement_and_restoration() {
+    let result = run_domain_read(&["domains", "show", "app.example.com"], "removed");
+    assert!(result.status.success());
+    assert!(String::from_utf8(result.stderr)
+        .unwrap()
+        .contains("retired (certificate kept 7 days; re-declare in floo.app.toml to restore)"));
+}
+
+#[test]
+fn domains_watch_stops_on_retirement() {
+    let result = run_domain_read(&["domains", "watch", "app.example.com"], "removed");
+    assert!(!result.status.success());
+    assert!(String::from_utf8(result.stderr)
+        .unwrap()
+        .contains("re-declare in floo.app.toml"));
+}
+
+#[test]
+fn domains_json_keeps_api_status_and_dns() {
+    let result = run_domain_read(&["--json", "domains", "show", "app.example.com"], "pending");
+    assert!(result.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(json["data"]["status"], "pending");
+    assert_eq!(json["data"]["dns_instructions"], DOMAIN_DNS);
+    assert!(result.stderr.is_empty());
+}
+
+fn diagnostic_fixture() -> serde_json::Value {
+    serde_json::json!([
+        {"id":"info-1","step_name":"domains","service_name":"web","code":"DNS_REQUIRED",
+         "severity":"info","source":"platform","title":"Publish DNS","message":"Traffic record\nACME record",
+         "fix":"Publish both CNAMEs","knowledge_ref":"domains"},
+        {"id":"error-1","code":"DOMAIN_FAILED","severity":"error","source":"platform",
+         "title":"Domain failed","message":"Certificate rejected","fix":"Check CAA"},
+        {"id":"warning-1","code":"DOMAIN_PENDING","severity":"warning","source":"platform",
+         "title":"Domain pending","message":"DNS is not ready","fix":"Wait for propagation"}
+    ])
+}
+
+const RENDERED_DIAGNOSTICS: &str = "Domain failed\n  Certificate rejected\n  Check CAA\n\nDomain pending\n  DNS is not ready\n  Wait for propagation\n\nPublish DNS\n  Traffic record\n  ACME record\n  Publish both CNAMEs\n";
+
+fn run_deploy_read(args: &[&str], deploy: serde_json::Value) -> std::process::Output {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _app = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}").as_str())
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(app_json())
+        .create();
+    let _deploys = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(serde_json::json!({"deploys": [deploy]}).to_string())
+        .create();
+    floo()
+        .args(args)
+        .args(["--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn deploy_status_renders_all_diagnostics_in_severity_order() {
+    let result = run_deploy_read(
+        &["deploys", "status"],
+        serde_json::json!({
+            "id":"deploy-1", "status":"live", "diagnostics": diagnostic_fixture()
+        }),
+    );
+    assert!(result.status.success());
+    assert!(result.stdout.is_empty());
+    assert!(String::from_utf8(result.stderr)
+        .unwrap()
+        .contains(RENDERED_DIAGNOSTICS));
+}
+
+#[test]
+fn deploy_status_json_preserves_diagnostic_metadata_and_api_order() {
+    let result = run_deploy_read(
+        &["--json", "deploys", "status"],
+        serde_json::json!({
+            "id":"deploy-1", "status":"live", "diagnostics": diagnostic_fixture()
+        }),
+    );
+    assert!(result.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(json["data"]["diagnostics"][0], diagnostic_fixture()[0]);
+    assert_eq!(json["data"]["diagnostics"].as_array().unwrap().len(), 3);
+    assert!(result.stderr.is_empty());
+}
+
+#[test]
+fn deploy_status_accepts_absent_diagnostics() {
+    let result = run_deploy_read(
+        &["--json", "deploys", "status"],
+        serde_json::json!({
+            "id":"deploy-1", "status":"live"
+        }),
+    );
+    assert!(result.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(json["data"]["diagnostics"], serde_json::json!([]));
+}
+
+#[test]
+fn failed_deploy_watch_renders_diagnostics_before_exiting() {
+    let result = run_deploy_read(
+        &["deploy", "watch"],
+        serde_json::json!({
+            "id":"deploy-1", "status":"failed", "diagnostics": diagnostic_fixture()
+        }),
+    );
+    assert!(!result.status.success());
+    assert!(String::from_utf8(result.stderr)
+        .unwrap()
+        .contains(RENDERED_DIAGNOSTICS));
+}
+
+#[test]
+fn deploy_watch_json_done_includes_diagnostics() {
+    let result = run_deploy_read(
+        &["--json", "deploy", "watch"],
+        serde_json::json!({
+            "id":"deploy-1", "status":"live", "diagnostics": diagnostic_fixture()
+        }),
+    );
+    assert!(result.status.success());
+    let stdout = String::from_utf8(result.stdout).unwrap();
+    let done: serde_json::Value = serde_json::from_str(stdout.lines().last().unwrap()).unwrap();
+    assert_eq!(done["event"], "done");
+    assert_eq!(done["diagnostics"][0], diagnostic_fixture()[0]);
 }

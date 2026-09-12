@@ -58,7 +58,7 @@ No state change is complete until a read-only command confirms the resulting sta
 - After editing floo config, run `floo preflight --json`.
 - Before a mutation, use its `--preflight` form when available.
 - After an environment change, inspect the relevant `env` read surface and run preflight.
-- After a service or domain change, inspect its list/show surface and run preflight.
+- A `[domains."<host>"]` block goes live on the prod release. Publish the DNS records the deploy output prints (also `floo domains show <host>`), then `floo domains watch <host>`.
 - After a git-triggered deploy, watch the deployment and inspect runtime logs.
 - If the audit differs from intent, stop and investigate before another mutation or push.
 

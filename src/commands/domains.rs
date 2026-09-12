@@ -2,91 +2,8 @@ use std::process;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::api_client::FlooClient;
 use crate::errors::ErrorCode;
 use crate::output;
-
-fn check_services_flag(client: &FlooClient, app_id: &str, services: Option<&str>) {
-    let result = match client.list_services(app_id, None) {
-        Ok(r) => r,
-        Err(e) => {
-            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-            process::exit(1);
-        }
-    };
-
-    if result.services.len() > 1 && services.is_none() {
-        output::error(
-            "Multiple services found. Specify --service.",
-            &ErrorCode::MultipleServicesNoTarget,
-            Some("Use --service <name> to target a specific service."),
-        );
-        process::exit(1);
-    }
-
-    if let Some(svc_name) = services {
-        let exists = result.services.iter().any(|s| s.name == svc_name);
-        if !exists {
-            output::error(
-                &format!("Service '{svc_name}' not found."),
-                &ErrorCode::ServiceNotFound,
-                Some("Run 'floo services list' to see available services."),
-            );
-            process::exit(1);
-        }
-    }
-}
-
-pub fn add(hostname: &str, app: Option<&str>, services: Option<&str>) {
-    if output::is_dry_run_mode() {
-        let target = app.unwrap_or("(reads from config)");
-        let svc_clause = services
-            .map(|s| format!(" (service: {s})"))
-            .unwrap_or_default();
-        let preview = format!("Would add domain {hostname} to {target}{svc_clause}.");
-        output::dry_run_preview(
-            &preview,
-            serde_json::json!({
-                "action": "domain_add",
-                "hostname": hostname,
-                "app": app,
-                "service": services,
-            }),
-        );
-        return;
-    }
-
-    super::require_auth();
-    let client = super::init_client(None);
-
-    let (app_id, app_name) = super::resolve_app_from_config(&client, app);
-    check_services_flag(&client, &app_id, services);
-
-    let result = match client.add_domain(&app_id, hostname, services) {
-        Ok(r) => r,
-        Err(e) => {
-            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-            process::exit(1);
-        }
-    };
-
-    if output::is_json_mode() {
-        output::success(
-            &format!("Added {hostname}"),
-            Some(output::to_value(&result)),
-        );
-    } else {
-        output::success(
-            &format!("Added domain {hostname} to {app_name}."),
-            Some(serde_json::Value::Null),
-        );
-        let status = result.status.as_deref().unwrap_or("-");
-        output::info(&format!("  Status: {status}"), None);
-        if let Some(dns) = result.dns_instructions.as_deref() {
-            output::info(&format!("  DNS:    {dns}"), None);
-        }
-    }
-}
 
 pub fn list(app: Option<&str>) {
     super::require_auth();
@@ -106,7 +23,7 @@ pub fn list(app: Option<&str>) {
         if !output::is_json_mode() {
             output::info(
                 &format!(
-                    "No custom domains on {app_name}. Add one with floo domains add example.com --app {app_name}."
+                    "No custom domains on {app_name}. Declare [domains.\"<host>\"] in floo.app.toml and release to prod."
                 ),
                 None,
             );
@@ -116,116 +33,23 @@ pub fn list(app: Option<&str>) {
         return;
     }
 
-    let rows: Vec<Vec<String>> = result
-        .domains
-        .iter()
-        .map(|d| {
-            vec![
-                d.hostname.clone(),
-                d.status.as_deref().unwrap_or("-").to_string(),
-                d.dns_instructions
-                    .as_deref()
-                    .unwrap_or("\u{2014}")
-                    .to_string(),
-            ]
-        })
-        .collect();
-
-    output::table(
-        &["Domain", "Status", "DNS"],
-        &rows,
-        Some(output::to_value(&result)),
-    );
-}
-
-pub fn verify(hostname: &str, app: Option<&str>) {
-    super::require_auth();
-    let client = super::init_client(None);
-
-    let (app_id, app_name) = super::resolve_app_from_config(&client, app);
-
-    let result = match client.verify_domain(&app_id, hostname) {
-        Ok(r) => r,
-        Err(e) => {
-            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-            process::exit(1);
-        }
-    };
-
     if output::is_json_mode() {
-        output::success(
-            &format!("Verified {hostname}"),
-            Some(output::to_value(&result)),
-        );
-    } else {
-        output::success(
-            &format!("Domain {hostname} verified on {app_name}."),
-            Some(serde_json::Value::Null),
-        );
-        let status = result.status.as_deref().unwrap_or("-");
-        output::info(&format!("  Status: {status}"), None);
-    }
-}
-
-pub fn remove(hostname: &str, app: Option<&str>, yes: bool) {
-    use crate::confirm::{confirm_tier2, ConfirmOutcome, RiskMetadata, Tier};
-
-    if output::is_dry_run_mode() {
-        let risk: RiskMetadata = Tier::Two.into();
-        let target = app.unwrap_or("(reads from config)");
-        let preview = format!("Would remove domain {hostname} from {target}.");
-        output::dry_run_preview(
-            &preview,
-            serde_json::json!({
-                "action": "domain_remove",
-                "hostname": hostname,
-                "app": app,
-                "destructive": risk.destructive,
-                "data_loss": risk.data_loss,
-                "tier": risk.tier,
-            }),
-        );
+        output::success("Domains retrieved.", Some(output::to_value(&result)));
         return;
     }
-
-    super::require_auth();
-    let client = super::init_client(None);
-
-    let (app_id, app_name) = super::resolve_app_from_config(&client, app);
-
-    match confirm_tier2("Remove domain", &format!("{hostname} from {app_name}"), yes) {
-        ConfirmOutcome::Proceed => {}
-        ConfirmOutcome::Aborted => {
-            if !output::is_json_mode() {
-                output::info("Cancelled — domain not removed.", None);
-            }
-            process::exit(0);
-        }
-        ConfirmOutcome::Refused { suggestion } => {
-            crate::confirm::exit_refused(
-                &format!(
-                    "Refusing to remove domain {hostname} from {app_name} without explicit confirmation."
-                ),
-                &suggestion,
-            );
+    for domain in &result.domains {
+        output::info(
+            &format!(
+                "{}: {}",
+                domain.hostname,
+                domain_status(domain.status.as_deref())
+            ),
+            None,
+        );
+        if let Some(dns) = domain.dns_instructions.as_deref() {
+            output::info(dns, None);
         }
     }
-
-    if let Err(e) = client.delete_domain(&app_id, hostname) {
-        output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-        process::exit(1);
-    }
-
-    let risk: RiskMetadata = Tier::Two.into();
-    output::success(
-        &format!("Removed domain {hostname} from {app_name}."),
-        Some(serde_json::json!({
-            "hostname": hostname,
-            "destructive": risk.destructive,
-            "data_loss": risk.data_loss,
-            "tier": risk.tier,
-        })),
-    );
 }
 
 pub fn status(hostname: &str, app: Option<&str>) {
@@ -262,7 +86,7 @@ pub fn status(hostname: &str, app: Option<&str>) {
         return;
     }
 
-    let status = domain.status.as_deref().unwrap_or("-");
+    let status = domain_status(domain.status.as_deref());
     let ssl = domain.ssl_status.as_deref().unwrap_or("-");
     let verified = domain
         .verified
@@ -276,12 +100,12 @@ pub fn status(hostname: &str, app: Option<&str>) {
     output::info(&format!("Verified: {verified}"), None);
     output::info(&format!("Service:  {service}"), None);
     if let Some(dns) = domain.dns_instructions.as_deref() {
-        output::info(&format!("DNS:      {dns}"), None);
+        output::info(dns, None);
     }
 }
 
 /// Poll until the domain is active, failed, or timeout expires.
-/// Calls `verify_domain` on each tick to trigger server-side DNS re-check.
+/// Reads domain state; the platform owns DNS checks and activation.
 pub fn watch(hostname: &str, app: Option<&str>, timeout_secs: u64) {
     super::require_auth();
     let client = super::init_client(None);
@@ -299,8 +123,7 @@ pub fn watch(hostname: &str, app: Option<&str>, timeout_secs: u64) {
     }
 
     loop {
-        // Re-check DNS via verify endpoint.
-        let result = match client.verify_domain(&app_id, hostname) {
+        let domains = match client.list_domains(&app_id) {
             Ok(r) => r,
             Err(e) => {
                 output::error(&e.message, &ErrorCode::from_api(&e.code), None);
@@ -308,6 +131,17 @@ pub fn watch(hostname: &str, app: Option<&str>, timeout_secs: u64) {
             }
         };
 
+        let result = match domains.domains.into_iter().find(|d| d.hostname == hostname) {
+            Some(domain) => domain,
+            None => {
+                output::error(
+                    &format!("Domain '{hostname}' not found."),
+                    &ErrorCode::DomainNotFound,
+                    Some("Run 'floo domains list' to see available domains."),
+                );
+                process::exit(1);
+            }
+        };
         let current_status = result.status.as_deref().unwrap_or("unknown");
 
         match current_status {
@@ -325,11 +159,19 @@ pub fn watch(hostname: &str, app: Option<&str>, timeout_secs: u64) {
                 }
                 return;
             }
+            "removed" => {
+                output::error(
+                    &format!("Domain {hostname} is {}.", domain_status(Some("removed"))),
+                    &ErrorCode::DomainNotFound,
+                    Some("Re-declare the domain in floo.app.toml and release to prod to restore."),
+                );
+                process::exit(1);
+            }
             "failed" => {
                 output::error(
                     &format!("Domain {hostname} verification failed."),
                     &ErrorCode::DomainVerificationFailed,
-                    Some("Check your DNS CNAME record and try again with 'floo domains verify'."),
+                    Some("Inspect DNS records with 'floo domains show', then re-run 'floo domains watch'."),
                 );
                 process::exit(1);
             }
@@ -350,5 +192,17 @@ pub fn watch(hostname: &str, app: Option<&str>, timeout_secs: u64) {
         }
 
         thread::sleep(poll_interval);
+    }
+}
+
+/// Human labels for API domain states; JSON retains the original status.
+fn domain_status(status: Option<&str>) -> &str {
+    match status {
+        Some("pending") => "waiting on DNS",
+        Some("removed") => {
+            "retired (certificate kept 7 days; re-declare in floo.app.toml to restore)"
+        }
+        Some(status) => status,
+        None => "-",
     }
 }

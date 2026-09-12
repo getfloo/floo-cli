@@ -7,7 +7,9 @@ use colored::Colorize;
 
 use crate::api_client::FlooClient;
 use crate::api_types::{CoalescedCommit, Deploy};
-use crate::commands::deploy::{poll_deploy, settle_to_terminal, stream_deploy, stream_deploy_json};
+use crate::commands::deploy::{
+    poll_deploy, render_diagnostics, settle_to_terminal, stream_deploy, stream_deploy_json,
+};
 use crate::deploy_status;
 use crate::errors::ErrorCode;
 use crate::output;
@@ -114,6 +116,7 @@ pub fn status(app: Option<&str>, deploy_id: Option<&str>) {
         "finished_at": deploy.finished_at,
         "duration_ms": deploy.duration_ms,
         "next_command": next_command,
+        "diagnostics": deploy.diagnostics,
     });
 
     if output::is_json_mode() {
@@ -148,6 +151,7 @@ pub fn status(app: Option<&str>, deploy_id: Option<&str>) {
         output::dim_line(&format!("  failure:       {stage}: {reason}"));
     }
     output::dim_line(&format!("  next_command:  {}", next_command));
+    render_diagnostics(&deploy.diagnostics);
 }
 
 /// Suggest the next command an agent or operator should run, based on
@@ -908,12 +912,14 @@ fn print_completed_deploy(deploy: &Deploy) {
 }
 
 fn print_final_status(deploy: &Deploy) {
+    render_diagnostics(&deploy.diagnostics);
     let status = deploy.status.as_deref().unwrap_or("unknown");
     let url = deploy.url.as_deref().unwrap_or("");
 
     if output::is_json_mode() {
         output::print_json(&serde_json::json!({
             "event": "done",
+            "diagnostics": deploy.diagnostics,
             "status": status,
             "url": url,
         }));

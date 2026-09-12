@@ -14,7 +14,7 @@
 //! | Tier | When to use | UX |
 //! |------|-------------|----|
 //! | 1 | Reversible, no data (env unset, scaling) | No prompt, no flag |
-//! | 2 | Destructive but recoverable from code (domain remove, rollback) | `y/N` prompt, `--yes` to skip |
+//! | 2 | Destructive but recoverable from code (rollback) | `y/N` prompt, `--yes` to skip |
 //! | 3 | Unrecoverable data loss (apps delete, managed-service remove) | Type the resource name, `--yes-i-know-this-destroys-data` to skip |
 //!
 //! **Tier 3 never uses a plain `--yes`.** Destroying user data must be
@@ -39,7 +39,7 @@ use crate::output;
 pub enum Tier {
     /// Reversible, no data loss (e.g., env remove, scaling).
     One = 1,
-    /// Destructive but recoverable from code (e.g., domain remove, rollback).
+    /// Destructive but recoverable from code (e.g., rollback).
     Two = 2,
     /// Unrecoverable data loss (e.g., apps delete, managed-service remove).
     Three = 3,
@@ -67,7 +67,7 @@ pub enum ConfirmOutcome {
 
 /// Tier-2 confirmation: `y/N` prompt, `--yes` bypasses.
 ///
-/// `action` is the short verb-noun the user will see (e.g. "Remove domain",
+/// `action` is the short verb-noun the user will see (e.g. "Roll back deploy",
 /// "Cancel deploy"). `subject` is the specific resource (e.g. "api.example.com
 /// on my-app"). Together they become `"{action} {subject}?"`.
 pub fn confirm_tier2(action: &str, subject: &str, yes_flag: bool) -> ConfirmOutcome {
@@ -214,7 +214,7 @@ mod tests {
 
     #[test]
     fn tier2_short_circuits_with_yes_flag() {
-        match confirm_tier2("Remove domain", "example.com", true) {
+        match confirm_tier2("Roll back deploy", "my-app", true) {
             ConfirmOutcome::Proceed => {}
             _ => panic!("--yes must short-circuit to Proceed"),
         }
