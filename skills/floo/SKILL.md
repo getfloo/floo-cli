@@ -39,7 +39,7 @@ Deploys are git-driven:
 - A push or merge to the connected branch deploys dev.
 - A GitHub release promotes prod.
 - The CLI never uploads source and `floo init` only writes local config.
-- `floo apps github connect` creates the app and triggers its first deploy
+- For a user-owned GitHub repo, `floo apps github connect` creates the app and triggers its first deploy
   from GitHub. Run preflight, commit, and push generated config before connect.
 - `floo redeploy` is for a no-code rebuild from connected GitHub source, such as applying changed environment values.
 
@@ -74,6 +74,7 @@ Never place credentials in source, committed `.env` files, floo TOML, logs, erro
 
 ## Topic routing
 
+- Managed projects without a GitHub account (hosted invite-only login and managed Postgres): `floo projects --help` for create, list, and clone; https://getfloo.com/agents.md for the full workflow.
 - Setup and first deploy: `floo docs quickstart`
 - Decision flow: `floo docs golden-path`
 - Config and secret behavior: `floo docs config`
