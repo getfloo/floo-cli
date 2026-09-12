@@ -374,6 +374,21 @@ pub struct CoalescedCommit {
     pub resolved_at: Option<String>,
 }
 
+/// One API-authored deploy diagnostic, including actionable DNS or repair steps.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeployDiagnostic {
+    pub id: String,
+    pub step_name: Option<String>,
+    pub service_name: Option<String>,
+    pub code: String,
+    pub severity: String,
+    pub source: String,
+    pub title: String,
+    pub message: String,
+    pub fix: String,
+    pub knowledge_ref: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Deploy {
     pub id: String,
@@ -391,6 +406,8 @@ pub struct Deploy {
     pub commit_sha: Option<String>,
     #[serde(default)]
     pub coalesced_commits: Vec<CoalescedCommit>,
+    #[serde(default)]
+    pub diagnostics: Vec<DeployDiagnostic>,
     #[serde(default)]
     pub github_ref: Option<String>,
     #[serde(default)]
@@ -914,13 +931,6 @@ pub struct Domain {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListDomainsResponse {
     pub domains: Vec<Domain>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AddDomainResponse {
-    pub hostname: Option<String>,
-    pub status: Option<String>,
-    pub dns_instructions: Option<String>,
 }
 
 // --- Logs ---

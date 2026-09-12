@@ -99,37 +99,34 @@ pub struct ManagedServiceBlock {
 
 const VALID_MANAGED_SERVICE_TYPES: &[&str] = &["postgres", "redis", "storage"];
 
-/// Who terminates TLS and routes a declared custom domain.
-///
-/// `gateway` (the default) is floo's own path: floo mints the certificate and the
-/// gateway routes the hostname. `external` means something floo does not control
-/// terminates it — a Cloud Run domain mapping, Cloudflare, Fastly, a corporate load
-/// balancer. floo still records the domain so routing intent stays auditable, but it
-/// does not provision a certificate and does not report the domain broken. Certificate
-/// provisioning for an externally-served host is unsatisfiable, not merely redundant:
-/// floo's certificate validates through a DNS authorization nobody has reason to
-/// publish when floo is not terminating the connection.
-#[derive(Debug, Deserialize, Serialize, Default, Clone, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum DomainServing {
-    #[default]
-    Gateway,
-    External,
+/// A custom domain declared as `[domains."<hostname>"]` on the prod release.
+/// `service` selects its backend; omission uses the app default. Removing the
+/// block retires the domain while retaining its certificate for seven days.
+#[derive(Debug, Serialize, Default, Clone)]
+pub struct DomainBlock {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service: Option<String>,
 }
 
-/// A custom domain declared as `[domains."<hostname>"]`. The hostname is the table key;
-/// `service` names which service backs it (None defers to the interactive/verify path),
-/// `enabled` defaults to true, `serving` defaults to `gateway`. Mirrors the API
-/// `DomainConfig` so local preflight predicts what the deploy accepts.
-#[derive(Debug, Deserialize, Serialize, Default, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct DomainBlock {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub service: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub enabled: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub serving: Option<DomainServing>,
+impl<'de> Deserialize<'de> for DomainBlock {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Fields {
+            service: Option<String>,
+        }
+
+        // Keep serde's key-specific rejection and attach migration guidance at
+        // this boundary so both app and service config parsers explain removal.
+        let fields = Fields::deserialize(deserializer).map_err(|err| {
+            serde::de::Error::custom(format!(
+                "{err}; domain blocks accept only `service`; remove the block to remove the domain"
+            ))
+        })?;
+        Ok(Self {
+            service: fields.service,
+        })
+    }
 }
 
 /// Validate `[domains."<hostname>"]` blocks against the same hostname rules the API parser
@@ -1785,60 +1782,53 @@ service = "web"
     }
 
     #[test]
-    fn test_load_app_config_domain_serving() {
+    fn test_load_app_config_rejects_domain_enabled_with_removal_guidance() {
+        let _guard = crate::output::GLOBAL_MODE_LOCK.lock().unwrap();
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
         let dir = TempDir::new().unwrap();
         fs::write(
             dir.path().join(super::super::APP_CONFIG_FILE),
-            r#"
-[app]
+            r#"[app]
 name = "my-app"
-
 [domains."app.example.com"]
-service = "web"
-serving = "external"
-
-[domains."api.example.com"]
-service = "api"
-serving = "gateway"
-
-[domains."www.example.com"]
-service = "web"
+enabled = false
 "#,
         )
         .unwrap();
 
-        let config = load_app_config(dir.path()).unwrap().unwrap();
-        assert_eq!(
-            config.domains["app.example.com"].serving,
-            Some(DomainServing::External)
-        );
-        assert_eq!(
-            config.domains["api.example.com"].serving,
-            Some(DomainServing::Gateway)
-        );
-        // Omitted is None here; the API applies the gateway default, so an old
-        // config keeps provisioning exactly as before.
-        assert_eq!(config.domains["www.example.com"].serving, None);
+        let err = load_app_config(dir.path()).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+        assert!(err.message.contains("unknown field `enabled`"));
+        assert!(err
+            .message
+            .contains("remove the block to remove the domain"));
+        assert!(!err.suggestion.unwrap().contains("floo update"));
     }
 
     #[test]
-    fn test_load_app_config_rejects_unknown_domain_serving() {
+    fn test_load_app_config_rejects_domain_serving_with_removal_guidance() {
+        let _guard = crate::output::GLOBAL_MODE_LOCK.lock().unwrap();
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
         let dir = TempDir::new().unwrap();
         fs::write(
             dir.path().join(super::super::APP_CONFIG_FILE),
-            r#"
-[app]
+            r#"[app]
 name = "my-app"
-
 [domains."app.example.com"]
-serving = "cloudflare"
+serving = "external"
 "#,
         )
         .unwrap();
 
-        // A typo must fail preflight, never silently fall back to provisioning a
-        // certificate the operator did not ask for.
-        assert!(load_app_config(dir.path()).is_err());
+        let err = load_app_config(dir.path()).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+        assert!(err.message.contains("unknown field `serving`"));
+        assert!(err
+            .message
+            .contains("remove the block to remove the domain"));
+        assert!(!err.suggestion.unwrap().contains("floo update"));
     }
 
     #[test]

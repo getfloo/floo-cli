@@ -71,9 +71,13 @@ floo apps delete my-app
 floo env set DATABASE_URL --stdin --secret --app my-app
 floo env list --app my-app
 
-# Custom domains
-floo domains add app.example.com --app my-app
+# Custom domains: declare [domains."app.example.com"] service = "web"
+# in floo.app.toml and release to prod, then publish the DNS records shown.
 floo domains list --app my-app
+floo domains show app.example.com --app my-app
+floo domains watch app.example.com --app my-app
+# Remove the block and release to prod to retire the domain.
+# Certificates are kept 7 days; re-declare the block to restore.
 
 # Edge routes
 floo edge routes list --app my-app --json

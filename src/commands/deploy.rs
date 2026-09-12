@@ -1162,6 +1162,7 @@ pub fn deploy(
         }
     }
 
+    render_diagnostics(&deploy_data.diagnostics);
     let final_status = deploy_data.status.as_deref().unwrap_or("");
 
     if deploy_status::is_failure(final_status) {
@@ -1353,6 +1354,7 @@ fn deploy_restart(
         };
     }
 
+    render_diagnostics(&deploy_data.diagnostics);
     let final_status = deploy_data.status.as_deref().unwrap_or("");
     let url = deploy_data.url.as_deref().unwrap_or("(no URL)");
 
@@ -1495,6 +1497,7 @@ fn deploy_rebuild(
         }
     }
 
+    render_diagnostics(&deploy_data.diagnostics);
     let final_status = deploy_data.status.as_deref().unwrap_or("");
 
     if deploy_status::is_failure(final_status) {
@@ -2884,6 +2887,7 @@ pub(crate) fn stream_deploy_json(
     let final_deploy = settle_to_terminal(client, app_id, fetched.into());
     output::print_json(&serde_json::json!({
         "event": "done",
+        "diagnostics": final_deploy.diagnostics,
         "status": final_deploy.status.as_deref().unwrap_or(""),
         "url": final_deploy.url.as_deref().unwrap_or(""),
     }));
@@ -2965,6 +2969,30 @@ impl From<Deploy> for StreamedDeploy {
         Self {
             deploy,
             printed: StreamedOutput::default(),
+        }
+    }
+}
+
+/// Render API diagnostics by severity, preserving their order within each group.
+/// JSON callers serialize the diagnostics with their deploy payload instead.
+pub(crate) fn render_diagnostics(diagnostics: &[crate::api_types::DeployDiagnostic]) {
+    if output::is_json_mode() {
+        return;
+    }
+    let mut ordered: Vec<_> = diagnostics.iter().collect();
+    ordered.sort_by_key(|diagnostic| match diagnostic.severity.as_str() {
+        "error" => 0,
+        "warning" => 1,
+        "info" => 2,
+        _ => 3,
+    });
+    for (index, diagnostic) in ordered.into_iter().enumerate() {
+        if index > 0 {
+            output::info("", None);
+        }
+        output::info(&diagnostic.title, None);
+        for line in diagnostic.message.lines().chain(diagnostic.fix.lines()) {
+            output::info(&format!("  {line}"), None);
         }
     }
 }

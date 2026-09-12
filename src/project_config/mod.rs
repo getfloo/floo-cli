@@ -18,6 +18,10 @@ const MAX_WALK_UP_LEVELS: usize = 20;
 pub(super) fn toml_parse_error(file_label: &str, err: toml::de::Error) -> crate::errors::FlooError {
     let raw = err.to_string();
     let suggestion = match extract_unknown_field(&raw) {
+        Some(_) if raw.contains("remove the block to remove the domain") => {
+            "Domain blocks accept only `service`; remove the block to remove the domain."
+                .to_string()
+        }
         Some(field) => format!(
             "Unknown key `{field}` may require a newer CLI \
              (you're on {version}). Try `floo update` and re-run preflight. \

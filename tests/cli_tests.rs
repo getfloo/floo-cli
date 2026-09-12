@@ -422,7 +422,7 @@ fn test_domains_help() {
         .args(["domains", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Manage custom domains"));
+        .stdout(predicate::str::contains("Inspect custom domains"));
 }
 
 #[test]
@@ -554,16 +554,6 @@ fn test_env_import_not_authenticated() {
 }
 
 // --- Domains (unauthenticated) ---
-
-#[test]
-fn test_domains_add_not_authenticated() {
-    floo()
-        .args(["domains", "add", "example.com", "--app", "test"])
-        .env("HOME", "/tmp/floo-test-nonexistent")
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("Not logged in."));
-}
 
 #[test]
 fn test_domains_list_not_authenticated() {
@@ -2608,80 +2598,6 @@ fn test_dry_run_apps_delete_human_has_preview() {
 }
 
 #[test]
-fn test_dry_run_domains_add() {
-    floo()
-        .args([
-            "--json",
-            "--dry-run",
-            "domains",
-            "add",
-            "example.com",
-            "--app",
-            "test",
-        ])
-        .env("HOME", "/tmp/floo-test-nonexistent")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""action":"domain_add"#));
-}
-
-#[test]
-fn test_dry_run_domains_add_human_has_preview() {
-    floo()
-        .args([
-            "--dry-run",
-            "domains",
-            "add",
-            "example.com",
-            "--app",
-            "test",
-        ])
-        .env("HOME", "/tmp/floo-test-nonexistent")
-        .assert()
-        .success()
-        .stderr(predicate::str::contains(
-            "Would add domain example.com to test",
-        ));
-}
-
-#[test]
-fn test_dry_run_domains_remove() {
-    floo()
-        .args([
-            "--json",
-            "--dry-run",
-            "domains",
-            "remove",
-            "example.com",
-            "--app",
-            "test",
-        ])
-        .env("HOME", "/tmp/floo-test-nonexistent")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""action":"domain_remove"#));
-}
-
-#[test]
-fn test_dry_run_domains_remove_human_has_preview() {
-    floo()
-        .args([
-            "--dry-run",
-            "domains",
-            "remove",
-            "example.com",
-            "--app",
-            "test",
-        ])
-        .env("HOME", "/tmp/floo-test-nonexistent")
-        .assert()
-        .success()
-        .stderr(predicate::str::contains(
-            "Would remove domain example.com from test",
-        ));
-}
-
-#[test]
 fn test_dry_run_cron_run() {
     floo()
         .args([
@@ -3347,4 +3263,31 @@ port = 8000
             }
         }
     }
+}
+
+#[test]
+fn domains_add_is_not_a_command() {
+    floo()
+        .args(["domains", "add", "example.com"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unrecognized subcommand"));
+}
+
+#[test]
+fn domains_verify_is_not_a_command() {
+    floo()
+        .args(["domains", "verify", "example.com"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unrecognized subcommand"));
+}
+
+#[test]
+fn domains_remove_is_not_a_command() {
+    floo()
+        .args(["domains", "remove", "example.com"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unrecognized subcommand"));
 }
