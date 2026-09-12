@@ -17,7 +17,7 @@ impl AppResolverClient for FlooClient {
     }
 }
 
-fn is_uuid_identifier(identifier: &str) -> bool {
+pub(crate) fn is_uuid_identifier(identifier: &str) -> bool {
     if identifier.len() != 36 {
         return false;
     }
@@ -268,6 +268,8 @@ mod tests {
 
     #[test]
     fn returns_app_not_found_when_name_lookup_misses() {
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
         let client = FakeClient::new(
             FakeClient::err_app(404, "APP_NOT_FOUND", "App not found."),
             FakeClient::ok_list(make_list(vec![make_app("id-1", "other-app")])),
@@ -277,5 +279,7 @@ mod tests {
 
         assert_eq!(error.status_code, 404);
         assert_eq!(error.code, "APP_NOT_FOUND");
+        assert_eq!(error.message, "App not found.");
+        assert!(error.extra.is_none());
     }
 }
