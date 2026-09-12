@@ -301,25 +301,31 @@ pub(crate) fn verify_release_signature(
         })
 }
 
+fn install_io_error(error: std::io::Error, path: &Path, context: &str) -> FlooError {
+    if error.kind() == std::io::ErrorKind::PermissionDenied {
+        FlooError::with_suggestion(
+            ErrorCode::UpdatePermissionDenied,
+            format!("Permission denied while writing to '{}'.", path.display()),
+            "Re-run with appropriate permissions, or reinstall via curl -fsSL https://getfloo.com/install.sh | bash",
+        )
+    } else {
+        FlooError::new(
+            ErrorCode::UpdateInstallFailed,
+            format!("{context}: {error}"),
+        )
+    }
+}
+
 #[cfg(unix)]
 pub(crate) fn set_executable(path: &Path) -> Result<(), FlooError> {
     use std::os::unix::fs::PermissionsExt;
 
     let mut permissions = fs::metadata(path)
-        .map_err(|e| {
-            FlooError::new(
-                ErrorCode::UpdateInstallFailed,
-                format!("Failed to stat file: {e}"),
-            )
-        })?
+        .map_err(|e| install_io_error(e, path, "Failed to stat file"))?
         .permissions();
     permissions.set_mode(0o755);
-    fs::set_permissions(path, permissions).map_err(|e| {
-        FlooError::new(
-            ErrorCode::UpdateInstallFailed,
-            format!("Failed to set executable permissions: {e}"),
-        )
-    })
+    fs::set_permissions(path, permissions)
+        .map_err(|e| install_io_error(e, path, "Failed to set executable permissions"))
 }
 
 #[cfg(not(unix))]
@@ -353,12 +359,8 @@ pub(crate) fn install_binary(binary_bytes: &[u8], destination: &Path) -> Result<
         )
     })?;
 
-    fs::create_dir_all(destination_dir).map_err(|e| {
-        FlooError::new(
-            ErrorCode::UpdateInstallFailed,
-            format!("Failed to prepare destination directory: {e}"),
-        )
-    })?;
+    fs::create_dir_all(destination_dir)
+        .map_err(|e| install_io_error(e, destination, "Failed to prepare destination directory"))?;
 
     let temp_name = format!(
         ".{}.tmp-update-{}",
@@ -370,29 +372,17 @@ pub(crate) fn install_binary(binary_bytes: &[u8], destination: &Path) -> Result<
     );
     let temp_path = destination_dir.join(temp_name);
 
-    fs::write(&temp_path, binary_bytes).map_err(|e| {
-        FlooError::new(
-            ErrorCode::UpdateInstallFailed,
-            format!("Failed to write update file: {e}"),
-        )
-    })?;
-    set_executable(&temp_path)?;
-
-    fs::rename(&temp_path, destination).map_err(|e| {
+    let result = (|| {
+        fs::write(&temp_path, binary_bytes)
+            .map_err(|e| install_io_error(e, destination, "Failed to write update file"))?;
+        set_executable(&temp_path)?;
+        fs::rename(&temp_path, destination)
+            .map_err(|e| install_io_error(e, destination, "Failed to replace existing binary"))
+    })();
+    if result.is_err() {
         let _ = fs::remove_file(&temp_path);
-        if e.kind() == std::io::ErrorKind::PermissionDenied {
-            FlooError::with_suggestion(
-                ErrorCode::UpdatePermissionDenied,
-                format!("Permission denied while writing to '{}'.", destination.display()),
-                "Re-run with appropriate permissions, or reinstall via curl -fsSL https://getfloo.com/install.sh | bash",
-            )
-        } else {
-            FlooError::new(
-                ErrorCode::UpdateInstallFailed,
-                format!("Failed to replace existing binary: {e}"),
-            )
-        }
-    })
+    }
+    result
 }
 
 fn run_update_with(
@@ -493,6 +483,39 @@ mod tests {
     use super::*;
     use mockito::{Matcher, Server};
     use std::sync::{Mutex, OnceLock};
+
+    #[test]
+    fn permission_errors_keep_diagnostics_and_other_errors_remain_failures() {
+        let _guard = crate::output::GLOBAL_MODE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
+        for context in [
+            "Failed to prepare destination directory",
+            "Failed to write update file",
+            "Failed to stat file",
+            "Failed to set executable permissions",
+            "Failed to replace existing binary",
+        ] {
+            // Inject ErrorKind directly: independent of uid, ACLs, and platform.
+            let denied = install_io_error(
+                std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+                Path::new("/install/floo"),
+                context,
+            );
+            assert_eq!(denied.code, ErrorCode::UpdatePermissionDenied);
+            assert!(denied.message.contains("/install/floo"));
+            assert!(denied.suggestion.is_some());
+            let other = install_io_error(
+                std::io::Error::from(std::io::ErrorKind::NotFound),
+                Path::new("/install/floo"),
+                context,
+            );
+            assert_eq!(other.code, ErrorCode::UpdateInstallFailed);
+            assert!(other.message.starts_with(context));
+        }
+    }
 
     static ENV_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
     const FAKE_BINARY_SIGNATURE_B64: &str = "asvfjb0bQYA5IrimKSPkA+BgWNHyuP3ax4H4qDQPM3jbsHL1C1fQvjmeKbgadkR3t1QxdDF+62s4pJ81LlDFzW6Iz/BXY9nUUabDSVRLVDqN9F21RWxIor/m89snTJSnanhvbh1+nJ3SeYDJSmKVBqRlNld1ACykNVBlU6eXOcD+hc2faJD4m3VSdaQvRUZsXCGTL5YzyyHV86PbUk4tYt9LQsGsa/CAA0h5TX2UMNmkk12byCh7IbV9tt58lXr3+e26+54UhjDSPX29jLcHEATDPgpnllXDGUyZLtJO1GsT7ojyWrlj18M1zvNg7el9l794HSaK8uTFq2bhvURRsGKjOe3NH13+fZYvL/azLrnvT8/zOrAbpToHVcJeuNo4DUHRJMc/U6ulykHYpeF4ebafr6JREmzOQ9VVUP8vBSco7Ocw7fCxyc77dfmZnTMGooIoifKKUhIjk9ZFIUykXU9BRRuZWVap8vNy6NHZw+EM3wxk4o+vA4/wAgAvliU5";

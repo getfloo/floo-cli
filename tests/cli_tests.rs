@@ -1,3 +1,6 @@
+#[cfg(unix)]
+mod support;
+
 use assert_cmd::Command;
 use mockito::Server;
 use predicates::prelude::*;
@@ -2962,16 +2965,193 @@ fn test_env_import_all_conflicts_with_services() {
 
 // --- Version check disabled in JSON mode ---
 
+fn stage_test_update(home: &std::path::Path, profile: &str) -> std::path::PathBuf {
+    let staged = home.join(format!(".{profile}")).join("staged-update");
+    std::fs::create_dir_all(&staged).unwrap();
+    std::fs::write(staged.join("binary"), b"test update").unwrap();
+    std::fs::write(
+        staged.join("metadata.json"),
+        r#"{"version":"v9999.0.0","staged_at":0}"#,
+    )
+    .unwrap();
+    staged
+}
+
 #[test]
+#[allow(deprecated)]
 fn test_json_mode_no_version_check_output() {
-    // In JSON mode, no version check messages should appear on stderr
-    floo()
-        .args(["--json", "version"])
-        .env("HOME", "/tmp/floo-test-version-check-json")
-        .assert()
-        .success()
-        .stderr(predicate::str::contains("Update").not())
-        .stderr(predicate::str::contains("downloaded").not());
+    for args in [
+        vec!["--json", "init", "example", "--dry-run"],
+        vec!["--json", "version"],
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let staged = stage_test_update(home.path(), "floo");
+        let target = home.path().join("install/floo");
+        let mut server = Server::new();
+        let check = server.mock("GET", "/latest").expect(0).create();
+        let result = Command::cargo_bin("floo")
+            .unwrap()
+            .args(args)
+            .current_dir(home.path())
+            .env("HOME", home.path())
+            .env_remove("FLOO_CONFIG_DIR")
+            .env_remove("FLOO_NO_UPDATE_CHECK")
+            .env("FLOO_UPDATE_TARGET_PATH", &target)
+            .env("FLOO_UPDATE_API_BASE", server.url())
+            .assert()
+            .success()
+            .stderr(predicate::str::is_empty());
+        let json: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+        assert_eq!(json["success"], true);
+        assert!(
+            staged.join("metadata.json").exists(),
+            "startup must not consume staging"
+        );
+        assert!(
+            !target.exists(),
+            "neither startup nor post-command may install"
+        );
+        check.assert();
+    }
+}
+
+#[test]
+#[cfg(unix)]
+#[allow(deprecated)]
+fn test_automatic_update_gate_table() {
+    use std::process::Stdio;
+    // A real stdout PTY isolates the JSON guard from the non-TTY guard.
+    for (profile, json, tty, disabled, expected) in [
+        ("floo", false, true, false, true),
+        ("floo", true, true, false, false),
+        ("floo", false, false, false, false),
+        ("floo", true, false, false, false),
+        ("floo", false, true, true, false),
+        ("floo-local", false, true, false, false),
+        ("floo-dev", false, true, false, false),
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let staged = stage_test_update(home.path(), profile);
+        // Obsolete staging is removed only if startup application runs. This
+        // also works with Cargo's 0.0.0-dev version, which cannot install updates.
+        std::fs::write(
+            staged.join("metadata.json"),
+            r#"{"version":"v0.0.0","staged_at":0}"#,
+        )
+        .unwrap();
+        let target = home.path().join("install/floo");
+        let mut server = Server::new();
+        let check = server
+            .mock("GET", "/latest")
+            .with_status(200)
+            .with_body(r#"{"tag_name":"v0.0.0","assets":[]}"#)
+            .expect(usize::from(expected))
+            .create();
+        let (_master, slave) = support::stdout_terminal();
+        let mut command = std::process::Command::new(assert_cmd::cargo::cargo_bin(profile));
+        command
+            .args(["init", "example", "--dry-run"])
+            .current_dir(home.path())
+            .env("HOME", home.path())
+            .env_remove("FLOO_CONFIG_DIR")
+            .env_remove("FLOO_NO_UPDATE_CHECK")
+            .env("FLOO_UPDATE_TARGET_PATH", &target)
+            .env("FLOO_UPDATE_API_BASE", server.url())
+            .stdout(if tty {
+                Stdio::from(slave)
+            } else {
+                Stdio::piped()
+            })
+            .stderr(Stdio::piped());
+        if json {
+            command.arg("--json");
+        }
+        if disabled {
+            command.env("FLOO_NO_UPDATE_CHECK", "");
+        }
+        let result = command.output().unwrap();
+        let stderr = String::from_utf8(result.stderr).unwrap();
+        assert!(
+            result.status.success(),
+            "{profile}, json={json}, tty={tty}: {stderr}"
+        );
+        assert!(!target.exists());
+        assert_eq!(
+            staged.exists(),
+            !expected,
+            "{profile}, json={json}, tty={tty}, disabled={disabled}"
+        );
+        assert!(!stderr.contains("Updated floo"), "{stderr}");
+        if json {
+            assert!(stderr.is_empty(), "{stderr}");
+        }
+        check.assert();
+    }
+}
+
+#[test]
+#[cfg(unix)]
+#[allow(deprecated)]
+fn test_version_and_explicit_update_gate_table() {
+    use std::process::Stdio;
+    for (subcommand, json, tty, requests) in [
+        ("version", true, true, 0),
+        ("version", false, false, 0),
+        ("version", false, true, 1),
+        ("update", true, false, 1),
+        ("update", false, true, 1),
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let staged = stage_test_update(home.path(), "floo");
+        let target = home.path().join("install/floo");
+        let mut server = Server::new();
+        let check = server
+            .mock("GET", "/latest")
+            .with_status(200)
+            .with_body(r#"{"tag_name":"v9999.0.0","assets":[]}"#)
+            .expect(requests)
+            .create();
+        let (_master, slave) = support::stdout_terminal();
+        let mut command = std::process::Command::new(assert_cmd::cargo::cargo_bin("floo"));
+        command
+            .arg(subcommand)
+            .current_dir(home.path())
+            .env("HOME", home.path())
+            .env_remove("FLOO_CONFIG_DIR")
+            .env_remove("FLOO_NO_UPDATE_CHECK")
+            .env("FLOO_UPDATE_TARGET_PATH", &target)
+            .env("FLOO_UPDATE_API_BASE", server.url())
+            .stdout(if tty {
+                Stdio::from(slave)
+            } else {
+                Stdio::piped()
+            })
+            .stderr(Stdio::piped());
+        if json {
+            command.arg("--json");
+        }
+        let result = command.output().unwrap();
+        let stderr = String::from_utf8(result.stderr).unwrap();
+        assert_eq!(result.status.success(), subcommand == "version", "{stderr}");
+        // Neither command may consume staged data via the automatic startup path.
+        assert!(staged.exists());
+        assert!(!target.exists());
+        if json {
+            assert!(stderr.is_empty(), "{stderr}");
+            if !tty {
+                let payload: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+                assert_eq!(payload["error"]["code"], "RELEASE_ASSET_MISSING");
+            }
+        } else if subcommand == "update" {
+            assert!(
+                stderr.contains("No binary asset"),
+                "explicit update must retain diagnostics: {stderr}"
+            );
+        } else if !tty {
+            assert!(!stderr.contains("Checking for floo updates"), "{stderr}");
+        }
+        check.assert();
+    }
 }
 
 #[test]

@@ -1,3 +1,6 @@
+#[cfg(unix)]
+mod support;
+
 use assert_cmd::Command;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use mockito::{Matcher, Mock, Server};
@@ -13,11 +16,6 @@ const UPDATE_SUCCESS_SIGNATURE_B64: &str = "J6XvKzQVWSMxsnLl4sAkqMhCXAtDI7AZ/ckG
 #[allow(deprecated)]
 fn floo() -> Command {
     Command::cargo_bin("floo-local").unwrap()
-}
-
-#[allow(deprecated)]
-fn installed_floo() -> Command {
-    Command::cargo_bin("floo").unwrap()
 }
 
 /// Create temp HOME with config pointing at mock server.
@@ -6004,6 +6002,8 @@ fn test_deploy_json_mode_uses_polling() {
 // ───────────────────────── Update ─────────────────────────
 
 #[test]
+#[cfg(unix)]
+#[allow(deprecated)]
 fn test_version_human_reports_up_to_date_after_successful_check() {
     let Some(asset_name) = update_asset_name() else {
         return;
@@ -6054,18 +6054,23 @@ fn test_version_human_reports_up_to_date_after_successful_check() {
     )
     .unwrap();
 
-    installed_floo()
+    let (_master, slave) = support::stdout_terminal();
+    let mut command = std::process::Command::new(assert_cmd::cargo::cargo_bin("floo"));
+    command
         .arg("version")
         .env("HOME", home.path())
+        .env_remove("FLOO_CONFIG_DIR")
+        .env_remove("FLOO_NO_UPDATE_CHECK")
         .env("FLOO_UPDATE_API_BASE", format!("{}/releases", server.url()))
         .env("FLOO_UPDATE_TARGET_PATH", install_path.as_os_str())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("0.0.0-dev"))
-        .stderr(predicate::str::contains("Checking for floo updates..."))
-        .stderr(predicate::str::contains("floo 0.0.0-dev is up to date."))
-        .stderr(predicate::str::contains("Refreshed agent skill").not())
-        .stderr(predicate::str::contains("Updated floo from").not());
+        .stdout(std::process::Stdio::from(slave));
+    let result = command.output().unwrap();
+    let stderr = String::from_utf8(result.stderr).unwrap();
+    assert!(result.status.success(), "{stderr}");
+    assert!(stderr.contains("Checking for floo updates..."), "{stderr}");
+    assert!(stderr.contains("floo 0.0.0-dev is up to date."), "{stderr}");
+    assert!(!stderr.contains("Refreshed agent skill"), "{stderr}");
+    assert!(!stderr.contains("Updated floo from"), "{stderr}");
 
     release_mock.assert();
 }

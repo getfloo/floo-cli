@@ -1,4 +1,5 @@
 use std::ffi::OsString;
+use std::io::IsTerminal;
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
@@ -2027,10 +2028,13 @@ pub enum CronCommands {
 }
 
 fn should_check_version(cli: &Cli) -> bool {
-    if crate::config::is_local_binary() {
+    if cli.json || !std::io::stdout().is_terminal() {
         return false;
     }
-    if std::env::var("FLOO_NO_UPDATE_CHECK").is_ok() {
+    if crate::config::is_local_binary() || crate::config::is_dev_binary() {
+        return false;
+    }
+    if std::env::var_os("FLOO_NO_UPDATE_CHECK").is_some() {
         return false;
     }
     // Commands that drive their own update flow synchronously — skip the
@@ -2234,13 +2238,13 @@ pub fn run() {
         return;
     }
 
-    // Phase 2: Always apply staged updates (safe for any command, including --json)
-    if !crate::config::is_local_binary() {
+    // Both automatic update phases run only in interactive human sessions.
+    let do_version_check = should_check_version(&cli);
+    if do_version_check {
         crate::version_check::apply_staged_update(VERSION);
     }
 
-    // Phase 1: Spawn background check + download (non-blocking, skipped for --json/version)
-    let do_version_check = should_check_version(&cli);
+    // Spawn the background check + download under the same gate.
     let version_handle = if do_version_check {
         crate::version_check::spawn_check(VERSION)
     } else {
@@ -2846,7 +2850,7 @@ pub fn run() {
 
     // Post-command: apply any update that was downloaded during this run
     if let Some(handle) = version_handle {
-        handle.apply_and_notify(VERSION, !cli.json);
+        handle.apply_and_notify(VERSION);
     }
 }
 

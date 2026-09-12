@@ -8,6 +8,7 @@ use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::config;
+use crate::errors::FlooError;
 use crate::updater;
 
 const CACHE_TTL_SECS: u64 = 900; // 15 minutes
@@ -227,6 +228,13 @@ fn download_and_stage(current_version: &str, release_json: &serde_json::Value) -
 
 /// Phase 2: Apply a previously staged update. Called at startup before command dispatch.
 pub fn apply_staged_update(current_version: &str) {
+    apply_staged_update_with(current_version, updater::install_binary);
+}
+
+fn apply_staged_update_with(
+    current_version: &str,
+    install: impl FnOnce(&[u8], &std::path::Path) -> Result<(), FlooError>,
+) {
     // Clean up orphaned .downloading files from interrupted previous runs
     clean_orphaned_downloading();
 
@@ -277,7 +285,7 @@ pub fn apply_staged_update(current_version: &str) {
         }
     };
 
-    match updater::install_binary(&binary_bytes, &install_path) {
+    match install(&binary_bytes, &install_path) {
         Ok(()) => {
             let refreshed = crate::commands::skills::refresh_skill_files();
             eprintln!("  Updated floo to {}.", meta.version);
@@ -379,23 +387,11 @@ impl VersionCheckHandle {
     /// Wait for the background download to finish, apply the update immediately,
     /// and print a notice. The current process is already finishing, so replacing
     /// the binary on disk is safe — the next `floo` invocation runs the new version.
-    pub fn apply_and_notify(self, current_version: &str, show_notice: bool) {
+    pub fn apply_and_notify(self, current_version: &str) {
         if let Ok(CheckResult::Downloaded) =
             self.rx.recv_timeout(Duration::from_millis(EXIT_WAIT_MS))
         {
             apply_staged_update(current_version);
-            if show_notice {
-                if let Some(meta) = read_staged_meta() {
-                    // staged dir still exists = apply failed, tell user
-                    eprintln!(
-                        "  floo {} downloaded but could not be applied.",
-                        meta.version
-                    );
-                    eprintln!("{MANUAL_UPDATE_HINT}");
-                } else {
-                    // staged dir cleaned up = apply succeeded (already printed by apply_staged_update)
-                }
-            }
         }
     }
 }
@@ -403,6 +399,57 @@ impl VersionCheckHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::errors::ErrorCode;
+
+    #[test]
+    fn permission_denied_staged_update_reports_diagnostics_and_cleans_staging() {
+        let _guard = crate::output::GLOBAL_MODE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
+        const CHILD: &str = "FLOO_TEST_STAGED_PERMISSION_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            apply_staged_update_with("0.0.0", |bytes, _| {
+                assert_eq!(bytes, b"test update");
+                Err(FlooError::with_suggestion(
+                    ErrorCode::UpdatePermissionDenied,
+                    "injected permission denial",
+                    "injected manual update suggestion",
+                ))
+            });
+            assert!(!staged_dir().unwrap().exists());
+            return;
+        }
+        // Isolate config and disable libtest capture so notices reach subprocess stderr.
+        let home = tempfile::tempdir().unwrap();
+        let staged = home.path().join(STAGED_DIR_NAME);
+        fs::create_dir_all(&staged).unwrap();
+        fs::write(staged.join(STAGED_BINARY_NAME), b"test update").unwrap();
+        fs::write(
+            staged.join(STAGED_META_NAME),
+            r#"{"version":"v9999.0.0","staged_at":0}"#,
+        )
+        .unwrap();
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "version_check::tests::permission_denied_staged_update_reports_diagnostics_and_cleans_staging",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("FLOO_CONFIG_DIR", home.path())
+            .env("FLOO_UPDATE_TARGET_PATH", home.path().join("install/floo"))
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{:?}", result);
+        let stderr = String::from_utf8(result.stderr).unwrap();
+        assert_eq!(
+            stderr,
+            "  Update to floo v9999.0.0 could not be applied: injected permission denial\n  injected manual update suggestion\n"
+        );
+        assert!(!staged.exists());
+    }
 
     #[test]
     fn test_is_newer_basic() {
