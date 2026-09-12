@@ -27,6 +27,24 @@ pub fn list() {
             )
         });
 
+    if result.orgs.is_empty() {
+        if !output::is_json_mode() {
+            if let Some(warning) = &warning {
+                output::warn(warning);
+            }
+        }
+        output::info(
+            "No organization memberships found.",
+            Some(serde_json::json!({
+                "orgs": [],
+                "total": result.total,
+                "current_org_id": null,
+                "warning": warning,
+            })),
+        );
+        return;
+    }
+
     // Resolve through the same client and headers as other API calls. Neither
     // the saved preference nor membership order is authoritative on its own.
     let current = match client.get_org_me() {
@@ -67,10 +85,6 @@ pub fn list() {
             ),
             None,
         );
-        if result.orgs.is_empty() {
-            output::info("No organization memberships found.", None);
-            return;
-        }
     }
 
     let rows = result
