@@ -87,10 +87,29 @@ pub(crate) fn require_auth() {
 pub(crate) fn resolve_app_or_exit(client: &FlooClient, app_name: &str) -> App {
     match crate::resolve::resolve_app(client, app_name) {
         Ok(a) => a,
-        Err(e) => {
+        Err(mut e) => {
             // Normalize 404 codes, but preserve the API's message and details:
             // an app in another org may carry a membership-gated owning-org hint.
             if e.is_not_found() {
+                // Enrich only the generic name-miss error, and only when it is
+                // displayed. Create-on-miss callers of resolve_app don't need
+                // this request. Preserve richer errors from the list endpoint.
+                if !crate::resolve::is_uuid_identifier(app_name)
+                    && e.code == "APP_NOT_FOUND"
+                    && e.message == "App not found."
+                    && e.extra.is_none()
+                {
+                    // Uses the same org header as the name lookup. A failed org
+                    // request must not mask the original app-not-found error.
+                    let org = client
+                        .get_org_me()
+                        .ok()
+                        .map(|org| format!("org '{}'", org.display_name().unwrap_or(&org.id)))
+                        .unwrap_or_else(|| "the current org".to_string());
+                    e.message = format!(
+                        "App '{app_name}' not found in {org}. Run 'floo orgs list' to see your organizations, or 'floo orgs switch <slug>' to search another org."
+                    );
+                }
                 output::error_with_details(
                     &e.message,
                     &ErrorCode::AppNotFound,

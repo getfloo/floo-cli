@@ -5240,6 +5240,7 @@ fn test_deploy_watch_coalesced_superseded_descendant_is_non_failure_terminal() {
 fn test_deploy_new_app_json() {
     let mut server = Server::new();
     let home = setup_config(&server);
+    let org = server.mock("GET", "/v1/orgs/me").expect(0).create();
 
     // Create a temp project with package.json for detection and service config
     let project = TempDir::new().unwrap();
@@ -5293,6 +5294,7 @@ fn test_deploy_new_app_json() {
         .stdout(predicate::str::contains(r#""app""#))
         .stdout(predicate::str::contains(r#""deploy""#))
         .stdout(predicate::str::contains(r#""detection""#));
+    org.assert();
 }
 
 #[test]
@@ -5747,6 +5749,50 @@ fn test_apps_show_uuid_preserves_owning_org_hint() {
     lookup.assert();
     list.assert();
     org.assert();
+}
+
+#[test]
+fn test_apps_show_server_not_found_errors_skip_org_enrichment() {
+    for (identifier, path, message) in [
+        (
+            "11111111-1111-1111-1111-111111111111",
+            "/v1/apps/11111111-1111-1111-1111-111111111111",
+            "App not found.",
+        ),
+        (
+            TEST_APP_NAME,
+            "/v1/apps",
+            "App list unavailable in this organization; contact your administrator.",
+        ),
+    ] {
+        let mut server = Server::new();
+        let home = setup_config(&server);
+        let lookup = server
+            .mock("GET", path)
+            .match_query(Matcher::Any)
+            .with_status(404)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "detail": {"code": "APP_NOT_FOUND", "message": message}
+                })
+                .to_string(),
+            )
+            .create();
+        let org = server.mock("GET", "/v1/orgs/me").expect(0).create();
+
+        let result = floo()
+            .args(["--json", "apps", "show", identifier])
+            .env("HOME", home.path())
+            .assert()
+            .failure();
+        let output: serde_json::Value =
+            serde_json::from_slice(&result.get_output().stdout).unwrap();
+        assert_eq!(output["error"]["code"], "APP_NOT_FOUND");
+        assert_eq!(output["error"]["message"], message);
+        lookup.assert();
+        org.assert();
+    }
 }
 
 #[test]
@@ -7869,6 +7915,7 @@ fn mock_connect_unauthorized(server: &mut Server) -> Mock {
 fn test_failed_connect_removes_the_app_it_created() {
     let mut server = Server::new();
     let home = setup_config(&server);
+    let org = server.mock("GET", "/v1/orgs/me").expect(0).create();
 
     let lookup = mock_app_lookup_miss(&mut server);
     let create = server
@@ -7907,6 +7954,7 @@ fn test_failed_connect_removes_the_app_it_created() {
     create.assert();
     connect.assert();
     delete.assert();
+    org.assert();
 }
 
 #[test]

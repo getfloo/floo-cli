@@ -1,11 +1,10 @@
 use crate::api_client::FlooClient;
-use crate::api_types::{App, ListAppsResponse, OrgResponse};
+use crate::api_types::{App, ListAppsResponse};
 use crate::errors::FlooApiError;
 
 trait AppResolverClient {
     fn get_app(&self, app_id: &str) -> Result<App, FlooApiError>;
     fn list_apps(&self, page: u32, per_page: u32) -> Result<ListAppsResponse, FlooApiError>;
-    fn get_org_me(&self) -> Result<OrgResponse, FlooApiError>;
 }
 
 impl AppResolverClient for FlooClient {
@@ -16,13 +15,9 @@ impl AppResolverClient for FlooClient {
     fn list_apps(&self, page: u32, per_page: u32) -> Result<ListAppsResponse, FlooApiError> {
         FlooClient::list_apps(self, page, per_page)
     }
-
-    fn get_org_me(&self) -> Result<OrgResponse, FlooApiError> {
-        FlooClient::get_org_me(self)
-    }
 }
 
-fn is_uuid_identifier(identifier: &str) -> bool {
+pub(crate) fn is_uuid_identifier(identifier: &str) -> bool {
     if identifier.len() != 36 {
         return false;
     }
@@ -45,14 +40,17 @@ fn is_uuid_identifier(identifier: &str) -> bool {
     true
 }
 
-fn match_app_from_list_response(list_response: &ListAppsResponse, identifier: &str) -> Option<App> {
+fn match_app_from_list_response(
+    list_response: &ListAppsResponse,
+    identifier: &str,
+) -> Result<App, FlooApiError> {
     for app in &list_response.apps {
         if app.name == identifier {
-            return Some(app.clone());
+            return Ok(app.clone());
         }
     }
 
-    None
+    Err(FlooApiError::new(404, "APP_NOT_FOUND", "App not found."))
 }
 
 fn resolve_app_with_client<C: AppResolverClient>(
@@ -66,22 +64,7 @@ fn resolve_app_with_client<C: AppResolverClient>(
 
     // Name lookup via list for non-UUID identifiers.
     let response = client.list_apps(1, 100)?;
-    match_app_from_list_response(&response, identifier).ok_or_else(|| {
-        // This uses the same org header as list_apps. Resolve the display name
-        // only on a miss, and don't let a failed org lookup mask the app error.
-        let org = client
-            .get_org_me()
-            .ok()
-            .map(|org| format!("org '{}'", org.display_name().unwrap_or(&org.id)))
-            .unwrap_or_else(|| "the current org".to_string());
-        FlooApiError::new(
-            404,
-            "APP_NOT_FOUND",
-            format!(
-                "App '{identifier}' not found in {org}. Run 'floo orgs list' to see your organizations, or 'floo orgs switch <slug>' to search another org."
-            ),
-        )
-    })
+    match_app_from_list_response(&response, identifier)
 }
 
 pub fn resolve_app(client: &FlooClient, identifier: &str) -> Result<App, FlooApiError> {
@@ -140,14 +123,6 @@ mod tests {
     }
 
     impl AppResolverClient for FakeClient {
-        fn get_org_me(&self) -> Result<OrgResponse, FlooApiError> {
-            Err(FlooApiError::new(
-                503,
-                "API_ERROR",
-                "Org lookup unavailable",
-            ))
-        }
-
         fn get_app(&self, app_id: &str) -> Result<App, FlooApiError> {
             self.app_lookup_calls.borrow_mut().push(app_id.to_string());
             match &self.app_lookup_result {
@@ -293,6 +268,8 @@ mod tests {
 
     #[test]
     fn returns_app_not_found_when_name_lookup_misses() {
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
         let client = FakeClient::new(
             FakeClient::err_app(404, "APP_NOT_FOUND", "App not found."),
             FakeClient::ok_list(make_list(vec![make_app("id-1", "other-app")])),
@@ -302,5 +279,7 @@ mod tests {
 
         assert_eq!(error.status_code, 404);
         assert_eq!(error.code, "APP_NOT_FOUND");
+        assert_eq!(error.message, "App not found.");
+        assert!(error.extra.is_none());
     }
 }
