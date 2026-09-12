@@ -1,3 +1,4 @@
+use std::io::IsTerminal;
 use std::process;
 
 use crate::constants::VERSION;
@@ -28,7 +29,7 @@ fn display_tag(tag: &str) -> &str {
 /// dev-stack work never attempts to auto-update over the developer's
 /// working binary.
 fn should_skip_network_check() -> bool {
-    std::env::var("FLOO_NO_UPDATE_CHECK").is_ok()
+    std::env::var_os("FLOO_NO_UPDATE_CHECK").is_some()
         || crate::config::is_local_binary()
         || crate::config::is_dev_binary()
 }
@@ -54,9 +55,10 @@ fn refresh_and_announce_skills() -> Vec<String> {
 /// `floo version || echo "floo not installed"` depend on this, and agents
 /// parsing `--json` output need a stable shape across every outcome.
 ///
-/// Respects `FLOO_NO_UPDATE_CHECK` and `floo-local` dev builds.
+/// Checks only in interactive human sessions, respecting `FLOO_NO_UPDATE_CHECK`
+/// and local/dev builds.
 pub fn version() {
-    if should_skip_network_check() {
+    if output::is_json_mode() || !std::io::stdout().is_terminal() || should_skip_network_check() {
         emit_version(None, false);
         return;
     }
