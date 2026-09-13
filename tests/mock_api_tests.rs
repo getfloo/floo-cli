@@ -6545,6 +6545,7 @@ fn test_preflight_declares_enabled_modern_and_legacy_services_without_lock() {
                 {"name": "web", "env_managed": ["redis:cache", "redis:queue"]}
             ]
         })))
+        .expect(2)
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(r#"{"managed_services":{"to_provision":[{"type":"redis","name":"cache","tier":"basic"}],"to_retain":[],"to_orphan":[],"in_flight_deprovisioning":[]},"summary":{"action_count":1,"destructive_count":0},"destructive":false,"data_loss":false}"#)
@@ -6587,6 +6588,21 @@ managed = ["redis:cache", "redis:queue"]
         .stdout(predicate::str::contains(r#""handle":"redis:queue""#))
         .stdout(predicate::str::contains(r#""mode":"explicit""#))
         .stdout(predicate::str::contains("unused").not());
+    let preview = floo()
+        .args([
+            "--json",
+            "redeploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let payload: serde_json::Value = serde_json::from_slice(&preview).unwrap();
+    assert_eq!(payload["data"]["plan"]["summary"]["action_count"], 1);
     planner.assert();
 }
 
@@ -6690,9 +6706,7 @@ managed = []
 }
 
 #[test]
-fn test_preflight_degrades_gracefully_when_app_not_resolvable() {
-    // Unauthenticated-style: local-only config, no mock endpoints wired.
-    // The plan fetch is best-effort; local validation still ships.
+fn test_preflight_without_credentials_validates_locally() {
     let project = TempDir::new().unwrap();
     std::fs::write(
         project.path().join("floo.app.toml"),
@@ -8453,4 +8467,115 @@ fn deploy_watch_json_done_includes_diagnostics() {
     let done: serde_json::Value = serde_json::from_str(stdout.lines().last().unwrap()).unwrap();
     assert_eq!(done["event"], "done");
     assert_eq!(done["diagnostics"][0], diagnostic_fixture()[0]);
+}
+
+fn assert_remote_preflight_failure(args: &[&str], status: usize) {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let planner = server.mock("POST", format!("/v1/apps/{TEST_APP_ID}/preflight").as_str())
+        .with_status(status)
+        .with_body(r#"{"detail":{"code":"REMOTE_FAILURE","message":"Remote preflight failed","findings":[{"code":"PLAN_LIMIT","message":"Too many instances"}]}}"#)
+        .create();
+    let project = TempDir::new().unwrap();
+    write_service_config(&project, TEST_APP_NAME);
+    let output = floo()
+        .args(args)
+        .arg(project.path())
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    let payload: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(payload["success"], false);
+    assert_eq!(payload["error"]["code"], "REMOTE_FAILURE");
+    assert_eq!(payload["error"]["findings"][0]["code"], "PLAN_LIMIT");
+    planner.assert();
+}
+
+#[test]
+fn test_preflight_propagates_remote_validation_failure() {
+    assert_remote_preflight_failure(&["--json", "preflight"], 422);
+}
+
+#[test]
+fn test_redeploy_preflight_propagates_remote_validation_failure() {
+    assert_remote_preflight_failure(&["--json", "redeploy", "--preflight"], 422);
+}
+
+#[test]
+fn test_preflight_propagates_resolution_failure() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let lookup = server
+        .mock("GET", "/v1/apps")
+        .match_query(Matcher::Any)
+        .with_status(401)
+        .with_body(r#"{"detail":{"code":"NOT_AUTHENTICATED","message":"Expired credentials"}}"#)
+        .create();
+    let project = TempDir::new().unwrap();
+    write_service_config(&project, TEST_APP_NAME);
+    floo()
+        .args(["--json", "preflight"])
+        .arg(project.path())
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""success":false"#))
+        .stdout(predicate::str::contains("Expired credentials"));
+    lookup.assert();
+}
+
+#[test]
+fn test_redeploy_validation_findings_match_standalone_preflight() {
+    let server = Server::new();
+    let home = setup_config(&server);
+    let project = TempDir::new().unwrap();
+    std::fs::write(project.path().join("floo.app.toml"),
+        "[app]\nname = \"my-app\"\n[services.web]\npath = \"missing\"\ntype = \"web\"\nport = 3000\ningress = \"public\"\n").unwrap();
+    let standalone = floo()
+        .args(["--json", "preflight"])
+        .arg(project.path())
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    let preview = floo()
+        .args(["--json", "redeploy", "--preflight"])
+        .arg(project.path())
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    let redeploy = floo()
+        .args(["--json", "redeploy"])
+        .arg(project.path())
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    let payload: serde_json::Value = serde_json::from_slice(&standalone).unwrap();
+    assert_eq!(payload["success"], false);
+    assert_eq!(payload["data"]["valid"], false);
+    assert_eq!(
+        payload["data"]["findings"][0]["code"],
+        "SERVICE_PATH_NOT_FOUND"
+    );
+    assert_eq!(preview, standalone);
+    assert_eq!(redeploy, standalone);
+    floo()
+        .arg("redeploy")
+        .arg(project.path())
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("path './missing' does not exist"));
 }
