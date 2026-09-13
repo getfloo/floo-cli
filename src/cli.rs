@@ -1285,12 +1285,10 @@ pub enum ServicesCommands {
         confirmed: bool,
     },
 
-    /// Migrate legacy [postgres]/[redis]/[storage] TOML sections to CLI-managed state.
+    /// Ensure legacy [postgres]/[redis]/[storage] TOML services are provisioned.
     ///
-    /// Reads floo.app.toml, ensures each declared managed service is provisioned
-    /// (idempotent — existing services are recorded, not re-created), and writes
-    /// .floo/services.lock. Zero data impact: the underlying managed services
-    /// are not touched. Prints instructions to delete the TOML sections afterward.
+    /// Reads floo.app.toml and provisions each legacy managed service idempotently.
+    /// Keep the declarations in the manifest for preflight and deploy.
     Migrate {
         /// App name or ID (uses config file if omitted).
         #[arg(short, long)]

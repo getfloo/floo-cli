@@ -578,7 +578,7 @@ pub fn preflight(
         &managed_services,
         &services,
         &environment,
-        &resolved.config_dir,
+        &resolved,
     );
 
     // 8. Display
@@ -604,7 +604,7 @@ pub fn preflight(
             .iter()
             .map(|ms| {
                 serde_json::json!({
-                    "name": ms.name,
+                    "name": ms.env_handle(),
                     "tier": ms.tier.as_deref().unwrap_or("basic"),
                 })
             })
@@ -673,7 +673,7 @@ pub fn preflight(
         eprintln!("  Managed services (declared):");
         for ms in &managed_services {
             let tier_label = ms.tier.as_deref().unwrap_or("basic");
-            eprintln!("    {} (tier {tier_label})", ms.name);
+            eprintln!("    {} (tier {tier_label})", ms.env_handle());
         }
         eprintln!();
     }
@@ -912,7 +912,7 @@ pub fn deploy(
             eprintln!("  Managed services:");
             for ms in &managed_services {
                 let tier_label = ms.tier.as_deref().unwrap_or("basic");
-                eprintln!("    {} (tier {tier_label})", ms.name);
+                eprintln!("    {} (tier {tier_label})", ms.env_handle());
             }
             eprintln!();
         }
@@ -941,7 +941,7 @@ pub fn deploy(
             .iter()
             .map(|ms| {
                 serde_json::json!({
-                    "name": ms.name,
+                    "name": ms.env_handle(),
                     "tier": ms.tier.as_deref().unwrap_or("basic"),
                 })
             })
@@ -1664,7 +1664,9 @@ fn validate_preflight(
 ) -> Vec<PreflightFinding> {
     let mut findings: Vec<PreflightFinding> = Vec::new();
     let mut seen_names: Vec<String> = Vec::new();
-    let has_managed_postgres = managed_services.iter().any(|ms| ms.name == "postgres");
+    let has_managed_postgres = managed_services
+        .iter()
+        .any(|ms| ms.service_type == "postgres");
 
     // The single canonical set of env files the deploy imports — shared with
     // `sync_env_vars_if_needed` (an inline floo.app.toml env_file and
@@ -2432,7 +2434,10 @@ fn build_env_injection_plan(
     let explicit_managed = contracts
         .iter()
         .any(|contract| contract.as_ref().and_then(|c| c.managed.as_ref()).is_some());
-    let declared_handles = managed_env_handles(resolved, managed_services);
+    let declared_handles = managed_services
+        .iter()
+        .map(|ms| ms.env_handle())
+        .collect::<Vec<_>>();
 
     let mut notes = Vec::new();
     let mode = if explicit_managed {
@@ -2488,26 +2493,6 @@ fn build_env_injection_plan(
         services: service_plans,
         notes,
     }
-}
-
-fn managed_env_handles(
-    resolved: &project_config::ResolvedApp,
-    managed_services: &[project_config::ManagedServiceDeclaration],
-) -> Vec<String> {
-    let mut handles: Vec<String> = managed_services.iter().map(|ms| ms.name.clone()).collect();
-    if let Ok(lock) = crate::services_lock::read(&resolved.config_dir) {
-        for managed in lock.managed_services {
-            let handle = if managed.name == "default" {
-                managed.service_type
-            } else {
-                format!("{}:{}", managed.service_type, managed.name)
-            };
-            handles.push(handle);
-        }
-    }
-    handles.sort();
-    handles.dedup();
-    handles
 }
 
 fn display_env_injection_plan(plan: &EnvInjectionPlan) {
@@ -3241,7 +3226,7 @@ fn fetch_remote_preflight(
     managed: &[project_config::ManagedServiceDeclaration],
     services: &[ServiceConfig],
     environment: &str,
-    project_root: &Path,
+    resolved: &project_config::ResolvedApp,
 ) -> Option<crate::api_types::PreflightPlan> {
     use crate::api_types::{DeclaredRuntimeService, DeclaredState};
     use crate::config::load_config;
@@ -3252,13 +3237,15 @@ fn fetch_remote_preflight(
     let app = crate::resolve::resolve_app(&client, app_name).ok()?;
 
     let declared = DeclaredState {
-        managed_services: collect_declared_managed_services(managed, project_root),
+        managed_services: managed.to_vec(),
         environment: environment.to_string(),
         services: services
             .iter()
             .map(|service| DeclaredRuntimeService {
                 name: service.name.clone(),
                 service_type: service.service_type.to_string(),
+                env_managed: env_contract_for_service(resolved, service)
+                    .and_then(|contract| contract.managed),
                 cpu: service.cpu.clone(),
                 memory: service.memory.clone(),
                 min_instances: service.min_instances,
@@ -3269,53 +3256,6 @@ fn fetch_remote_preflight(
     };
 
     client.preflight(&app.id, &declared).ok()
-}
-
-/// Build the full list of declared managed services for preflight by merging:
-///
-/// - Legacy top-level `[postgres]` / `[redis]` / `[storage]` sections in
-///   `floo.app.toml` (passed in as `managed`).
-/// - `.floo/services.lock` entries written by `floo services add`.
-///
-/// The lock file is the canonical record for the new explicit-attachment
-/// model — services provisioned via the CLI never appear in `floo.app.toml`,
-/// so leaving them out of the preflight request body would make every
-/// CLI-managed service look like drift (`to_orphan`) and flip the plan
-/// destructive. See feedback id `0cadb329`.
-///
-/// Dedup by (service_type, name): when the same `(type, name)` appears in
-/// both sources, the TOML version wins because it carries an explicit `tier`.
-fn collect_declared_managed_services(
-    managed: &[project_config::ManagedServiceDeclaration],
-    project_root: &Path,
-) -> Vec<crate::api_types::DeclaredManagedService> {
-    use crate::api_types::DeclaredManagedService;
-
-    let mut declared: Vec<DeclaredManagedService> = managed
-        .iter()
-        .map(|ms| DeclaredManagedService {
-            service_type: ms.name.clone(),
-            name: "default".to_string(),
-            tier: ms.tier.clone(),
-        })
-        .collect();
-
-    if let Ok(lock) = crate::services_lock::read(project_root) {
-        for entry in lock.managed_services {
-            let already_present = declared
-                .iter()
-                .any(|d| d.service_type == entry.service_type && d.name == entry.name);
-            if !already_present {
-                declared.push(DeclaredManagedService {
-                    service_type: entry.service_type,
-                    name: entry.name,
-                    tier: None,
-                });
-            }
-        }
-    }
-
-    declared
 }
 
 fn render_plan_human(plan: &crate::api_types::PreflightPlan) {
@@ -3724,103 +3664,6 @@ port = 8000
             assert_eq!(settled.status.as_deref(), Some(status));
         }
         m.assert();
-    }
-
-    fn write_lock(dir: &Path, body: &str) {
-        let lock_dir = dir.join(".floo");
-        fs::create_dir_all(&lock_dir).unwrap();
-        fs::write(lock_dir.join("services.lock"), body).unwrap();
-    }
-
-    #[test]
-    fn test_collect_declared_managed_services_empty_when_nothing_declared() {
-        let dir = TempDir::new().unwrap();
-        let result = collect_declared_managed_services(&[], dir.path());
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_collect_declared_managed_services_pulls_lock_entries() {
-        let dir = TempDir::new().unwrap();
-        write_lock(
-            dir.path(),
-            r#"{
-              "version": 1,
-              "managed_services": [
-                {"type": "postgres", "name": "default", "status": "ready", "created_at": null},
-                {"type": "redis", "name": "default", "status": "ready", "created_at": null},
-                {"type": "storage", "name": "default", "status": "ready", "created_at": null}
-              ]
-            }"#,
-        );
-        let result = collect_declared_managed_services(&[], dir.path());
-        let pairs: Vec<(String, String)> = result
-            .iter()
-            .map(|d| (d.service_type.clone(), d.name.clone()))
-            .collect();
-        assert_eq!(
-            pairs,
-            vec![
-                ("postgres".to_string(), "default".to_string()),
-                ("redis".to_string(), "default".to_string()),
-                ("storage".to_string(), "default".to_string()),
-            ]
-        );
-    }
-
-    #[test]
-    fn test_collect_declared_managed_services_preserves_named_services() {
-        let dir = TempDir::new().unwrap();
-        write_lock(
-            dir.path(),
-            r#"{
-              "version": 1,
-              "managed_services": [
-                {"type": "postgres", "name": "default", "status": "ready", "created_at": null},
-                {"type": "postgres", "name": "analytics", "status": "ready", "created_at": null}
-              ]
-            }"#,
-        );
-        let result = collect_declared_managed_services(&[], dir.path());
-        let names: Vec<String> = result.iter().map(|d| d.name.clone()).collect();
-        assert!(names.contains(&"default".to_string()));
-        assert!(names.contains(&"analytics".to_string()));
-    }
-
-    #[test]
-    fn test_collect_declared_managed_services_dedups_against_toml() {
-        let dir = TempDir::new().unwrap();
-        write_lock(
-            dir.path(),
-            r#"{
-              "version": 1,
-              "managed_services": [
-                {"type": "postgres", "name": "default", "status": "ready", "created_at": null}
-              ]
-            }"#,
-        );
-        let toml_decl = vec![project_config::ManagedServiceDeclaration {
-            name: "postgres".to_string(),
-            tier: Some("basic".to_string()),
-        }];
-        let result = collect_declared_managed_services(&toml_decl, dir.path());
-        assert_eq!(result.len(), 1);
-        // TOML wins because it carries an explicit tier.
-        assert_eq!(result[0].tier.as_deref(), Some("basic"));
-    }
-
-    #[test]
-    fn test_collect_declared_managed_services_no_lock_file() {
-        let dir = TempDir::new().unwrap();
-        // No .floo/services.lock — only TOML declarations come through.
-        let toml_decl = vec![project_config::ManagedServiceDeclaration {
-            name: "postgres".to_string(),
-            tier: None,
-        }];
-        let result = collect_declared_managed_services(&toml_decl, dir.path());
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].service_type, "postgres");
-        assert_eq!(result[0].name, "default");
     }
 
     #[test]

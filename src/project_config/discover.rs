@@ -1,7 +1,5 @@
 use std::collections::HashSet;
 
-use serde::Serialize;
-
 use crate::errors::{ErrorCode, FlooError};
 
 use super::app_config::{AppServiceEntry, AppServiceType};
@@ -320,40 +318,50 @@ pub fn filter_services(
         .collect())
 }
 
-/// A managed service declaration from floo.app.toml (e.g. [postgres], [redis], [storage]).
-#[derive(Debug, Clone, Serialize)]
-pub struct ManagedServiceDeclaration {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tier: Option<String>,
+/// An enabled managed service declared in floo.app.toml, ready for preflight.
+pub use crate::api_types::DeclaredManagedService as ManagedServiceDeclaration;
+
+impl ManagedServiceDeclaration {
+    /// Return the credential attachment handle for this instance.
+    pub fn env_handle(&self) -> String {
+        if self.name == "default" {
+            self.service_type.clone()
+        } else {
+            format!("{}:{}", self.service_type, self.name)
+        }
+    }
 }
 
-/// Extract managed service declarations from top-level [postgres], [redis], [storage]
-/// sections in floo.app.toml.
+/// Extract enabled modern and legacy declarations in stable (type, name) order.
 pub fn discover_managed_services(resolved: &ResolvedApp) -> Vec<ManagedServiceDeclaration> {
     let Some(ref app_cfg) = resolved.app_config else {
         return Vec::new();
     };
 
-    let mut result = Vec::new();
-    if let Some(ref pg) = app_cfg.postgres {
-        result.push(ManagedServiceDeclaration {
-            name: "postgres".to_string(),
-            tier: pg.tier.clone(),
+    let legacy = [
+        ("postgres", &app_cfg.postgres),
+        ("redis", &app_cfg.redis),
+        ("storage", &app_cfg.storage),
+    ]
+    .into_iter()
+    .filter_map(|(service_type, section)| {
+        section.as_ref().map(|section| ManagedServiceDeclaration {
+            service_type: service_type.to_string(),
+            name: "default".to_string(),
+            tier: section.tier.clone(),
+        })
+    });
+    let modern = app_cfg
+        .managed
+        .iter()
+        .filter(|(_, block)| block.enabled != Some(false))
+        .map(|(name, block)| ManagedServiceDeclaration {
+            service_type: block.service_type.clone(),
+            name: name.clone(),
+            tier: block.tier.clone(),
         });
-    }
-    if let Some(ref rd) = app_cfg.redis {
-        result.push(ManagedServiceDeclaration {
-            name: "redis".to_string(),
-            tier: rd.tier.clone(),
-        });
-    }
-    if let Some(ref st) = app_cfg.storage {
-        result.push(ManagedServiceDeclaration {
-            name: "storage".to_string(),
-            tier: st.tier.clone(),
-        });
-    }
+    let mut result: Vec<_> = legacy.chain(modern).collect();
+    result.sort_by(|a, b| (&a.service_type, &a.name).cmp(&(&b.service_type, &b.name)));
     result
 }
 
@@ -2217,9 +2225,11 @@ domain = "svc.example.com"
 
         let managed = discover_managed_services(&resolved);
         assert_eq!(managed.len(), 2);
-        assert_eq!(managed[0].name, "postgres");
+        assert_eq!(managed[0].service_type, "postgres");
+        assert_eq!(managed[0].name, "default");
         assert_eq!(managed[0].tier, Some("hobby".to_string()));
-        assert_eq!(managed[1].name, "redis");
+        assert_eq!(managed[1].service_type, "redis");
+        assert_eq!(managed[1].name, "default");
         assert!(managed[1].tier.is_none());
     }
 
