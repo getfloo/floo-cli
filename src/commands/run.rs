@@ -182,7 +182,7 @@ pub fn run(service: &str, app_flag: Option<String>, command: Vec<String>) {
 
 /// Build a shell command string, quoting any argument that contains whitespace
 /// or shell metacharacters. Both `bin` and `args` are quoted with the same rules.
-fn shell_join(bin: &str, args: &[String]) -> String {
+pub(super) fn shell_join(bin: &str, args: &[String]) -> String {
     let mut parts = vec![shell_quote_if_needed(bin)];
     for arg in args {
         parts.push(shell_quote_if_needed(arg));

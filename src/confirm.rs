@@ -24,6 +24,7 @@ use std::io::{self, IsTerminal, Write};
 
 use serde::Serialize;
 
+pub use crate::api_types::RiskMetadata;
 use crate::errors::ErrorCode;
 use crate::output;
 
@@ -156,16 +157,6 @@ pub fn confirm_tier3(
 pub fn exit_refused(message: &str, suggestion: &str) -> ! {
     output::error(message, &ErrorCode::ConfirmationRequired, Some(suggestion));
     std::process::exit(1);
-}
-
-/// Structured risk metadata that destructive commands include in their JSON
-/// output before executing, so agents can reason about the action from the
-/// contract (not the prompt text).
-#[derive(Debug, Clone, Serialize)]
-pub struct RiskMetadata {
-    pub destructive: bool,
-    pub data_loss: bool,
-    pub tier: u8,
 }
 
 impl From<Tier> for RiskMetadata {

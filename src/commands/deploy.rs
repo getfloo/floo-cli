@@ -724,7 +724,7 @@ fn run_preflight(
     }
 
     if let Some(ref plan) = remote_plan {
-        render_plan_human(plan);
+        render_plan_human(plan, &app_name);
     }
 
     render_security_findings_human(&security_findings);
@@ -3137,26 +3137,21 @@ fn fetch_remote_preflight(
     client.preflight(&app.id, &declared).map(Some)
 }
 
-fn render_plan_human(plan: &crate::api_types::PreflightPlan) {
+fn render_plan_human(plan: &crate::api_types::PreflightPlan, app_name: &str) {
     if !plan.runtime_services.is_empty() {
         eprintln!("  Server-resolved runtime plan:");
         for service in &plan.runtime_services {
             let runtime = &service.runtime_plan;
-            let environment = runtime
-                .environment
-                .as_deref()
-                .unwrap_or("selected environment");
+            let env = runtime.environment.as_deref();
+            let env = env.unwrap_or("selected environment");
+            let effective = &runtime.effective;
             let scaling = if runtime.service_type == "worker" {
-                format!(
-                    "{} fixed instance(s)",
-                    runtime.effective.instances.unwrap_or_default()
-                )
+                let instances = effective.instances.unwrap_or_default();
+                format!("{instances} fixed instance(s)")
             } else {
-                format!(
-                    "{}-{} instances",
-                    runtime.effective.min_instances.unwrap_or_default(),
-                    runtime.effective.max_instances.unwrap_or_default()
-                )
+                let min = effective.min_instances.unwrap_or_default();
+                let max = effective.max_instances.unwrap_or_default();
+                format!("{min}-{max} instances")
             };
             let source = runtime
                 .sources
@@ -3164,14 +3159,10 @@ fn render_plan_human(plan: &crate::api_types::PreflightPlan) {
                 .as_deref()
                 .or(runtime.sources.instances.as_deref())
                 .unwrap_or("not applicable");
-            eprintln!(
-                "    {} ({}): {}, {} [{}]",
-                service.name,
-                environment,
-                runtime.availability.replace('_', " "),
-                scaling,
-                source.replace('_', " "),
-            );
+            let name = &service.name;
+            let availability = runtime.availability.replace('_', " ");
+            let source = source.replace('_', " ");
+            eprintln!("    {name} ({env}): {availability}, {scaling} [{source}]");
             for note in &runtime.warnings {
                 eprintln!("      note: {note}");
             }
@@ -3180,36 +3171,71 @@ fn render_plan_human(plan: &crate::api_types::PreflightPlan) {
     }
 
     let ms = &plan.managed_services;
-    if !ms.to_provision.is_empty() {
-        eprintln!("  Will provision on next deploy:");
-        for item in &ms.to_provision {
-            let tier = item.tier.as_deref().unwrap_or("basic");
-            eprintln!(
-                "    + {} (tier {tier})",
-                format_args!("{}/{}", item.service_type, item.name)
+    render_managed_plan_items("Will provision on next deploy", &ms.to_provision, None);
+    render_managed_plan_items("Will retry on next deploy", &ms.to_retry, None);
+    render_managed_plan_items("Will retain", &ms.to_retain, None);
+    let removal_app = Some(app_name);
+    let orphan_title = "Orphaned (deploy will NOT remove)";
+    render_managed_plan_items(orphan_title, &ms.to_orphan, removal_app);
+    render_managed_plan_items("Proposed deprovisions", &ms.to_deprovision, removal_app);
+    let in_flight = &ms.in_flight_deprovisioning;
+    render_managed_plan_items("Deprovisioning in flight", in_flight, None);
+    if !plan.scheduled_deprovisions.is_empty() {
+        eprintln!("  Scheduled deprovisions (pending teardown deadlines):");
+        for item in &plan.scheduled_deprovisions {
+            eprintln!("    {}/{}", item.service_type, item.name);
+            for (environment, deadline) in [
+                ("dev", &item.dev_deprovision_after),
+                ("prod", &item.prod_deprovision_after),
+            ] {
+                if let Some(deadline) = deadline {
+                    eprintln!("      {environment}: {deadline}");
+                }
+            }
+        }
+        eprintln!();
+    }
+}
+
+/// Render one nonempty managed-service bin, including explicit removal guidance when applicable.
+fn render_managed_plan_items(
+    title: &str,
+    items: &[crate::api_types::ManagedServicePlanItem],
+    removal_app: Option<&str>,
+) {
+    if items.is_empty() {
+        return;
+    }
+    eprintln!("  {title}:");
+    for item in items {
+        eprintln!("    {}/{}", item.service_type, item.name);
+        if let Some(tier) = &item.tier {
+            eprintln!("      tier: {tier}");
+        }
+        eprintln!(
+            "      risk: tier {}, destructive={}, data_loss={}",
+            item.risk.tier, item.risk.destructive, item.risk.data_loss
+        );
+        if let Some(impact) = &item.data_impact {
+            eprintln!("      data impact: {impact}");
+        }
+        if let Some(app_name) = removal_app {
+            let command = super::run::shell_join(
+                "floo",
+                &[
+                    "services".into(),
+                    "remove".into(),
+                    item.service_type.clone(),
+                    "--app".into(),
+                    app_name.into(),
+                    "--name".into(),
+                    item.name.clone(),
+                ],
             );
+            eprintln!("      To deprovision explicitly: {command}");
         }
-        eprintln!();
     }
-    if !ms.to_orphan.is_empty() {
-        eprintln!("  \u{26a0} Orphaned managed services (deploy will NOT remove these):");
-        for item in &ms.to_orphan {
-            let impact = item
-                .data_impact
-                .as_deref()
-                .unwrap_or("managed service data");
-            eprintln!("    - {}/{}  [{}]", item.service_type, item.name, impact);
-        }
-        eprintln!("    Run 'floo services remove <type> --app <name>' to deprovision explicitly.");
-        eprintln!();
-    }
-    if !ms.in_flight_deprovisioning.is_empty() {
-        eprintln!("  \u{26a0} Deprovisioning in flight:");
-        for item in &ms.in_flight_deprovisioning {
-            eprintln!("    … {}/{}", item.service_type, item.name);
-        }
-        eprintln!();
-    }
+    eprintln!();
 }
 
 #[cfg(test)]
