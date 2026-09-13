@@ -113,7 +113,12 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
                     )
                 })?;
 
-                if svc_file.app.name != resolved.app_name {
+                // --app changes the target, not the identities declared on disk.
+                if let Some(app_config) = resolved
+                    .app_config
+                    .as_ref()
+                    .filter(|app| app.app.name != svc_file.app.name)
+                {
                     return Err(FlooError::with_suggestion(
                         ErrorCode::AppNameMismatch,
                         format!(
@@ -121,11 +126,11 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
                             super::SERVICE_CONFIG_FILE,
                             svc_file.app.name,
                             super::APP_CONFIG_FILE,
-                            resolved.app_name,
+                            app_config.app.name,
                         ),
                         format!(
                             "Set [app].name = \"{}\" in {normalized_path}/{}.",
-                            resolved.app_name,
+                            app_config.app.name,
                             super::SERVICE_CONFIG_FILE,
                         ),
                     ));

@@ -3276,3 +3276,149 @@ fn domains_remove_is_not_a_command() {
         .failure()
         .stderr(predicate::str::contains("unrecognized subcommand"));
 }
+
+// App resolution (#288): all preflight checks below use an empty local config.
+fn local_preflight(project: &std::path::Path) -> Command {
+    let mut command = floo();
+    command
+        .args(["--json", "preflight"])
+        .current_dir(project)
+        .env("FLOO_CONFIG_DIR", project.join(".test-config"))
+        .env("FLOO_NO_UPDATE_CHECK", "1");
+    command
+}
+
+#[test]
+fn test_preflight_does_not_walk_past_git_directory() {
+    let parent = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        parent.path().join("floo.app.toml"),
+        "[app]\nname = 'outside'",
+    )
+    .unwrap();
+    let repo = parent.path().join("repo");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    let child = repo.join("child");
+    std::fs::create_dir(&child).unwrap();
+
+    local_preflight(&child)
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"NO_CONFIG_FOUND""#));
+}
+
+#[test]
+fn test_preflight_does_not_walk_past_worktree_git_file() {
+    let parent = tempfile::TempDir::new().unwrap();
+    std::fs::write(parent.path().join("floo.toml"), "[app]\nname = 'outside'").unwrap();
+    let repo = parent.path().join("worktree");
+    std::fs::create_dir(&repo).unwrap();
+    std::fs::write(repo.join(".git"), "gitdir: ../metadata/worktrees/test\n").unwrap();
+
+    local_preflight(&repo)
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"NO_CONFIG_FOUND""#));
+}
+
+#[test]
+fn test_preflight_app_flag_preserves_manifest_and_paths_at_git_root() {
+    let repo = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir(repo.path().join(".git")).unwrap();
+    std::fs::write(
+        repo.path().join("floo.app.toml"),
+        "[app]\nname = 'configured'\n[services.api]\npath = './api'\ntype = 'api'\nport = 8000\n",
+    )
+    .unwrap();
+    let child = repo.path().join("api/nested");
+    std::fs::create_dir_all(&child).unwrap();
+
+    local_preflight(&child)
+        .args(["--app", "override"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""app":"override""#))
+        .stdout(predicate::str::contains(r#""name":"api""#))
+        .stdout(predicate::str::contains(r#""valid":true"#));
+}
+
+#[test]
+fn test_preflight_app_flag_preserves_delegated_service_discovery() {
+    let repo = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir(repo.path().join(".git")).unwrap();
+    std::fs::write(
+        repo.path().join("floo.app.toml"),
+        "[app]\nname = 'configured'\n[services.api]\npath = './api'\ntype = 'api'\n",
+    )
+    .unwrap();
+    std::fs::create_dir(repo.path().join("api")).unwrap();
+    std::fs::write(
+        repo.path().join("api/floo.service.toml"),
+        "[app]\nname = 'configured'\n[service]\nname = 'api'\ntype = 'api'\nport = 8000\ningress = 'public'\n",
+    )
+    .unwrap();
+    let child = repo.path().join("nested");
+    std::fs::create_dir(&child).unwrap();
+
+    local_preflight(&child)
+        .args(["--app", "override"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""app":"override""#))
+        .stdout(predicate::str::contains(r#""name":"api""#))
+        .stdout(predicate::str::contains(r#""valid":true"#));
+}
+
+fn conflicting_app_manifests() -> tempfile::TempDir {
+    let repo = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        repo.path().join("floo.app.toml"),
+        "[app]\nname = 'app-name'",
+    )
+    .unwrap();
+    std::fs::write(
+        repo.path().join("floo.service.toml"),
+        "[app]\nname = 'service-name'\n[service]\nname = 'api'\ntype = 'api'\nport = 8000\ningress = 'public'\n",
+    )
+    .unwrap();
+    repo
+}
+
+#[test]
+fn test_preflight_rejects_conflicting_colocated_app_names() {
+    let repo = conflicting_app_manifests();
+
+    local_preflight(repo.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"APP_NAME_MISMATCH""#))
+        .stdout(predicate::str::contains("app-name"))
+        .stdout(predicate::str::contains("service-name"))
+        .stdout(predicate::str::contains("floo.app.toml"))
+        .stdout(predicate::str::contains("floo.service.toml"));
+}
+
+#[test]
+fn test_preflight_app_flag_cannot_hide_conflicting_colocated_app_names() {
+    let repo = conflicting_app_manifests();
+
+    local_preflight(repo.path())
+        .args(["--app", "service-name"])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"APP_NAME_MISMATCH""#));
+}
+
+#[test]
+fn test_preflight_app_flag_cannot_hide_ancestor_legacy_config() {
+    let repo = tempfile::TempDir::new().unwrap();
+    std::fs::write(repo.path().join("floo.toml"), "[app]\nname = 'old'").unwrap();
+    let child = repo.path().join("child");
+    std::fs::create_dir(&child).unwrap();
+
+    local_preflight(&child)
+        .args(["--app", "override"])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"LEGACY_CONFIG""#));
+}
