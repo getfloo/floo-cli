@@ -314,8 +314,6 @@ pub struct AppServiceEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub env_file: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub domain: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub cpu: Option<String>,
     /// Delegated overrides: `[services.<name>.resources]` > child resources > global.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -403,7 +401,6 @@ impl AppServiceEntry {
             port: Some(port),
             ingress: Some(ServiceIngress::Public),
             env_file,
-            domain: None,
             cpu: None,
             resources: None,
             memory: None,

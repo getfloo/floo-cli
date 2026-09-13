@@ -3271,7 +3271,6 @@ mod tests {
             path: ".".to_string(),
             port: Some(8080),
             ingress: ServiceIngress::Public,
-            domain: None,
             cpu: None,
             memory: None,
             max_instances,

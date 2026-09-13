@@ -867,7 +867,6 @@ mod tests {
             port: Some(3000),
             ingress: None,
             env_file: None,
-            domain: None,
             cpu: None,
             resources: None,
             memory: None,

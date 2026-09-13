@@ -238,8 +238,6 @@ pub struct ServiceConfig {
     pub port: Option<u16>,
     pub ingress: ServiceIngress,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub domain: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub cpu: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory: Option<String>,
@@ -334,8 +332,6 @@ pub struct ServiceSection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub env_file: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub domain: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_instances: Option<u32>,
     /// Exact fixed count for a worker. Omitted workers default to one instance;
     /// zero is the explicit paused state.
@@ -364,7 +360,6 @@ impl ServiceSection {
             path: path.to_string(),
             port: Some(self.port),
             ingress: self.resolved_ingress(),
-            domain: self.domain.clone(),
             cpu: None,
             memory: None,
             max_instances: None,
@@ -730,7 +725,6 @@ ingress = "internal"
                 port: 3000,
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
-                domain: None,
                 min_instances: None,
                 instances: None,
                 dev_command: None,
@@ -755,7 +749,6 @@ ingress = "internal"
             port: 8000,
             ingress: Some(ServiceIngress::Internal),
             env_file: None,
-            domain: None,
             min_instances: None,
             instances: None,
             dev_command: None,
@@ -778,7 +771,6 @@ ingress = "internal"
             path: "backend".to_string(),
             port: Some(8000),
             ingress: ServiceIngress::Internal,
-            domain: None,
             cpu: None,
             memory: None,
             max_instances: None,
@@ -912,139 +904,28 @@ port = 8000
     }
 
     #[test]
-    fn test_load_service_config_with_domain() {
+    fn test_load_service_config_rejects_service_domain() {
+        let _guard = crate::output::GLOBAL_MODE_LOCK.lock().unwrap();
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
         let dir = TempDir::new().unwrap();
         fs::write(
             dir.path().join(super::super::SERVICE_CONFIG_FILE),
-            r#"
-[app]
+            r#"[app]
 name = "my-app"
-
 [service]
 name = "web"
 type = "web"
 port = 3000
-ingress = "public"
-domain = "getfloo.com"
+domain = "app.example.com"
 "#,
         )
         .unwrap();
 
-        let config = load_service_config(dir.path()).unwrap().unwrap();
-        assert_eq!(config.service.domain.as_deref(), Some("getfloo.com"));
-    }
-
-    #[test]
-    fn test_load_service_config_without_domain() {
-        let dir = TempDir::new().unwrap();
-        fs::write(
-            dir.path().join(super::super::SERVICE_CONFIG_FILE),
-            r#"
-[app]
-name = "my-app"
-
-[service]
-name = "api"
-type = "api"
-port = 8000
-"#,
-        )
-        .unwrap();
-
-        let config = load_service_config(dir.path()).unwrap().unwrap();
-        assert!(config.service.domain.is_none());
-    }
-
-    #[test]
-    fn test_to_api_service_config_passes_domain() {
-        let section = ServiceSection {
-            name: "web".to_string(),
-            service_type: ServiceType::Web,
-            port: 3000,
-            ingress: Some(ServiceIngress::Public),
-            env_file: None,
-            domain: Some("getfloo.com".to_string()),
-            min_instances: None,
-            instances: None,
-            dev_command: None,
-            migrate_command: None,
-        };
-
-        let api_config = section.to_api_service_config(".");
-        assert_eq!(api_config.domain.as_deref(), Some("getfloo.com"));
-    }
-
-    #[test]
-    fn test_service_config_json_domain_omitted_when_none() {
-        let config = ServiceConfig {
-            name: "api".to_string(),
-            service_type: ServiceType::Api,
-            path: "backend".to_string(),
-            port: Some(8000),
-            ingress: ServiceIngress::Public,
-            domain: None,
-            cpu: None,
-            memory: None,
-            max_instances: None,
-            max_request_body_mb: None,
-            min_instances: None,
-            instances: None,
-            migrate_command: None,
-        };
-        let json = serde_json::to_value(&config).unwrap();
-        assert!(json.get("domain").is_none());
-    }
-
-    #[test]
-    fn test_service_config_json_domain_included_when_set() {
-        let config = ServiceConfig {
-            name: "web".to_string(),
-            service_type: ServiceType::Web,
-            path: ".".to_string(),
-            port: Some(3000),
-            ingress: ServiceIngress::Public,
-            domain: Some("getfloo.com".to_string()),
-            cpu: None,
-            memory: None,
-            max_instances: None,
-            max_request_body_mb: None,
-            min_instances: None,
-            instances: None,
-            migrate_command: None,
-        };
-        let json = serde_json::to_value(&config).unwrap();
-        assert_eq!(json["domain"], "getfloo.com");
-    }
-
-    #[test]
-    fn test_write_and_reload_service_config_with_domain() {
-        let dir = TempDir::new().unwrap();
-        let config = ServiceFileConfig {
-            edge: None,
-            domains: Default::default(),
-            app: ServiceFileAppSection {
-                name: "my-app".to_string(),
-                access_mode: None,
-            },
-            service: ServiceSection {
-                name: "web".to_string(),
-                service_type: ServiceType::Web,
-                port: 3000,
-                ingress: Some(ServiceIngress::Public),
-                env_file: None,
-                domain: Some("getfloo.com".to_string()),
-                min_instances: None,
-                instances: None,
-                dev_command: None,
-                migrate_command: None,
-            },
-            resources: None,
-            env: None,
-        };
-
-        write_service_config(dir.path(), &config).unwrap();
-        let loaded = load_service_config(dir.path()).unwrap().unwrap();
-        assert_eq!(loaded.service.domain.as_deref(), Some("getfloo.com"));
+        let err = load_service_config(dir.path()).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+        assert!(err.message.contains("unknown field `domain`"));
+        assert!(err.suggestion.unwrap().contains("`service.domain`"));
     }
 
     #[test]
@@ -1105,7 +986,6 @@ port = 8000
             path: ".".to_string(),
             port: Some(8000),
             ingress: ServiceIngress::Public,
-            domain: None,
             cpu: None,
             memory: None,
             max_instances: None,
@@ -1128,7 +1008,6 @@ port = 8000
             path: ".".to_string(),
             port: Some(8000),
             ingress: ServiceIngress::Public,
-            domain: None,
             cpu: Some("2".to_string()),
             memory: Some("4Gi".to_string()),
             max_instances: Some(5),

@@ -66,7 +66,6 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
                 path: normalized_path.clone(),
                 port,
                 ingress,
-                domain: entry.domain.clone(),
                 cpu,
                 memory,
                 max_instances,
@@ -150,9 +149,6 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
                     .and_then(|c| c.resources.as_ref());
                 apply_service_file_resources(&mut svc, &svc_file.resources, global_resources);
 
-                if entry.domain.is_some() {
-                    svc.domain = entry.domain.clone();
-                }
                 apply_app_service_overrides(&mut svc, entry)?;
 
                 services.push(svc);
@@ -472,7 +468,6 @@ ingress = "public"
                 port: 8000,
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
-                domain: None,
                 min_instances: None,
                 instances: None,
                 dev_command: None,
@@ -528,7 +523,6 @@ ingress = "public"
                 port: None,
                 ingress: None,
                 env_file: None,
-                domain: None,
                 cpu: None,
                 resources: None,
                 memory: None,
@@ -552,7 +546,6 @@ ingress = "public"
                 port: Some(3000),
                 ingress: None,
                 env_file: None,
-                domain: None,
                 cpu: None,
                 resources: None,
                 memory: None,
@@ -627,7 +620,6 @@ ingress = "public"
                 port: 3000,
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
-                domain: None,
                 min_instances: None,
                 instances: None,
                 dev_command: None,
@@ -658,7 +650,6 @@ ingress = "public"
                 port: None,
                 ingress: None,
                 env_file: None,
-                domain: None,
                 cpu: None,
                 resources: None,
                 memory: None,
@@ -728,7 +719,6 @@ ingress = "public"
                 port: 3000,
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
-                domain: None,
                 min_instances: None,
                 instances: None,
                 dev_command: None,
@@ -792,7 +782,6 @@ ingress = "public"
                 port: None,
                 ingress: None,
                 env_file: None,
-                domain: None,
                 cpu: None,
                 resources: None,
                 memory: None,
@@ -862,7 +851,6 @@ ingress = "public"
                 port: None,
                 ingress: None,
                 env_file: None,
-                domain: None,
                 cpu: None,
                 resources: None,
                 memory: None,
@@ -927,7 +915,6 @@ ingress = "public"
                 port: 8000,
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
-                domain: None,
                 min_instances: None,
                 instances: None,
                 dev_command: None,
@@ -958,7 +945,6 @@ ingress = "public"
                 port: None,
                 ingress: None,
                 env_file: None,
-                domain: None,
                 cpu: None,
                 resources: None,
                 memory: None,
@@ -1064,7 +1050,6 @@ ingress = "public"
                 port: None,
                 ingress: None,
                 env_file: None,
-                domain: None,
                 cpu: None,
                 resources: None,
                 memory: None,
@@ -1120,7 +1105,6 @@ ingress = "public"
                 path: "frontend".to_string(),
                 port: Some(3000),
                 ingress: ServiceIngress::Public,
-                domain: None,
                 cpu: None,
                 memory: None,
                 max_instances: None,
@@ -1135,7 +1119,6 @@ ingress = "public"
                 path: "backend".to_string(),
                 port: Some(8000),
                 ingress: ServiceIngress::Public,
-                domain: None,
                 cpu: None,
                 memory: None,
                 max_instances: None,
@@ -1159,7 +1142,6 @@ ingress = "public"
                 path: "frontend".to_string(),
                 port: Some(3000),
                 ingress: ServiceIngress::Public,
-                domain: None,
                 cpu: None,
                 memory: None,
                 max_instances: None,
@@ -1174,7 +1156,6 @@ ingress = "public"
                 path: "backend".to_string(),
                 port: Some(8000),
                 ingress: ServiceIngress::Public,
-                domain: None,
                 cpu: None,
                 memory: None,
                 max_instances: None,
@@ -1199,7 +1180,6 @@ ingress = "public"
                 path: "frontend".to_string(),
                 port: Some(3000),
                 ingress: ServiceIngress::Public,
-                domain: None,
                 cpu: None,
                 memory: None,
                 max_instances: None,
@@ -1214,7 +1194,6 @@ ingress = "public"
                 path: "backend".to_string(),
                 port: Some(8000),
                 ingress: ServiceIngress::Public,
-                domain: None,
                 cpu: None,
                 memory: None,
                 max_instances: None,
@@ -1258,7 +1237,6 @@ ingress = "public"
                 port: 3000,
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
-                domain: None,
                 min_instances: None,
                 instances: None,
                 dev_command: None,
@@ -1280,7 +1258,6 @@ ingress = "public"
                 port: None,
                 ingress: Some(ServiceIngress::Internal),
                 env_file: None,
-                domain: None,
                 cpu: None,
                 resources: None,
                 memory: None,
@@ -1375,7 +1352,6 @@ ingress = "internal"
                 port: None,
                 ingress: None,
                 env_file: None,
-                domain: None,
                 cpu: None,
                 resources: None,
                 memory: None,
@@ -1399,7 +1375,6 @@ ingress = "internal"
                 port: None,
                 ingress: None,
                 env_file: None,
-                domain: None,
                 cpu: None,
                 resources: None,
                 memory: None,
@@ -1446,164 +1421,27 @@ ingress = "internal"
     }
 
     #[test]
-    fn test_app_toml_domain_overrides_service_toml() {
+    fn test_discover_rejects_delegated_service_domain() {
+        let _guard = crate::output::GLOBAL_MODE_LOCK.lock().unwrap();
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
         let dir = TempDir::new().unwrap();
-
-        // Sub-service declares domain = "svc.example.com"
-        let backend = dir.path().join("backend");
-        fs::create_dir(&backend).unwrap();
+        fs::create_dir(dir.path().join("backend")).unwrap();
         fs::write(
-            backend.join("floo.service.toml"),
-            r#"[app]
-name = "my-app"
-
-[service]
-name = "api"
-type = "api"
-port = 8000
-ingress = "public"
-domain = "svc.example.com"
-"#,
+            dir.path().join("floo.app.toml"),
+            "[app]\nname = 'my-app'\n[services.api]\ntype = 'api'\npath = 'backend'\n",
         )
         .unwrap();
-
-        let mut services_map = HashMap::new();
-        services_map.insert(
-            "api".to_string(),
-            AppServiceEntry {
-                service_type: AppServiceType::Api,
-                path: Some("./backend".to_string()),
-                dockerfile: None,
-                repo: None,
-                port: None,
-                ingress: None,
-                env_file: None,
-                domain: Some("app.example.com".to_string()),
-                cpu: None,
-                resources: None,
-                memory: None,
-                max_instances: None,
-                max_request_body_mb: None,
-                min_instances: None,
-                instances: None,
-                dev_command: None,
-                migrate_command: None,
-                command: None,
-                env: None,
-            },
-        );
-
-        let app_config = AppFileConfig {
-            domains: Default::default(),
-            app: AppFileAppSection {
-                name: "my-app".to_string(),
-                access_mode: None,
-            },
-            auth: None,
-            github: None,
-            postgres: None,
-            redis: None,
-            storage: None,
-            managed: HashMap::new(),
-            edge: None,
-            resources: None,
-            services: services_map,
-            environments: HashMap::new(),
-            cron: HashMap::new(),
-        };
-
-        let resolved = make_resolved(
-            dir.path(),
-            "my-app",
-            None,
-            Some(app_config),
-            AppSource::AppFile,
-        );
-
-        let services = discover_services(&resolved).unwrap();
-        let api = services.iter().find(|s| s.name == "api").unwrap();
-        // floo.app.toml domain should override floo.service.toml domain
-        assert_eq!(api.domain.as_deref(), Some("app.example.com"));
-    }
-
-    #[test]
-    fn test_service_toml_domain_preserved_when_no_app_override() {
-        let dir = TempDir::new().unwrap();
-
-        let backend = dir.path().join("backend");
-        fs::create_dir(&backend).unwrap();
         fs::write(
-            backend.join("floo.service.toml"),
-            r#"[app]
-name = "my-app"
-
-[service]
-name = "api"
-type = "api"
-port = 8000
-ingress = "public"
-domain = "svc.example.com"
-"#,
+            dir.path().join("backend/floo.service.toml"),
+            "[app]\nname = 'my-app'\n[service]\nname = 'api'\ntype = 'api'\nport = 8000\ndomain = 'app.example.com'\n",
         )
         .unwrap();
+        let resolved = crate::project_config::resolve_app_context(dir.path(), None).unwrap();
 
-        let mut services_map = HashMap::new();
-        services_map.insert(
-            "api".to_string(),
-            AppServiceEntry {
-                service_type: AppServiceType::Api,
-                path: Some("./backend".to_string()),
-                dockerfile: None,
-                repo: None,
-                port: None,
-                ingress: None,
-                env_file: None,
-                domain: None,
-                cpu: None,
-                resources: None,
-                memory: None,
-                max_instances: None,
-                max_request_body_mb: None,
-                min_instances: None,
-                instances: None,
-                dev_command: None,
-                migrate_command: None,
-                command: None,
-                env: None,
-            },
-        );
-
-        let app_config = AppFileConfig {
-            domains: Default::default(),
-            app: AppFileAppSection {
-                name: "my-app".to_string(),
-                access_mode: None,
-            },
-            auth: None,
-            github: None,
-            postgres: None,
-            redis: None,
-            storage: None,
-            managed: HashMap::new(),
-            edge: None,
-            resources: None,
-            services: services_map,
-            environments: HashMap::new(),
-            cron: HashMap::new(),
-        };
-
-        let resolved = make_resolved(
-            dir.path(),
-            "my-app",
-            None,
-            Some(app_config),
-            AppSource::AppFile,
-        );
-
-        let services = discover_services(&resolved).unwrap();
-        let api = services.iter().find(|s| s.name == "api").unwrap();
-        // Domain from floo.service.toml should be preserved
-        assert_eq!(api.domain.as_deref(), Some("svc.example.com"));
+        let err = discover_services(&resolved).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+        assert!(err.message.contains("unknown field `domain`"));
     }
 
     // --- Inline mode tests ---
@@ -1628,7 +1466,6 @@ domain = "svc.example.com"
                 port: Some(8000),
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
-                domain: None,
                 cpu: Some("2".to_string()),
                 resources: None,
                 memory: Some("4Gi".to_string()),
@@ -1652,7 +1489,6 @@ domain = "svc.example.com"
                 port: Some(3000),
                 ingress: None,
                 env_file: None,
-                domain: None,
                 cpu: None,
                 resources: None,
                 memory: None,
@@ -1728,7 +1564,6 @@ domain = "svc.example.com"
                 port: Some(8000),
                 ingress: None,
                 env_file: None,
-                domain: None,
                 resources: None,
                 cpu: Some("4".to_string()), // per-service override
                 memory: None,               // will inherit global
@@ -1791,7 +1626,6 @@ domain = "svc.example.com"
             path: ".".to_string(),
             port: Some(8080),
             ingress: ServiceIngress::Internal,
-            domain: None,
             cpu: None,
             memory: None,
             max_instances: None,
@@ -1822,7 +1656,6 @@ domain = "svc.example.com"
             path: "backend".to_string(),
             port: Some(8080),
             ingress: ServiceIngress::Public,
-            domain: None,
             cpu: None,
             memory: None,
             max_instances: None,
@@ -1853,7 +1686,6 @@ domain = "svc.example.com"
             port: None,
             ingress: None,
             env_file: None,
-            domain: None,
             cpu: None,
             resources: Some(ResourceConfig {
                 cpu: Some("4".to_string()),
@@ -1891,7 +1723,6 @@ domain = "svc.example.com"
             path: "jobs".to_string(),
             port: Some(8080),
             ingress: ServiceIngress::Internal,
-            domain: None,
             cpu: None,
             memory: None,
             max_instances: None,
@@ -1908,7 +1739,6 @@ domain = "svc.example.com"
             port: None,
             ingress: None,
             env_file: None,
-            domain: None,
             cpu: None,
             resources: None,
             memory: None,
@@ -1951,7 +1781,6 @@ domain = "svc.example.com"
                 port: Some(8000),
                 ingress: None,
                 env_file: None,
-                domain: None,
                 cpu: None,
                 resources: None,
                 memory: None,
@@ -2017,7 +1846,6 @@ domain = "svc.example.com"
                 port: None,
                 ingress: None, // should default to internal for workers
                 env_file: None,
-                domain: None,
                 cpu: None,
                 resources: None,
                 memory: None,
@@ -2041,7 +1869,6 @@ domain = "svc.example.com"
                 port: Some(3000),
                 ingress: None, // should default to public
                 env_file: None,
-                domain: None,
                 cpu: None,
                 resources: None,
                 memory: None,
@@ -2109,7 +1936,6 @@ domain = "svc.example.com"
                 port: 8000,
                 ingress: Some(ServiceIngress::Public),
                 env_file: None,
-                domain: None,
                 min_instances: None,
                 instances: None,
                 dev_command: None,
@@ -2174,7 +2000,6 @@ domain = "svc.example.com"
                         port: Some(3000),
                         ingress: Some(ServiceIngress::Public),
                         env_file: None,
-                        domain: None,
                         cpu: None,
                         resources: None,
                         memory: None,
@@ -2241,7 +2066,6 @@ domain = "svc.example.com"
                         port: Some(3000),
                         ingress: Some(ServiceIngress::Public),
                         env_file: None,
-                        domain: None,
                         cpu: None,
                         resources: None,
                         memory: None,
