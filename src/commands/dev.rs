@@ -38,6 +38,7 @@ struct DevServiceInfo {
     path: String,
     dev_command: String,
     migrate_command: Option<String>,
+    local_env: super::env::LocalServiceEnv,
 }
 
 pub struct DevArgs {
@@ -162,9 +163,14 @@ pub fn dev(args: DevArgs) {
         services.push(DevServiceInfo {
             name: name.clone(),
             port,
-            path,
+            path: path.clone(),
             dev_command,
             migrate_command: entry.migrate_command.clone(),
+            local_env: super::env::LocalServiceEnv::load(entry, &resolved.config_dir.join(&path))
+                .unwrap_or_else(|e| {
+                    output::error(&e.message, &e.code, e.suggestion.as_deref());
+                    process::exit(1);
+                }),
         });
     }
 
@@ -283,6 +289,7 @@ pub fn dev(args: DevArgs) {
         .map(|s| crate::api_types::DevSessionService {
             name: s.name.clone(),
             port: Some(s.port),
+            managed: s.local_env.managed.clone(),
         })
         .collect();
 
@@ -304,6 +311,15 @@ pub fn dev(args: DevArgs) {
     };
 
     let session_id = session.session_id.clone();
+
+    // Validate every service before readiness probes, proxies, migrations, or children.
+    for svc in &mut services {
+        if let Err(e) = svc.local_env.merge(&svc.name, &session, Some(svc.port)) {
+            cleanup_session(&client, &app_id, &session_id);
+            output::error(&e.message, &e.code, e.suggestion.as_deref());
+            process::exit(1);
+        }
+    }
 
     // --- Confirm Postgres reachability before handing off ---
     //
@@ -556,15 +572,7 @@ the database finishes applying it.",
             process::exit(1);
         }
 
-        // Build environment: inherit current env + inject dev session env vars
-        let mut env_vars: HashMap<String, String> = std::env::vars().collect();
-        if let Some(svc_env) = session.services.get(&svc.name) {
-            for (k, v) in svc_env {
-                env_vars.insert(k.clone(), v.clone());
-            }
-        }
-        // Also inject PORT so services that read it get the right value
-        env_vars.insert("PORT".to_string(), svc.port.to_string());
+        let env_vars = svc.local_env.vars();
 
         // Run migrate_command before starting the service, if configured
         if let Some(ref migrate_cmd) = svc.migrate_command {
@@ -573,7 +581,7 @@ the database finishes applying it.",
                 .arg("-c")
                 .arg(migrate_cmd)
                 .current_dir(&working_dir)
-                .envs(&env_vars)
+                .envs(env_vars)
                 .stdout(Stdio::inherit())
                 .stderr(Stdio::inherit())
                 .status()
@@ -603,7 +611,7 @@ the database finishes applying it.",
             .arg("-c")
             .arg(&svc.dev_command)
             .current_dir(&working_dir)
-            .envs(&env_vars)
+            .envs(env_vars)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -830,7 +838,11 @@ fn cleanup_children(children: &mut [(String, Child)]) {
     }
 }
 
-fn cleanup_session(client: &crate::api_client::FlooClient, app_id: &str, session_id: &str) {
+pub(super) fn cleanup_session(
+    client: &crate::api_client::FlooClient,
+    app_id: &str,
+    session_id: &str,
+) {
     if let Err(e) = client.delete_dev_session(app_id, session_id) {
         if !output::is_json_mode() {
             eprintln!(

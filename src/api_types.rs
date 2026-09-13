@@ -1079,6 +1079,9 @@ pub struct GitHubSetupPollResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DevSessionService {
     pub name: String,
+    /// Omission retains server defaults; an empty list explicitly detaches all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed: Option<Vec<String>>,
     /// Port is required for `floo dev` (used for cross-service discovery vars).
     /// Omit (None) for `floo run` one-shot mode — the API skips discovery in that case.
     #[serde(skip_serializing_if = "Option::is_none")]
