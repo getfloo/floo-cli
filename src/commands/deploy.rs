@@ -1596,7 +1596,7 @@ fn validate_preflight(
         }
 
         // Validate port
-        if svc.port == 0 {
+        if svc.port == Some(0) {
             findings.push(
                 PreflightFinding::error(
                     "INVALID_PORT",
@@ -1788,14 +1788,16 @@ fn validate_preflight(
                         if let Some(expose_val) = trimmed.strip_prefix("EXPOSE ") {
                             let expose_val = expose_val.trim();
                             let port_str = expose_val.split('/').next().unwrap_or(expose_val);
-                            if let Ok(exposed_port) = port_str.parse::<u16>() {
-                                if exposed_port != svc.port {
+                            if let (Ok(exposed_port), Some(port)) =
+                                (port_str.parse::<u16>(), svc.port)
+                            {
+                                if exposed_port != port {
                                     findings.push(
                                         PreflightFinding::warning(
                                             "EXPOSE_PORT_MISMATCH",
                                             format!(
                                                 "Service '{}' Dockerfile EXPOSE {exposed_port} does not match configured port {}.",
-                                                svc.name, svc.port
+                                                svc.name, port
                                             ),
                                         )
                                         .with_path(&svc.path),
@@ -2455,7 +2457,9 @@ fn display_preflight_human(
         eprintln!("  {}{path_label}", svc.name);
         eprintln!(
             "    type: {}, port: {}, ingress: {}",
-            svc.service_type, svc.port, svc.ingress
+            svc.service_type,
+            svc.port.map_or("none".to_string(), |port| port.to_string()),
+            svc.ingress
         );
 
         let framework_label = det
@@ -3242,7 +3246,7 @@ mod tests {
             name: name.to_string(),
             service_type,
             path: ".".to_string(),
-            port: 8080,
+            port: Some(8080),
             ingress: ServiceIngress::Public,
             domain: None,
             cpu: None,
@@ -3277,7 +3281,11 @@ mod tests {
             let path = if mode == "delegated" { "api" } else { "." };
             fs::create_dir_all(dir.path().join(path)).unwrap();
             if mode != "single" {
-                let port = if mode == "inline" { "port = 8000" } else { "" };
+                let port = if mode == "inline" {
+                    "port = 8000"
+                } else {
+                    "[services.api.resources]"
+                };
                 fs::write(
                     dir.path().join("floo.app.toml"),
                     format!(

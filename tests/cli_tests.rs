@@ -1170,7 +1170,7 @@ ingress = "public"
 }
 
 #[test]
-fn test_deploy_dry_run_missing_service_toml() {
+fn test_preflight_requires_port_without_child_service_file() {
     let project = tempfile::TempDir::new().unwrap();
     std::fs::write(
         project.path().join("floo.app.toml"),
@@ -1192,7 +1192,7 @@ path = "./api"
         .assert()
         .failure()
         .stdout(predicate::str::contains(
-            r#""code":"SERVICE_CONFIG_MISSING""#,
+            r#""code":"INVALID_PROJECT_CONFIG""#,
         ));
 }
 

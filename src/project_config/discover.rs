@@ -8,47 +8,18 @@ use super::service_config::{
     load_service_config, ResourceConfig, ServiceConfig, ServiceIngress, ServiceType,
 };
 
-/// Discover all deployable services from resolved config files.
-///
-/// Three branches:
-/// 1. Inline mode: `floo.app.toml` has user-managed services with `port` fields —
-///    build ServiceConfig directly from app.toml entries (no floo.service.toml in subdirs)
-/// 2. Delegated mode (legacy): `floo.app.toml` has user-managed services with `path` but no `port` —
-///    read each sub-service's `floo.service.toml`
-/// 3. Single `floo.service.toml` only (no app_config user-managed entries) -> single service at "."
-/// 4. `floo.app.toml` only with no deployable services -> error
+/// Resolve entries independently; explicit ports win over child files, and inline workers may omit ports.
 pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, FlooError> {
     let inline_entries = inline_service_entries(resolved);
+    let delegated_entries = delegated_path_entries(resolved);
 
-    let services = if !inline_entries.is_empty() {
-        // Branch 1: Inline mode — build ServiceConfig directly from app.toml
-        // Error if floo.service.toml files exist in subdirs (enforce either/or)
-        for (name, normalized_path, _) in &inline_entries {
-            let sub_dir = resolved.config_dir.join(normalized_path);
-            if sub_dir.join(super::SERVICE_CONFIG_FILE).exists() {
-                return Err(FlooError::with_suggestion(
-                    ErrorCode::InvalidProjectConfig,
-                    format!(
-                        "Service '{name}' is defined inline in {} but '{normalized_path}/{}' also exists.",
-                        super::APP_CONFIG_FILE,
-                        super::SERVICE_CONFIG_FILE,
-                    ),
-                    format!(
-                        "Remove {normalized_path}/{} — inline services in {} don't use separate service files.",
-                        super::SERVICE_CONFIG_FILE,
-                        super::APP_CONFIG_FILE,
-                    ),
-                ));
-            }
-        }
-
+    let mut services = if !inline_entries.is_empty() {
         let global_resources = resolved
             .app_config
             .as_ref()
             .and_then(|c| c.resources.as_ref());
 
         let mut services = Vec::new();
-        let mut seen_names = HashSet::new();
 
         for (name, normalized_path, entry) in &inline_entries {
             let service_type = match entry.service_type {
@@ -62,8 +33,11 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
                 _ => ServiceIngress::Public,
             });
 
-            // port is guaranteed by validation
-            let port = entry.port.unwrap();
+            if entry.resources.is_some() {
+                return Err(FlooError::new(ErrorCode::InvalidProjectConfig,
+                    format!("Inline service '{name}' reads resources directly from [services.{name}], not a resources sub-table.")));
+            }
+            let port = entry.port;
 
             // Merge resources: per-service > global
             let cpu = entry
@@ -102,36 +76,26 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
                 migrate_command: entry.migrate_command.clone(),
             };
 
-            if !seen_names.insert(svc.name.clone()) {
-                return Err(FlooError::new(
-                    ErrorCode::DuplicateServiceNames,
-                    format!(
-                        "Multiple services named '{}'. Service names must be unique.",
-                        svc.name,
-                    ),
-                ));
-            }
-
             services.push(svc);
         }
 
         services
     } else {
-        let delegated_entries = delegated_path_entries(resolved);
+        Vec::new()
+    };
+    services.extend({
         if !delegated_entries.is_empty() {
             // Branch 2: Delegated mode (legacy) — read floo.service.toml from subdirs
             let mut services = Vec::new();
-            let mut seen_names = HashSet::new();
 
             // Include root floo.service.toml if present
             if let Some(ref svc_file) = resolved.service_config {
                 let mut svc = svc_file.service.to_api_service_config(".");
                 apply_service_file_resources(&mut svc, &svc_file.resources, None);
-                seen_names.insert(svc.name.clone());
                 services.push(svc);
             }
 
-            for (name, normalized_path) in &delegated_entries {
+            for (name, normalized_path, entry) in &delegated_entries {
                 let sub_dir = resolved.config_dir.join(normalized_path);
                 let svc_file = load_service_config(&sub_dir)?.ok_or_else(|| {
                     FlooError::with_suggestion(
@@ -167,7 +131,12 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
                     ));
                 }
 
+                if svc_file.service.name != *name {
+                    return Err(FlooError::new(ErrorCode::InvalidProjectConfig,
+                        format!("Service '{name}' at '{normalized_path}' declares [service].name '{}'; set it to '{name}' to match the root key.", svc_file.service.name)));
+                }
                 let mut svc = svc_file.service.to_api_service_config(normalized_path);
+                svc.name = name.clone();
 
                 // Apply resources from floo.service.toml [resources]
                 let global_resources = resolved
@@ -176,33 +145,17 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
                     .and_then(|c| c.resources.as_ref());
                 apply_service_file_resources(&mut svc, &svc_file.resources, global_resources);
 
-                // Let floo.app.toml override floo.service.toml/global values last.
-                if let Some(ref app_cfg) = resolved.app_config {
-                    if let Some(entry) = app_cfg.services.get(name) {
-                        if let Some(override_ingress) = entry.ingress {
-                            svc.ingress = override_ingress;
-                        }
-                        if entry.domain.is_some() {
-                            svc.domain = entry.domain.clone();
-                        }
-                        apply_app_service_overrides(&mut svc, entry);
-                    }
+                if entry.domain.is_some() {
+                    svc.domain = entry.domain.clone();
                 }
-
-                if !seen_names.insert(svc.name.clone()) {
-                    return Err(FlooError::new(
-                        ErrorCode::DuplicateServiceNames,
-                        format!(
-                            "Multiple services named '{}'. Service names must be unique.",
-                            svc.name,
-                        ),
-                    ));
-                }
+                apply_app_service_overrides(&mut svc, entry)?;
 
                 services.push(svc);
             }
 
             services
+        } else if !services.is_empty() {
+            Vec::new()
         } else if let Some(ref svc_file) = resolved.service_config {
             // Branch 3: single floo.service.toml only
             let mut svc = svc_file.service.to_api_service_config(".");
@@ -219,15 +172,25 @@ pub fn discover_services(resolved: &ResolvedApp) -> Result<Vec<ServiceConfig>, F
                 "Add a [services.<name>] block with type, port, and path. Run 'floo docs config' for the schema.".to_string(),
             ));
         }
-    };
+    });
 
-    // Multi-service apps must have at least one public service
-    if services.len() > 1 && !services.iter().any(|s| s.ingress == ServiceIngress::Public) {
-        return Err(FlooError::with_suggestion(
-            ErrorCode::NoPublicServices,
-            "At least one service must have ingress 'public'. All services are currently set to 'internal'.",
-            "Set ingress = \"public\" on at least one service in floo.app.toml or floo.service.toml.",
-        ));
+    let mut seen_names = HashSet::new();
+    for svc in &services {
+        if !seen_names.insert(&svc.name) {
+            return Err(FlooError::new(
+                ErrorCode::DuplicateServiceNames,
+                format!("Multiple services named '{}'.", svc.name),
+            ));
+        }
+        if svc.port.is_none() && svc.service_type != ServiceType::Worker {
+            return Err(FlooError::new(
+                ErrorCode::InvalidProjectConfig,
+                format!(
+                    "Service '{}' at '{}' is missing 'port'.",
+                    svc.name, svc.path
+                ),
+            ));
+        }
     }
 
     Ok(services)
@@ -269,7 +232,28 @@ fn apply_service_file_resources(
 
 /// Apply the app-level declaration last: delegated precedence is
 /// floo.app.toml service override > floo.service.toml > global [resources].
-fn apply_app_service_overrides(svc: &mut ServiceConfig, entry: &AppServiceEntry) {
+fn apply_app_service_overrides(
+    svc: &mut ServiceConfig,
+    declaration: &AppServiceEntry,
+) -> Result<(), FlooError> {
+    if declaration.cpu.is_some()
+        || declaration.memory.is_some()
+        || declaration.max_instances.is_some()
+        || declaration.max_request_body_mb.is_some()
+        || declaration.min_instances.is_some()
+    {
+        return Err(FlooError::new(ErrorCode::InvalidProjectConfig,
+            format!("Delegated service '{}' requires resource overrides under [services.{}.resources]. Move the flat resource fields there.", svc.name, svc.name)));
+    }
+    if svc.service_type == ServiceType::Worker && declaration.instances.is_some() {
+        svc.instances = declaration.instances;
+    }
+    if declaration.migrate_command.is_some() {
+        svc.migrate_command = declaration.migrate_command.clone();
+    }
+    let Some(entry) = &declaration.resources else {
+        return Ok(());
+    };
     if entry.cpu.is_some() {
         svc.cpu = entry.cpu.clone();
     }
@@ -285,9 +269,7 @@ fn apply_app_service_overrides(svc: &mut ServiceConfig, entry: &AppServiceEntry)
     if svc.service_type != ServiceType::Worker && entry.min_instances.is_some() {
         svc.min_instances = entry.min_instances;
     }
-    if svc.service_type == ServiceType::Worker && entry.instances.is_some() {
-        svc.instances = entry.instances;
-    }
+    Ok(())
 }
 
 /// Filter services by name. Empty filter returns all.
@@ -365,7 +347,7 @@ pub fn discover_managed_services(resolved: &ResolvedApp) -> Vec<ManagedServiceDe
     result
 }
 
-/// Extract user-managed inline service entries (have `port` set) from app_config.
+/// Extract inline entries, giving explicit ports precedence over child files.
 /// Returns (service_name, normalized_path, &AppServiceEntry) triples.
 fn inline_service_entries(resolved: &ResolvedApp) -> Vec<(String, String, &AppServiceEntry)> {
     let Some(ref app_cfg) = resolved.app_config else {
@@ -376,8 +358,9 @@ fn inline_service_entries(resolved: &ResolvedApp) -> Vec<(String, String, &AppSe
         .services
         .iter()
         .filter_map(|(name, entry)| {
-            // Inline mode: user-managed + has port
-            entry.port?; // must have port for inline mode
+            if !is_inline(entry, resolved) {
+                return None;
+            }
             let raw = entry.path.as_deref().unwrap_or(".");
             let normalized = normalize_path(raw);
             let path = if normalized.is_empty() {
@@ -390,30 +373,35 @@ fn inline_service_entries(resolved: &ResolvedApp) -> Vec<(String, String, &AppSe
         .collect()
 }
 
-/// Extract user-managed service entries with `path` but no `port` (delegated/legacy mode).
-fn delegated_path_entries(resolved: &ResolvedApp) -> Vec<(String, String)> {
+/// Extract entries whose specification lives in a child service file.
+fn delegated_path_entries(resolved: &ResolvedApp) -> Vec<(String, String, &AppServiceEntry)> {
     let Some(ref app_cfg) = resolved.app_config else {
         return Vec::new();
     };
-
-    // If any entry has port (inline mode), don't use delegated mode
-    let has_inline = app_cfg.services.values().any(|e| e.port.is_some());
-    if has_inline {
-        return Vec::new();
-    }
 
     app_cfg
         .services
         .iter()
         .filter_map(|(name, entry)| {
+            if is_inline(entry, resolved) {
+                return None;
+            }
             let raw = entry.path.as_deref()?;
             let normalized = normalize_path(raw);
             if normalized.is_empty() || normalized == "." {
                 return None;
             }
-            Some((name.clone(), normalized))
+            Some((name.clone(), normalized, entry))
         })
         .collect()
+}
+
+/// Match the server's per-entry choice without reading an overridden child file.
+fn is_inline(entry: &AppServiceEntry, resolved: &ResolvedApp) -> bool {
+    let path = resolved
+        .config_dir
+        .join(entry.path.as_deref().unwrap_or("."));
+    entry.port.is_some() || !path.join(super::SERVICE_CONFIG_FILE).exists()
 }
 
 /// Normalize a relative path: strip leading `./` and trailing `/`.
@@ -501,11 +489,11 @@ ingress = "public"
         assert_eq!(services.len(), 1);
         assert_eq!(services[0].name, "api");
         assert_eq!(services[0].path, ".");
-        assert_eq!(services[0].port, 8000);
+        assert_eq!(services[0].port, Some(8000));
     }
 
     #[test]
-    fn test_discover_multi_service_from_app_config_paths() {
+    fn test_discover_mixed_inline_and_delegated_services() {
         let dir = TempDir::new().unwrap();
 
         // Create subdirs with floo.service.toml
@@ -537,6 +525,7 @@ ingress = "public"
                 env_file: None,
                 domain: None,
                 cpu: None,
+                resources: None,
                 memory: None,
                 max_instances: None,
                 max_request_body_mb: None,
@@ -555,11 +544,12 @@ ingress = "public"
                 path: Some("./frontend".to_string()),
                 dockerfile: None,
                 repo: None,
-                port: None,
+                port: Some(3000),
                 ingress: None,
                 env_file: None,
                 domain: None,
                 cpu: None,
+                resources: None,
                 memory: None,
                 max_instances: None,
                 max_request_body_mb: None,
@@ -608,11 +598,11 @@ ingress = "public"
 
         let api = services.iter().find(|s| s.name == "api").unwrap();
         assert_eq!(api.path, "backend");
-        assert_eq!(api.port, 8000);
+        assert_eq!(api.port, Some(8000));
 
         let web = services.iter().find(|s| s.name == "web").unwrap();
         assert_eq!(web.path, "frontend");
-        assert_eq!(web.port, 3000);
+        assert_eq!(web.port, Some(3000));
     }
 
     #[test]
@@ -665,6 +655,7 @@ ingress = "public"
                 env_file: None,
                 domain: None,
                 cpu: None,
+                resources: None,
                 memory: None,
                 max_instances: None,
                 max_request_body_mb: None,
@@ -778,7 +769,7 @@ ingress = "public"
     }
 
     #[test]
-    fn test_discover_errors_on_missing_service_toml() {
+    fn test_discover_requires_port_when_no_child_file() {
         let dir = TempDir::new().unwrap();
 
         // Create subdir but don't put floo.service.toml in it
@@ -798,6 +789,7 @@ ingress = "public"
                 env_file: None,
                 domain: None,
                 cpu: None,
+                resources: None,
                 memory: None,
                 max_instances: None,
                 max_request_body_mb: None,
@@ -838,7 +830,7 @@ ingress = "public"
         );
 
         let err = discover_services(&resolved).unwrap_err();
-        assert_eq!(err.code, ErrorCode::ServiceConfigMissing);
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
         assert!(err.message.contains("backend"));
     }
 
@@ -867,6 +859,7 @@ ingress = "public"
                 env_file: None,
                 domain: None,
                 cpu: None,
+                resources: None,
                 memory: None,
                 max_instances: None,
                 max_request_body_mb: None,
@@ -913,7 +906,7 @@ ingress = "public"
     }
 
     #[test]
-    fn test_discover_errors_on_duplicate_names() {
+    fn test_delegated_child_name_must_match_root_key() {
         let dir = TempDir::new().unwrap();
 
         // Root service named "api"
@@ -962,6 +955,7 @@ ingress = "public"
                 env_file: None,
                 domain: None,
                 cpu: None,
+                resources: None,
                 memory: None,
                 max_instances: None,
                 max_request_body_mb: None,
@@ -1002,8 +996,8 @@ ingress = "public"
         );
 
         let err = discover_services(&resolved).unwrap_err();
-        assert_eq!(err.code, ErrorCode::DuplicateServiceNames);
-        assert!(err.message.contains("api"));
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+        assert!(err.message.contains("root key"));
     }
 
     #[test]
@@ -1067,6 +1061,7 @@ ingress = "public"
                 env_file: None,
                 domain: None,
                 cpu: None,
+                resources: None,
                 memory: None,
                 max_instances: None,
                 max_request_body_mb: None,
@@ -1118,7 +1113,7 @@ ingress = "public"
                 name: "web".to_string(),
                 service_type: ServiceType::Web,
                 path: "frontend".to_string(),
-                port: 3000,
+                port: Some(3000),
                 ingress: ServiceIngress::Public,
                 domain: None,
                 cpu: None,
@@ -1133,7 +1128,7 @@ ingress = "public"
                 name: "api".to_string(),
                 service_type: ServiceType::Api,
                 path: "backend".to_string(),
-                port: 8000,
+                port: Some(8000),
                 ingress: ServiceIngress::Public,
                 domain: None,
                 cpu: None,
@@ -1157,7 +1152,7 @@ ingress = "public"
                 name: "web".to_string(),
                 service_type: ServiceType::Web,
                 path: "frontend".to_string(),
-                port: 3000,
+                port: Some(3000),
                 ingress: ServiceIngress::Public,
                 domain: None,
                 cpu: None,
@@ -1172,7 +1167,7 @@ ingress = "public"
                 name: "api".to_string(),
                 service_type: ServiceType::Api,
                 path: "backend".to_string(),
-                port: 8000,
+                port: Some(8000),
                 ingress: ServiceIngress::Public,
                 domain: None,
                 cpu: None,
@@ -1197,7 +1192,7 @@ ingress = "public"
                 name: "web".to_string(),
                 service_type: ServiceType::Web,
                 path: "frontend".to_string(),
-                port: 3000,
+                port: Some(3000),
                 ingress: ServiceIngress::Public,
                 domain: None,
                 cpu: None,
@@ -1212,7 +1207,7 @@ ingress = "public"
                 name: "api".to_string(),
                 service_type: ServiceType::Api,
                 path: "backend".to_string(),
-                port: 8000,
+                port: Some(8000),
                 ingress: ServiceIngress::Public,
                 domain: None,
                 cpu: None,
@@ -1233,7 +1228,7 @@ ingress = "public"
     }
 
     #[test]
-    fn test_app_toml_ingress_overrides_service_toml() {
+    fn test_delegated_ingress_comes_from_service_toml() {
         let dir = TempDir::new().unwrap();
 
         // Sub-service declares ingress = "public"
@@ -1245,7 +1240,7 @@ ingress = "public"
         )
         .unwrap();
 
-        // Root service to satisfy at-least-one-public
+        // A root service can coexist with delegated declarations
         let root_svc = ServiceFileConfig {
             domains: Default::default(),
             app: ServiceFileAppSection {
@@ -1282,6 +1277,7 @@ ingress = "public"
                 env_file: None,
                 domain: None,
                 cpu: None,
+                resources: None,
                 memory: None,
                 max_instances: None,
                 max_request_body_mb: None,
@@ -1323,11 +1319,11 @@ ingress = "public"
 
         let services = discover_services(&resolved).unwrap();
         let api = services.iter().find(|s| s.name == "api").unwrap();
-        assert_eq!(api.ingress, ServiceIngress::Internal);
+        assert_eq!(api.ingress, ServiceIngress::Public);
     }
 
     #[test]
-    fn test_all_internal_multi_service_errors() {
+    fn test_all_internal_multi_service_parses() {
         let dir = TempDir::new().unwrap();
 
         let backend = dir.path().join("backend");
@@ -1343,7 +1339,7 @@ name = "my-app"
 
 [service]
 name = "api"
-type = "api"
+type = "worker"
 port = 8000
 ingress = "internal"
 "#,
@@ -1376,6 +1372,7 @@ ingress = "internal"
                 env_file: None,
                 domain: None,
                 cpu: None,
+                resources: None,
                 memory: None,
                 max_instances: None,
                 max_request_body_mb: None,
@@ -1399,6 +1396,7 @@ ingress = "internal"
                 env_file: None,
                 domain: None,
                 cpu: None,
+                resources: None,
                 memory: None,
                 max_instances: None,
                 max_request_body_mb: None,
@@ -1438,8 +1436,8 @@ ingress = "internal"
             AppSource::AppFile,
         );
 
-        let err = discover_services(&resolved).unwrap_err();
-        assert_eq!(err.code, ErrorCode::NoPublicServices);
+        let services = discover_services(&resolved).unwrap();
+        assert_eq!(services.len(), 2);
     }
 
     #[test]
@@ -1477,6 +1475,7 @@ domain = "svc.example.com"
                 env_file: None,
                 domain: Some("app.example.com".to_string()),
                 cpu: None,
+                resources: None,
                 memory: None,
                 max_instances: None,
                 max_request_body_mb: None,
@@ -1556,6 +1555,7 @@ domain = "svc.example.com"
                 env_file: None,
                 domain: None,
                 cpu: None,
+                resources: None,
                 memory: None,
                 max_instances: None,
                 max_request_body_mb: None,
@@ -1625,6 +1625,7 @@ domain = "svc.example.com"
                 env_file: None,
                 domain: None,
                 cpu: Some("2".to_string()),
+                resources: None,
                 memory: Some("4Gi".to_string()),
                 max_instances: Some(5),
                 max_request_body_mb: None,
@@ -1648,6 +1649,7 @@ domain = "svc.example.com"
                 env_file: None,
                 domain: None,
                 cpu: None,
+                resources: None,
                 memory: None,
                 max_instances: None,
                 max_request_body_mb: None,
@@ -1692,14 +1694,14 @@ domain = "svc.example.com"
 
         let api = services.iter().find(|s| s.name == "api").unwrap();
         assert_eq!(api.path, "backend");
-        assert_eq!(api.port, 8000);
+        assert_eq!(api.port, Some(8000));
         assert_eq!(api.cpu.as_deref(), Some("2"));
         assert_eq!(api.memory.as_deref(), Some("4Gi"));
         assert_eq!(api.max_instances, Some(5));
 
         let web = services.iter().find(|s| s.name == "web").unwrap();
         assert_eq!(web.path, "frontend");
-        assert_eq!(web.port, 3000);
+        assert_eq!(web.port, Some(3000));
         assert!(web.cpu.is_none());
     }
 
@@ -1722,6 +1724,7 @@ domain = "svc.example.com"
                 ingress: None,
                 env_file: None,
                 domain: None,
+                resources: None,
                 cpu: Some("4".to_string()), // per-service override
                 memory: None,               // will inherit global
                 max_instances: None,
@@ -1781,7 +1784,7 @@ domain = "svc.example.com"
             name: "jobs".to_string(),
             service_type: ServiceType::Worker,
             path: ".".to_string(),
-            port: 8080,
+            port: Some(8080),
             ingress: ServiceIngress::Internal,
             domain: None,
             cpu: None,
@@ -1812,7 +1815,7 @@ domain = "svc.example.com"
             name: "api".to_string(),
             service_type: ServiceType::Api,
             path: "backend".to_string(),
-            port: 8080,
+            port: Some(8080),
             ingress: ServiceIngress::Public,
             domain: None,
             cpu: None,
@@ -1846,21 +1849,29 @@ domain = "svc.example.com"
             ingress: None,
             env_file: None,
             domain: None,
-            cpu: Some("4".to_string()),
-            memory: Some("2Gi".to_string()),
-            max_instances: Some(8),
+            cpu: None,
+            resources: Some(ResourceConfig {
+                cpu: Some("4".to_string()),
+                memory: Some("2Gi".to_string()),
+                max_instances: Some(8),
+                min_instances: Some(2),
+                max_request_body_mb: None,
+            }),
+            memory: None,
+            max_instances: None,
             max_request_body_mb: None,
-            min_instances: Some(2),
+            min_instances: None,
             instances: None,
             dev_command: None,
-            migrate_command: None,
+            migrate_command: Some("migrate".to_string()),
             command: None,
             env: None,
         };
 
         apply_service_file_resources(&mut service, &service_file, Some(&global));
-        apply_app_service_overrides(&mut service, &app_override);
+        apply_app_service_overrides(&mut service, &app_override).unwrap();
 
+        assert_eq!(service.migrate_command.as_deref(), Some("migrate"));
         assert_eq!(service.cpu.as_deref(), Some("4"));
         assert_eq!(service.memory.as_deref(), Some("2Gi"));
         assert_eq!(service.max_instances, Some(8));
@@ -1873,7 +1884,7 @@ domain = "svc.example.com"
             name: "jobs".to_string(),
             service_type: ServiceType::Worker,
             path: "jobs".to_string(),
-            port: 8080,
+            port: Some(8080),
             ingress: ServiceIngress::Internal,
             domain: None,
             cpu: None,
@@ -1894,6 +1905,7 @@ domain = "svc.example.com"
             env_file: None,
             domain: None,
             cpu: None,
+            resources: None,
             memory: None,
             max_instances: None,
             max_request_body_mb: None,
@@ -1905,13 +1917,13 @@ domain = "svc.example.com"
             env: None,
         };
 
-        apply_app_service_overrides(&mut worker, &app_override);
+        apply_app_service_overrides(&mut worker, &app_override).unwrap();
 
         assert_eq!(worker.instances, Some(0));
     }
 
     #[test]
-    fn test_discover_inline_errors_when_service_toml_exists() {
+    fn test_inline_root_key_wins_over_child_file() {
         let dir = TempDir::new().unwrap();
 
         let backend = dir.path().join("backend");
@@ -1925,7 +1937,7 @@ domain = "svc.example.com"
 
         let mut services_map = HashMap::new();
         services_map.insert(
-            "api".to_string(),
+            "renamed".to_string(),
             AppServiceEntry {
                 service_type: AppServiceType::Api,
                 path: Some("./backend".to_string()),
@@ -1936,6 +1948,7 @@ domain = "svc.example.com"
                 env_file: None,
                 domain: None,
                 cpu: None,
+                resources: None,
                 memory: None,
                 max_instances: None,
                 max_request_body_mb: None,
@@ -1975,9 +1988,8 @@ domain = "svc.example.com"
             AppSource::AppFile,
         );
 
-        let err = discover_services(&resolved).unwrap_err();
-        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
-        assert!(err.message.contains("inline"));
+        let services = discover_services(&resolved).unwrap();
+        assert_eq!(services[0].name, "renamed");
     }
 
     #[test]
@@ -1997,11 +2009,12 @@ domain = "svc.example.com"
                 path: Some("./worker".to_string()),
                 dockerfile: None,
                 repo: None,
-                port: Some(9000),
+                port: None,
                 ingress: None, // should default to internal for workers
                 env_file: None,
                 domain: None,
                 cpu: None,
+                resources: None,
                 memory: None,
                 max_instances: None,
                 max_request_body_mb: None,
@@ -2025,6 +2038,7 @@ domain = "svc.example.com"
                 env_file: None,
                 domain: None,
                 cpu: None,
+                resources: None,
                 memory: None,
                 max_instances: None,
                 max_request_body_mb: None,
@@ -2066,6 +2080,7 @@ domain = "svc.example.com"
 
         let services = discover_services(&resolved).unwrap();
         let worker = services.iter().find(|s| s.name == "bg").unwrap();
+        assert_eq!(worker.port, None);
         assert_eq!(worker.ingress, ServiceIngress::Internal);
 
         let web = services.iter().find(|s| s.name == "web").unwrap();
@@ -2156,6 +2171,7 @@ domain = "svc.example.com"
                         env_file: None,
                         domain: None,
                         cpu: None,
+                        resources: None,
                         memory: None,
                         max_instances: None,
                         max_request_body_mb: None,
@@ -2222,6 +2238,7 @@ domain = "svc.example.com"
                         env_file: None,
                         domain: None,
                         cpu: None,
+                        resources: None,
                         memory: None,
                         max_instances: None,
                         max_request_body_mb: None,
