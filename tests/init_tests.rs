@@ -174,7 +174,7 @@ fn blank_shared_worker_command_fails_validation_before_writing() {
 
 #[test]
 #[cfg(unix)]
-fn candidate_discovery_rejects_service_file_in_inline_subdirectory() {
+fn candidate_discovery_prefers_inline_over_existing_child_file() {
     let project = tempfile::tempdir().unwrap();
     let subdir = project.path().join("web");
     std::fs::create_dir(&subdir).unwrap();
@@ -185,13 +185,8 @@ fn candidate_discovery_rejects_service_file_in_inline_subdirectory() {
     )
     .unwrap();
 
-    interactive_init(project.path(), "\ny\nweb\nweb\n8080\nweb\nn\n")
-        .failure()
-        .stderr(predicate::str::contains("defined inline"))
-        .stderr(predicate::str::contains("floo.service.toml' also exists"));
-    assert!(!project.path().join("floo.app.toml").exists());
-    assert!(!project.path().join("Dockerfile").exists());
-    assert!(!project.path().join("AGENTS.md").exists());
+    interactive_init(project.path(), "\ny\nweb\nweb\n8080\nweb\nn\n").success();
+    assert!(project.path().join("floo.app.toml").exists());
 }
 
 #[test]

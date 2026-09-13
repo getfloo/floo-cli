@@ -869,6 +869,7 @@ mod tests {
             env_file: None,
             domain: None,
             cpu: None,
+            resources: None,
             memory: None,
             max_instances: None,
             max_request_body_mb: None,

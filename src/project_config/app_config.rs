@@ -317,6 +317,9 @@ pub struct AppServiceEntry {
     pub domain: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cpu: Option<String>,
+    /// Delegated overrides: `[services.<name>.resources]` > child resources > global.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resources: Option<ResourceConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -402,6 +405,7 @@ impl AppServiceEntry {
             env_file,
             domain: None,
             cpu: None,
+            resources: None,
             memory: None,
             max_instances: None,
             max_request_body_mb: None,
@@ -444,34 +448,18 @@ fn validate_app_config(config: &AppFileConfig) -> Result<(), FlooError> {
     if let Some(ref resources) = config.resources {
         validate_max_request_body_mb(resources.max_request_body_mb)?;
     }
-    // Detect inline mode: any user-managed service has `port` set
-    let has_inline = config.services.values().any(|e| e.port.is_some());
-
     for (name, entry) in &config.services {
         validate_max_request_body_mb(entry.max_request_body_mb)?;
-        // In inline mode, all services require port and path
-        // (path is optional when repo is set — defaults to "." on the server)
-        if has_inline {
-            if entry.port.is_none() {
-                return Err(FlooError::with_suggestion(
-                    ErrorCode::InvalidProjectConfig,
-                    format!(
-                        "Service '{name}' in {} is missing 'port'. All user-managed services must declare a port in inline mode.",
-                        super::APP_CONFIG_FILE
-                    ),
-                    format!("Add port = <number> to [services.{name}]."),
-                ));
-            }
-            if entry.path.is_none() && entry.repo.is_none() {
-                return Err(FlooError::with_suggestion(
-                    ErrorCode::InvalidProjectConfig,
-                    format!(
-                        "Service '{name}' in {} is missing 'path'. All user-managed services must declare a path in inline mode.",
-                        super::APP_CONFIG_FILE
-                    ),
-                    format!("Add path = \"./subdir\" to [services.{name}]."),
-                ));
-            }
+        // A repo declaration defaults its path to the repository root.
+        if entry.path.is_none() && entry.repo.is_none() {
+            return Err(FlooError::with_suggestion(
+                ErrorCode::InvalidProjectConfig,
+                format!(
+                    "Service '{name}' in {} is missing 'path'.",
+                    super::APP_CONFIG_FILE
+                ),
+                format!("Add path = \"./subdir\" to [services.{name}]."),
+            ));
         }
         // `instances` is the Worker Pool's exact manual count; a web/api service is
         // request-autoscaled and has no such knob (getfloo/floo#1801). Reject it loudly
@@ -494,7 +482,10 @@ fn validate_app_config(config: &AppFileConfig) -> Result<(), FlooError> {
         // names its replacement. (`max_instances` on a worker stays accepted-and-advisory
         // — it predates this and floo-artifact declares it; tightening that is separate
         // cleanup, not part of #1801.)
-        if entry.service_type == AppServiceType::Worker && entry.min_instances.is_some() {
+        let min_instances = entry
+            .min_instances
+            .or(entry.resources.as_ref().and_then(|r| r.min_instances));
+        if entry.service_type == AppServiceType::Worker && min_instances.is_some() {
             return Err(FlooError::with_suggestion(
                 ErrorCode::InvalidProjectConfig,
                 format!(
@@ -1493,7 +1484,7 @@ port = 3000
     }
 
     #[test]
-    fn test_load_app_config_inline_requires_port_for_all_user_managed() {
+    fn test_load_app_config_allows_mixed_service_declarations() {
         let dir = TempDir::new().unwrap();
         fs::write(
             dir.path().join(super::super::APP_CONFIG_FILE),
@@ -1502,22 +1493,21 @@ port = 3000
 name = "my-app"
 
 [services.api]
-type = "api"
+type = "web"
 path = "./backend"
 port = 8000
 
 [services.web]
-type = "web"
+type = "worker"
 path = "./frontend"
 "#,
         )
         .unwrap();
 
-        // api has port, web doesn't — error
-        let err = load_app_config(dir.path()).unwrap_err();
-        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
-        assert!(err.message.contains("web"));
-        assert!(err.message.contains("port"));
+        let config = load_app_config(dir.path()).unwrap().unwrap();
+        assert_eq!(config.services["web"].port, None);
+        let resolved = super::super::resolve_app_context(dir.path(), None).unwrap();
+        assert_eq!(super::super::discover_services(&resolved).unwrap().len(), 2);
     }
 
     #[test]

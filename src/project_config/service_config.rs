@@ -235,7 +235,7 @@ pub struct ServiceConfig {
     #[serde(rename(deserialize = "type", serialize = "service_type"))]
     pub service_type: ServiceType,
     pub path: String,
-    pub port: u16,
+    pub port: Option<u16>,
     pub ingress: ServiceIngress,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
@@ -362,7 +362,7 @@ impl ServiceSection {
             name: self.name.clone(),
             service_type: self.service_type,
             path: path.to_string(),
-            port: self.port,
+            port: Some(self.port),
             ingress: self.resolved_ingress(),
             domain: self.domain.clone(),
             cpu: None,
@@ -766,7 +766,7 @@ ingress = "internal"
         assert_eq!(api_config.name, "api");
         assert_eq!(api_config.service_type, ServiceType::Api);
         assert_eq!(api_config.path, "backend");
-        assert_eq!(api_config.port, 8000);
+        assert_eq!(api_config.port, Some(8000));
         assert_eq!(api_config.ingress, ServiceIngress::Internal);
     }
 
@@ -776,7 +776,7 @@ ingress = "internal"
             name: "api".to_string(),
             service_type: ServiceType::Api,
             path: "backend".to_string(),
-            port: 8000,
+            port: Some(8000),
             ingress: ServiceIngress::Internal,
             domain: None,
             cpu: None,
@@ -980,7 +980,7 @@ port = 8000
             name: "api".to_string(),
             service_type: ServiceType::Api,
             path: "backend".to_string(),
-            port: 8000,
+            port: Some(8000),
             ingress: ServiceIngress::Public,
             domain: None,
             cpu: None,
@@ -1001,7 +1001,7 @@ port = 8000
             name: "web".to_string(),
             service_type: ServiceType::Web,
             path: ".".to_string(),
-            port: 3000,
+            port: Some(3000),
             ingress: ServiceIngress::Public,
             domain: Some("getfloo.com".to_string()),
             cpu: None,
@@ -1103,7 +1103,7 @@ port = 8000
             name: "api".to_string(),
             service_type: ServiceType::Api,
             path: ".".to_string(),
-            port: 8000,
+            port: Some(8000),
             ingress: ServiceIngress::Public,
             domain: None,
             cpu: None,
@@ -1126,7 +1126,7 @@ port = 8000
             name: "api".to_string(),
             service_type: ServiceType::Api,
             path: ".".to_string(),
-            port: 8000,
+            port: Some(8000),
             ingress: ServiceIngress::Public,
             domain: None,
             cpu: Some("2".to_string()),
