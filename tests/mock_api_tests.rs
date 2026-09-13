@@ -2551,6 +2551,52 @@ fn test_env_get_human_secret_printed_with_reveal() {
         .stdout(predicate::str::contains("postgres://u:p@h/db"));
 }
 
+fn inline_env_project() -> TempDir {
+    let project = TempDir::new().unwrap();
+    std::fs::write(project.path().join("floo.app.toml"), "[app]\nname = 'my-app'\n[services.web]\ntype = 'web'\npath = '.'\nport = 3000\nenv_file = '.custom.env'\n").unwrap();
+    std::fs::write(project.path().join(".custom.env"), "COLOR=blue\n").unwrap();
+    project
+}
+
+#[test]
+fn test_env_import_all_preflight_makes_no_post() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let project = inline_env_project();
+    let writes = server.mock("POST", Matcher::Any).expect(0).create();
+    floo()
+        .args(["--json", "env", "import", "--all", "--preflight"])
+        .current_dir(project.path())
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("COLOR"))
+        .stdout(predicate::str::contains("blue").not());
+    writes.assert();
+}
+
+#[test]
+fn test_sync_env_service_list_error_exits_nonzero() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let project = inline_env_project();
+    let _resolve = mock_resolve_app(&mut server);
+    let services = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/services").as_str())
+        .match_query(Matcher::Any)
+        .with_status(403)
+        .with_body(r#"{"detail":{"code":"FORBIDDEN","message":"service lookup denied"}}"#)
+        .create();
+    floo()
+        .args(["--json", "redeploy", "--sync-env"])
+        .current_dir(project.path())
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("service lookup denied"));
+    services.assert();
+}
+
 #[test]
 fn test_env_import_json() {
     let mut server = Server::new();
@@ -5395,13 +5441,29 @@ fn test_deploy_new_app_json() {
     let org = server.mock("GET", "/v1/orgs/me").expect(0).create();
 
     // Create a temp project with package.json for detection and service config
-    let project = TempDir::new().unwrap();
+    let project = inline_env_project();
     std::fs::write(
         project.path().join("package.json"),
         r#"{"name":"test-project","version":"1.0.0"}"#,
     )
     .unwrap();
-    write_service_config(&project, "test-deploy");
+    let _services = mock_list_services_one(&mut server);
+    let _env = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/env").as_str())
+        .match_query(Matcher::Any)
+        .with_body(r#"{"env_vars":[]}"#)
+        .create();
+    let imported = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/env/import").as_str(),
+        )
+        .match_query(Matcher::Any)
+        .match_body(Matcher::Json(
+            serde_json::json!({"env_vars":[{"key":"COLOR","value":"blue"}], "service_id":TEST_SERVICE_ID}),
+        ))
+        .with_body(r#"{"imported":1}"#)
+        .create();
 
     // Config-resolved deploy: resolve_app (name lookup) returns 404, then creates app
     let _m_list = server
@@ -5438,7 +5500,12 @@ fn test_deploy_new_app_json() {
         .create();
 
     floo()
-        .args(["--json", "redeploy", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "redeploy",
+            "--sync-env",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", home.path())
         .assert()
         .success()
@@ -5446,6 +5513,7 @@ fn test_deploy_new_app_json() {
         .stdout(predicate::str::contains(r#""app""#))
         .stdout(predicate::str::contains(r#""deploy""#))
         .stdout(predicate::str::contains(r#""detection""#));
+    imported.assert();
     org.assert();
 }
 
