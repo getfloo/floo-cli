@@ -6923,139 +6923,122 @@ fn test_services_remove_not_found_surfaces_clear_error() {
         .stdout(predicate::str::contains("MANAGED_SERVICE_NOT_FOUND"));
 }
 
-#[test]
-fn test_services_migrate_upserts_each_legacy_section_without_local_writes() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let _resolve = mock_resolve_app(&mut server);
+fn services_add_command(home: &TempDir) -> Command {
+    let mut command = floo();
+    command
+        .args(["services", "add", "postgres", "--app", TEST_APP_NAME])
+        .env("HOME", home.path());
+    command
+}
 
-    // POST is idempotent on (app_id, type, name) — the API returns the existing
-    // row if one exists. Both legacy sections get a 201.
-    let _m_postgres = server
+fn mock_services_add_conflict(server: &mut Server, code: &str) -> Mock {
+    server
         .mock(
             "POST",
             format!("/v1/apps/{TEST_APP_ID}/managed-services").as_str(),
         )
-        .match_body(mockito::Matcher::JsonString(
-            r#"{"type":"postgres","name":"default","tier":"basic"}"#.to_string(),
-        ))
-        .with_status(201)
+        .with_status(409)
         .with_header("content-type", "application/json")
         .with_body(
-            r#"{
-                "id":"ms-pg",
-                "app_id":"app-uuid-1234",
-                "type":"postgres",
-                "name":"default",
-                "status":"ready",
-                "env_var_keys":["DATABASE_URL"],
-                "created_at":"2026-04-24T00:00:00Z",
-                "updated_at":"2026-04-24T00:00:00Z"
-            }"#,
+            serde_json::json!({"detail":{"code":code,"message":"Service conflict"}}).to_string(),
         )
-        .create();
+        .create()
+}
 
-    let _m_redis = server
+fn mock_managed_lookup(server: &mut Server, status: usize, body: &str) -> Mock {
+    server
         .mock(
-            "POST",
+            "GET",
             format!("/v1/apps/{TEST_APP_ID}/managed-services").as_str(),
         )
-        .match_body(mockito::Matcher::JsonString(
-            r#"{"type":"redis","name":"default","tier":"basic"}"#.to_string(),
-        ))
-        .with_status(201)
+        .with_status(status)
         .with_header("content-type", "application/json")
-        .with_body(
-            r#"{
-                "id":"ms-rd",
-                "app_id":"app-uuid-1234",
-                "type":"redis",
-                "name":"default",
-                "status":"ready",
-                "env_var_keys":["REDIS_URL"],
-                "created_at":"2026-04-24T00:00:00Z",
-                "updated_at":"2026-04-24T00:00:00Z"
-            }"#,
-        )
-        .create();
-
-    let project = TempDir::new().unwrap();
-    std::fs::write(
-        project.path().join("floo.app.toml"),
-        format!(
-            r#"[app]
-name = "{TEST_APP_NAME}"
-
-[postgres]
-tier = "basic"
-
-[redis]
-tier = "basic"
-
-[managed.cache]
-type = "redis"
-"#
-        ),
-    )
-    .unwrap();
-
-    let working_dir = TempDir::new().unwrap();
-    std::fs::write(
-        working_dir.path().join("floo.app.toml"),
-        "[app]\nname = \"another-app\"\n",
-    )
-    .unwrap();
-    floo()
-        .args([
-            "--json",
-            "services",
-            "migrate",
-            project.path().to_str().unwrap(),
-        ])
-        .env("HOME", home.path())
-        .current_dir(working_dir.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""success":true"#))
-        .stdout(predicate::str::contains(r#""type":"postgres""#))
-        .stdout(predicate::str::contains(r#""type":"redis""#))
-        .stdout(predicate::str::contains("next_steps"));
-
-    assert_eq!(std::fs::read_dir(project.path()).unwrap().count(), 1);
-    assert_eq!(std::fs::read_dir(working_dir.path()).unwrap().count(), 1);
-    _m_postgres.assert();
-    _m_redis.assert();
+        .with_body(body)
+        .create()
 }
 
 #[test]
-fn test_services_migrate_no_op_when_no_legacy_sections() {
-    let server = Server::new();
+fn test_services_add_conflict_reports_existing_identity_in_json() {
+    let mut server = Server::new();
     let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let create = mock_services_add_conflict(&mut server, "MANAGED_SERVICE_ALREADY_EXISTS");
+    let lookup = mock_managed_lookup(
+        &mut server,
+        200,
+        r#"{"managed_services":[
+        {"id":"wrong-type","app_id":"app-uuid-1234","type":"redis","name":"default","status":"ready"},
+        {"id":"wrong-name","app_id":"app-uuid-1234","type":"postgres","name":"analytics","status":"ready"},
+        {"id":"existing-pg","app_id":"app-uuid-1234","type":"postgres","name":"default","status":"ready","credentials":{"password":"must-not-leak"}}
+    ],"total":3}"#,
+    );
+    let result = services_add_command(&home).arg("--json").assert().success();
+    let json: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    assert_eq!(json["success"], true);
+    assert_eq!(json["data"]["already_provisioned"], true);
+    assert_eq!(json["data"]["id"], "existing-pg");
+    result.stdout(predicate::str::contains("must-not-leak").not());
+    create.assert();
+    lookup.assert();
+}
 
-    // No mocks — migrate must short-circuit before any API call when there
-    // are no legacy sections to migrate.
-    let project = TempDir::new().unwrap();
-    std::fs::write(
-        project.path().join("floo.app.toml"),
-        format!("[app]\nname = \"{TEST_APP_NAME}\"\n"),
-    )
-    .unwrap();
-
-    floo()
-        .args([
-            "--json",
-            "services",
-            "migrate",
-            "--app",
-            TEST_APP_NAME,
-            project.path().to_str().unwrap(),
-        ])
-        .env("HOME", home.path())
-        .current_dir(project.path())
+#[test]
+fn test_services_add_conflict_without_existing_row_fails() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let create = mock_services_add_conflict(&mut server, "MANAGED_SERVICE_ALREADY_EXISTS");
+    let lookup = mock_managed_services_empty(&mut server);
+    services_add_command(&home)
+        .arg("--json")
         .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""success":true"#))
-        .stdout(predicate::str::contains("migrated"));
+        .failure()
+        .stdout(predicate::str::contains("Service conflict"));
+    create.assert();
+    lookup.assert();
+}
+
+#[test]
+fn test_services_add_conflict_lookup_failure_is_reported() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let create = mock_services_add_conflict(&mut server, "MANAGED_SERVICE_ALREADY_EXISTS");
+    let lookup = mock_managed_lookup(
+        &mut server,
+        403,
+        r#"{"detail":{"code":"FORBIDDEN","message":"Cannot read managed services"}}"#,
+    );
+    services_add_command(&home)
+        .arg("--json")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("Cannot read managed services"));
+    create.assert();
+    lookup.assert();
+}
+
+#[test]
+fn test_services_add_unrelated_conflict_still_fails() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let create = mock_services_add_conflict(&mut server, "OTHER_CONFLICT");
+    services_add_command(&home)
+        .arg("--json")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("Service conflict"));
+    create.assert();
+}
+
+#[test]
+fn test_services_migrate_is_rejected_by_clap() {
+    floo()
+        .args(["services", "migrate"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("unrecognized subcommand"));
 }
 
 // ───────────────────────── Database ─────────────────────────

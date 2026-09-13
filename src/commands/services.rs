@@ -397,28 +397,41 @@ pub fn add(service_type: &str, app: Option<&str>, tier: &str, name: &str) {
 
     let detail = match client.create_managed_service(&app_id, &body) {
         Ok(d) => d,
-        Err(e) => {
+        Err(mut e) => {
+            if e.status_code == 409 && e.code == "MANAGED_SERVICE_ALREADY_EXISTS" {
+                match client.list_managed_services(&app_id) {
+                    Ok(services) => {
+                        if let Some(existing) = services.managed_services.iter().find(|service| {
+                            service.service_type == service_type && service.name == name
+                        }) {
+                            let mut data = output::to_value(existing);
+                            data["already_provisioned"] = serde_json::json!(true);
+                            output::success(
+                                &format!(
+                                    "Managed {service_type}/{name} already provisioned for {app_name} (id: {}, status: {}).",
+                                    existing.id, existing.status
+                                ),
+                                Some(data),
+                            );
+                            return;
+                        }
+                    }
+                    Err(lookup_error) => e = lookup_error,
+                }
+            }
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
 
-    if output::is_json_mode() {
-        output::success(
-            &format!("Provisioned {service_type} for {app_name}"),
-            Some(output::to_value(&detail)),
-        );
-        return;
-    }
-
-    output::info(
+    output::success(
         &format!(
-            "\u{2713} Provisioned {service_type} (name: {}, tier: {tier}) for {app_name}.",
+            "Provisioned {service_type} (name: {}, tier: {tier}) for {app_name}.",
             detail.name
         ),
-        None,
+        Some(output::to_value(&detail)),
     );
-    if !detail.env_var_keys.is_empty() {
+    if !output::is_json_mode() && !detail.env_var_keys.is_empty() {
         output::info(
             &format!(
                 "  Injected env vars on next deploy: {}",
@@ -526,148 +539,6 @@ pub fn remove(service_type: &str, app: Option<&str>, name: &str, confirmed: bool
 
     output::info(
         &format!("\u{2713} Destroyed managed {service_type}/{name} on {app_name}."),
-        None,
-    );
-}
-
-/// Ensure legacy TOML declarations are provisioned without recording local state.
-/// Existing instances are returned by the API's idempotent create operation.
-pub fn migrate(app: Option<&str>, path: &std::path::Path) {
-    use crate::api_types::CreateManagedServiceRequest;
-    use crate::project_config;
-
-    super::require_auth();
-    let client = super::init_client(None);
-
-    let canonical_path = match path.canonicalize() {
-        Ok(p) => p,
-        Err(_) => {
-            output::error(
-                &format!("Path '{}' is not a directory.", path.display()),
-                &ErrorCode::InvalidPath,
-                Some("Provide a valid project directory."),
-            );
-            process::exit(1);
-        }
-    };
-
-    let resolved = match project_config::resolve_app_context(&canonical_path, app) {
-        Ok(r) => r,
-        Err(e) => {
-            output::error(&e.message, &e.code, e.suggestion.as_deref());
-            process::exit(1);
-        }
-    };
-
-    let declarations: Vec<_> = project_config::discover_managed_services(&resolved)
-        .into_iter()
-        .filter(|decl| {
-            resolved.app_config.as_ref().is_some_and(|config| {
-                decl.name == "default"
-                    && match decl.service_type.as_str() {
-                        "postgres" => config.postgres.is_some(),
-                        "redis" => config.redis.is_some(),
-                        "storage" => config.storage.is_some(),
-                        _ => false,
-                    }
-            })
-        })
-        .collect();
-    if declarations.is_empty() {
-        if output::is_json_mode() {
-            output::success(
-                "No legacy managed-service sections to migrate.",
-                Some(serde_json::json!({
-                    "migrated": [],
-                    "app": resolved.app_name,
-                })),
-            );
-        } else {
-            output::info(
-                &format!(
-                    "No [postgres]/[redis]/[storage] sections in floo.app.toml for {}. Nothing to migrate.",
-                    resolved.app_name
-                ),
-                None,
-            );
-        }
-        return;
-    }
-
-    let (app_id, app_name) = super::resolve_app_from_config(&client, Some(&resolved.app_name));
-
-    let mut migrated: Vec<serde_json::Value> = Vec::new();
-    for decl in &declarations {
-        let service_type = decl.service_type.as_str();
-        let tier = decl.tier.as_deref().unwrap_or("basic");
-
-        let request = CreateManagedServiceRequest {
-            service_type,
-            name: "default",
-            tier,
-        };
-
-        let detail = match client.create_managed_service(&app_id, &request) {
-            Ok(d) => d,
-            Err(e) => {
-                output::error(
-                    &format!(
-                        "Failed to migrate {service_type}: {message}",
-                        message = e.message
-                    ),
-                    &ErrorCode::from_api(&e.code),
-                    Some(
-                        "The managed service row may already exist; check 'floo services list'. \
-                         If this persists, file feedback via 'floo feedback --category bug'.",
-                    ),
-                );
-                process::exit(1);
-            }
-        };
-
-        migrated.push(serde_json::json!({
-            "type": service_type,
-            "name": detail.name,
-            "status": detail.status,
-            "tier": tier,
-        }));
-    }
-
-    if output::is_json_mode() {
-        output::success(
-            &format!(
-                "Migrated {} managed service(s) for {app_name}.",
-                migrated.len()
-            ),
-            Some(serde_json::json!({
-                "app": app_name,
-                "migrated": migrated,
-                "next_steps": [
-                    "Keep the managed-service declarations in floo.app.toml for preflight and deploy.",
-                ],
-            })),
-        );
-        return;
-    }
-
-    output::info(
-        &format!(
-            "\u{2713} Migrated {} managed service(s) for {app_name}.",
-            migrated.len()
-        ),
-        None,
-    );
-    for item in &migrated {
-        if let (Some(t), Some(n)) = (
-            item.get("type").and_then(|v| v.as_str()),
-            item.get("name").and_then(|v| v.as_str()),
-        ) {
-            output::info(&format!("    {t}/{n}"), None);
-        }
-    }
-    output::info("", None);
-    output::info(
-        "Keep the managed-service declarations in floo.app.toml for preflight and deploy.",
         None,
     );
 }
