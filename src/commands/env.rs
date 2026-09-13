@@ -332,7 +332,7 @@ fn parse_env_file(path: &Path) -> Vec<(String, String)> {
     })
 }
 
-fn read_env_file(path: &Path) -> Result<Vec<(String, String)>, FlooError> {
+pub(crate) fn read_env_file(path: &Path) -> Result<Vec<(String, String)>, FlooError> {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) => {
@@ -1137,13 +1137,11 @@ pub fn get(key: &str, app_flag: Option<&str>, service_flag: Option<&str>, env: &
     }
 }
 
-pub fn import_vars(
+fn resolve_import_file(
     file_flag: Option<&Path>,
     app_flag: Option<&str>,
     service_names: &[String],
-    env: &str,
-    secret: bool,
-) {
+) -> (Option<project_config::ResolvedApp>, PathBuf) {
     let cwd = super::read_cwd_or_exit();
 
     // Resolve config — used for env_file default path. Missing config is OK.
@@ -1162,46 +1160,70 @@ pub fn import_vars(
         }
     };
 
+    let files = resolved
+        .as_ref()
+        .filter(|_| file_flag.is_none())
+        .map(super::deploy::deploy_imported_env_files)
+        .transpose()
+        .unwrap_or_else(|message| {
+            output::error(&message, &ErrorCode::InvalidProjectConfig, None);
+            process::exit(1);
+        })
+        .unwrap_or_default();
     let env_file_path = match file_flag {
         Some(p) => p.to_path_buf(),
         None => {
-            let from_config = resolved
-                .as_ref()
-                .and_then(|r| r.service_config.as_ref())
-                .and_then(|sc| sc.service.env_file.as_deref());
-            match from_config {
-                Some(f) => match validate_env_file_path(f, &cwd) {
-                    Ok(p) => p,
-                    Err(msg) => {
-                        output::error(&msg, &ErrorCode::InvalidPath, None);
+            let configured = files.iter().find(|(name, _, _)| {
+                service_names == [name.as_str()] || (service_names.is_empty() && files.len() == 1)
+            });
+            match configured {
+                Some((_, file, base)) => {
+                    validate_env_file_path(file, base).unwrap_or_else(|message| {
+                        output::error(&message, &ErrorCode::InvalidPath, None);
                         process::exit(1);
-                    }
-                },
-                None => cwd.join(".env"),
+                    })
+                }
+                None => resolved
+                    .as_ref()
+                    .map_or(cwd, |r| r.config_dir.clone())
+                    .join(".env"),
             }
         }
     };
+    (resolved, env_file_path)
+}
 
+/// Parse every file before either previewing the plan or allowing imports.
+fn plan_imports(
+    files: &[(Vec<String>, PathBuf)],
+    app_flag: Option<&str>,
+    env: &str,
+    secret: bool,
+) -> Option<Vec<Vec<(String, String)>>> {
+    if !output::is_dry_run_mode() {
+        super::require_auth();
+    }
+    let plan: Vec<_> = files.iter().map(|(_, path)| parse_env_file(path)).collect();
     if output::is_dry_run_mode() {
-        let vars = parse_env_file(&env_file_path);
-        let keys: Vec<&str> = vars.iter().map(|(k, _)| k.as_str()).collect();
-        let count = vars.len();
-        let target = app_flag
-            .map(String::from)
-            .or_else(|| resolved.as_ref().map(|r| r.app_name.clone()))
-            .unwrap_or_else(|| "(reads from config)".to_string());
-        let scope = format_env_scope(service_names, env);
+        let keys: Vec<&str> = plan.iter().flatten().map(|(key, _)| key.as_str()).collect();
+        let count = keys.len();
+        let service_names: Vec<String> =
+            files.iter().flat_map(|(names, _)| names.clone()).collect();
+        let paths: Vec<_> = files.iter().map(|(_, p)| p.display().to_string()).collect();
+        let env_file_path = paths.join(", ");
+        let target = app_flag.unwrap_or("(reads from config)");
+        let scope = format_env_scope(&service_names, env);
         let preview = format!(
             "Would import {count} variable(s){} from {} to {target}{scope}.\nKeys: {}",
             if secret { " as write-only" } else { "" },
-            env_file_path.display(),
+            env_file_path,
             keys.join(", "),
         );
         output::dry_run_preview(
             &preview,
             serde_json::json!({
                 "action": "env_import",
-                "file": env_file_path.display().to_string(),
+                "file": env_file_path,
                 "app": target,
                 "services": service_names,
                 "is_secret": secret,
@@ -1210,13 +1232,32 @@ pub fn import_vars(
                 "count": count,
             }),
         );
-        return;
+        return None;
     }
 
-    super::require_auth();
+    Some(plan)
+}
 
-    let vars = parse_env_file(&env_file_path);
+pub fn import_vars(
+    file_flag: Option<&Path>,
+    app_flag: Option<&str>,
+    service_names: &[String],
+    env: &str,
+    secret: bool,
+) {
+    let (resolved, env_file_path) = resolve_import_file(file_flag, app_flag, service_names);
+    let Some(plan) = plan_imports(
+        &[(service_names.to_vec(), env_file_path)],
+        resolved.as_ref().map(|r| r.app_name.as_str()).or(app_flag),
+        env,
+        secret,
+    ) else {
+        return;
+    };
+    let vars = &plan[0];
     let count = vars.len();
+
+    super::require_auth();
 
     // Use resolved app name if available, otherwise fall back to resolving from config.
     let client = super::init_client(None);
@@ -1233,7 +1274,7 @@ pub fn import_vars(
     let marker = if secret { " as write-only" } else { "" };
     let mut results: Vec<serde_json::Value> = Vec::new();
     for (service_id, service_name) in &targets {
-        match client.import_env_vars(&app_id, &vars, service_id.as_deref(), env, secret) {
+        match client.import_env_vars(&app_id, vars, service_id.as_deref(), env, secret) {
             Ok(result) => {
                 let target = format_target(&app_name, service_name.as_deref());
                 if output::is_json_mode() {
@@ -1271,8 +1312,6 @@ pub fn import_vars(
 }
 
 pub fn import_all_services(app_flag: Option<&str>, env: &str, secret: bool) {
-    super::require_auth();
-
     let cwd = super::read_cwd_or_exit();
 
     let resolved = match project_config::resolve_app_context(&cwd, app_flag) {
@@ -1283,69 +1322,17 @@ pub fn import_all_services(app_flag: Option<&str>, env: &str, secret: bool) {
         }
     };
 
-    // Collect (service_name, env_file_path) pairs from all service configs
+    let files = super::deploy::deploy_imported_env_files(&resolved).unwrap_or_else(|message| {
+        output::error(&message, &ErrorCode::InvalidPath, None);
+        process::exit(1);
+    });
     let mut env_file_entries: Vec<(String, PathBuf)> = Vec::new();
-
-    // Check root service
-    if let Some(ref svc_config) = resolved.service_config {
-        if let Some(ref env_file) = svc_config.service.env_file {
-            match validate_env_file_path(env_file, &resolved.config_dir) {
-                Ok(path) => env_file_entries.push((svc_config.service.name.clone(), path)),
-                Err(msg) => {
-                    output::error(&msg, &ErrorCode::InvalidPath, None);
-                    process::exit(1);
-                }
-            }
-        }
-    }
-
-    // Check sub-services from app config
-    if let Some(ref app_config) = resolved.app_config {
-        for entry in app_config.services.values() {
-            let Some(ref path_str) = entry.path else {
-                continue;
-            };
-            let normalized = path_str.strip_prefix("./").unwrap_or(path_str);
-            let normalized = normalized.strip_suffix('/').unwrap_or(normalized);
-            if normalized.is_empty() || normalized == "." {
-                continue;
-            }
-            let svc_dir = resolved.config_dir.join(normalized);
-            match project_config::load_service_config(&svc_dir) {
-                Ok(Some(svc_config)) => {
-                    if let Some(ref env_file) = svc_config.service.env_file {
-                        match validate_env_file_path(env_file, &svc_dir) {
-                            Ok(path) => {
-                                env_file_entries.push((svc_config.service.name.clone(), path))
-                            }
-                            Err(msg) => {
-                                output::error(&msg, &ErrorCode::InvalidPath, None);
-                                process::exit(1);
-                            }
-                        }
-                    } else if !output::is_json_mode() {
-                        output::info(
-                            &format!(
-                                "Skipping service '{}' (no env_file configured).",
-                                svc_config.service.name
-                            ),
-                            None,
-                        );
-                    }
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    output::error(
-                        &format!(
-                            "Failed to load service config at '{}': {}",
-                            svc_dir.display(),
-                            e.message
-                        ),
-                        &e.code,
-                        e.suggestion.as_deref(),
-                    );
-                    process::exit(1);
-                }
+    for (svc_name, env_file, base) in files {
+        match validate_env_file_path(&env_file, &base) {
+            Ok(path) => env_file_entries.push((svc_name, path)),
+            Err(msg) => {
+                output::error(&msg, &ErrorCode::InvalidPath, None);
+                process::exit(1);
             }
         }
     }
@@ -1358,6 +1345,15 @@ pub fn import_all_services(app_flag: Option<&str>, env: &str, secret: bool) {
         );
         process::exit(1);
     }
+
+    let files: Vec<_> = env_file_entries
+        .iter()
+        .map(|(name, path)| (vec![name.clone()], path.clone()))
+        .collect();
+    let Some(plan) = plan_imports(&files, Some(&resolved.app_name), env, secret) else {
+        return;
+    };
+    super::require_auth();
 
     let client = super::init_client(None);
     let app = super::resolve_app_or_exit(&client, &resolved.app_name);
@@ -1377,8 +1373,7 @@ pub fn import_all_services(app_flag: Option<&str>, env: &str, secret: bool) {
     let mut services_imported: usize = 0;
     let mut results: Vec<serde_json::Value> = Vec::new();
 
-    for (svc_name, env_path) in &env_file_entries {
-        let vars = parse_env_file(env_path);
+    for ((svc_name, _), vars) in env_file_entries.iter().zip(&plan) {
         let count = vars.len();
 
         // Find service ID on server — refuse to fall back to app-scope if not found
@@ -1399,7 +1394,7 @@ pub fn import_all_services(app_flag: Option<&str>, env: &str, secret: bool) {
             process::exit(1);
         }
 
-        match client.import_env_vars(&app_id, &vars, service_id, env, secret) {
+        match client.import_env_vars(&app_id, vars, service_id, env, secret) {
             Ok(result) => {
                 let target = format!("{app_name}/{svc_name}");
                 let marker = if secret { " as write-only" } else { "" };

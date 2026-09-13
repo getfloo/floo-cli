@@ -1567,11 +1567,9 @@ required = ["STRIPE_SECRET_KEY"]
         ));
 }
 
-/// An INLINE floo.app.toml `env_file` does not satisfy a required var: the
-/// deploy's sync path only imports `env_file` declared in floo.service.toml, so
-/// an inline-only env file is never imported and the var would be missing.
+/// Inline env files are imported, so their keys satisfy required vars.
 #[test]
-fn test_preflight_inline_env_file_does_not_satisfy_required() {
+fn test_preflight_inline_env_file_satisfies_required() {
     let project = tempfile::TempDir::new().unwrap();
     std::fs::write(
         project.path().join("floo.app.toml"),
@@ -1590,8 +1588,6 @@ required = ["STRIPE_SECRET_KEY"]
 "#,
     )
     .unwrap();
-    // The inline-declared env_file exists and has the var, but deploy-sync won't
-    // import it (inline env_file is not in deploy_imported_env_files).
     std::fs::write(
         project.path().join(".floo.env"),
         "STRIPE_SECRET_KEY=sk_test_local\n",
@@ -1603,9 +1599,7 @@ required = ["STRIPE_SECRET_KEY"]
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            r#""code":"REQUIRED_ENV_UNSATISFIED""#,
-        ));
+        .stdout(predicate::str::contains(r#""code":"REQUIRED_ENV_UNSATISFIED""#).not());
 }
 
 /// A service sourced from an external `repo` builds from that repo, not the

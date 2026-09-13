@@ -1543,9 +1543,11 @@ fn validate_preflight(
         .any(|ms| ms.service_type == "postgres");
 
     // The single canonical set of env files the deploy imports — shared with
-    // `sync_env_vars_if_needed` (an inline floo.app.toml env_file and
-    // external-repo services are NOT in it, matching what deploy imports).
-    let imported_env_file_list = deploy_imported_env_files(resolved);
+    // `sync_env_vars_if_needed`; external-repo services are excluded.
+    let imported_env_file_list = match deploy_imported_env_files(resolved) {
+        Ok(files) => files,
+        Err(message) => return vec![PreflightFinding::error("ENV_FILE_INVALID", message)],
+    };
 
     // Validate every imported env_file with the deploy's OWN validator over the
     // FULL (unfiltered) set: `sync_env_vars_if_needed` runs `validate_env_file_path`
@@ -1653,17 +1655,15 @@ fn validate_preflight(
             continue;
         }
 
-        // The DECLARED env_file (floo.app.toml inline OR floo.service.toml) — used
-        // for the "you pointed at a missing file" check below and the Rails/secret
-        // scans, which are about declared intent / local exposure.
-        let configured_env_file = configured_env_file_for_service(resolved, svc);
+        let configured_env_file = imported_env_files
+            .get(&svc.name)
+            .map(|(file, _)| file.clone());
 
         // Env vars that will actually be present at runtime, from local config:
         // managed-injected keys (DATABASE_URL, REDIS_URL, …) plus the keys in the
         // env_file the deploy will IMPORT. Satisfaction reads the imported set
-        // (deploy_imported_env_files), NOT every declared/conventional file — an
-        // inline floo.app.toml env_file is declared but never imported, so it
-        // must not count. Server-side `floo env set` vars are invisible here,
+        // (deploy_imported_env_files), not every conventional file.
+        // Server-side `floo env set` vars are invisible here,
         // which is why the consumers below warn rather than error.
         let imported_env_file = imported_env_files.get(&svc.name);
         let env_file_keys = match imported_env_file {
@@ -1674,27 +1674,6 @@ fn validate_preflight(
         // (Imported env_file path validity — ENV_FILE_INVALID — is checked once
         // over the full unfiltered import set above, matching the deploy's
         // unfiltered import; it is not repeated per filtered service here.)
-
-        // A DECLARED-but-not-imported env_file (an inline floo.app.toml env_file,
-        // which the deploy never imports) gets an advisory warning if missing —
-        // not an error, since it has no effect on the deploy either way.
-        if let Some(ref env_file) = configured_env_file {
-            let is_imported = imported_env_file
-                .map(|(imported, _)| imported == env_file)
-                .unwrap_or(false);
-            if !is_imported && !svc_dir.join(env_file).exists() {
-                findings.push(
-                    PreflightFinding::warning(
-                        "ENV_FILE_NOT_FOUND",
-                        format!(
-                            "Service '{}' env_file '{env_file}' not found on disk.",
-                            svc.name
-                        ),
-                    )
-                    .with_path(&svc.path),
-                );
-            }
-        }
 
         // A migrate_command needs a database to run against (config-only check;
         // see the helper). Local services pass the keys from their imported
@@ -1961,22 +1940,22 @@ fn service_is_external_repo(resolved: &project_config::ResolvedApp, service_name
 /// see whichever is set, or they false-warn / miss secrets on service-file apps.
 fn configured_env_file_for_service(
     resolved: &project_config::ResolvedApp,
-    svc: &ServiceConfig,
-) -> Option<String> {
+    name: &str,
+    path: &str,
+) -> Result<Option<String>, String> {
     if let Some(app_cfg) = resolved.app_config.as_ref() {
         if let Some(env_file) = app_cfg
             .services
-            .get(&svc.name)
+            .get(name)
             .and_then(|entry| entry.env_file.clone())
         {
-            return Some(env_file);
+            return Ok(Some(env_file));
         }
     }
-    let svc_dir = resolved.config_dir.join(&svc.path);
+    let svc_dir = resolved.config_dir.join(path);
     project_config::load_service_config(&svc_dir)
-        .ok()
-        .flatten()
-        .and_then(|cfg| cfg.service.env_file)
+        .map(|cfg| cfg.and_then(|cfg| cfg.service.env_file))
+        .map_err(|e| e.message)
 }
 
 /// Emit `MIGRATE_COMMAND_NO_DATABASE` if a service declares a `migrate_command`
@@ -2204,7 +2183,14 @@ fn generate_security_findings(
         // actually imports — e.g. `.floo.env` from `floo init`, declared in
         // either floo.app.toml or floo.service.toml) in addition to the
         // conventional candidates, so a secret in a custom env file isn't missed.
-        let configured_env_file = configured_env_file_for_service(resolved, svc);
+        let configured_env_file =
+            match configured_env_file_for_service(resolved, &svc.name, &svc.path) {
+                Ok(file) => file,
+                Err(message) => {
+                    findings.push(PreflightFinding::error("ENV_FILE_INVALID", message));
+                    continue;
+                }
+            };
         let mut env_filenames: Vec<&str> = Vec::new();
         if let Some(ef) = configured_env_file.as_deref() {
             env_filenames.push(ef);
@@ -2957,14 +2943,14 @@ fn parse_env_file_soft(path: &Path) -> Option<Vec<(String, String)>> {
 /// Every env_file the deploy will import, as `(service_name, env_file relative
 /// path, base_dir)`. THE single source of "what env files get imported": the
 /// root service's `floo.service.toml` `env_file`, plus each sub-service's
-/// `floo.service.toml` `env_file`. Inline `floo.app.toml` `[services.x] env_file`
-/// is intentionally NOT here — the deploy does not import it. Shared by
+/// `floo.service.toml` `env_file`, with inline `floo.app.toml` env_file taking
+/// precedence. Shared by explicit imports and
 /// `sync_env_vars_if_needed` (which imports these) and the preflight
 /// required-var satisfaction check (which verifies against these), so the set
 /// preflight treats as imported is, by construction, exactly what deploy imports.
 pub(crate) fn deploy_imported_env_files(
     resolved: &project_config::ResolvedApp,
-) -> Vec<(String, String, PathBuf)> {
+) -> Result<Vec<(String, String, PathBuf)>, String> {
     let mut entries: Vec<(String, String, PathBuf)> = Vec::new();
 
     // Root service (floo.service.toml at the config dir).
@@ -2978,34 +2964,26 @@ pub(crate) fn deploy_imported_env_files(
         }
     }
 
-    // Sub-services: each app-config entry with a real subdir path, read from
-    // that subdir's floo.service.toml.
     if let Some(ref app_config) = resolved.app_config {
-        for entry in app_config.services.values() {
+        for (name, entry) in &app_config.services {
             // External-repo services build (and carry their env files) in the
             // referenced repo, not the local checkout — the deploy can't import
             // a local env_file for them, so they're not in the imported set.
             if entry.repo.is_some() {
                 continue;
             }
-            let Some(ref path_str) = entry.path else {
-                continue;
-            };
+            let path_str = entry.path.as_deref().unwrap_or(".");
             let normalized = path_str.strip_prefix("./").unwrap_or(path_str);
             let normalized = normalized.strip_suffix('/').unwrap_or(normalized);
-            if normalized.is_empty() || normalized == "." {
-                continue;
-            }
             let svc_dir = resolved.config_dir.join(normalized);
-            if let Ok(Some(svc_config)) = project_config::load_service_config(&svc_dir) {
-                if let Some(env_file) = svc_config.service.env_file {
-                    entries.push((svc_config.service.name.clone(), env_file, svc_dir));
-                }
+            if let Some(env_file) = configured_env_file_for_service(resolved, name, normalized)? {
+                entries.retain(|(existing, _, _)| existing != name);
+                entries.push((name.clone(), env_file, svc_dir));
             }
         }
     }
 
-    entries
+    Ok(entries)
 }
 
 /// Import env files declared in `floo.app.toml`.
@@ -3022,7 +3000,7 @@ pub(crate) fn sync_env_vars_if_needed(
     // Resolve+validate each imported env_file to an absolute path (the shared
     // helper decides WHICH files are imported; this loop validates them).
     let mut env_file_entries: Vec<(String, PathBuf)> = Vec::new();
-    for (svc_name, env_file, base_dir) in deploy_imported_env_files(resolved) {
+    for (svc_name, env_file, base_dir) in deploy_imported_env_files(resolved)? {
         let path = super::env::validate_env_file_path(&env_file, &base_dir)?;
         env_file_entries.push((svc_name, path));
     }
@@ -3031,21 +3009,28 @@ pub(crate) fn sync_env_vars_if_needed(
         return Ok(());
     }
 
-    // Get server-side services — silently return on API error (services may not exist on first deploy)
+    // Automatic first-deploy sync remains best-effort; explicit sync must complete.
     let server_services = match client.list_services(app_id, None) {
         Ok(r) => r.services,
+        Err(e) if force_sync => return Err(e.message),
         Err(_) => return Ok(()),
     };
 
     for (svc_name, env_file_path) in &env_file_entries {
         let server_svc = server_services.iter().find(|s| s.name == *svc_name);
 
-        let Some(svc) = server_svc else { continue };
+        let Some(svc) = server_svc else {
+            if force_sync {
+                return Err(format!("Service '{svc_name}' not found on server."));
+            }
+            continue;
+        };
         let svc_id = &svc.id;
 
         // Check env var count on server
         let env_count = match client.list_env_vars(app_id, Some(svc_id), "dev") {
             Ok(r) => r.env_vars.len(),
+            Err(e) if force_sync => return Err(e.message),
             Err(_) => continue,
         };
 
@@ -3059,15 +3044,24 @@ pub(crate) fn sync_env_vars_if_needed(
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("env file");
+            if force_sync {
+                return Err(format!(
+                    "Service '{svc_name}' env file {file_name} not found."
+                ));
+            }
             output::warn(&format!(
                 "Service '{svc_name}' has env_file configured but {file_name} not found on disk."
             ));
             continue;
         }
 
-        let vars = match parse_env_file_soft(env_file_path) {
-            Some(v) => v,
-            None => continue,
+        let vars = if force_sync {
+            super::env::read_env_file(env_file_path).map_err(|e| e.message)?
+        } else {
+            match parse_env_file_soft(env_file_path) {
+                Some(vars) => vars,
+                None => continue,
+            }
         };
 
         let count = vars.len();
@@ -3089,6 +3083,9 @@ pub(crate) fn sync_env_vars_if_needed(
         // repo (public by definition) and sticky semantics preserve any
         // existing write-only marker server-side.
         if let Err(e) = client.import_env_vars(app_id, &vars, Some(svc_id), "dev", false) {
+            if force_sync {
+                return Err(e.message);
+            }
             output::warn(&format!(
                 "Failed to import env vars for service '{svc_name}': {}",
                 e.message
