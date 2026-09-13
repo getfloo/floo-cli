@@ -1305,42 +1305,6 @@ managed = ["postgres", "redis"]
         ));
 }
 
-#[test]
-fn test_preflight_env_injection_plan_reads_services_lock() {
-    let project = tempfile::TempDir::new().unwrap();
-    std::fs::write(
-        project.path().join("floo.app.toml"),
-        r#"[app]
-name = "myapp"
-
-[services.api]
-type = "api"
-path = "./api"
-port = 8000
-ingress = "public"
-"#,
-    )
-    .unwrap();
-    std::fs::create_dir(project.path().join("api")).unwrap();
-    std::fs::create_dir(project.path().join(".floo")).unwrap();
-    std::fs::write(
-        project.path().join(".floo").join("services.lock"),
-        r#"{"version":1,"managed_services":[{"type":"postgres","name":"default","status":"ready","created_at":null}]}"#,
-    )
-    .unwrap();
-
-    floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
-        .env("HOME", "/tmp/floo-test-nonexistent")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""mode":"implicit_all""#))
-        .stdout(predicate::str::contains(r#""handle":"postgres""#))
-        .stdout(predicate::str::contains(
-            r#""keys":["DATABASE_URL","PGHOST""#,
-        ));
-}
-
 // --- #1154: preflight must fail/warn on guaranteed-to-fail configs ---
 
 /// A service whose `path` doesn't exist on disk has no build context — the

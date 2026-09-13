@@ -840,6 +840,8 @@ pub struct DeclaredRuntimeService {
     pub name: String,
     #[serde(rename = "type")]
     pub service_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub env_managed: Option<Vec<String>>,
     pub cpu: Option<String>,
     pub memory: Option<String>,
     pub min_instances: Option<u32>,

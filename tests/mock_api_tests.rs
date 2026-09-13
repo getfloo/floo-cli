@@ -6530,6 +6530,67 @@ fn test_update_human_and_json_success() {
 }
 
 #[test]
+fn test_preflight_declares_enabled_modern_and_legacy_services_without_lock() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let planner = server.mock("POST", format!("/v1/apps/{TEST_APP_ID}/preflight").as_str())
+        .match_body(Matcher::PartialJson(serde_json::json!({
+            "managed_services": [
+                {"type": "postgres", "name": "default", "tier": "basic"},
+                {"type": "redis", "name": "cache", "tier": "basic"},
+                {"type": "redis", "name": "queue"}
+            ],
+            "services": [
+                {"name": "web", "env_managed": ["redis:cache", "redis:queue"]}
+            ]
+        })))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"managed_services":{"to_provision":[{"type":"redis","name":"cache","tier":"basic"}],"to_retain":[],"to_orphan":[],"in_flight_deprovisioning":[]},"summary":{"action_count":1,"destructive_count":0},"destructive":false,"data_loss":false}"#)
+        .create();
+    let project = TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        format!(
+            r#"[app]
+name = "{TEST_APP_NAME}"
+[postgres]
+tier = "basic"
+[managed.cache]
+type = "redis"
+tier = "basic"
+[managed.queue]
+type = "redis"
+enabled = true
+[managed.unused]
+type = "storage"
+enabled = false
+[services.web]
+path = "."
+type = "web"
+port = 3000
+ingress = "public"
+[services.web.env]
+managed = ["redis:cache", "redis:queue"]
+"#
+        ),
+    )
+    .unwrap();
+
+    floo()
+        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""handle":"redis:cache""#))
+        .stdout(predicate::str::contains(r#""handle":"redis:queue""#))
+        .stdout(predicate::str::contains(r#""mode":"explicit""#))
+        .stdout(predicate::str::contains("unused").not());
+    planner.assert();
+}
+
+#[test]
 fn test_preflight_surfaces_orphaned_managed_service() {
     let mut server = Server::new();
     let home = setup_config(&server);
@@ -6542,9 +6603,11 @@ fn test_preflight_surfaces_orphaned_managed_service() {
         )
         .match_body(Matcher::PartialJson(serde_json::json!({
             "environment": "prod",
+            "managed_services": [],
             "services": [{
                 "name": "web",
                 "type": "web",
+                "env_managed": [],
                 "min_instances": null
             }]
         })))
@@ -6596,6 +6659,8 @@ name = "web"
 type = "web"
 port = 3000
 ingress = "public"
+[env]
+managed = []
 "#
         ),
     )
@@ -6621,6 +6686,7 @@ ingress = "public"
         ))
         .stdout(predicate::str::contains("bills continuously"))
         .stdout(predicate::str::contains(r#""destructive":true"#));
+    _m_preflight.assert();
 }
 
 #[test]
@@ -6657,7 +6723,7 @@ ingress = "public"
 }
 
 #[test]
-fn test_services_add_provisions_and_writes_lock_file() {
+fn test_services_add_to_another_app_writes_nothing_local() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
@@ -6687,7 +6753,7 @@ fn test_services_add_provisions_and_writes_lock_file() {
     let project = TempDir::new().unwrap();
     std::fs::write(
         project.path().join("floo.app.toml"),
-        format!("[app]\nname = \"{TEST_APP_NAME}\"\n"),
+        "[app]\nname = \"another-app\"\n",
     )
     .unwrap();
 
@@ -6711,9 +6777,12 @@ fn test_services_add_provisions_and_writes_lock_file() {
         // Credentials must never leak into stdout even though the API returned them.
         .stdout(predicate::str::contains("redacted").not());
 
-    let lock = std::fs::read_to_string(project.path().join(".floo").join("services.lock")).unwrap();
-    assert!(lock.contains(r#""type": "postgres""#));
-    assert!(lock.contains(r#""status": "ready""#));
+    assert_eq!(std::fs::read_dir(project.path()).unwrap().count(), 1);
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("floo.app.toml")).unwrap(),
+        "[app]\nname = \"another-app\"\n"
+    );
+    _m_create.assert();
 }
 
 #[test]
@@ -6760,7 +6829,7 @@ fn test_services_remove_refuses_without_confirmation_flag_in_json_mode() {
 }
 
 #[test]
-fn test_services_remove_with_explicit_flag_destroys_and_updates_lock() {
+fn test_services_remove_with_explicit_flag_destroys_without_local_writes() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
@@ -6791,15 +6860,6 @@ fn test_services_remove_with_explicit_flag_destroys_and_updates_lock() {
         format!("[app]\nname = \"{TEST_APP_NAME}\"\n"),
     )
     .unwrap();
-    // Pre-existing lock file with the row we're about to remove.
-    std::fs::create_dir_all(project.path().join(".floo")).unwrap();
-    std::fs::write(
-        project.path().join(".floo").join("services.lock"),
-        r#"{"version":1,"managed_services":[{"type":"postgres","name":"default","status":"ready","created_at":null}]}
-"#,
-    )
-    .unwrap();
-
     floo()
         .args([
             "--json",
@@ -6819,11 +6879,8 @@ fn test_services_remove_with_explicit_flag_destroys_and_updates_lock() {
         .stdout(predicate::str::contains(r#""data_loss":true"#))
         .stdout(predicate::str::contains(r#""tier":3"#));
 
-    let lock = std::fs::read_to_string(project.path().join(".floo").join("services.lock")).unwrap();
-    assert!(
-        !lock.contains(r#""postgres""#),
-        "lock file should no longer have the postgres entry, got: {lock}"
-    );
+    assert_eq!(std::fs::read_dir(project.path()).unwrap().count(), 1);
+    _m_delete.assert();
 }
 
 #[test]
@@ -6867,14 +6924,13 @@ fn test_services_remove_not_found_surfaces_clear_error() {
 }
 
 #[test]
-fn test_services_migrate_upserts_each_declared_section_and_writes_lock() {
+fn test_services_migrate_upserts_each_legacy_section_without_local_writes() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
 
     // POST is idempotent on (app_id, type, name) — the API returns the existing
-    // row if one exists, so migrate is a "read-and-record" operation, not a
-    // "create-new" operation. Both of our declared sections get a 201.
+    // row if one exists. Both legacy sections get a 201.
     let _m_postgres = server
         .mock(
             "POST",
@@ -6935,22 +6991,29 @@ tier = "basic"
 
 [redis]
 tier = "basic"
+
+[managed.cache]
+type = "redis"
 "#
         ),
     )
     .unwrap();
 
+    let working_dir = TempDir::new().unwrap();
+    std::fs::write(
+        working_dir.path().join("floo.app.toml"),
+        "[app]\nname = \"another-app\"\n",
+    )
+    .unwrap();
     floo()
         .args([
             "--json",
             "services",
             "migrate",
-            "--app",
-            TEST_APP_NAME,
             project.path().to_str().unwrap(),
         ])
         .env("HOME", home.path())
-        .current_dir(project.path())
+        .current_dir(working_dir.path())
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""success":true"#))
@@ -6958,16 +7021,10 @@ tier = "basic"
         .stdout(predicate::str::contains(r#""type":"redis""#))
         .stdout(predicate::str::contains("next_steps"));
 
-    // Lock file now reflects both migrated services.
-    let lock = std::fs::read_to_string(project.path().join(".floo").join("services.lock")).unwrap();
-    assert!(
-        lock.contains(r#""type": "postgres""#),
-        "lock missing postgres: {lock}"
-    );
-    assert!(
-        lock.contains(r#""type": "redis""#),
-        "lock missing redis: {lock}"
-    );
+    assert_eq!(std::fs::read_dir(project.path()).unwrap().count(), 1);
+    assert_eq!(std::fs::read_dir(working_dir.path()).unwrap().count(), 1);
+    _m_postgres.assert();
+    _m_redis.assert();
 }
 
 #[test]
