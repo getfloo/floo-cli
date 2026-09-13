@@ -8579,3 +8579,201 @@ fn test_redeploy_validation_findings_match_standalone_preflight() {
         .failure()
         .stderr(predicate::str::contains("path './missing' does not exist"));
 }
+
+#[cfg(unix)]
+mod local_env_contract {
+    use super::*;
+
+    fn project(env: &str) -> TempDir {
+        let project = TempDir::new().unwrap();
+        std::fs::create_dir(project.path().join("web")).unwrap();
+        std::fs::write(
+            project.path().join("floo.app.toml"),
+            format!(
+                "[app]\nname = 'my-app'\n[services.web]\ntype = 'web'\npath = 'web'\nport = 3000\n\
+                 dev_command = 'touch spawned'\nmigrate_command = 'touch migrated'\n{env}"
+            ),
+        )
+        .unwrap();
+        project
+    }
+
+    fn session(
+        server: &mut Server,
+        request: serde_json::Value,
+        env: serde_json::Value,
+    ) -> (Mock, Mock) {
+        let create = server
+            .mock(
+                "POST",
+                format!("/v1/apps/{TEST_APP_ID}/dev-session").as_str(),
+            )
+            .match_body(Matcher::Json(request))
+            .with_status(200)
+            .with_body(
+                serde_json::json!({
+                    "session_id": "local-test", "postgres_authorized": false, "services": env
+                })
+                .to_string(),
+            )
+            .create();
+        let delete = server
+            .mock(
+                "DELETE",
+                format!("/v1/apps/{TEST_APP_ID}/dev-session/local-test").as_str(),
+            )
+            .with_status(204)
+            .create();
+        (create, delete)
+    }
+
+    fn command(server: &Server, home: &TempDir, project: &TempDir) -> Command {
+        let mut cmd = floo();
+        cmd.env("HOME", home.path())
+            .env("FLOO_CONFIG_DIR", home.path().join(".floo-local"))
+            .env("FLOO_API_URL", server.url())
+            .env_remove("FLOO_TEST_MISSING")
+            .current_dir(project.path());
+        cmd
+    }
+
+    #[test]
+    fn dev_detaches_and_checks_all_services_before_any_spawn() {
+        let mut server = Server::new();
+        let home = setup_config(&server);
+        let _resolve = mock_resolve_app(&mut server);
+        let project = project("[services.web.env]\nmanaged = []\nrequired = ['FLOO_TEST_MISSING', 'FLOO_TEST_EMPTY']\n");
+        let manifest = project.path().join("floo.app.toml");
+        let mut content = std::fs::read_to_string(&manifest).unwrap();
+        content.push_str("[services.aa]\ntype = 'web'\npath = 'web'\nport = 3001\ndev_command = 'touch spawned'\nmigrate_command = 'touch migrated'\n[services.aa.env]\nrequired = ['PORT']\n");
+        std::fs::write(manifest, content).unwrap();
+        let (create, delete) = session(
+            &mut server,
+            serde_json::json!({"services": [{"name": "aa", "port": 3001}, {"name": "web", "port": 3000, "managed": []}]}),
+            serde_json::json!({"aa": {}, "web": {"FLOO_TEST_EMPTY": ""}}),
+        );
+        command(&server, &home, &project)
+            .env("FLOO_TEST_EMPTY", "shell-value")
+            .args(["dev", "--json"])
+            .assert()
+            .failure()
+            .stdout(predicate::str::contains(
+                "FLOO_TEST_MISSING, FLOO_TEST_EMPTY",
+            ));
+        assert!(!project.path().join("web/spawned").exists());
+        assert!(!project.path().join("web/migrated").exists());
+        create.assert();
+        delete.assert();
+    }
+
+    #[test]
+    fn run_uses_delegated_empty_attachments_and_env_file_below_shell_and_session() {
+        let mut server = Server::new();
+        let home = setup_config(&server);
+        let _resolve = mock_resolve_app(&mut server);
+        let project = project("");
+        std::fs::write(project.path().join("web/floo.service.toml"),
+            "[app]\nname = 'my-app'\n[service]\nname = 'web'\ntype = 'web'\nport = 3000\nenv_file = '.env.local'\n[env]\nmanaged = []\nrequired = ['FLOO_TEST_FILE', 'FLOO_TEST_SHELL', 'FLOO_TEST_SESSION']\noptional = ['FLOO_TEST_OPTIONAL']\n").unwrap();
+        std::fs::write(
+            project.path().join("web/.env.local"),
+            "FLOO_TEST_FILE=file\nFLOO_TEST_SHELL=file\nFLOO_TEST_SESSION=file\n",
+        )
+        .unwrap();
+        let (create, delete) = session(
+            &mut server,
+            serde_json::json!({"services": [{"name": "web", "managed": []}]}),
+            serde_json::json!({"web": {"FLOO_TEST_SESSION": "session"}}),
+        );
+        command(&server, &home, &project)
+            .env_remove("FLOO_TEST_FILE")
+            .env_remove("FLOO_TEST_OPTIONAL")
+            .env("FLOO_TEST_SHELL", "shell")
+            .env("FLOO_TEST_SESSION", "shell")
+            .args([
+                "run",
+                "--service",
+                "web",
+                "--",
+                "sh",
+                "-c",
+                "printf '%s/%s/%s' \"$FLOO_TEST_FILE\" \"$FLOO_TEST_SHELL\" \"$FLOO_TEST_SESSION\"",
+            ])
+            .assert()
+            .success()
+            .stdout("file/shell/session");
+        create.assert();
+        delete.assert();
+    }
+
+    #[test]
+    fn run_omits_undeclared_attachments_and_does_not_require_optional_keys() {
+        let mut server = Server::new();
+        let home = setup_config(&server);
+        let _resolve = mock_resolve_app(&mut server);
+        let project = project("[services.web.env]\noptional = ['FLOO_TEST_MISSING']\n");
+        let (create, delete) = session(
+            &mut server,
+            serde_json::json!({"services": [{"name": "web"}]}),
+            serde_json::json!({"web": {}}),
+        );
+        command(&server, &home, &project)
+            .args(["run", "--service", "web", "--", "true"])
+            .assert()
+            .success();
+        create.assert();
+        delete.assert();
+    }
+
+    #[test]
+    fn run_sends_named_attachments_and_rejects_missing_required_before_spawn() {
+        let mut server = Server::new();
+        let home = setup_config(&server);
+        let _resolve = mock_resolve_app(&mut server);
+        let project = project(
+            "[services.web.env]\nmanaged = ['redis:cache']\nrequired = ['FLOO_TEST_MISSING']\n",
+        );
+        let (create, delete) = session(
+            &mut server,
+            serde_json::json!({"services": [{"name": "web", "managed": ["redis:cache"]}]}),
+            serde_json::json!({"web": {}}),
+        );
+        command(&server, &home, &project)
+            .args([
+                "run",
+                "--json",
+                "--service",
+                "web",
+                "--",
+                "touch",
+                "spawned",
+            ])
+            .assert()
+            .failure()
+            .stdout(predicate::str::contains("FLOO_TEST_MISSING"));
+        assert!(!project.path().join("web/spawned").exists());
+        create.assert();
+        delete.assert();
+    }
+
+    #[test]
+    fn run_rejects_a_session_that_omits_the_requested_service() {
+        let mut server = Server::new();
+        let home = setup_config(&server);
+        let _resolve = mock_resolve_app(&mut server);
+        let project = project("");
+        let (create, delete) = session(
+            &mut server,
+            serde_json::json!({"services": [{"name": "web"}]}),
+            serde_json::json!({}),
+        );
+        command(&server, &home, &project)
+            .args(["run", "--json", "--service", "web", "--", "true"])
+            .assert()
+            .failure()
+            .stdout(predicate::str::contains(
+                "Dev session omitted service 'web'.",
+            ));
+        create.assert();
+        delete.assert();
+    }
+}

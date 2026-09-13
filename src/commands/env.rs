@@ -1,11 +1,11 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process;
 
 use crate::api_client::FlooClient;
 use crate::api_types::ListEnvVarsResponse;
 use crate::deploy_status;
-use crate::errors::ErrorCode;
+use crate::errors::{ErrorCode, FlooError};
 use crate::output;
 use crate::project_config;
 use serde::Serialize;
@@ -47,6 +47,89 @@ pub(crate) fn validate_env_file_path(
         ));
     }
     Ok(canonical)
+}
+
+/// Local attachment intent and environment shared by dev and one-shot commands.
+pub(crate) struct LocalServiceEnv {
+    pub managed: Option<Vec<String>>,
+    required: Vec<String>,
+    vars: HashMap<String, String>,
+}
+
+impl LocalServiceEnv {
+    /// Load inline declarations first, then delegated config, without losing empty lists.
+    pub fn load(entry: &project_config::AppServiceEntry, dir: &Path) -> Result<Self, FlooError> {
+        let delegated = if entry.env.is_none() || entry.env_file.is_none() {
+            project_config::load_service_config(dir)?
+        } else {
+            None
+        };
+        let contract = entry
+            .env
+            .as_ref()
+            .or_else(|| delegated.as_ref().and_then(|c| c.env.as_ref()));
+        let env_file = entry.env_file.as_deref().or_else(|| {
+            delegated
+                .as_ref()
+                .and_then(|c| c.service.env_file.as_deref())
+        });
+        let mut vars = HashMap::new();
+        if let Some(file) = env_file {
+            let path = validate_env_file_path(file, dir)
+                .map_err(|message| FlooError::new(ErrorCode::InvalidProjectConfig, message))?;
+            vars.extend(read_env_file(&path)?);
+        }
+        // Explicit shell values override the local file; session values win at launch.
+        vars.extend(std::env::vars());
+        Ok(Self {
+            managed: contract
+                .map(|c| c.normalized_managed("local service env"))
+                .transpose()?
+                .flatten(),
+            required: contract.map(|c| c.required.clone()).unwrap_or_default(),
+            vars,
+        })
+    }
+
+    /// Merge the session and dev port, then validate exactly the environment to launch.
+    pub fn merge(
+        &mut self,
+        service: &str,
+        session: &crate::api_types::DevSessionResponse,
+        port: Option<u16>,
+    ) -> Result<(), FlooError> {
+        let session_vars = session.services.get(service).ok_or_else(|| {
+            FlooError::new(
+                ErrorCode::InternalError,
+                format!("Dev session omitted service '{service}'."),
+            )
+        })?;
+        self.vars.extend(session_vars.clone());
+        if let Some(port) = port {
+            self.vars.insert("PORT".into(), port.to_string());
+        }
+        let missing: Vec<&str> = self
+            .required
+            .iter()
+            .filter(|key| self.vars.get(*key).is_none_or(String::is_empty))
+            .map(String::as_str)
+            .collect();
+        if !missing.is_empty() {
+            return Err(FlooError::new(
+                ErrorCode::InvalidProjectConfig,
+                format!(
+                    "Service '{service}' is missing required environment variables: {}",
+                    missing.join(", ")
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Return the merged environment for the child process.
+    pub fn vars(&self) -> &HashMap<String, String> {
+        &self.vars
+    }
 }
 
 fn format_target(app_name: &str, service_name: Option<&str>) -> String {
@@ -243,6 +326,13 @@ fn resolve_single_service(
 }
 
 fn parse_env_file(path: &Path) -> Vec<(String, String)> {
+    read_env_file(path).unwrap_or_else(|e| {
+        output::error(&e.message, &e.code, e.suggestion.as_deref());
+        process::exit(1);
+    })
+}
+
+fn read_env_file(path: &Path) -> Result<Vec<(String, String)>, FlooError> {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) => {
@@ -255,12 +345,11 @@ fn parse_env_file(path: &Path) -> Vec<(String, String)> {
                 }
                 _ => format!("Failed to read {}: {e}", path.display()),
             };
-            output::error(
-                &msg,
-                &ErrorCode::EnvFileNotFound,
-                Some("Check the file path and permissions."),
-            );
-            process::exit(1);
+            return Err(FlooError::with_suggestion(
+                ErrorCode::EnvFileNotFound,
+                msg,
+                "Check the file path and permissions.",
+            ));
         }
     };
 
@@ -291,8 +380,9 @@ fn parse_env_file(path: &Path) -> Vec<(String, String)> {
     }
 
     if !bad_lines.is_empty() {
-        output::error(
-            &format!(
+        return Err(FlooError::with_suggestion(
+            ErrorCode::EnvParseError,
+            format!(
                 "Malformed lines in {}: line(s) {}",
                 path.display(),
                 bad_lines
@@ -301,22 +391,19 @@ fn parse_env_file(path: &Path) -> Vec<(String, String)> {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
-            &ErrorCode::EnvParseError,
-            Some("Each non-comment line must be in KEY=VALUE format."),
-        );
-        process::exit(1);
+            "Each non-comment line must be in KEY=VALUE format.",
+        ));
     }
 
     if vars.is_empty() {
-        output::error(
-            &format!("No valid KEY=VALUE pairs found in {}.", path.display()),
-            &ErrorCode::EnvParseError,
-            Some("Ensure the file contains lines in KEY=VALUE format."),
-        );
-        process::exit(1);
+        return Err(FlooError::with_suggestion(
+            ErrorCode::EnvParseError,
+            format!("No valid KEY=VALUE pairs found in {}.", path.display()),
+            "Ensure the file contains lines in KEY=VALUE format.",
+        ));
     }
 
-    vars
+    Ok(vars)
 }
 
 /// Strip a single trailing newline (`\n` or `\r\n`) from a value read off a

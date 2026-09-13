@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::process::{self, Command, Stdio};
 
 use crate::config::load_config;
@@ -35,7 +34,7 @@ pub fn run(service: &str, app_flag: Option<String>, command: Vec<String>) {
     let app_id = app.id.clone();
 
     // Resolve the working directory: use the service's `path` from floo.app.toml.
-    let working_dir = {
+    let (working_dir, mut local_env) = {
         let app_config = match super::load_app_config_for_resolved_app(&resolved) {
             Ok(c) => c,
             Err(e) => {
@@ -58,7 +57,7 @@ pub fn run(service: &str, app_flag: Option<String>, command: Vec<String>) {
             }
         };
 
-        match &entry.path {
+        let dir = match &entry.path {
             Some(p) => {
                 let dir = resolved.config_dir.join(p);
                 if !dir.exists() {
@@ -72,7 +71,12 @@ pub fn run(service: &str, app_flag: Option<String>, command: Vec<String>) {
                 dir
             }
             None => cwd.clone(),
-        }
+        };
+        let local_env = super::env::LocalServiceEnv::load(entry, &dir).unwrap_or_else(|e| {
+            output::error(&e.message, &e.code, e.suggestion.as_deref());
+            process::exit(1);
+        });
+        (dir, local_env)
     };
 
     // Create a portless dev session: gets env vars + postgres IP auth without
@@ -80,6 +84,7 @@ pub fn run(service: &str, app_flag: Option<String>, command: Vec<String>) {
     let api_services = vec![crate::api_types::DevSessionService {
         name: service.to_string(),
         port: None,
+        managed: local_env.managed.clone(),
     }];
 
     let spinner = output::Spinner::new("Fetching env vars...");
@@ -100,6 +105,11 @@ pub fn run(service: &str, app_flag: Option<String>, command: Vec<String>) {
     };
 
     let session_id = session.session_id.clone();
+    if let Err(e) = local_env.merge(service, &session, None) {
+        super::dev::cleanup_session(&client, &app_id, &session_id);
+        output::error(&e.message, &e.code, e.suggestion.as_deref());
+        process::exit(1);
+    }
 
     if !output::is_json_mode() {
         output::info(&format!("Running with env from '{service}'"), None);
@@ -125,21 +135,13 @@ pub fn run(service: &str, app_flag: Option<String>, command: Vec<String>) {
         eprintln!();
     }
 
-    // Build env: inherit current env, then overlay platform vars for the service.
-    let mut env_vars: HashMap<String, String> = std::env::vars().collect();
-    if let Some(svc_env) = session.services.get(service) {
-        for (k, v) in svc_env {
-            env_vars.insert(k.clone(), v.clone());
-        }
-    }
-
     // Run the command, inheriting stdin/stdout/stderr so test output flows through naturally.
     let (bin, args) = command.split_first().expect("command is non-empty");
     let status = match Command::new("sh")
         .arg("-c")
         .arg(shell_join(bin, args))
         .current_dir(&working_dir)
-        .envs(&env_vars)
+        .envs(local_env.vars())
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -148,7 +150,7 @@ pub fn run(service: &str, app_flag: Option<String>, command: Vec<String>) {
         Ok(s) => s,
         Err(e) => {
             // Clean up the session before exiting — process::exit() skips destructors.
-            let _ = client.delete_dev_session(&app_id, &session_id);
+            super::dev::cleanup_session(&client, &app_id, &session_id);
             output::error(
                 &format!("Failed to run command: {e}"),
                 &ErrorCode::InternalError,
@@ -174,7 +176,7 @@ pub fn run(service: &str, app_flag: Option<String>, command: Vec<String>) {
 
     // Tear down the dev session before exit. process::exit() skips destructors,
     // so this must be an explicit call — not a Drop impl.
-    let _ = client.delete_dev_session(&app_id, &session_id);
+    super::dev::cleanup_session(&client, &app_id, &session_id);
     process::exit(exit_code);
 }
 
