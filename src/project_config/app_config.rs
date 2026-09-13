@@ -429,11 +429,15 @@ pub fn load_app_config(dir: &Path) -> Result<Option<AppFileConfig>, FlooError> {
         )
     })?;
 
-    let config: AppFileConfig = super::parse_config(super::APP_CONFIG_FILE, &content)?;
+    parse_app_config(&content).map(Some)
+}
+
+fn parse_app_config(content: &str) -> Result<AppFileConfig, FlooError> {
+    let config: AppFileConfig = super::parse_config(super::APP_CONFIG_FILE, content)?;
 
     validate_app_config(&config)?;
 
-    Ok(Some(config))
+    Ok(config)
 }
 
 fn validate_app_config(config: &AppFileConfig) -> Result<(), FlooError> {
@@ -531,8 +535,15 @@ fn validate_app_config(config: &AppFileConfig) -> Result<(), FlooError> {
 /// grandfather — clean hard error.
 type ServiceBuildGroup<'a> = Vec<(&'a str, &'a AppServiceEntry)>;
 
-fn validate_worker_command_collision(config: &AppFileConfig) -> Result<(), FlooError> {
-    use std::collections::HashMap;
+/// A worker needing its own process because another service shares its build.
+pub(crate) struct WorkerCommandCollision<'a> {
+    pub worker_name: &'a str,
+    path: String,
+    others: Vec<&'a str>,
+}
+
+/// Find missing worker commands using the same build identity as validation.
+pub(crate) fn worker_command_collisions(config: &AppFileConfig) -> Vec<WorkerCommandCollision<'_>> {
     // Group services by their resolved build identity. `path` defaults to "." when
     // omitted (server behavior), so two services with no explicit path collide.
     let mut builds: HashMap<(Option<&str>, String), ServiceBuildGroup> = HashMap::new();
@@ -558,13 +569,8 @@ fn validate_worker_command_collision(config: &AppFileConfig) -> Result<(), FlooE
             .or_default()
             .push((name.as_str(), entry));
     }
+    let mut collisions = Vec::new();
     for ((_, path), members) in &builds {
-        let worker = members
-            .iter()
-            .find(|(_, e)| e.service_type == AppServiceType::Worker && e.command.is_none());
-        let Some((worker_name, _)) = worker else {
-            continue;
-        };
         let mut others: Vec<&str> = members
             .iter()
             .filter(|(_, e)| e.service_type != AppServiceType::Worker)
@@ -574,6 +580,27 @@ fn validate_worker_command_collision(config: &AppFileConfig) -> Result<(), FlooE
             continue;
         }
         others.sort_unstable();
+        for (worker_name, _) in members.iter().filter(|(_, entry)| {
+            entry.service_type == AppServiceType::Worker && entry.command.is_none()
+        }) {
+            collisions.push(WorkerCommandCollision {
+                worker_name,
+                path: path.clone(),
+                others: others.clone(),
+            });
+        }
+    }
+    collisions.sort_unstable_by_key(|collision| collision.worker_name);
+    collisions
+}
+
+fn validate_worker_command_collision(config: &AppFileConfig) -> Result<(), FlooError> {
+    if let Some(WorkerCommandCollision {
+        worker_name,
+        path,
+        others,
+    }) = worker_command_collisions(config).first()
+    {
         return Err(FlooError::with_suggestion(
             ErrorCode::InvalidProjectConfig,
             format!(
@@ -641,7 +668,8 @@ fn write_app_config(dir: &Path, config: &AppFileConfig) -> Result<(), FlooError>
     write_app_config_with_header(dir, config, "")
 }
 
-/// Write `floo.app.toml`, optionally prepending a header comment block.
+/// Validate the serialized candidate through the loader parser and service
+/// discovery before writing `floo.app.toml`, optionally with header comments.
 ///
 /// `floo init` uses the header to make two non-obvious things impossible
 /// to miss when the user opens the file: (1) deploys happen on `git push`,
@@ -669,6 +697,14 @@ pub fn write_app_config_with_header(
     } else {
         format!("{header}\n{serialized}")
     };
+    let candidate = parse_app_config(&content)?;
+    super::discover_services(&super::ResolvedApp {
+        app_name: candidate.app.name.clone(),
+        source: super::AppSource::AppFile,
+        service_config: super::load_service_config(dir)?,
+        app_config: Some(candidate),
+        config_dir: dir.to_path_buf(),
+    })?;
     std::fs::write(&config_path, content).map_err(|e| {
         FlooError::new(
             ErrorCode::ConfigWriteError,
@@ -1101,6 +1137,8 @@ type = "mysql"
 
     #[test]
     fn test_write_and_reload_app_config() {
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
         let dir = TempDir::new().unwrap();
         let config = AppFileConfig {
             domains: Default::default(),
@@ -1117,14 +1155,17 @@ type = "mysql"
             edge: None,
             resources: None,
             cron: HashMap::new(),
-            services: HashMap::new(),
+            services: HashMap::from([(
+                "web".to_string(),
+                AppServiceEntry::scaffold(AppServiceType::Web, ".", 8080, None),
+            )]),
             environments: HashMap::new(),
         };
 
         write_app_config(dir.path(), &config).unwrap();
         let loaded = load_app_config(dir.path()).unwrap().unwrap();
         assert_eq!(loaded.app.name, "roundtrip-app");
-        assert!(loaded.services.is_empty());
+        assert_eq!(loaded.services.len(), 1);
     }
 
     #[test]

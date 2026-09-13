@@ -66,6 +66,7 @@ fn extract_unknown_field(msg: &str) -> Option<&str> {
     Some(&rest[..end])
 }
 
+pub(crate) use app_config::worker_command_collisions;
 #[cfg(test)]
 pub use app_config::AppServiceType;
 pub use app_config::{

@@ -62,14 +62,19 @@ pub fn init(name: Option<String>, path: PathBuf) {
         process::exit(1);
     }
 
-    // Error if config already exists
-    if project_path.join(project_config::APP_CONFIG_FILE).exists() {
-        output::error(
-            &format!("{} already exists.", project_config::APP_CONFIG_FILE),
-            &ErrorCode::ConfigExists,
-            Some("Edit floo.app.toml directly to add services."),
-        );
-        process::exit(1);
+    for file in [
+        project_config::APP_CONFIG_FILE,
+        project_config::SERVICE_CONFIG_FILE,
+        project_config::LEGACY_CONFIG_FILE,
+    ] {
+        if project_path.join(file).exists() {
+            output::error(
+                &format!("{file} already exists; init creates an inline floo.app.toml and cannot combine it with existing config files."),
+                &ErrorCode::ConfigExists,
+                Some("Edit or migrate the existing config instead of running init."),
+            );
+            process::exit(1);
+        }
     }
 
     let detection = detect(&project_path);
@@ -359,9 +364,6 @@ fn init_non_interactive(
     let service_name = default_type.to_string();
     let port = detection.default_port();
 
-    // Generate Dockerfile if none exists
-    let dockerfile_generated = generate_dockerfile_if_needed(project_path, detection);
-
     // Write a single floo.app.toml with the service inline.
     // Agents read 'floo docs config' to understand the schema and customize it.
     let mut services = HashMap::new();
@@ -398,6 +400,8 @@ fn init_non_interactive(
         process::exit(1);
     }
     files_written.push(project_config::APP_CONFIG_FILE);
+
+    let dockerfile_generated = generate_dockerfile_if_needed(project_path, detection);
 
     if dockerfile_generated {
         files_written.push("Dockerfile");
@@ -460,9 +464,6 @@ fn init_interactive(
         );
     }
 
-    // Generate Dockerfile if none exists
-    generate_dockerfile_if_needed(project_path, detection);
-
     let default_name = name.unwrap_or_else(generate_name);
     let app_name = output::prompt_with_default("App name", &default_name);
 
@@ -473,6 +474,15 @@ fn init_interactive(
         loop {
             let default_svc_name = detection.default_service_type().to_string();
             let svc_name = output::prompt_with_default("Service name", &default_svc_name);
+
+            if services_map.contains_key(&svc_name) {
+                output::error(
+                    &format!("Multiple services named '{svc_name}'. Service names must be unique."),
+                    &ErrorCode::DuplicateServiceNames,
+                    Some("Choose a different service name."),
+                );
+                process::exit(1);
+            }
 
             let default_path = ".".to_string();
             let svc_path = output::prompt_with_default("Service path", &default_path);
@@ -547,8 +557,8 @@ fn init_interactive(
         );
     }
 
-    // Write app config
-    let app_file = AppFileConfig {
+    // Collect commands after all services so shared builds are order-independent.
+    let mut app_file = AppFileConfig {
         domains: Default::default(),
         app: AppFileAppSection {
             name: app_name.clone(),
@@ -567,6 +577,22 @@ fn init_interactive(
         environments: HashMap::new(),
     };
 
+    let workers: Vec<String> = project_config::worker_command_collisions(&app_file)
+        .iter()
+        .map(|collision| collision.worker_name.to_string())
+        .collect();
+    for (name, entry) in app_file
+        .services
+        .iter_mut()
+        .filter(|(name, _)| workers.contains(name))
+    {
+        let command = output::prompt_with_default(
+            &format!("Production command for worker '{name}' (required for shared build)"),
+            "",
+        );
+        entry.command = (!command.is_empty()).then_some(command);
+    }
+
     if let Err(e) =
         project_config::write_app_config_with_header(project_path, &app_file, APP_TOML_HEADER)
     {
@@ -574,6 +600,7 @@ fn init_interactive(
         process::exit(1);
     }
     output::info(&format!("Wrote {}", project_config::APP_CONFIG_FILE), None);
+    generate_dockerfile_if_needed(project_path, detection);
 
     if write_agents_md(project_path) {
         output::info("Wrote AGENTS.md (agent operating notes)", None);
