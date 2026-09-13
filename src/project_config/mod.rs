@@ -2,6 +2,8 @@ mod app_config;
 mod discover;
 mod resolve;
 mod service_config;
+#[cfg(test)]
+mod strictness_tests;
 
 pub const SERVICE_CONFIG_FILE: &str = "floo.service.toml";
 pub const APP_CONFIG_FILE: &str = "floo.app.toml";
@@ -9,25 +11,39 @@ pub const LEGACY_CONFIG_FILE: &str = "floo.toml";
 const SCHEMA_URL: &str = "https://getfloo.com/docs/reference/config-spec";
 const MAX_WALK_UP_LEVELS: usize = 20;
 
-/// Convert a `toml::de::Error` from project-config parsing into a FlooError
-/// with a helpful suggestion. When serde reports an `unknown field` (the
-/// `deny_unknown_fields` failure mode), surface a CLI-version-skew hint:
-/// the most common cause is a TOML key that exists in newer docs but the
-/// locally-installed CLI doesn't recognize yet, and the previous "see schema"
-/// suggestion sent users to the docs that already document the rejected key.
+/// Parse a manifest through TOML's value deserializer so schema errors retain
+/// their table path, including dotted keys and inline tables.
+pub(super) fn parse_config<T: serde::de::DeserializeOwned>(
+    file_label: &str,
+    content: &str,
+) -> Result<T, crate::errors::FlooError> {
+    let value: toml::Value =
+        toml::from_str(content).map_err(|err| toml_parse_error(file_label, err))?;
+    value
+        .try_into()
+        .map_err(|err| toml_parse_error(file_label, err))
+}
+
+/// Attach corrective guidance to syntax and schema errors from either manifest.
 pub(super) fn toml_parse_error(file_label: &str, err: toml::de::Error) -> crate::errors::FlooError {
     let raw = err.to_string();
-    let suggestion = match extract_unknown_field(&raw) {
-        Some(_) if raw.contains("remove the block to remove the domain") => {
-            "Domain blocks accept only `service`; remove the block to remove the domain."
-                .to_string()
+    let suggestion = match extract_unknown_field(err.message()) {
+        Some(field) => {
+            let path = raw.lines().find_map(|line| {
+                line.strip_prefix("in `")
+                    .and_then(|path| path.strip_suffix('`'))
+            });
+            let key = match path {
+                Some(path) => format!("{path}.{field}"),
+                None => field.to_string(),
+            };
+            let correction = if raw.contains("remove the block to remove the domain") {
+                "Domain blocks accept only `service`; remove the block to remove the domain."
+            } else {
+                "Remove or correct it."
+            };
+            format!("Unknown key `{key}`. {correction} See {SCHEMA_URL} for the schema reference.")
         }
-        Some(field) => format!(
-            "Unknown key `{field}` may require a newer CLI \
-             (you're on {version}). Try `floo update` and re-run preflight. \
-             If the key is correct for your installed version, see {SCHEMA_URL}.",
-            version = crate::constants::VERSION,
-        ),
         None => format!("See {SCHEMA_URL} for the schema reference."),
     };
 
@@ -182,7 +198,10 @@ mod tests {
     }
 
     #[test]
-    fn test_toml_parse_error_unknown_field_suggests_update() {
+    fn test_toml_parse_error_unknown_field_suggests_correction() {
+        let _guard = crate::output::GLOBAL_MODE_LOCK.lock().unwrap();
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
         // Synthesize the same path real callers hit.
         #[derive(serde::Deserialize, Debug)]
         #[serde(deny_unknown_fields)]
@@ -196,8 +215,7 @@ mod tests {
             .suggestion
             .expect("unknown-field path always sets a suggestion");
         assert!(suggestion.contains("`foo`"), "got: {suggestion}");
-        assert!(suggestion.contains("floo update"), "got: {suggestion}");
-        // Falls back to schema link when the user is on a current CLI.
+        assert!(!suggestion.contains("floo update"), "got: {suggestion}");
         assert!(suggestion.contains(SCHEMA_URL), "got: {suggestion}");
     }
 
