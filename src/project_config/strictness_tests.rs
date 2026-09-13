@@ -123,6 +123,24 @@ rejects_app_key!(
 );
 
 #[test]
+fn rejects_app_service_domain() {
+    let _guard = crate::output::GLOBAL_MODE_LOCK.lock().unwrap();
+    crate::output::set_json_mode(false);
+    crate::output::set_dry_run_mode(false);
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join(APP_CONFIG_FILE),
+        "[app]\nname = 'my-app'\n[services.web]\ntype = 'web'\nport = 3000\ndomain = 'app.example.com'",
+    )
+    .unwrap();
+
+    let err = load_app_config(dir.path()).unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+    assert!(err.message.contains("unknown field `domain`"));
+    assert!(err.suggestion.unwrap().contains("`services.web.domain`"));
+}
+
+#[test]
 fn rejects_removed_agent_mode() {
     let _guard = crate::output::GLOBAL_MODE_LOCK.lock().unwrap();
     crate::output::set_json_mode(false);
