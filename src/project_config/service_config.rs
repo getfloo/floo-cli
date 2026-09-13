@@ -390,8 +390,7 @@ pub fn load_service_config(dir: &Path) -> Result<Option<ServiceFileConfig>, Floo
         )
     })?;
 
-    let config: ServiceFileConfig = toml::from_str(&content)
-        .map_err(|e| super::toml_parse_error(super::SERVICE_CONFIG_FILE, e))?;
+    let config: ServiceFileConfig = super::parse_config(super::SERVICE_CONFIG_FILE, &content)?;
 
     if let Some(ref resources) = config.resources {
         validate_max_request_body_mb(resources.max_request_body_mb)?;

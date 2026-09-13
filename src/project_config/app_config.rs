@@ -14,6 +14,7 @@ use super::SCHEMA_URL;
 
 /// A single scheduled cron job declared in `[cron.<name>]`.
 #[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct CronJobConfig {
     /// Cron expression (e.g. `"0 9 * * *"` for 9am daily).
     pub schedule: String,
@@ -42,6 +43,7 @@ pub struct GitHubConfig {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct AppFileConfig {
     pub app: AppFileAppSection,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -166,14 +168,6 @@ pub(crate) fn validate_domain_blocks(
 pub struct AuthSection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub access_policy: Option<String>,
-    /// Deprecated (getfloo/floo#1458): the ACCOUNTS-mode email allowlist is
-    /// operational access data managed via the dashboard/API (`floo`'s
-    /// `/allowed-domains`), not config-as-code. The deploy no longer applies
-    /// this field. It is kept only so an existing manifest still parses under
-    /// `deny_unknown_fields`; new manifests should omit it and manage domains in
-    /// the dashboard. `access_policy = "domain"` no longer requires it here.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub allowed_domains: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub redirect_uris: Option<Vec<String>>,
 }
@@ -314,10 +308,6 @@ pub struct AppServiceEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub plan: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ingress: Option<ServiceIngress>,
@@ -407,8 +397,6 @@ impl AppServiceEntry {
             path: Some(path.into()),
             dockerfile: None,
             repo: None,
-            version: None,
-            plan: None,
             port: Some(port),
             ingress: Some(ServiceIngress::Public),
             env_file,
@@ -441,8 +429,7 @@ pub fn load_app_config(dir: &Path) -> Result<Option<AppFileConfig>, FlooError> {
         )
     })?;
 
-    let config: AppFileConfig =
-        toml::from_str(&content).map_err(|e| super::toml_parse_error(super::APP_CONFIG_FILE, e))?;
+    let config: AppFileConfig = super::parse_config(super::APP_CONFIG_FILE, &content)?;
 
     validate_app_config(&config)?;
 
@@ -1064,6 +1051,9 @@ repo = "myorg/my-fixture"
 
     #[test]
     fn test_load_app_config_unknown_field_rejected() {
+        let _guard = crate::output::GLOBAL_MODE_LOCK.lock().unwrap();
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
         let dir = TempDir::new().unwrap();
         fs::write(
             dir.path().join(super::super::APP_CONFIG_FILE),
@@ -1079,14 +1069,14 @@ unknown = "bad"
         assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
         let suggestion = err
             .suggestion
-            .expect("unknown-field rejection must surface a CLI-version-skew suggestion");
+            .expect("unknown-field rejection must explain how to fix the manifest");
         assert!(
-            suggestion.contains("`unknown`"),
+            suggestion.contains("`app.unknown`"),
             "suggestion should name the unknown key, got: {suggestion}"
         );
         assert!(
-            suggestion.contains("floo update"),
-            "suggestion should point users at `floo update`, got: {suggestion}"
+            !suggestion.contains("floo update"),
+            "a typo should not suggest updating the CLI, got: {suggestion}"
         );
     }
 
@@ -1681,31 +1671,6 @@ access_policy = "open"
         let config = load_app_config(dir.path()).unwrap().unwrap();
         let auth = config.auth.unwrap();
         assert_eq!(auth.access_policy.as_deref(), Some("open"));
-        assert!(auth.allowed_domains.is_none());
-    }
-
-    #[test]
-    fn test_load_app_config_with_auth_access_policy_domain() {
-        let dir = TempDir::new().unwrap();
-        fs::write(
-            dir.path().join(super::super::APP_CONFIG_FILE),
-            r#"
-[app]
-name = "my-app"
-access_mode = "accounts"
-
-[auth]
-access_policy = "domain"
-allowed_domains = ["acme.com", "acme.io"]
-"#,
-        )
-        .unwrap();
-
-        let config = load_app_config(dir.path()).unwrap().unwrap();
-        let auth = config.auth.unwrap();
-        assert_eq!(auth.access_policy.as_deref(), Some("domain"));
-        let domains = auth.allowed_domains.unwrap();
-        assert_eq!(domains, vec!["acme.com".to_string(), "acme.io".to_string()]);
     }
 
     #[test]
@@ -1752,7 +1717,6 @@ access_policy = "domain"
         let config = load_app_config(dir.path()).unwrap().unwrap();
         let auth = config.auth.unwrap();
         assert_eq!(auth.access_policy.as_deref(), Some("domain"));
-        assert!(auth.allowed_domains.is_none());
     }
 
     #[test]
@@ -1904,34 +1868,6 @@ name = "my-app"
 
         let config = load_app_config(dir.path()).unwrap().unwrap();
         assert!(config.github.is_none());
-    }
-
-    #[test]
-    fn test_load_app_config_ignores_removed_reparo_section() {
-        // `[reparo]` was a dead config surface: the CLI parsed it and sent it on
-        // deploy, but the API always dropped it (reparo config lives at
-        // `PUT /reparo/config` only). The section was removed (getfloo/floo#1461).
-        // `AppFileConfig` is not `deny_unknown_fields`, so an existing manifest
-        // that still carries `[reparo]` must keep parsing (the block is ignored),
-        // not fail — this test pins that so a future `deny_unknown_fields` can't
-        // silently turn old manifests into a hard error.
-        let dir = TempDir::new().unwrap();
-        fs::write(
-            dir.path().join(super::super::APP_CONFIG_FILE),
-            r#"
-[app]
-name = "my-app"
-
-[reparo]
-mode = "webhook"
-error_threshold = 5
-webhook_url = "https://example.com/hook"
-"#,
-        )
-        .unwrap();
-
-        let config = load_app_config(dir.path()).unwrap().unwrap();
-        assert_eq!(config.app.name, "my-app");
     }
 
     #[test]

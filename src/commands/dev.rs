@@ -852,8 +852,6 @@ mod tests {
             path: Some(".".into()),
             dockerfile: None,
             repo: repo.map(String::from),
-            version: None,
-            plan: None,
             port: Some(3000),
             ingress: None,
             env_file: None,
