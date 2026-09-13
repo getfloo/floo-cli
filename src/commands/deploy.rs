@@ -474,11 +474,39 @@ fn status_label(status: &str) -> &str {
     }
 }
 
+#[derive(PartialEq)]
+enum PreflightMode {
+    Inspect,
+    Deploy,
+}
+
+/// Validate a local project and report its findings and remote plan.
 pub fn preflight(
     path: PathBuf,
     app: Option<String>,
     services_filter: Vec<String>,
     environment: String,
+) {
+    run_preflight(
+        path,
+        app,
+        services_filter,
+        environment,
+        PreflightMode::Inspect,
+    );
+}
+
+/// Validate once; actual deploys reuse the resolved project without emitting JSON success.
+fn run_preflight(
+    path: PathBuf,
+    app: Option<String>,
+    services_filter: Vec<String>,
+    environment: String,
+    mode: PreflightMode,
+) -> (
+    project_config::ResolvedApp,
+    Vec<ServiceConfig>,
+    DetectionResult,
 ) {
     // 1. Canonicalize path
     let project_path = match path.canonicalize() {
@@ -547,8 +575,7 @@ pub fn preflight(
         .iter()
         .map(|s| (s.name.as_str(), s.path.as_str()))
         .collect();
-    let (_primary_detection, per_service_detection) =
-        detect_for_services(&project_path, &svc_pairs);
+    let (primary_detection, per_service_detection) = detect_for_services(&project_path, &svc_pairs);
 
     // 5. Validate (env plan first — the build/run checks read it).
     let env_injection_plan = build_env_injection_plan(&services, &managed_services, &resolved);
@@ -571,15 +598,33 @@ pub fn preflight(
     let mut all_findings = validation_findings.clone();
     all_findings.extend(security_findings.iter().cloned());
 
-    // 7. Remote preflight audit (declared vs deployed). Best-effort — auth/resolution
-    // failures degrade to a note; local validation still ships.
-    let remote_plan = fetch_remote_preflight(
-        &app_name,
-        &managed_services,
-        &services,
-        &environment,
-        &resolved,
-    );
+    // Inspection calls the planner; an actual deploy is validated by its write endpoint.
+    let remote_plan = if mode == PreflightMode::Inspect && valid {
+        match fetch_remote_preflight(
+            &app_name,
+            &managed_services,
+            &services,
+            &environment,
+            &resolved,
+        ) {
+            Ok(plan) => plan,
+            Err(error) => {
+                output::error_with_details(
+                    &error.message,
+                    &ErrorCode::from_api(&error.code),
+                    None,
+                    error.extra.as_ref(),
+                );
+                process::exit(1);
+            }
+        }
+    } else {
+        None
+    };
+
+    if output::is_json_mode() && valid && mode == PreflightMode::Deploy {
+        return (resolved, services, primary_detection);
+    }
 
     // 8. Display
     if output::is_json_mode() {
@@ -655,7 +700,7 @@ pub fn preflight(
         if !valid {
             process::exit(1);
         }
-        return;
+        return (resolved, services, primary_detection);
     }
 
     // --- Human output ---
@@ -698,6 +743,7 @@ pub fn preflight(
     }
 
     print_preflight_ready(&all_findings);
+    (resolved, services, primary_detection)
 }
 
 /// Serialize declared `[cron.<name>]` entries for the JSON payload. Preflight
@@ -812,167 +858,14 @@ pub fn deploy(
         return;
     }
 
-    // --- Path 3: No --app flag — full preflight from local project directory ---
-
-    // ===== Deploy preflight (no auth required) =====
-
-    // 1. Canonicalize path
-    let project_path = match path.canonicalize() {
-        Ok(p) => p,
-        Err(_) => {
-            output::error(
-                &format!("Path '{}' is not a directory.", path.display()),
-                &ErrorCode::InvalidPath,
-                Some("Provide a valid project directory."),
-            );
-            process::exit(1);
-        }
+    let mode = if output::is_dry_run_mode() {
+        PreflightMode::Inspect
+    } else {
+        PreflightMode::Deploy
     };
-
-    if !project_path.is_dir() {
-        output::error(
-            &format!("Path '{}' is not a directory.", path.display()),
-            &ErrorCode::InvalidPath,
-            Some("Provide a valid project directory."),
-        );
-        process::exit(1);
-    }
-
-    // 2. Resolve app context
-    let resolved = match project_config::resolve_app_context(&project_path, app.as_deref()) {
-        Ok(r) => r,
-        Err(e) if e.code == ErrorCode::NoConfigFound => {
-            output::error(
-                "No floo.app.toml or floo.service.toml found.",
-                &ErrorCode::NoConfigFound,
-                Some("Run 'floo init' to create config files, then 'floo apps github connect <repo>' to connect to GitHub."),
-            );
-            process::exit(1);
-        }
-        Err(e) => {
-            output::error(&e.message, &e.code, e.suggestion.as_deref());
-            process::exit(1);
-        }
-    };
-
-    let app_name = resolved.app_name.clone();
-
-    // 3. Discover + filter services
-    let all_services = match project_config::discover_services(&resolved) {
-        Ok(svcs) => svcs,
-        Err(e) => {
-            output::error(&e.message, &e.code, e.suggestion.as_deref());
-            process::exit(1);
-        }
-    };
-    let all_service_names: Vec<String> = all_services.iter().map(|s| s.name.clone()).collect();
-    let services = match project_config::filter_services(all_services, &services_filter) {
-        Ok(svcs) => svcs,
-        Err(e) => {
-            output::error(&e.message, &e.code, e.suggestion.as_deref());
-            process::exit(1);
-        }
-    };
-
-    // 3b. Discover managed service declarations (postgres, redis, etc.)
-    let managed_services = project_config::discover_managed_services(&resolved);
-
-    // 4. Per-service runtime detection
-    let svc_pairs: Vec<(&str, &str)> = services
-        .iter()
-        .map(|s| (s.name.as_str(), s.path.as_str()))
-        .collect();
-    let (primary_detection, per_service_detection) = detect_for_services(&project_path, &svc_pairs);
-
-    // 5. Validate per-service (env plan first — the build/run checks read it).
-    let env_injection_plan = build_env_injection_plan(&services, &managed_services, &resolved);
-    let validation_findings = validate_preflight(
-        &services,
-        &all_service_names,
-        &resolved,
-        &managed_services,
-        &env_injection_plan,
-    );
-    let valid = !has_errors(&validation_findings);
-    let runtime_plan = build_runtime_plan(&services, "dev");
-
-    // 6. Display preflight info
-    if !output::is_json_mode() {
-        display_preflight_human(
-            &app_name,
-            &resolved,
-            &services,
-            &per_service_detection,
-            &runtime_plan,
-            &env_injection_plan,
-            &validation_findings,
-        );
-
-        if !managed_services.is_empty() {
-            eprintln!("  Managed services:");
-            for ms in &managed_services {
-                let tier_label = ms.tier.as_deref().unwrap_or("basic");
-                eprintln!("    {} (tier {tier_label})", ms.env_handle());
-            }
-            eprintln!();
-        }
-    }
-
-    // 7. Dry-run exit — full preflight output, no auth needed
+    let (resolved, services, detection) =
+        run_preflight(path, app, services_filter, "dev".to_string(), mode);
     if output::is_dry_run_mode() {
-        let svc_json: Vec<serde_json::Value> = services
-            .iter()
-            .zip(per_service_detection.iter())
-            .map(|(svc, (_, det))| {
-                serde_json::json!({
-                    "name": svc.name,
-                    "path": svc.path,
-                    "port": svc.port,
-                    "type": svc.service_type.to_string(),
-                    "ingress": svc.ingress.to_string(),
-                    "runtime": det.runtime,
-                    "framework": det.framework,
-                    "confidence": det.confidence,
-                })
-            })
-            .collect();
-
-        let managed_json: Vec<serde_json::Value> = managed_services
-            .iter()
-            .map(|ms| {
-                serde_json::json!({
-                    "name": ms.env_handle(),
-                    "tier": ms.tier.as_deref().unwrap_or("basic"),
-                })
-            })
-            .collect();
-
-        // Preflight already printed the human-friendly service table via
-        // display_preflight_human() above (gated on !is_json_mode). Keep the
-        // preview line tight so we don't duplicate it.
-        let svc_count = services.len();
-        let preview = format!(
-            "Would deploy app '{app_name}' with {svc_count} service(s){}.",
-            if valid {
-                ""
-            } else {
-                "; preflight errors must be fixed first"
-            }
-        );
-        output::dry_run_preview(
-            &preview,
-            serde_json::json!({
-                "action": "deploy",
-                "app": app_name,
-                "services": svc_json,
-                "managed_services": managed_json,
-                "runtime_plan": runtime_plan,
-                "env_injection_plan": env_injection_plan,
-                "cron": cron_json(&resolved),
-                "findings": validation_findings,
-                "valid": valid,
-            }),
-        );
         return;
     }
 
@@ -986,25 +879,6 @@ pub fn deploy(
         );
         process::exit(1);
     }
-
-    // 9. Fail if preflight has errors
-    if !valid {
-        for f in validation_findings.iter().filter(|f| f.is_error()) {
-            if !output::is_json_mode() {
-                eprintln!("  {} {}", Severity::Error.glyph(), f.message);
-            }
-        }
-        let count = validation_findings.iter().filter(|f| f.is_error()).count();
-        output::error(
-            &format!("{count} preflight error(s) found."),
-            &ErrorCode::ConfigInvalid,
-            Some("Fix the errors above and run `floo preflight` to validate."),
-        );
-        process::exit(1);
-    }
-
-    // Use primary detection for API call metadata
-    let detection = primary_detection;
 
     let client = super::init_client(Some(config));
 
@@ -3227,14 +3101,15 @@ fn fetch_remote_preflight(
     services: &[ServiceConfig],
     environment: &str,
     resolved: &project_config::ResolvedApp,
-) -> Option<crate::api_types::PreflightPlan> {
+) -> Result<Option<crate::api_types::PreflightPlan>, FlooApiError> {
     use crate::api_types::{DeclaredRuntimeService, DeclaredState};
-    use crate::config::load_config;
 
-    load_config().api_key.as_ref()?;
-
-    let client = crate::api_client::FlooClient::new(None).ok()?;
-    let app = crate::resolve::resolve_app(&client, app_name).ok()?;
+    let config = load_config();
+    if config.api_key.is_none() {
+        return Ok(None);
+    }
+    let client = FlooClient::new(Some(config))?;
+    let app = resolve_app(&client, app_name)?;
 
     let declared = DeclaredState {
         managed_services: managed.to_vec(),
@@ -3255,7 +3130,7 @@ fn fetch_remote_preflight(
             .collect(),
     };
 
-    client.preflight(&app.id, &declared).ok()
+    client.preflight(&app.id, &declared).map(Some)
 }
 
 fn render_plan_human(plan: &crate::api_types::PreflightPlan) {
