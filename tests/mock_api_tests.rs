@@ -6548,7 +6548,7 @@ fn test_preflight_declares_enabled_modern_and_legacy_services_without_lock() {
         .expect(2)
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"managed_services":{"to_provision":[{"type":"redis","name":"cache","tier":"basic"}],"to_retain":[],"to_orphan":[],"in_flight_deprovisioning":[]},"summary":{"action_count":1,"destructive_count":0},"destructive":false,"data_loss":false}"#)
+        .with_body(r#"{"managed_services":{"to_provision":[{"type":"redis","name":"cache","tier":"basic","risk":{"tier":1,"destructive":false,"data_loss":false}}],"to_retry":[],"to_deprovision":[],"to_retain":[],"to_orphan":[],"in_flight_deprovisioning":[]},"summary":{"action_count":1,"destructive_count":0},"destructive":false,"data_loss":false}"#)
         .create();
     let project = TempDir::new().unwrap();
     std::fs::write(
@@ -6606,17 +6606,13 @@ managed = ["redis:cache", "redis:queue"]
     planner.assert();
 }
 
-#[test]
-fn test_preflight_surfaces_orphaned_managed_service() {
+fn preflight_with_plan(plan: &serde_json::Value, flags: &[&str]) -> std::process::Output {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
 
     let _m_preflight = server
-        .mock(
-            "POST",
-            format!("/v1/apps/{TEST_APP_ID}/preflight").as_str(),
-        )
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/preflight").as_str())
         .match_body(Matcher::PartialJson(serde_json::json!({
             "environment": "prod",
             "managed_services": [],
@@ -6629,33 +6625,7 @@ fn test_preflight_surfaces_orphaned_managed_service() {
         })))
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(
-            r#"{
-                "managed_services":{
-                    "to_provision":[],
-                    "to_retain":[],
-                    "to_orphan":[{"type":"postgres","name":"default","tier":"basic","managed_service_id":"ms-1","data_impact":"Postgres schema app_xyz and role floo_app_xyz"}],
-                    "in_flight_deprovisioning":[]
-                },
-                "runtime_services":[{
-                    "name":"web",
-                    "runtime_plan":{
-                        "environment":"prod",
-                        "service_type":"web",
-                        "availability":"warm",
-                        "declared":{"cpu":null,"memory":null,"min_instances":null,"max_instances":null,"instances":null},
-                        "effective":{"cpu":"1","memory":"512Mi","min_instances":1,"max_instances":3,"instances":null},
-                        "sources":{"cpu":"platform_default","memory":"platform_default","min_instances":"platform_default","max_instances":"platform_default","instances":null},
-                        "cpu_allocation":"request_based",
-                        "cpu_allocation_reason":"http_request_scoped",
-                        "warnings":["Warm production baseline bills continuously; set min_instances = 0 in floo.app.toml to opt out."]
-                    }
-                }],
-                "summary":{"action_count":1,"destructive_count":1,"estimated_duration_seconds":null},
-                "destructive":true,
-                "data_loss":false
-            }"#,
-        )
+        .with_body(plan.to_string())
         .create();
 
     let project = TempDir::new().unwrap();
@@ -6682,27 +6652,83 @@ managed = []
     )
     .unwrap();
 
-    floo()
+    let output = floo()
+        .args(flags)
         .args([
-            "--json",
             "preflight",
             project.path().to_str().unwrap(),
             "--env",
             "prod",
         ])
         .env("HOME", home.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""valid":true"#))
-        .stdout(predicate::str::contains(r#""to_orphan""#))
-        .stdout(predicate::str::contains("app_xyz"))
-        .stdout(predicate::str::contains(r#""availability":"warm""#))
-        .stdout(predicate::str::contains(
-            r#""min_instances":"platform_default""#,
-        ))
-        .stdout(predicate::str::contains("bills continuously"))
-        .stdout(predicate::str::contains(r#""destructive":true"#));
+        .output()
+        .unwrap();
     _m_preflight.assert();
+    output
+}
+
+#[test]
+fn test_preflight_json_preserves_complete_server_plan() {
+    let plan: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/preflight_plan.json")).unwrap();
+    let output = preflight_with_plan(&plan, &["--json"]);
+    assert!(output.status.success(), "{:?}", output);
+    let payload: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["data"]["valid"], true);
+    assert_eq!(payload["data"]["plan"], plan);
+}
+
+#[test]
+fn test_preflight_human_renders_every_bin_deadline_and_exact_removal_command() {
+    let plan = serde_json::from_str(include_str!("fixtures/preflight_plan.json")).unwrap();
+    let output = preflight_with_plan(&plan, &[]);
+    assert!(output.status.success(), "{:?}", output);
+    assert!(output.stdout.is_empty());
+    let text = String::from_utf8(output.stderr).unwrap();
+    assert!(text.contains("Will provision on next deploy:\n    storage/assets"));
+    assert!(text.contains("Will retry on next deploy:\n    redis/cache"));
+    assert!(text.contains("Will retain:\n    postgres/primary"));
+    assert!(text.contains("Orphaned (deploy will NOT remove):\n    postgres/default"));
+    assert!(text.contains("Proposed deprovisions:\n    redis/retired_cache"));
+    assert!(text.contains("Deprovisioning in flight:\n    storage/old_assets"));
+    assert!(text.contains("risk: tier 3, destructive=true, data_loss=true"));
+    assert!(text.contains("data impact: Postgres schema app_xyz and role floo_app_xyz"));
+    assert!(text.contains("floo services remove postgres --app my-app --name default"));
+    assert!(text.contains("floo services remove redis --app my-app --name retired_cache"));
+    assert!(text.contains("Scheduled deprovisions (pending teardown deadlines):\n    redis/retired_cache\n      dev: 2026-09-14T12:34:56.123456Z\n      prod: 2026-09-20T08:00:00+00:00\n    postgres/dev_only\n      dev: 2026-09-15T01:00:00Z\n    storage/prod_only\n      prod: 2026-09-21T02:00:00Z"));
+    assert!(text.contains("Server-resolved runtime plan:"));
+    assert!(text.contains("web (prod): warm, 1-3 instances [platform default]"));
+}
+
+#[test]
+fn test_preflight_omitted_bins_do_not_invent_actions_or_deadlines() {
+    let output = preflight_with_plan(&serde_json::json!({}), &[]);
+    assert!(output.status.success(), "{:?}", output);
+    let text = String::from_utf8(output.stderr).unwrap();
+    assert!(!text.contains("Will provision"));
+    assert!(!text.contains("Will retry"));
+    assert!(!text.contains("Will retain"));
+    assert!(!text.contains("Orphaned ("));
+    assert!(!text.contains("Proposed deprovisions"));
+    assert!(!text.contains("Deprovisioning in flight"));
+    assert!(!text.contains("Scheduled deprovisions"));
+}
+
+#[test]
+fn test_preflight_missing_risk_rejects_incomplete_server_plan() {
+    let output = preflight_with_plan(
+        &serde_json::json!({
+            "managed_services": {"to_deprovision": [{"type": "redis", "name": "cache"}]}
+        }),
+        &["--json"],
+    );
+    assert!(!output.status.success());
+    let payload: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["success"], false);
+    assert!(payload["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("Failed to parse response"));
 }
 
 #[test]

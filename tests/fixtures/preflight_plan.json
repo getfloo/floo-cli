@@ -1,0 +1,94 @@
+{
+  "managed_services": {
+    "to_provision": [
+      {
+        "type": "storage",
+        "name": "assets",
+        "tier": "basic",
+        "managed_service_id": null,
+        "risk": {"tier":1,"destructive":false,"data_loss":false},
+        "data_impact": null
+      }
+    ],
+    "to_retry": [
+      {
+        "type": "redis",
+        "name": "cache",
+        "tier": "basic",
+        "managed_service_id": "00000000-0000-0000-0000-000000000002",
+        "risk": {"tier":1,"destructive":false,"data_loss":false},
+        "data_impact": null
+      }
+    ],
+    "to_retain": [
+      {
+        "type": "postgres",
+        "name": "primary",
+        "tier": "basic",
+        "managed_service_id": "00000000-0000-0000-0000-000000000003",
+        "risk": {"tier":1,"destructive":false,"data_loss":false},
+        "data_impact": null
+      }
+    ],
+    "to_orphan": [
+      {
+        "type": "postgres",
+        "name": "default",
+        "tier": "basic",
+        "managed_service_id": "00000000-0000-0000-0000-000000000001",
+        "risk": {"tier":1,"destructive":false,"data_loss":false},
+        "data_impact": "Postgres schema app_xyz and role floo_app_xyz"
+      }
+    ],
+    "to_deprovision": [
+      {
+        "type": "redis",
+        "name": "retired_cache",
+        "tier": "basic",
+        "managed_service_id": "00000000-0000-0000-0000-000000000004",
+        "risk": {"tier":3,"destructive":true,"data_loss":true},
+        "data_impact": "Redis keys in retired_cache"
+      }
+    ],
+    "in_flight_deprovisioning": [
+      {
+        "type": "storage",
+        "name": "old_assets",
+        "tier": "basic",
+        "managed_service_id": "00000000-0000-0000-0000-000000000005",
+        "risk": {"tier":1,"destructive":false,"data_loss":false},
+        "data_impact": null
+      }
+    ]
+  },
+  "runtime_services": [
+    {
+      "name": "web",
+      "runtime_plan": {
+        "environment": "prod",
+        "service_type": "web",
+        "availability": "warm",
+        "declared": {"cpu":null,"memory":null,"min_instances":null,"max_instances":null,"instances":null},
+        "effective": {"cpu":"1","memory":"512Mi","min_instances":1,"max_instances":3,"instances":null},
+        "sources": {"cpu":"platform_default","memory":"platform_default","min_instances":"platform_default","max_instances":"platform_default","instances":null},
+        "cpu_allocation": "request_based",
+        "cpu_allocation_reason": "http_request_scoped",
+        "warnings": [
+          "Warm production baseline bills continuously; set min_instances = 0 in floo.app.toml to opt out."
+        ],
+        "components": [
+          {"name":"application","cpu":"1","memory":"512Mi","source":"platform_default"}
+        ],
+        "instance_total": {"cpu":"1","memory":"512Mi"}
+      }
+    }
+  ],
+  "summary": {"action_count":3,"destructive_count":1,"estimated_duration_seconds":60},
+  "destructive": true,
+  "data_loss": true,
+  "scheduled_deprovisions": [
+    {"type":"redis","name":"retired_cache","managed_service_id":"00000000-0000-0000-0000-000000000004","dev_deprovision_after":"2026-09-14T12:34:56.123456Z","prod_deprovision_after":"2026-09-20T08:00:00+00:00"},
+    {"type":"postgres","name":"dev_only","managed_service_id":"00000000-0000-0000-0000-000000000006","dev_deprovision_after":"2026-09-15T01:00:00Z","prod_deprovision_after":null},
+    {"type":"storage","name":"prod_only","managed_service_id":"00000000-0000-0000-0000-000000000007","dev_deprovision_after":null,"prod_deprovision_after":"2026-09-21T02:00:00Z"}
+  ]
+}

@@ -872,6 +872,14 @@ pub struct PreflightRuntimeService {
     pub runtime_plan: ApiRuntimePlan,
 }
 
+/// Risk reported by preflight and destructive-command previews.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RiskMetadata {
+    pub destructive: bool,
+    pub data_loss: bool,
+    pub tier: u8,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ManagedServicePlanItem {
     #[serde(rename = "type")]
@@ -880,6 +888,7 @@ pub struct ManagedServicePlanItem {
     pub tier: Option<String>,
     pub managed_service_id: Option<String>,
     pub data_impact: Option<String>,
+    pub risk: RiskMetadata,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -887,9 +896,13 @@ pub struct ManagedServicesPlan {
     #[serde(default)]
     pub to_provision: Vec<ManagedServicePlanItem>,
     #[serde(default)]
+    pub to_retry: Vec<ManagedServicePlanItem>,
+    #[serde(default)]
     pub to_retain: Vec<ManagedServicePlanItem>,
     #[serde(default)]
     pub to_orphan: Vec<ManagedServicePlanItem>,
+    #[serde(default)]
+    pub to_deprovision: Vec<ManagedServicePlanItem>,
     #[serde(default)]
     pub in_flight_deprovisioning: Vec<ManagedServicePlanItem>,
 }
@@ -903,12 +916,25 @@ pub struct PlanSummary {
     pub estimated_duration_seconds: Option<u32>,
 }
 
+/// A pending teardown with independent dev and prod deadlines from the server.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ScheduledDeprovisionItem {
+    #[serde(rename = "type")]
+    pub service_type: String,
+    pub name: String,
+    pub managed_service_id: String,
+    pub dev_deprovision_after: Option<String>,
+    pub prod_deprovision_after: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct PreflightPlan {
     #[serde(default)]
     pub managed_services: ManagedServicesPlan,
     #[serde(default)]
     pub runtime_services: Vec<PreflightRuntimeService>,
+    #[serde(default)]
+    pub scheduled_deprovisions: Vec<ScheduledDeprovisionItem>,
     #[serde(default)]
     pub summary: PlanSummary,
     #[serde(default)]
