@@ -6377,7 +6377,7 @@ fn test_version_human_reports_up_to_date_after_successful_check() {
     let skill_dir = home.path().join("skills").join("floo");
     std::fs::create_dir_all(&skill_dir).unwrap();
     let skill_path = skill_dir.join("SKILL.md");
-    std::fs::write(&skill_path, include_str!("../skills/floo/SKILL.md")).unwrap();
+    std::fs::write(&skill_path, include_str!("../plugin/skills/floo/SKILL.md")).unwrap();
     for (name, content) in [
         (
             "floo-services",

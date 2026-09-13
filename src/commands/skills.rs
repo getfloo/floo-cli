@@ -10,7 +10,7 @@ use crate::constants::VERSION;
 use crate::errors::ErrorCode;
 use crate::output;
 
-const SKILL_CONTENT: &str = include_str!("../../skills/floo/SKILL.md");
+const SKILL_CONTENT: &str = include_str!("../../plugin/skills/floo/SKILL.md");
 const SKILL_SERVICES: &str = include_str!("../../plugin/skills/floo-services/SKILL.md");
 const SKILL_SECURITY: &str = include_str!("../../plugin/skills/floo-security/SKILL.md");
 

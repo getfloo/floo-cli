@@ -23,6 +23,27 @@ fn test_help() {
         ));
 }
 
+#[test]
+fn printed_skill_preserves_manifest_lifecycle_rules() {
+    let skill = include_str!("../plugin/skills/floo/SKILL.md");
+    assert!(skill.contains("names are identities."));
+    assert!(skill.contains("rename does not migrate."));
+    assert!(skill.contains("removing a block does not retire the runtime."));
+    assert!(skill.contains("services remove does not edit the manifest."));
+    assert!(skill.contains("always `[services.NAME.env]` in `floo.app.toml`."));
+    assert!(skill.contains(
+        "verify by comparing `services list --json` names to the manifest and treating a partial read as failure."
+    ));
+    assert!(skill.contains("report retained resources rather than claiming cleanup."));
+
+    floo()
+        .env("FLOO_NO_UPDATE_CHECK", "1")
+        .args(["skills", "install", "--print"])
+        .assert()
+        .success()
+        .stdout(skill);
+}
+
 /// Assert stdout contains a line that, when trimmed, equals exactly `tag`.
 /// The regression test for `floo --version`'s stdout output needs to pin
 /// the EXACT content, not just a substring — `contains("0.0.0-dev")` would

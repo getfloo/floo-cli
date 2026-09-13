@@ -411,9 +411,7 @@ fn validate_path_and_options(invocation: &str) -> Result<(), String> {
 fn first_party_guidance_matches_clap() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut markdown = vec![root.join("README.md")];
-    for directory in ["skills", "plugin/skills"] {
-        collect_markdown_files(&root.join(directory), &mut markdown);
-    }
+    collect_markdown_files(&root.join("plugin/skills"), &mut markdown);
     if let Some(external_root) = std::env::var_os("FLOO_EXTERNAL_GUIDANCE_DIR") {
         let external_root = PathBuf::from(external_root);
         assert!(
@@ -564,15 +562,4 @@ fn guidance_validator_skips_pr_comment_commands() {
         &mut plain,
     );
     assert_eq!(plain.len(), 1);
-}
-
-#[test]
-fn installed_and_plugin_routers_match() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let installed = fs::read_to_string(root.join("skills/floo/SKILL.md")).unwrap();
-    let plugin = fs::read_to_string(root.join("plugin/skills/floo/SKILL.md")).unwrap();
-    assert_eq!(
-        installed, plugin,
-        "the installed and plugin floo routers must remain one policy"
-    );
 }

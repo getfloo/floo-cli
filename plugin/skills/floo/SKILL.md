@@ -6,7 +6,7 @@ user-invocable: false
 
 # floo CLI
 
-The installed `floo` binary is the version-matched source for command syntax. Check it before relying on remembered flags. Platform guidance lives at https://getfloo.com/docs; `floo docs <topic>` prints the canonical page for a topic so the binary and the site cannot disagree.
+The installed `floo` binary is the version-matched source for command syntax. Check it before relying on remembered flags. Platform guidance lives at https://getfloo.com/docs; `floo docs <topic>` prints a URL, not the page content.
 
 ## Discover before acting
 
@@ -15,9 +15,9 @@ Use these local surfaces in order:
 1. `floo commands --json` for the machine-readable command tree.
 2. `floo <command> --help` for exact flags, arguments, and examples.
 3. `floo docs --json` for the topic catalog and its documentation URLs.
-4. `floo docs <topic> --json` for version-matched platform guidance.
+4. `floo docs <topic> --json` for the topic's documentation URL and metadata.
 
-The JSON docs index includes `schema_version`, `cli_version`, topic summaries, and aliases. If the installed binary lacks a needed capability, run `floo update` and check again. Use getfloo.com only when the bundled knowledge is insufficient and website access is permitted.
+The JSON docs index includes `schema_version`, `cli_version`, topic summaries, and aliases. These describe the CLI response, not a manifest schema or version-pinned documentation. `floo docs config --json` returns an unversioned URL, not a schema. The config topic has the alias `app-toml`; there is no `manifest` topic. No platform knowledge articles are bundled. Read the linked page only when website access is permitted; otherwise report that guidance is unavailable. If the installed binary lacks a needed capability, run `floo update` and check again.
 
 For automation, pass `--json`. JSON responses go to stdout; human output goes to stderr. Parse the response envelope instead of screen-scraping prose.
 
@@ -41,15 +41,27 @@ Deploys are git-driven:
 - The CLI never uploads source and `floo init` only writes local config.
 - For a user-owned GitHub repo, `floo apps github connect` creates the app and triggers its first deploy
   from GitHub. Run preflight, commit, and push generated config before connect.
-- `floo redeploy` is for a no-code rebuild from connected GitHub source, such as applying changed environment values.
+- `floo redeploy --app <app>` restarts existing images with fresh server-side env values; it does not rebuild or read local env files.
+- `floo redeploy --app <app> --rebuild` rebuilds the current GitHub default-branch HEAD and reparses immutable contracts. If a restart reports an unavailable immutable contract, use the exact rebuild command it returns.
+- To re-sync configured local `env_file` values, run `floo redeploy --sync-env` from the project directory without `--app`. With `--app`, `--sync-env` has no effect. Redeploy requires an existing dev deploy; push code changes through git.
 
 There is no normal deploy command. Validate with `floo preflight`, push through git, then observe with the current `deploys` and `logs` help surfaces.
 
 ## Source of truth
 
-Auditable app shape and policy belong in `floo.app.toml` and move through git. This includes services, routes, access policy, cron, domain bindings, and managed-service declarations supported by the installed version. Opaque secret values stay outside git and are written through the CLI. Stateful resources and external bindings have explicit CLI lifecycle actions; omitting a declaration never grants permission to destroy stored data.
+Auditable app shape and policy belong in `floo.app.toml` and move through git. This includes services, routes, access policy, cron, domain bindings, and managed-service declarations supported by the installed version. Opaque secret values stay outside git and are written through the CLI.
 
 When older projects use a legacy authoring surface, follow the migration guidance in `floo docs config` or `floo docs services`. Do not create a second write path for the same state.
+
+## Manifest lifecycle
+
+- names are identities. Treat each `[services.NAME]` name as a distinct service.
+- rename does not migrate. Rename is create+remove, with no automatic data migration or retirement of the old service.
+- removing a block does not retire the runtime. No consumer command retires an app service; `floo services remove` targets managed resources only.
+- services remove does not edit the manifest. Leaving a managed-service declaration means the next push re-provisions it. `enabled=false` is a removal proposal, not proof of cleanup or authorization to destroy data.
+- always `[services.NAME.env]` in `floo.app.toml`. This also applies to single-service apps; do not use top-level `[env]` for their contracts.
+- verify by comparing `services list --json` names to the manifest and treating a partial read as failure. Run `floo services list --app <app> --env <env> --json` and compare both `app_services` and `managed_services` names with their declarations, reporting missing and extra names. A `running` status can be inherited from the environment deploy and does not prove per-service health. Managed-list failure can appear as an empty list in success JSON, with its warning suppressed in JSON mode. Repeat the read without `--json` to check for a partial-view warning; if completeness is uncertain, stop and report verification failure.
+- report retained resources rather than claiming cleanup. Cron removal leaves the Cloud Run Job (getfloo/floo#1371); name retained app services, managed resources, and jobs explicitly, and report anything whose retention could not be verified.
 
 ## Audit every mutation
 

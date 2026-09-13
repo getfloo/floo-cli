@@ -104,7 +104,7 @@ The installed binary is the version-matched offline knowledge pack:
 - Clap definitions and `after_help` examples in `src/cli.rs` own exact syntax.
 - `docs/offline/*.md` owns on-demand platform guidance.
 - The typed registry in `src/commands/docs.rs` owns topic names, aliases, summaries, and JSON discovery.
-- `skills/floo/SKILL.md` and `plugin/skills/**/SKILL.md` stay compact and route agents to those local surfaces while preserving durable safety policy.
+- `plugin/skills/**/SKILL.md` stay compact and route agents to those local surfaces while preserving durable safety policy; the CLI embeds the same files for installation and refresh.
 - `src/commands/command_tree.rs` owns the machine-readable command catalog.
 
 When behavior changes, update every affected offline topic in the same PR. Do not copy long-form command reference back into a skill or a Rust string. The guidance validator scans README, every offline topic, every bundled skill, Clap help strings, and production Rust strings against the live Clap tree.

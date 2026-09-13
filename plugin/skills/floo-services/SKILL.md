@@ -5,11 +5,11 @@ description: floo service, database, cache, storage, cron, and service-routing s
 
 # floo services
 
-Use the installed CLI as the version-matched authority:
+Read the core floo skill's Manifest lifecycle section before changing or auditing services. Use the installed CLI for version-matched syntax and documentation discovery:
 
 1. Read `floo docs services --json`.
 2. Read `floo docs scaling --json` before choosing HTTP availability or worker count.
-3. Read `floo docs config --json` for the current declaration schema.
+3. Use `floo docs config --json` to find the configuration documentation URL; it does not return a declaration schema.
 4. Inspect exact command syntax with `floo services --help` and the selected subcommand's help.
 5. Run `floo preflight --json` before pushing config or completing an operational change.
 
@@ -42,7 +42,7 @@ Use parameterized database queries and least-privilege application roles. Do not
 
 - Config change: `floo preflight --json`, then inspect the diff before pushing.
 - Operational change: use `--preflight` when supported, execute only after the preview matches intent, then use the resource's list/show command.
-- Git-triggered deploy: watch the deploy, inspect logs, and confirm the resource is healthy.
+- Git-triggered deploy: watch the deploy, inspect logs, and follow the core floo skill's manifest lifecycle verification, including missing/extra names and partial-read failure.
 - Destructive service action: inspect exact help and current resource identity, then obtain explicit authorization for that exact app, environment, and service.
 
 For cron syntax and operations, use `floo docs cron`. For preview database isolation, use `floo docs previews`. For outbound network constraints, use `floo docs egress`.
