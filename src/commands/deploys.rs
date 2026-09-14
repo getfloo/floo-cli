@@ -20,7 +20,8 @@ use crate::output;
 /// latest entry in `list_deploys` / `get_deploy`). Emits derived phase
 /// booleans the user can branch on without parsing build logs:
 ///
-/// - `image_built` — the deploy moved past the build phase
+/// - `image_built` — true for a successful aggregate build step, false when
+///   skipped, unknown otherwise; not a claim that every service was rebuilt
 /// - `service_ready` — Cloud Run is serving the new revision
 /// - `host_bound` — the gateway URL is wired and the deploy is LIVE
 ///
@@ -81,10 +82,14 @@ pub fn status(app: Option<&str>, deploy_id: Option<&str>) {
     let gateway_url = app_info.url.as_deref().or(deploy.url.as_deref());
     let commit_short = deploy.commit_sha.as_deref().map(super::short_sha);
 
-    let image_built = matches!(
-        deploy_status,
-        "deploying" | "configuring_routing" | "live" | "superseded"
-    );
+    let build_step = deploy.steps.iter().find(|step| step.name == "build_image");
+    let image_built = match build_step.map(|step| step.status.as_str()) {
+        Some("success") => Some(true),
+        Some("skipped") => Some(false),
+        // A failed multi-service build may already have built some images.
+        // Missing or incomplete step evidence cannot answer this boolean.
+        _ => None,
+    };
     let service_ready = matches!(deploy_status, "live");
     // host_bound is the strict signal: the gateway URL is wired AND the
     // deploy is the one currently serving. A deploy that "looks live"
@@ -139,11 +144,14 @@ pub fn status(app: Option<&str>, deploy_id: Option<&str>) {
         "  url:           {}",
         gateway_url.unwrap_or("\u{2014}")
     ));
-    output::dim_line(&format!("  image_built:   {}", image_built));
+    output::dim_line(&format!(
+        "  image_built:   {}",
+        image_built.map_or("unknown", |built| if built { "true" } else { "false" })
+    ));
     output::dim_line(&format!("  service_ready: {}", service_ready));
     output::dim_line(&format!("  host_bound:    {}", host_bound));
     output::dim_line(&format!(
-        "  duration:      {}",
+        "  deploy duration: {}",
         format_duration_ms(deploy.duration_ms)
     ));
     if let Some(reason) = failure_reason(&deploy) {

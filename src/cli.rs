@@ -1478,6 +1478,11 @@ pub enum DeploysSubcommands {
     /// audit payloads, or env-var values. Use this from agents and
     /// scripts that need to know "what state is the deploy in?" without
     /// risking secret exfiltration through verbose log output.
+    ///
+    /// image_built is true when the aggregate build step succeeded, false when
+    /// skipped (for example, an inherited-image restart), and null when evidence
+    /// is missing or inconclusive. A multi-service build may reuse some images.
+    /// duration_ms is the entire deploy attempt, including scheduling and rollout.
     Status {
         /// App name or ID (uses config file if omitted).
         #[arg(short, long)]
