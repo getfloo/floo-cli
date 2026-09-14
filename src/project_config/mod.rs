@@ -71,7 +71,7 @@ pub(crate) use app_config::worker_command_collisions;
 pub use app_config::AppServiceType;
 pub use app_config::{
     load_app_config, managed_block_line, write_app_config_with_header, AppAccessMode,
-    AppFileAppSection, AppFileConfig, AppServiceEntry, GitHubConfig, ManagedBlock,
+    AppFileAppSection, AppFileConfig, AppServiceEntry, ManagedBlock,
 };
 pub use discover::{
     discover_managed_services, discover_services, filter_services, ManagedServiceDeclaration,
@@ -86,19 +86,6 @@ pub fn load_service_env_contract(
     dir: &std::path::Path,
 ) -> Result<Option<ServiceEnvContract>, crate::errors::FlooError> {
     Ok(load_service_config(dir)?.and_then(|cfg| cfg.env))
-}
-
-/// Wire-format representation of a cron job sent to the API.
-///
-/// Flattens `AppFileConfig.cron` HashMap<name, CronJobConfig> into a list
-/// where the name is included as a field (matching the API's `CronJobDefinition` schema).
-#[derive(Debug, serde::Serialize, Clone)]
-pub struct CronJobEntry {
-    pub name: String,
-    pub schedule: String,
-    pub command: String,
-    pub service: String,
-    pub timeout: u32,
 }
 
 /// Validate a service name for DNS-label compatibility.

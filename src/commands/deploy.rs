@@ -777,6 +777,15 @@ pub fn deploy(
     sync_env: bool,
     skip_migrations: bool,
 ) {
+    if sync_env && !services_filter.is_empty() {
+        output::error(
+            "--sync-env cannot be combined with --service (or --services).",
+            &ErrorCode::InvalidArguments,
+            Some("Run --sync-env from the project directory without --app or --service."),
+        );
+        process::exit(1);
+    }
+
     // Restart path reuses the existing image and never runs migrations,
     // so `--skip-migrations` only makes sense on a rebuild path. Reject
     // the combination loudly rather than silently dropping the flag.
@@ -864,7 +873,7 @@ pub fn deploy(
         PreflightMode::Deploy
     };
     let (resolved, services, detection) =
-        run_preflight(path, app, services_filter, "dev".to_string(), mode);
+        run_preflight(path, app, services_filter.clone(), "dev".to_string(), mode);
     if output::is_dry_run_mode() {
         return;
     }
@@ -927,68 +936,12 @@ pub fn deploy(
         process::exit(1);
     }
 
-    // Extract access_mode: [environments.dev] override > [app] level > service_config
-    let access_mode: Option<AppAccessMode> = resolved
-        .app_config
-        .as_ref()
-        .and_then(|c| {
-            c.environments
-                .get("dev")
-                .and_then(|env| env.access_mode)
-                .or(c.app.access_mode)
-        })
-        .or_else(|| {
-            resolved
-                .service_config
-                .as_ref()
-                .and_then(|c| c.app.access_mode)
-        });
-
-    // Extract auth redirect URIs from [auth] toml section
-    let auth_redirect_uris: Option<Vec<String>> = resolved
-        .app_config
-        .as_ref()
-        .and_then(|c| c.auth.as_ref())
-        .and_then(|auth| auth.redirect_uris.clone());
-
-    // Extract cron job definitions from [cron] toml section
-    let cron_entries: Vec<crate::project_config::CronJobEntry> = resolved
-        .app_config
-        .as_ref()
-        .map(|c| {
-            c.cron
-                .iter()
-                .map(|(name, cfg)| crate::project_config::CronJobEntry {
-                    name: name.clone(),
-                    schedule: cfg.schedule.clone(),
-                    command: cfg.command.clone(),
-                    service: cfg.service.clone(),
-                    timeout: cfg.timeout.unwrap_or(300),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let cron_jobs_arg = if cron_entries.is_empty() {
-        None
-    } else {
-        Some(cron_entries.as_slice())
-    };
-
-    // Extract [github] config
-    let github_config = resolved.app_config.as_ref().and_then(|c| c.github.as_ref());
-
-    // Deploy
-    let svc_slice = Some(services.as_slice());
     let spinner = output::Spinner::new("Deploying...");
     let mut deploy_data = match client.create_deploy(
         &app_id,
         &detection.runtime,
         detection.framework.as_deref(),
-        svc_slice,
-        access_mode.as_ref().map(|m| m.as_str()),
-        auth_redirect_uris.as_deref(),
-        cron_jobs_arg,
-        github_config,
+        &services_filter,
         skip_migrations,
     ) {
         Ok(d) => {
@@ -1091,9 +1044,6 @@ pub fn deploy(
         if let Some(ref password) = deploy_data.generated_password {
             output::info(&format!("  Generated password: {password}"), None);
             output::info("  To retrieve later: floo apps password <name>", None);
-        }
-        if let Some(ref mode) = access_mode {
-            output::info(&format!("  Access: {}", mode.as_str()), None);
         }
         // Closes feedback c9b70eb5 — surface the auto-deploy contract the
         // moment a manual `floo redeploy` finishes, so the user knows the
@@ -1321,14 +1271,9 @@ fn deploy_rebuild(
         return;
     }
 
-    let svcs: Option<&[String]> = if services_filter.is_empty() {
-        None
-    } else {
-        Some(services_filter)
-    };
-
     let spinner = output::Spinner::new("Rebuilding...");
-    let mut deploy_data = match client.rebuild_app(app_id, runtime, svcs, skip_migrations) {
+    let result = client.create_deploy(app_id, runtime, None, services_filter, skip_migrations);
+    let mut deploy_data = match result {
         Ok(d) => {
             spinner.finish();
             d
@@ -2066,9 +2011,7 @@ fn generate_security_findings(
     let mut findings: Vec<PreflightFinding> = Vec::new();
 
     // Check access_mode — note when no auth is configured.
-    // Mirror what the CLI actually sends to the API: the deploy resolves
-    // env-override-wins for the body.access_mode it POSTs, so the note matches
-    // the value the deploy will use.
+    // Inspect local config with environment overrides; the server reads the committed manifest.
     let access_mode = resolved.app_config.as_ref().and_then(|c| {
         c.environments
             .get("dev")
@@ -3282,7 +3225,7 @@ mod tests {
     }
 
     #[test]
-    fn test_max_request_body_mb_manifest_reaches_deploy_request() {
+    fn test_max_request_body_mb_manifest_resource_precedence() {
         output::set_json_mode(false);
         output::set_dry_run_mode(false);
         // Exercise all discovery paths and each level of resource precedence.
@@ -3349,39 +3292,6 @@ port = 8000
             let services = project_config::discover_services(&resolved).unwrap();
             assert_eq!(services.len(), 1);
             assert_eq!(services[0].max_request_body_mb, expected, "{mode}");
-            let mut server = mockito::Server::new();
-            let mut body = serde_json::json!({
-                "runtime": "python",
-                "services": [{
-                    "name": "api", "service_type": "api", "path": path,
-                    "port": 8000, "ingress": "public"
-                }]
-            });
-            if let Some(value) = expected {
-                body["services"][0]["max_request_body_mb"] = serde_json::json!(value);
-            }
-            let request = server
-                .mock("POST", "/v1/apps/app-1/deploys")
-                .match_body(mockito::Matcher::Json(body))
-                .with_status(200)
-                .with_body(
-                    r#"{"id":"dep-1","status":"pending","created_at":"2024-01-01T00:00:00Z"}"#,
-                )
-                .create();
-            mock_client(&server.url())
-                .create_deploy(
-                    "app-1",
-                    "python",
-                    None,
-                    Some(&services),
-                    None,
-                    None,
-                    None,
-                    None,
-                    false,
-                )
-                .unwrap();
-            request.assert();
         }
     }
 
