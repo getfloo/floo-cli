@@ -493,7 +493,7 @@ pub fn remove(service_type: &str, app: Option<&str>, name: &str, confirmed: bool
     ];
     if !target.env_var_keys.is_empty() {
         preamble.push(format!(
-            "    env vars removed from runtime: {}",
+            "    env vars removed from stored configuration: {}. Already-deployed containers keep their values until redeployed.",
             target.env_var_keys.join(", ")
         ));
     }
@@ -517,22 +517,45 @@ pub fn remove(service_type: &str, app: Option<&str>, name: &str, confirmed: bool
     }
 
     if let Err(e) = client.delete_managed_service(&app_id, &target.id) {
-        output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+        let suggestion = if e.status_code == 409 && e.code == "MANAGED_SERVICE_STILL_DECLARED" {
+            match local_managed_block(service_type, name, &app_name) {
+                Ok(location) => location
+                    .map(|location| format!("Remove {location}, then deploy without the block.")),
+                Err(error) => Some(format!("Could not inspect the local manifest: {error}")),
+            }
+        } else {
+            None
+        };
+        output::error(
+            &e.message,
+            &ErrorCode::from_api(&e.code),
+            suggestion.as_deref(),
+        );
         process::exit(1);
     }
 
+    let warning = match local_managed_block(service_type, name, &app_name) {
+        Ok(location) => location.map(|location| {
+            format!("{location} is still declared. The next push will re-provision it unless the block is removed.")
+        }),
+        Err(error) => Some(format!("Service destroyed, but could not inspect the local manifest: {error}")),
+    };
     let risk: RiskMetadata = Tier::Three.into();
     if output::is_json_mode() {
+        let mut data = serde_json::json!({
+            "type": service_type,
+            "name": name,
+            "app": app_name,
+            "destructive": risk.destructive,
+            "data_loss": risk.data_loss,
+            "tier": risk.tier,
+        });
+        if let Some(warning) = warning {
+            data["warning"] = serde_json::json!(warning);
+        }
         output::success(
             &format!("Destroyed managed {service_type}/{name} on {app_name}"),
-            Some(serde_json::json!({
-                "type": service_type,
-                "name": name,
-                "app": app_name,
-                "destructive": risk.destructive,
-                "data_loss": risk.data_loss,
-                "tier": risk.tier,
-            })),
+            Some(data),
         );
         return;
     }
@@ -541,4 +564,55 @@ pub fn remove(service_type: &str, app: Option<&str>, name: &str, confirmed: bool
         &format!("\u{2713} Destroyed managed {service_type}/{name} on {app_name}."),
         None,
     );
+    if let Some(warning) = warning {
+        output::warn(&warning);
+    }
+}
+
+fn local_managed_block(
+    service_type: &str,
+    name: &str,
+    app_name: &str,
+) -> Result<Option<String>, crate::errors::FlooError> {
+    let cwd = std::env::current_dir()
+        .map_err(|error| crate::errors::FlooError::new(ErrorCode::CwdError, error.to_string()))?;
+    let resolved = crate::project_config::resolve_app_manifest_context(&cwd, Some(app_name))?;
+    let Some(ref config) = resolved.app_config else {
+        return Ok(None);
+    };
+    if config.app.name != app_name
+        || !crate::project_config::discover_managed_services(&resolved)
+            .iter()
+            .any(|declaration| declaration.name == name && declaration.service_type == service_type)
+    {
+        return Ok(None);
+    }
+    let path = resolved
+        .config_dir
+        .join(crate::project_config::APP_CONFIG_FILE);
+    let (block, label) = if config
+        .managed
+        .get(name)
+        .is_some_and(|block| block.service_type == service_type)
+    {
+        (
+            crate::project_config::ManagedBlock::Named(name),
+            format!("managed.{name}"),
+        )
+    } else {
+        (
+            crate::project_config::ManagedBlock::Legacy(service_type),
+            service_type.to_string(),
+        )
+    };
+    let line = crate::project_config::managed_block_line(&path, block)?.ok_or_else(|| {
+        crate::errors::FlooError::new(
+            ErrorCode::InvalidProjectConfig,
+            format!(
+                "[{label}] disappeared from {} during inspection",
+                path.display()
+            ),
+        )
+    })?;
+    Ok(Some(format!("[{label}] at {}:{line}", path.display())))
 }

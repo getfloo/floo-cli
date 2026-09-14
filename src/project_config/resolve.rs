@@ -24,6 +24,27 @@ pub struct ResolvedApp {
 
 /// Find the nearest manifest within the git boundary; the flag overrides only its app name.
 pub fn resolve_app_context(cwd: &Path, app_flag: Option<&str>) -> Result<ResolvedApp, FlooError> {
+    resolve_context(cwd, app_flag, ManifestScope::Nearest)
+}
+
+/// Find the app manifest above delegated services without crossing the git boundary.
+pub fn resolve_app_manifest_context(
+    cwd: &Path,
+    app_flag: Option<&str>,
+) -> Result<ResolvedApp, FlooError> {
+    resolve_context(cwd, app_flag, ManifestScope::App)
+}
+
+enum ManifestScope {
+    Nearest,
+    App,
+}
+
+fn resolve_context(
+    cwd: &Path,
+    app_flag: Option<&str>,
+    scope: ManifestScope,
+) -> Result<ResolvedApp, FlooError> {
     for current in cwd.ancestors().take(MAX_WALK_UP_LEVELS) {
         if current.join(LEGACY_CONFIG_FILE).exists() {
             return Err(FlooError::with_suggestion(
@@ -42,9 +63,11 @@ pub fn resolve_app_context(cwd: &Path, app_flag: Option<&str>) -> Result<Resolve
                     "Set [app].name to the same value in both files.".to_string(),
                 ));
             }
-            (Some(service), _) => Some((&service.app.name, AppSource::ServiceFile)),
+            (Some(service), _) if matches!(scope, ManifestScope::Nearest) => {
+                Some((&service.app.name, AppSource::ServiceFile))
+            }
             (_, Some(app)) => Some((&app.app.name, AppSource::AppFile)),
-            (None, None) => None,
+            (_, None) => None,
         };
         if let Some((name, source)) = identity {
             return Ok(ResolvedApp {
