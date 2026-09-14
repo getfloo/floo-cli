@@ -1,0 +1,98 @@
+# Slice 2 key coverage; retired domain knobs are deliberately excluded.
+[app]
+name = "parity-app"
+access_mode = "accounts"
+[auth]
+access_policy = "invite"
+redirect_uris = ["https://example.com/callback"]
+[auth.branding]
+display_name = "Parity app"
+logo_url = "https://example.com/logo.png"
+accent_color = "#123456"
+[github]
+deploy_on_push = true
+preview_environments = true
+preview_ttl_hours = 24
+[preview]
+enabled = true
+ttl_hours = 24
+[preview.data]
+mode = "seed"
+seed_command = "./seed.sh"
+sanitize_command = "./sanitize.sh"
+[[routes]]
+path = "/"
+access = "accounts"
+api_key = true
+scope = "app:read"
+service = "web"
+[postgres]
+tier = "basic"
+enabled = true
+[redis]
+tier = "basic"
+enabled = false
+[storage]
+tier = "basic"
+enabled = true
+[managed.cache]
+type = "redis"
+tier = "basic"
+enabled = true
+[domains."app.example.com"]
+service = "web"
+[edge]
+rules = [{ action = "allow", cidr = "10.0.0.0/8" }]
+default_action = "deny"
+enabled = true
+[resources]
+cpu = "1"
+memory = "512Mi"
+min_instances = 0
+max_instances = 2
+max_request_body_mb = 10
+[services.web]
+type = "web"
+path = "."
+dockerfile = "Dockerfile"
+repo = "https://github.com/example/parity-app"
+port = 3000
+ingress = "public"
+env_file = ".env"
+cpu = "1"
+memory = "512Mi"
+min_instances = 0
+max_instances = 2
+max_request_body_mb = 20
+dev_command = "npm run dev"
+migrate_command = "./migrate.sh"
+command = "npm start"
+[services.web.env]
+required = ["APP_SETTING"]
+optional = ["EXTRA_SETTING"]
+managed = ["postgres", "redis:cache", "storage"]
+[services.worker]
+type = "worker"
+path = "worker"
+instances = 1
+command = "./worker.sh"
+[services.api]
+type = "api"
+path = "api"
+[services.api.resources]
+cpu = "1"
+memory = "512Mi"
+min_instances = 0
+max_instances = 2
+max_request_body_mb = 30
+[environments.preview]
+access_mode = "password"
+[environments.preview.edge]
+rules = [{ action = "deny", cidr = "192.0.2.0/24" }]
+default_action = "allow"
+enabled = false
+[cron.cleanup]
+schedule = "0 9 * * *"
+command = "./cleanup.sh"
+service = "web"
+timeout = 300

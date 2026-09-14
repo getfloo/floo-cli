@@ -50,6 +50,12 @@ pub struct AppFileConfig {
     pub auth: Option<AuthSection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub github: Option<GitHubConfig>,
+    /// Route tables pass through unchanged; the server owns their validation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub routes: Vec<toml::Table>,
+    /// Preview data and deprecated aliases are validated by the server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<toml::Table>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub postgres: Option<ManagedServiceSection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -85,6 +91,8 @@ pub struct AppFileConfig {
 pub struct ManagedServiceSection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
 }
 
 /// A `[managed.<name>]` block: a named instance of a managed service type.
@@ -170,6 +178,20 @@ pub struct AuthSection {
     pub access_policy: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub redirect_uris: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branding: Option<AuthBranding>,
+}
+
+/// Login-page branding; the server validates lengths, URLs, and colors.
+#[derive(Debug, Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct AuthBranding {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logo_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accent_color: Option<String>,
 }
 
 const VALID_ACCESS_POLICIES: &[&str] = &["invite", "domain", "open"];
@@ -1136,6 +1158,8 @@ type = "mysql"
             },
             auth: None,
             github: None,
+            routes: Vec::new(),
+            preview: None,
             postgres: None,
             redis: None,
             storage: None,

@@ -3283,6 +3283,58 @@ fn local_preflight(project: &std::path::Path) -> Command {
 }
 
 #[test]
+fn server_supported_keys_pass_preflight_and_deploy_validation() {
+    let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        include_str!("fixtures/server_supported_keys.toml"),
+    )
+    .unwrap();
+    std::fs::create_dir(project.path().join("api")).unwrap();
+    std::fs::create_dir(project.path().join("worker")).unwrap();
+    std::fs::write(project.path().join("Dockerfile"), "FROM scratch\n").unwrap();
+    std::fs::write(project.path().join(".env"), "APP_SETTING=example\n").unwrap();
+    std::fs::write(
+        project.path().join("api/floo.service.toml"),
+        r#"
+[app]
+name = "parity-app"
+[service]
+name = "api"
+type = "api"
+port = 8000
+command = "npm start"
+"#,
+    )
+    .unwrap();
+
+    let preflight = local_preflight(project.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""valid":true"#))
+        .get_output()
+        .stdout
+        .clone();
+    let payload: serde_json::Value = serde_json::from_slice(&preflight).unwrap();
+    assert_eq!(
+        payload["data"]["managed_services"],
+        serde_json::json!([
+            {"name": "postgres", "tier": "basic"},
+            {"name": "redis:cache", "tier": "basic"},
+            {"name": "storage", "tier": "basic"}
+        ])
+    );
+    floo()
+        .args(["--json", "redeploy", "--preflight"])
+        .current_dir(project.path())
+        .env("FLOO_CONFIG_DIR", project.path().join(".test-config"))
+        .env("FLOO_NO_UPDATE_CHECK", "1")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""valid":true"#));
+}
+
+#[test]
 fn test_preflight_does_not_walk_past_git_directory() {
     let parent = tempfile::TempDir::new().unwrap();
     std::fs::write(

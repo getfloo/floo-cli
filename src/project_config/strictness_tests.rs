@@ -56,6 +56,11 @@ rejects_app_key!(
     "auth.access_polciy"
 );
 rejects_app_key!(
+    rejects_branding_typo,
+    "[auth.branding]\ndisplay_nam = 'Example'",
+    "auth.branding.display_nam"
+);
+rejects_app_key!(
     rejects_postgres_typo,
     "[postgres]\ntire = 'small'",
     "postgres.tire"
@@ -186,4 +191,64 @@ fn accepts_supported_cron_fields() {
     .unwrap();
     let config = load_app_config(dir.path()).unwrap().unwrap();
     assert_eq!(config.cron["backup"].timeout, Some(900));
+}
+
+#[test]
+fn server_supported_app_keys_survive_roundtrip() {
+    let _guard = crate::output::GLOBAL_MODE_LOCK.lock().unwrap();
+    crate::output::set_json_mode(false);
+    crate::output::set_dry_run_mode(false);
+    let manifest = include_str!("../../tests/fixtures/server_supported_keys.toml");
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(dir.path().join(APP_CONFIG_FILE), manifest).unwrap();
+
+    let config = load_app_config(dir.path()).unwrap().unwrap();
+    let serialized = toml::to_string(&config).unwrap();
+    assert_eq!(
+        serialized.parse::<toml::Table>().unwrap(),
+        manifest.parse::<toml::Table>().unwrap()
+    );
+}
+
+#[test]
+fn route_and_preview_contents_remain_server_validated() {
+    let _guard = crate::output::GLOBAL_MODE_LOCK.lock().unwrap();
+    crate::output::set_json_mode(false);
+    crate::output::set_dry_run_mode(false);
+    let manifest = "[app]\nname = 'my-app'\n[[routes]]\nfuture_key = { nested = [1, 2] }\n[preview]\nfuture_key = false";
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(dir.path().join(APP_CONFIG_FILE), manifest).unwrap();
+
+    let config = load_app_config(dir.path()).unwrap().unwrap();
+    assert_eq!(
+        config.routes[0]["future_key"]["nested"][1].as_integer(),
+        Some(2)
+    );
+    assert_eq!(config.preview.unwrap()["future_key"].as_bool(), Some(false));
+}
+
+#[test]
+fn routes_reject_non_table_entries() {
+    let _guard = crate::output::GLOBAL_MODE_LOCK.lock().unwrap();
+    crate::output::set_json_mode(false);
+    crate::output::set_dry_run_mode(false);
+    let err = super::parse_config::<super::AppFileConfig>(
+        APP_CONFIG_FILE,
+        "routes = [1]\n[app]\nname = 'my-app'",
+    )
+    .unwrap_err();
+    assert!(err.message.contains("expected a map"), "{}", err.message);
+}
+
+#[test]
+fn preview_rejects_non_table_values() {
+    let _guard = crate::output::GLOBAL_MODE_LOCK.lock().unwrap();
+    crate::output::set_json_mode(false);
+    crate::output::set_dry_run_mode(false);
+    let err = super::parse_config::<super::AppFileConfig>(
+        APP_CONFIG_FILE,
+        "preview = false\n[app]\nname = 'my-app'",
+    )
+    .unwrap_err();
+    assert!(err.message.contains("expected a map"), "{}", err.message);
 }
