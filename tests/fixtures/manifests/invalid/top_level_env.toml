@@ -1,0 +1,6 @@
+# error-key: env
+[app]
+name = "parity-app"
+
+[env]
+APP_SETTING = "example"

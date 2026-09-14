@@ -1,0 +1,8 @@
+# error-key: crons
+[app]
+name = "parity-app"
+
+[crons.x]
+schedule = "0 9 * * *"
+command = "./backup.sh"
+service = "web"

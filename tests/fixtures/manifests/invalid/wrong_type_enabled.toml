@@ -1,0 +1,6 @@
+# error-key: postgres.enabled
+[app]
+name = "parity-app"
+
+[postgres]
+enabled = "true"

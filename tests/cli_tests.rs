@@ -3287,7 +3287,7 @@ fn server_supported_keys_pass_preflight_and_deploy_validation() {
     let project = tempfile::TempDir::new().unwrap();
     std::fs::write(
         project.path().join("floo.app.toml"),
-        include_str!("fixtures/server_supported_keys.toml"),
+        include_str!("fixtures/manifests/valid/server_supported_keys.toml"),
     )
     .unwrap();
     std::fs::create_dir(project.path().join("api")).unwrap();

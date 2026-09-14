@@ -1,0 +1,10 @@
+[app]
+name = "parity-app"
+
+[services.web]
+type = "web"
+path = "web"
+
+[services.api]
+type = "api"
+path = "api"
