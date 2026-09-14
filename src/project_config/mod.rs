@@ -70,8 +70,8 @@ pub(crate) use app_config::worker_command_collisions;
 #[cfg(test)]
 pub use app_config::AppServiceType;
 pub use app_config::{
-    load_app_config, write_app_config_with_header, AppAccessMode, AppFileAppSection, AppFileConfig,
-    AppServiceEntry, GitHubConfig,
+    load_app_config, managed_block_line, write_app_config_with_header, AppAccessMode,
+    AppFileAppSection, AppFileConfig, AppServiceEntry, GitHubConfig,
 };
 pub use discover::{
     discover_managed_services, discover_services, filter_services, ManagedServiceDeclaration,
