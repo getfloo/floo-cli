@@ -71,12 +71,12 @@ pub(crate) use app_config::worker_command_collisions;
 pub use app_config::AppServiceType;
 pub use app_config::{
     load_app_config, managed_block_line, write_app_config_with_header, AppAccessMode,
-    AppFileAppSection, AppFileConfig, AppServiceEntry, GitHubConfig,
+    AppFileAppSection, AppFileConfig, AppServiceEntry, GitHubConfig, ManagedBlock,
 };
 pub use discover::{
     discover_managed_services, discover_services, filter_services, ManagedServiceDeclaration,
 };
-pub use resolve::{resolve_app_context, AppSource, ResolvedApp};
+pub use resolve::{resolve_app_context, resolve_app_manifest_context, AppSource, ResolvedApp};
 pub use service_config::{
     load_service_config, managed_env_attachment_keys, ServiceConfig, ServiceEnvContract,
     ServiceIngress, ServiceType,

@@ -7189,6 +7189,177 @@ fn test_services_remove_success_warns_on_stderr_with_manifest_block() {
 }
 
 #[test]
+fn test_services_remove_success_warns_at_legacy_redis_header() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let list = mock_managed_lookup(
+        &mut server,
+        200,
+        r#"{"managed_services":[{"id":"ms-redis","app_id":"app-uuid-1234","type":"redis","name":"default","status":"ready"}],"total":1}"#,
+    );
+    let delete = server
+        .mock(
+            "DELETE",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services/ms-redis").as_str(),
+        )
+        .with_status(204)
+        .create();
+    let project = TempDir::new().unwrap();
+    let manifest = project.path().join("floo.app.toml");
+    let content = "# [redis] is a comment\n[app]\nname = 'my-app'\n\n[ 'redis' ]\n[managed.default]\ntype = 'postgres'\n";
+    std::fs::write(&manifest, content).unwrap();
+
+    let result = floo()
+        .args([
+            "services",
+            "remove",
+            "redis",
+            "--app",
+            TEST_APP_NAME,
+            "--yes-i-know-this-destroys-data",
+            "--json",
+        ])
+        .env("HOME", home.path())
+        .current_dir(project.path())
+        .assert()
+        .success();
+    let json: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    assert_eq!(json["data"]["warning"], format!(
+        "[redis] at {}:5 is still declared. The next push will re-provision it unless the block is removed.",
+        manifest.canonicalize().unwrap().display()
+    ));
+    assert_eq!(std::fs::read_to_string(&manifest).unwrap(), content);
+    list.assert();
+    delete.assert();
+}
+
+#[test]
+fn test_services_remove_success_warns_from_delegated_service_directory() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let (list, delete) = mock_remove_primary(&mut server, 204, "");
+    let project = TempDir::new().unwrap();
+    std::fs::create_dir(project.path().join(".git")).unwrap();
+    let manifest = project.path().join("floo.app.toml");
+    let content = "[app]\nname = 'my-app'\n[managed.primary]\ntype = 'postgres'\n[services.web]\ntype = 'web'\npath = 'web'\n";
+    std::fs::write(&manifest, content).unwrap();
+    let service = project.path().join("web");
+    std::fs::create_dir(&service).unwrap();
+    std::fs::write(service.join("floo.service.toml"),
+        "[app]\nname = 'my-app'\n[service]\nname = 'web'\ntype = 'web'\nport = 3000\ningress = 'public'\n").unwrap();
+
+    let result = services_remove_command(&home, &project)
+        .current_dir(service)
+        .arg("--json")
+        .assert()
+        .success();
+    let json: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    assert_eq!(json["data"]["warning"], format!(
+        "[managed.primary] at {}:3 is still declared. The next push will re-provision it unless the block is removed.",
+        manifest.canonicalize().unwrap().display()
+    ));
+    assert_eq!(std::fs::read_to_string(&manifest).unwrap(), content);
+    list.assert();
+    delete.assert();
+}
+
+#[test]
+fn test_services_remove_refusal_suggests_root_block_from_delegated_service_directory() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let message = "LIVE deploy still declares [managed.primary].";
+    let (list, delete) = mock_remove_primary(
+        &mut server,
+        409,
+        &serde_json::json!({"detail": {
+            "code": "MANAGED_SERVICE_STILL_DECLARED", "message": message
+        }})
+        .to_string(),
+    );
+    let project = TempDir::new().unwrap();
+    std::fs::create_dir(project.path().join(".git")).unwrap();
+    let manifest = project.path().join("floo.app.toml");
+    std::fs::write(&manifest,
+        "[app]\nname = 'my-app'\n[managed.primary]\ntype = 'postgres'\n[services.web]\ntype = 'web'\npath = 'web'\n").unwrap();
+    let service = project.path().join("web");
+    std::fs::create_dir(&service).unwrap();
+    std::fs::write(service.join("floo.service.toml"),
+        "[app]\nname = 'my-app'\n[service]\nname = 'web'\ntype = 'web'\nport = 3000\ningress = 'public'\n").unwrap();
+
+    let result = services_remove_command(&home, &project)
+        .current_dir(service)
+        .arg("--json")
+        .assert()
+        .failure();
+    let json: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    assert_eq!(json["error"]["code"], "MANAGED_SERVICE_STILL_DECLARED");
+    assert_eq!(json["error"]["message"], message);
+    assert_eq!(
+        json["error"]["suggestion"],
+        format!(
+            "Remove [managed.primary] at {}:3, then deploy without the block.",
+            manifest.canonicalize().unwrap().display()
+        )
+    );
+    list.assert();
+    delete.assert();
+}
+
+#[test]
+fn test_services_remove_does_not_find_app_manifest_beyond_service_git_boundary() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let (list, delete) = mock_remove_primary(&mut server, 204, "");
+    let project = TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        "[app]\nname = 'my-app'\n[managed.primary]\ntype = 'postgres'\n",
+    )
+    .unwrap();
+    let service = project.path().join("web");
+    std::fs::create_dir(&service).unwrap();
+    std::fs::write(service.join(".git"), "gitdir: ../.git/modules/web\n").unwrap();
+    std::fs::write(service.join("floo.service.toml"),
+        "[app]\nname = 'my-app'\n[service]\nname = 'web'\ntype = 'web'\nport = 3000\ningress = 'public'\n").unwrap();
+
+    let result = services_remove_command(&home, &project)
+        .current_dir(service)
+        .arg("--json")
+        .assert()
+        .success();
+    let json: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    assert!(json["data"].get("warning").is_none());
+    list.assert();
+    delete.assert();
+}
+
+#[test]
+fn test_services_remove_success_does_not_warn_for_disabled_declaration() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let (list, delete) = mock_remove_primary(&mut server, 204, "");
+    let project = TempDir::new().unwrap();
+    let manifest = project.path().join("floo.app.toml");
+    let content = "[app]\nname = 'my-app'\n[managed.primary]\ntype = 'postgres'\nenabled = false\n";
+    std::fs::write(&manifest, content).unwrap();
+
+    let result = services_remove_command(&home, &project)
+        .arg("--json")
+        .assert()
+        .success();
+    let json: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    assert!(json["data"].get("warning").is_none());
+    assert_eq!(std::fs::read_to_string(&manifest).unwrap(), content);
+    list.assert();
+    delete.assert();
+}
+
+#[test]
 fn test_services_remove_success_does_not_point_at_another_apps_manifest() {
     let mut server = Server::new();
     let home = setup_config(&server);

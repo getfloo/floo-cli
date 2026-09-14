@@ -463,8 +463,17 @@ fn parse_app_config(content: &str) -> Result<AppFileConfig, FlooError> {
     Ok(config)
 }
 
-/// Locate a named managed declaration using TOML key spans, including quoted keys.
-pub fn managed_block_line(path: &Path, name: &str) -> Result<Option<usize>, FlooError> {
+/// The source table of an already-discovered managed declaration.
+pub enum ManagedBlock<'a> {
+    Named(&'a str),
+    Legacy(&'a str),
+}
+
+/// Locate a managed declaration using TOML key spans, including quoted keys.
+pub fn managed_block_line(
+    path: &Path,
+    block: ManagedBlock<'_>,
+) -> Result<Option<usize>, FlooError> {
     #[derive(Deserialize)]
     struct Declarations {
         #[serde(default)]
@@ -479,16 +488,29 @@ pub fn managed_block_line(path: &Path, name: &str) -> Result<Option<usize>, Floo
     })?;
     // The value deserializer used for schema validation discards source spans.
     // Deserialize from the source here so TOML owns syntax and location handling.
-    let declarations: Declarations = toml::from_str(&content)
-        .map_err(|error| super::toml_parse_error(&path.display().to_string(), error))?;
-    Ok(declarations.managed.keys().find_map(|key| {
-        (key.get_ref() == name).then(|| {
-            content[..key.span().start]
-                .bytes()
-                .filter(|b| *b == b'\n')
-                .count()
-                + 1
-        })
+    let parse_error = |error| super::toml_parse_error(&path.display().to_string(), error);
+    let span = match block {
+        ManagedBlock::Named(name) => {
+            let declarations: Declarations = toml::from_str(&content).map_err(parse_error)?;
+            declarations
+                .managed
+                .keys()
+                .find_map(|key| (key.get_ref() == name).then(|| key.span()))
+        }
+        ManagedBlock::Legacy(service_type) => {
+            let tables: HashMap<toml::Spanned<String>, toml::Value> =
+                toml::from_str(&content).map_err(parse_error)?;
+            tables
+                .keys()
+                .find_map(|key| (key.get_ref() == service_type).then(|| key.span()))
+        }
+    };
+    Ok(span.map(|span| {
+        content[..span.start]
+            .bytes()
+            .filter(|b| *b == b'\n')
+            .count()
+            + 1
     }))
 }
 

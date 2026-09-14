@@ -576,32 +576,43 @@ fn local_managed_block(
 ) -> Result<Option<String>, crate::errors::FlooError> {
     let cwd = std::env::current_dir()
         .map_err(|error| crate::errors::FlooError::new(ErrorCode::CwdError, error.to_string()))?;
-    let resolved = crate::project_config::resolve_app_context(&cwd, Some(app_name))?;
-    let Some(config) = resolved.app_config else {
+    let resolved = crate::project_config::resolve_app_manifest_context(&cwd, Some(app_name))?;
+    let Some(ref config) = resolved.app_config else {
         return Ok(None);
     };
     if config.app.name != app_name
-        || !config
-            .managed
-            .get(name)
-            .is_some_and(|block| block.service_type == service_type)
+        || !crate::project_config::discover_managed_services(&resolved)
+            .iter()
+            .any(|declaration| declaration.name == name && declaration.service_type == service_type)
     {
         return Ok(None);
     }
     let path = resolved
         .config_dir
         .join(crate::project_config::APP_CONFIG_FILE);
-    let line = crate::project_config::managed_block_line(&path, name)?.ok_or_else(|| {
+    let (block, label) = if config
+        .managed
+        .get(name)
+        .is_some_and(|block| block.service_type == service_type)
+    {
+        (
+            crate::project_config::ManagedBlock::Named(name),
+            format!("managed.{name}"),
+        )
+    } else {
+        (
+            crate::project_config::ManagedBlock::Legacy(service_type),
+            service_type.to_string(),
+        )
+    };
+    let line = crate::project_config::managed_block_line(&path, block)?.ok_or_else(|| {
         crate::errors::FlooError::new(
             ErrorCode::InvalidProjectConfig,
             format!(
-                "[managed.{name}] disappeared from {} during inspection",
+                "[{label}] disappeared from {} during inspection",
                 path.display()
             ),
         )
     })?;
-    Ok(Some(format!(
-        "[managed.{name}] at {}:{line}",
-        path.display()
-    )))
+    Ok(Some(format!("[{label}] at {}:{line}", path.display())))
 }
