@@ -90,7 +90,7 @@ pub struct BillingCheckoutResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanLimitsResponse {
-    pub plan: String,
+    pub plan: Option<String>,
     pub max_spend_cap_cents: Option<u64>,
 }
 
@@ -1386,5 +1386,37 @@ mod managed_services_doctor_tests {
             service.prod_health.expect("prod health").status,
             "throttled"
         );
+    }
+}
+
+#[cfg(test)]
+mod billing_tests {
+    use super::{OrgResponse, PlanLimitsResponse};
+    use crate::output;
+
+    #[test]
+    fn plan_limits_accepts_null_plan() {
+        output::set_json_mode(false);
+        output::set_dry_run_mode(false);
+        let limits: PlanLimitsResponse = serde_json::from_value(serde_json::json!({
+            "plan": null,
+            "max_spend_cap_cents": null,
+        }))
+        .expect("null plan deserializes");
+
+        assert_eq!(limits.plan, None);
+    }
+
+    #[test]
+    fn org_accepts_null_plan() {
+        output::set_json_mode(false);
+        output::set_dry_run_mode(false);
+        let org: OrgResponse = serde_json::from_value(serde_json::json!({
+            "id": "org-1",
+            "plan": null,
+        }))
+        .expect("null plan deserializes");
+
+        assert_eq!(org.plan, None);
     }
 }

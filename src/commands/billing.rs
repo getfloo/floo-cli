@@ -3,19 +3,22 @@ use std::process;
 use crate::errors::ErrorCode;
 use crate::output;
 
-fn canonical_plan(plan: &str) -> &str {
+fn canonical_plan(plan: Option<&str>) -> Option<&str> {
     match plan {
-        "hobby" | "pro" => "paygo",
+        // Older APIs use "free" for an org that has no plan yet.
+        Some("free") => None,
+        Some("hobby" | "pro") => Some("paygo"),
         current => current,
     }
 }
 
-fn plan_display(plan: &str) -> (&'static str, &'static str) {
+fn plan_display(plan: Option<&str>) -> (&'static str, Option<&'static str>) {
     match canonical_plan(plan) {
-        "paygo" => ("Pay as you go", "$0 commitment"),
-        "team" => ("Team", "$250/mo"),
-        "enterprise" => ("Enterprise", "Custom"),
-        _ => ("Free", "$0"),
+        Some("paygo") => ("Pay as you go", Some("$0 commitment")),
+        Some("team") => ("Team", Some("$250/mo")),
+        Some("enterprise") => ("Enterprise", Some("Custom")),
+        Some(_) => ("Unknown plan", None),
+        None => ("No plan", None),
     }
 }
 
@@ -26,14 +29,17 @@ pub fn upgrade(plan: Option<String>) {
     match client.create_billing_checkout(plan.as_deref()) {
         Ok(result) => {
             if result.upgraded {
-                let plan_name = result.plan.as_deref().unwrap_or("paid");
+                let plan_name = canonical_plan(result.plan.as_deref());
                 if output::is_json_mode() {
                     output::success(
                         "",
                         Some(serde_json::json!({"upgraded": true, "plan": plan_name})),
                     );
                 } else {
-                    output::success(&format!("Upgraded to {plan_name}"), None);
+                    output::success(
+                        &format!("Upgraded to {}", plan_name.unwrap_or("No plan")),
+                        None,
+                    );
                 }
             } else if let Some(url) = &result.url {
                 if output::is_json_mode() {
@@ -122,7 +128,7 @@ pub fn spend_cap_get() {
     if exceeded {
         output::warn("Spend cap exceeded \u{2014} deploys are blocked.");
     }
-    if org.plan.as_deref() == Some("free") {
+    if canonical_plan(org.plan.as_deref()).is_none() {
         eprintln!("  Upgrade: floo billing upgrade --plan paygo");
     }
 }
@@ -188,7 +194,7 @@ pub fn usage(period: &str) {
         }
     };
 
-    let plan = org.plan.as_deref().unwrap_or("free");
+    let plan = org.plan.as_deref();
     let spend_cap = org.spend_cap;
     let max_cap = limits.max_spend_cap_cents;
 
@@ -225,7 +231,10 @@ pub fn usage(period: &str) {
         return;
     }
 
-    eprintln!("  Plan: {} ({})", plan_label, plan_price);
+    match plan_price {
+        Some(price) => eprintln!("  Plan: {plan_label} ({price})"),
+        None => eprintln!("  Plan: {plan_label}"),
+    }
     eprintln!(
         "  floo credits included: {:.2}/month",
         breakdown.included_cost_usd
@@ -281,15 +290,39 @@ pub fn usage(period: &str) {
 #[cfg(test)]
 mod tests {
     use super::{canonical_plan, plan_display};
+    use crate::output;
 
     #[test]
     fn plan_display_projects_legacy_offers_into_the_canonical_catalog() {
+        output::set_json_mode(false);
+        output::set_dry_run_mode(false);
         for plan in ["hobby", "pro", "paygo"] {
-            assert_eq!(canonical_plan(plan), "paygo");
-            assert_eq!(plan_display(plan), ("Pay as you go", "$0 commitment"));
+            assert_eq!(canonical_plan(Some(plan)), Some("paygo"));
+            assert_eq!(
+                plan_display(Some(plan)),
+                ("Pay as you go", Some("$0 commitment"))
+            );
         }
-        assert_eq!(plan_display("team"), ("Team", "$250/mo"));
-        assert_eq!(plan_display("enterprise"), ("Enterprise", "Custom"));
-        assert_eq!(plan_display("free"), ("Free", "$0"));
+        assert_eq!(plan_display(Some("team")), ("Team", Some("$250/mo")));
+        assert_eq!(
+            plan_display(Some("enterprise")),
+            ("Enterprise", Some("Custom"))
+        );
+    }
+
+    #[test]
+    fn missing_plan_has_no_price() {
+        output::set_json_mode(false);
+        output::set_dry_run_mode(false);
+        assert_eq!(canonical_plan(None), None);
+        assert_eq!(plan_display(None), ("No plan", None));
+    }
+
+    #[test]
+    fn legacy_free_is_a_missing_plan() {
+        output::set_json_mode(false);
+        output::set_dry_run_mode(false);
+        assert_eq!(canonical_plan(Some("free")), None);
+        assert_eq!(plan_display(Some("free")), ("No plan", None));
     }
 }

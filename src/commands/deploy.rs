@@ -164,7 +164,7 @@ fn build_runtime_plan(services: &[ServiceConfig], environment: &str) -> Vec<Runt
                     cpu_allocation_reason: "http_request_scoped".to_string(),
                     server_resolution_required: true,
                     notes: if server_resolved_prod_default {
-                        vec!["Paid production defaults to one warm instance and bills continuously; Free remains on-demand. Set min_instances = 0 to opt out.".to_string()]
+                        vec!["Paid production defaults to one warm instance and bills continuously. Set min_instances = 0 to opt out.".to_string()]
                     } else {
                         Vec::new()
                     },

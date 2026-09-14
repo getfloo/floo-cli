@@ -159,9 +159,8 @@ fn render_org_analytics(period: &str, data: &AppAnalyticsResponse) {
     render_gateway_handled(summary.gateway_handled_requests, 18);
 
     // Org-level latency mirrors the per-app surface (request-weighted avg,
-    // max of per-app p95s). Free-tier orgs see no latency line because the
-    // API gates these fields by tier; the absence is the same signal as on
-    // the per-app endpoint.
+    // max of per-app p95s). Omitted latency fields suppress the line, just
+    // as on the per-app endpoint.
     if let Some(avg) = summary.avg_latency_ms {
         eprintln!("  {:18}{:>10}", "Avg Latency", format!("{}ms", avg));
     }
