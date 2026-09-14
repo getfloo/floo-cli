@@ -24,7 +24,7 @@ sanitize_command = "./sanitize.sh"
 path = "/"
 access = "accounts"
 api_key = true
-scope = "app:read"
+scope = "app.read"
 service = "web"
 [postgres]
 tier = "basic"
