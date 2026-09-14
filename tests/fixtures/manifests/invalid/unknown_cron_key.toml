@@ -1,0 +1,9 @@
+# error-key: cron.backup.timeuot
+[app]
+name = "parity-app"
+
+[cron.backup]
+schedule = "0 9 * * *"
+command = "./backup.sh"
+service = "web"
+timeuot = 900

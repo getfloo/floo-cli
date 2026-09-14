@@ -1,0 +1,5 @@
+# error-key: timeuot
+timeuot = 900
+
+[app]
+name = "parity-app"

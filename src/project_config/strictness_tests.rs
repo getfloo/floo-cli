@@ -1,6 +1,52 @@
 use super::{load_app_config, load_service_config, APP_CONFIG_FILE, SERVICE_CONFIG_FILE};
 use crate::errors::ErrorCode;
 
+#[test]
+fn manifest_fixtures_enforce_parity_and_name_invalid_keys() {
+    let _guard = crate::output::GLOBAL_MODE_LOCK.lock().unwrap();
+    crate::output::set_json_mode(false);
+    crate::output::set_dry_run_mode(false);
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/manifests");
+    let dir = tempfile::TempDir::new().unwrap();
+
+    for category in ["valid", "invalid"] {
+        let mut fixtures: Vec<_> = std::fs::read_dir(root.join(category))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
+            .collect();
+        fixtures.sort();
+        assert!(!fixtures.is_empty(), "No {category} manifest fixtures");
+
+        for fixture in fixtures {
+            let manifest = std::fs::read_to_string(&fixture).unwrap();
+            std::fs::write(dir.path().join(APP_CONFIG_FILE), &manifest).unwrap();
+            let result = load_app_config(dir.path());
+            if category == "valid" {
+                assert!(matches!(result, Ok(Some(_))), "{fixture:?}: {result:?}");
+            } else {
+                // Keep the expected path in a TOML comment so the server can reuse it.
+                let key = manifest
+                    .lines()
+                    .find_map(|line| line.strip_prefix("# error-key: "))
+                    .expect("Invalid fixtures must declare an error-key");
+                assert!(!key.is_empty(), "{fixture:?}: empty error-key");
+                let err = result.expect_err(&format!("{fixture:?} must be rejected"));
+                assert_eq!(err.code, ErrorCode::InvalidProjectConfig, "{fixture:?}");
+                let diagnostic = format!("{} {:?}", err.message, err.suggestion);
+                assert!(
+                    diagnostic.contains(&format!("`{key}`")),
+                    "{fixture:?}: expected key path `{key}` in {diagnostic}"
+                );
+                assert!(
+                    !diagnostic.contains("floo update"),
+                    "{fixture:?}: {diagnostic}"
+                );
+            }
+        }
+    }
+}
+
 macro_rules! rejects_app_key {
     ($name:ident, $manifest:literal, $path:literal) => {
         #[test]
@@ -27,23 +73,15 @@ macro_rules! rejects_app_key {
     };
 }
 
-rejects_app_key!(rejects_misspelled_cron_table, "[crons.backup]", "crons");
-rejects_app_key!(rejects_root_env_table, "[env]\nTOKEN = 'value'", "env");
 rejects_app_key!(
     rejects_domain_typo,
     "[domains.\"app.example.com\"]\nservce = 'web'",
     "domains.app.example.com.servce"
 );
-rejects_app_key!(rejects_root_scalar, "timeuot = 900", "timeuot");
 rejects_app_key!(
     rejects_removed_reparo,
     "[reparo]\nmode = 'webhook'",
     "reparo"
-);
-rejects_app_key!(
-    rejects_cron_timeout_typo,
-    "[cron.backup]\nschedule = '* * * * *'\ncommand = 'backup'\nservice = 'web'\ntimeuot = 900",
-    "cron.backup.timeuot"
 );
 rejects_app_key!(
     rejects_github_typo,
@@ -198,7 +236,7 @@ fn server_supported_app_keys_survive_roundtrip() {
     let _guard = crate::output::GLOBAL_MODE_LOCK.lock().unwrap();
     crate::output::set_json_mode(false);
     crate::output::set_dry_run_mode(false);
-    let manifest = include_str!("../../tests/fixtures/server_supported_keys.toml");
+    let manifest = include_str!("../../tests/fixtures/manifests/valid/server_supported_keys.toml");
     let dir = tempfile::TempDir::new().unwrap();
     std::fs::write(dir.path().join(APP_CONFIG_FILE), manifest).unwrap();
 
