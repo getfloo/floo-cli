@@ -8943,6 +8943,7 @@ fn deploy_status_accepts_absent_diagnostics() {
     assert!(result.status.success());
     let json: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(json["data"]["diagnostics"], serde_json::json!([]));
+    assert!(json["data"]["image_built"].is_null());
 }
 
 #[test]
@@ -9281,4 +9282,89 @@ mod local_env_contract {
         create.assert();
         delete.assert();
     }
+}
+
+#[test]
+fn deploy_status_restart_does_not_report_inherited_image_as_built() {
+    let result = run_deploy_read(
+        &["--json", "deploys", "status"],
+        serde_json::json!({
+            "id":"restart-12f6ddb1", "status":"superseded", "triggered_by":"restart",
+            "source_deploy_id":"source-089a33db", "duration_ms":464059,
+            "steps":[
+                {"name":"schedule_job", "status":"success", "duration_ms":134171},
+                {"name":"build_image", "status":"skipped"},
+                {"name":"push_image", "status":"skipped"},
+                {"name":"deploy_service", "status":"success", "duration_ms":329681}
+            ]
+        }),
+    );
+    assert!(result.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(json["data"]["image_built"], false);
+    assert_eq!(json["data"]["duration_ms"], 464059);
+    assert_eq!(json["data"]["service_ready"], false);
+    assert!(result.stderr.is_empty());
+}
+
+#[test]
+fn deploy_status_preserves_successful_build_when_later_rollout_fails() {
+    let result = run_deploy_read(
+        &["--json", "deploys", "status"],
+        serde_json::json!({
+            "id":"deploy-1", "status":"failed",
+            "steps":[
+                {"name":"build_image", "status":"success"},
+                {"name":"deploy_service", "status":"failed"}
+            ]
+        }),
+    );
+    assert!(result.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(json["data"]["image_built"], true);
+    assert_eq!(json["data"]["service_ready"], false);
+}
+
+#[test]
+fn deploy_status_failed_aggregate_build_does_not_guess_about_partial_images() {
+    let result = run_deploy_read(
+        &["--json", "deploys", "status"],
+        serde_json::json!({
+            "id":"deploy-1", "status":"failed",
+            "steps":[{"name":"build_image", "status":"failed"}]
+        }),
+    );
+    assert!(result.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert!(json["data"]["image_built"].is_null());
+}
+
+#[test]
+fn deploy_status_incomplete_build_evidence_is_unknown() {
+    let result = run_deploy_read(
+        &["--json", "deploys", "status"],
+        serde_json::json!({
+            "id":"deploy-1", "status":"building",
+            "steps":[{"name":"build_image", "status":"running"}]
+        }),
+    );
+    assert!(result.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert!(json["data"]["image_built"].is_null());
+}
+
+#[test]
+fn deploy_status_human_duration_names_whole_attempt() {
+    let result = run_deploy_read(
+        &["deploys", "status"],
+        serde_json::json!({
+            "id":"restart-1", "status":"live", "duration_ms":464059,
+            "steps":[{"name":"build_image", "status":"skipped"}]
+        }),
+    );
+    assert!(result.status.success());
+    assert!(result.stdout.is_empty());
+    let stderr = String::from_utf8(result.stderr).unwrap();
+    assert!(stderr.contains("image_built:   false"));
+    assert!(stderr.contains("deploy duration: 7m 44s"));
 }

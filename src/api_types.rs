@@ -389,9 +389,18 @@ pub struct DeployDiagnostic {
     pub knowledge_ref: Option<String>,
 }
 
+/// Execution evidence for one aggregate deploy phase; excludes step logs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeployStep {
+    pub name: String,
+    pub status: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Deploy {
     pub id: String,
+    #[serde(default, skip_serializing)]
+    pub steps: Vec<DeployStep>,
     #[serde(default)]
     pub app_id: Option<String>,
     #[serde(default)]
