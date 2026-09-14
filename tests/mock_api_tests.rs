@@ -2576,6 +2576,22 @@ fn test_env_import_all_preflight_makes_no_post() {
 }
 
 #[test]
+fn test_sync_env_with_service_is_rejected_before_api_calls() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let calls = server.mock("GET", Matcher::Any).expect(0).create();
+    floo()
+        .args(["--json", "redeploy", "--sync-env", "--service", "web"])
+        .args(["--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"INVALID_ARGUMENTS""#))
+        .stdout(predicate::str::contains("--sync-env cannot be combined"));
+    calls.assert();
+}
+
+#[test]
 fn test_sync_env_service_list_error_exits_nonzero() {
     let mut server = Server::new();
     let home = setup_config(&server);
@@ -5444,9 +5460,18 @@ fn test_deploy_new_app_json() {
     let project = inline_env_project();
     std::fs::write(
         project.path().join("package.json"),
-        r#"{"name":"test-project","version":"1.0.0"}"#,
+        r#"{"name":"test-project","version":"1.0.0","dependencies":{"express":"^4"}}"#,
     )
     .unwrap();
+    let manifest = project.path().join("floo.app.toml");
+    let local = std::fs::read_to_string(&manifest).unwrap();
+    let declarations = r#"
+environments.dev.access_mode = 'public'
+auth.redirect_uris = ['https://example.com/callback']
+github = { deploy_on_push = false, preview_environments = true, preview_ttl_hours = 24 }
+cron.cleanup = { schedule = '0 * * * *', command = 'echo cleanup', service = 'web' }
+"#;
+    std::fs::write(&manifest, format!("{declarations}{local}")).unwrap();
     let _services = mock_list_services_one(&mut server);
     let _env = server
         .mock("GET", format!("/v1/apps/{TEST_APP_ID}/env").as_str())
@@ -5492,6 +5517,7 @@ fn test_deploy_new_app_json() {
             "POST",
             format!("/v1/apps/{TEST_APP_ID}/deploys").as_str(),
         )
+        .match_body(Matcher::Json(serde_json::json!({"runtime": "nodejs", "framework": "Express", "environment": "dev"})))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
@@ -5513,6 +5539,7 @@ fn test_deploy_new_app_json() {
         .stdout(predicate::str::contains(r#""app""#))
         .stdout(predicate::str::contains(r#""deploy""#))
         .stdout(predicate::str::contains(r#""detection""#));
+    _m_deploy.assert();
     imported.assert();
     org.assert();
 }
@@ -5545,8 +5572,7 @@ fn test_deploy_existing_app_by_name_json() {
     // `floo redeploy --app X` (without --rebuild) goes through
     // deploy_restart → POST /v1/apps/{id}/restart, NOT the old /deploys
     // endpoint. The rebuild path (--rebuild flag) is what POSTs to
-    // /deploys via rebuild_app — see test_deploy_rebuild_json below
-    // if/when we add one.
+    // /deploys via create_deploy.
     let _m_restart = server
         .mock(
             "POST",
@@ -5582,7 +5608,7 @@ fn test_redeploy_rebuild_requests_server_resolved_github_head() {
     let _resolve = mock_resolve_app(&mut server);
     let rebuild = server
         .mock("POST", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
-        .match_body(Matcher::Json(serde_json::json!({"runtime": "nodejs"})))
+        .match_body(Matcher::Json(serde_json::json!({"runtime": "nodejs", "environment": "dev"})))
         .with_status(201)
         .with_header("content-type", "application/json")
         .with_body(
@@ -5600,6 +5626,25 @@ fn test_redeploy_rebuild_requests_server_resolved_github_head() {
             r#""commit_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb""#,
         ));
 
+    rebuild.assert();
+}
+
+#[test]
+fn test_redeploy_rebuild_requires_runtime_with_service_selectors() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let rebuild = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
+        .match_body(Matcher::Json(serde_json::json!({"runtime": "nodejs", "environment": "dev", "services": ["web"], "skip_migrations": true})))
+        .with_body(r#"{"id":"deploy-rebuilt","status":"live"}"#)
+        .create();
+    floo()
+        .args(["--json", "redeploy", "--app", TEST_APP_NAME, "--rebuild"])
+        .args(["--service", "web", "--skip-migrations"])
+        .env("HOME", home.path())
+        .assert()
+        .success();
     rebuild.assert();
 }
 
@@ -5785,6 +5830,9 @@ fn test_deploy_config_not_found_keyed_on_status_creates() {
 
     let _m_deploy = server
         .mock("POST", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
+        .match_body(Matcher::Json(
+            serde_json::json!({"runtime": "nodejs", "environment": "dev", "services": ["web"], "skip_migrations": true}),
+        ))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
@@ -5794,10 +5842,12 @@ fn test_deploy_config_not_found_keyed_on_status_creates() {
 
     floo()
         .args(["--json", "redeploy", project.path().to_str().unwrap()])
+        .args(["--services", "web", "--skip-migrations"])
         .env("HOME", home.path())
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""success":true"#));
+    _m_deploy.assert();
 }
 
 #[test]

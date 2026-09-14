@@ -43,7 +43,7 @@ Deploys are git-driven:
   from GitHub. Run preflight, commit, and push generated config before connect.
 - `floo redeploy --app <app>` restarts existing images with fresh server-side env values; it does not rebuild or read local env files.
 - `floo redeploy --app <app> --rebuild` rebuilds the current GitHub default-branch HEAD and reparses immutable contracts. If a restart reports an unavailable immutable contract, use the exact rebuild command it returns.
-- To re-sync configured local `env_file` values, run `floo redeploy --sync-env` from the project directory without `--app`. With `--app`, `--sync-env` has no effect. Redeploy requires an existing dev deploy; push code changes through git.
+- To re-sync configured local `env_file` values, run `floo redeploy --sync-env` from the project directory without `--app` or `--service`. The CLI rejects `--sync-env` with `--service` (including the `--services` alias). With `--app` alone, `--sync-env` has no effect. Redeploy requires an existing dev deploy; push code changes through git.
 
 There is no normal deploy command. Validate with `floo preflight`, push through git, then observe with the current `deploys` and `logs` help surfaces.
 

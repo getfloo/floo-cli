@@ -295,17 +295,6 @@ pub enum AppAccessMode {
     Sso,
 }
 
-impl AppAccessMode {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            AppAccessMode::Public => "public",
-            AppAccessMode::Password => "password",
-            AppAccessMode::Accounts => "accounts",
-            AppAccessMode::Sso => "sso",
-        }
-    }
-}
-
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppFileAppSection {
