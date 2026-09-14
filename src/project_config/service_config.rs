@@ -341,6 +341,9 @@ pub struct ServiceSection {
     pub dev_command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub migrate_command: Option<String>,
+    /// Production command override, read from the manifest by the server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
 }
 
 impl ServiceSection {
@@ -729,6 +732,7 @@ ingress = "internal"
                 instances: None,
                 dev_command: None,
                 migrate_command: None,
+                command: None,
             },
             resources: None,
             env: None,
@@ -753,6 +757,7 @@ ingress = "internal"
             instances: None,
             dev_command: None,
             migrate_command: None,
+            command: None,
         };
 
         let api_config = section.to_api_service_config("backend");
