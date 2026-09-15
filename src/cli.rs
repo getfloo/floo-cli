@@ -407,13 +407,13 @@ Examples:
         context: Option<String>,
     },
 
-    /// Built-in platform documentation. Run `floo docs` (no topic) for the
-    /// full list of topics with one-line descriptions.
+    /// Find web documentation URLs. Run `floo docs` without a topic for the index.
     #[command(after_help = "\
-Run `floo docs` for the version-matched offline topic index.
-Run `floo docs --json` for a machine-readable topic catalog.")]
+Run `floo docs` for the web documentation index.
+Run `floo docs --json` for topic URLs and metadata.
+Read the returned URL for guidance; page content is not bundled or version-pinned.")]
     Docs {
-        /// Documentation topic to display. Omit for the overview.
+        /// Documentation topic whose URL to print. Omit for the index.
         topic: Option<String>,
     },
 
@@ -948,10 +948,8 @@ pub enum GitHubCommands {
     /// account that owns the repo:
     /// https://getfloo.com/docs/cli/github#granting-the-floo-github-app-access-to-a-repository
     ///
-    /// `connect` only mints a setup link when the App is NOT installed, so an
-    /// App installed straight from GitHub's UI — or installed more than 15
-    /// minutes before the connect — left the org with no way to link it
-    /// (getfloo/floo#2189). This always mints a fresh link.
+    /// Run this again for a fresh authorization link if setup expired or the
+    /// App was installed directly on GitHub. Select the intended floo org first.
     Setup {
         /// Never open a browser (for agents/CI). Prints the link instead.
         #[arg(long)]

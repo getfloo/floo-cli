@@ -49,7 +49,7 @@ When older projects use a legacy authoring surface, follow the migration guidanc
 - services remove does not edit the manifest. Leaving a managed-service declaration means the next push re-provisions it. `enabled=false` is a removal proposal, not proof of cleanup or authorization to destroy data.
 - always `[services.NAME.env]` in `floo.app.toml`. This also applies to single-service apps; do not use top-level `[env]` for their contracts.
 - verify by comparing `services list --json` names to the manifest and treating a partial read as failure. Run `floo services list --app <app> --env <env> --json` and compare both `app_services` and `managed_services` names with their declarations, reporting missing and extra names. A `running` status can be inherited from the environment deploy and does not prove per-service health. Managed-list failure can appear as an empty list in success JSON, with its warning suppressed in JSON mode. Repeat the read without `--json` to check for a partial-view warning; if completeness is uncertain, stop and report verification failure.
-- report retained resources rather than claiming cleanup. Cron removal leaves the Cloud Run Job (getfloo/floo#1371); name retained app services, managed resources, and jobs explicitly, and report anything whose retention could not be verified.
+- report retained resources rather than claiming cleanup. Name retained app services, managed resources, and scheduled jobs explicitly, and report anything whose retention could not be verified.
 
 ## Audit every mutation
 
@@ -59,7 +59,7 @@ No state change is complete until a read-only command confirms the resulting sta
 - Before a mutation, use its `--preflight` form when available.
 - After an environment change, inspect the relevant `env` read surface and run preflight.
 - A `[domains."<host>"]` block goes live on the prod release. Publish the DNS records the deploy output prints (also `floo domains show <host>`), then `floo domains watch <host>`.
-- After a git-triggered deploy, watch the deployment and inspect runtime logs.
+- After a git-triggered deploy, use `floo deploys status --json` to verify the result. Inspect logs only when needed and keep sensitive output out of transcripts.
 - If the audit differs from intent, stop and investigate before another mutation or push.
 
 `--dry-run` is a compatibility alias for `--preflight`. Use `--preflight` in new work.

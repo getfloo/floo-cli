@@ -9,7 +9,7 @@ This is the **open-source Rust CLI** for [floo](https://getfloo.com). It deploys
 ```bash
 # Build
 cargo build                      # Debug build
-cargo build --release            # Release build (~2MB static binary)
+cargo build --release            # Optimized release binaries
 
 # Test
 ./scripts/test                   # Canonical: fmt --check + clippy + all tests,
@@ -22,9 +22,9 @@ cargo fmt --check                # Check formatting
 cargo fmt                        # Auto-format
 
 # Run locally
-cargo run -- --help              # Show help
-cargo run -- deploy              # Run deploy command
-cargo run -- apps list --json    # JSON mode
+cargo run --bin floo-local -- --help                 # Show help
+cargo run --bin floo-local -- docs quickstart --json # Web quickstart URL
+cargo run --bin floo-local -- apps list --json       # List apps (authenticated)
 ```
 
 ## Architecture
@@ -66,15 +66,14 @@ All HTTP calls go through `FlooClient`. Never use `reqwest` directly in commands
 
 ### Config (`config.rs`)
 
-Manages `~/.floo-local/config.json` for local builds or `~/.floo/config.json` for installed builds (API key, email, API URL). The config directory is chosen at runtime based on the binary name (`floo-local` vs `floo`). File permissions set to `0o600`.
+The binary basename selects credentials and the default API: `floo-local` uses
+`~/.floo-local/` and the production API, `floo` uses `~/.floo/` and the production
+API, and `floo-dev` uses `~/.floo-dev/` and the dev API. A local build does not
+select a local API automatically. Config file permissions are `0o600`.
 
 ### Detection (`detection.rs`)
 
 Auto-detects runtime/framework from project files. Priority: Dockerfile > package.json > pyproject.toml/requirements.txt > go.mod > index.html.
-
-### Archive (`archive.rs`)
-
-Packs source into `.tar.gz`, respects `.flooignore`. 500MB size limit.
 
 ### Errors (`errors.rs`)
 

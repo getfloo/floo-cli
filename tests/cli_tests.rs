@@ -1042,19 +1042,15 @@ fn test_init_creates_config_json() {
     assert!(!project.path().join("floo.service.toml").exists());
 
     let agents = std::fs::read_to_string(project.path().join("AGENTS.md")).unwrap();
-    assert!(agents.contains("floo commands\n  --json"));
+    assert!(agents.contains("floo commands --json"));
     assert!(agents.contains("floo docs <topic> --json"));
     assert!(agents.contains("commit, and push before connecting"));
-    assert!(!agents.contains("Read the latest docs"));
+    assert!(agents.contains("floo docs quickstart"));
+    assert!(agents.contains("floo docs auth"));
 }
 
 #[test]
-fn test_init_writes_header_with_access_mode_and_autodeploy_signal() {
-    // Pins the in-file friction fixes for floo-artifact 2026-05-01
-    // (`88e32b22` access_mode placement, `c9b70eb5` no auto-deploy signal).
-    // Both points need to live IN the file the user opens — a hint in
-    // post-init terminal output is too easy to skip past, and the user
-    // who reported these had already done so.
+fn test_init_links_config_docs_and_preserves_push_before_connect() {
     let project = tempfile::TempDir::new().unwrap();
     std::fs::write(
         project.path().join("package.json"),
@@ -1087,15 +1083,8 @@ fn test_init_writes_header_with_access_mode_and_autodeploy_signal() {
         toml.contains("Commit and push this file before `floo apps github connect`"),
         "header must put the pushed source before the first connect"
     );
-    // access_mode is shown under [app] — the placement that actually applies
-    // on push today. Per-env overrides via [environments.<name>] are parsed
-    // but not applied server-side; the header discloses that gap explicitly
-    // so a user doesn't write config that silently does nothing.
-    assert!(toml.contains("access_mode"));
-    assert!(
-        toml.contains("not yet applied"),
-        "header must disclose the per-env override gap honestly"
-    );
+    assert!(toml.contains("https://getfloo.com/docs/reference/config-spec.md"));
+    assert!(toml.contains("https://getfloo.com/docs/introduction"));
     // Output toml after the header is still parseable — sanity-check that
     // we didn't break TOML by prepending comments without a trailing newline.
     let cfg: toml::Value = toml::from_str(&toml).unwrap();

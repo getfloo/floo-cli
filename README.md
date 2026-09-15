@@ -69,22 +69,25 @@ For agent setup and the JSON output contract, read the
 
 ## Building from source
 
-Requires [Rust](https://rustup.rs/) (1.70+).
+Use the current stable [Rust toolchain](https://rustup.rs/), matching CI.
 
 ```bash
 git clone https://github.com/getfloo/floo-cli.git
 cd floo-cli
-cargo build
+cargo build --bin floo-local
 # Binary at target/debug/floo-local
 ```
 
 ## Local development vs installed CLI
 
-The binary compiles as `floo-local` and uses `~/.floo-local/` for config, keeping it completely isolated from the installed `floo` binary (`~/.floo/`):
+The package builds `floo`, `floo-local`, and `floo-dev`. Use `floo-local` for
+local CLI development: it stores credentials in `~/.floo-local/`, separate from
+installed `floo` (`~/.floo/`). Both default to the production API. `floo-dev`
+uses the dev API and `~/.floo-dev/`.
 
 ```bash
 cd floo-cli
-cargo build
+cargo build --bin floo-local
 ./target/debug/floo-local --help
 # Or symlink: ln -sf $(pwd)/target/debug/floo-local /usr/local/bin/floo-local
 ```
