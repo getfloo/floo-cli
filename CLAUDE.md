@@ -97,17 +97,21 @@ Packs source into `.tar.gz`, respects `.flooignore`. 500MB size limit.
   - CLI issues: `Closes #N` (same-repo reference)
   - Cross-repo issues: `Closes getfloo/floo#N`
 
-## Offline Guidance Maintenance
+## Documentation ownership
 
-The installed binary is the version-matched offline knowledge pack:
+The installed binary owns command syntax and documentation discovery:
 
-- Clap definitions and `after_help` examples in `src/cli.rs` own exact syntax.
-- `docs/offline/*.md` owns on-demand platform guidance.
-- The typed registry in `src/commands/docs.rs` owns topic names, aliases, summaries, and JSON discovery.
-- `plugin/skills/**/SKILL.md` stay compact and route agents to those local surfaces while preserving durable safety policy; the CLI embeds the same files for installation and refresh.
+- Clap definitions and `after_help` examples in `src/cli.rs` own exact syntax and immediate command recovery.
 - `src/commands/command_tree.rs` owns the machine-readable command catalog.
+- The typed registry in `src/commands/docs.rs` owns topic names, aliases, summaries, URLs, and JSON discovery.
+- https://getfloo.com/docs owns platform guidance, onboarding, examples, and troubleshooting. `floo docs` returns links to those current pages; articles are neither bundled nor pinned to the installed CLI version.
+- `plugin/skills/**/SKILL.md` route agents to command help and web docs while preserving durable safety policy. The CLI embeds these same files for installation and refresh.
+- README owns installation and contributor instructions and links to the web quickstart.
 
-When behavior changes, update every affected offline topic in the same PR. Do not copy long-form command reference back into a skill or a Rust string. The guidance validator scans README, every offline topic, every bundled skill, Clap help strings, and production Rust strings against the live Clap tree.
+When behavior changes, update its canonical web documentation and any affected
+Clap help or topic routing. Do not copy long-form guidance into README, skills,
+or Rust strings. The guidance validator checks first-party command examples
+against the live Clap tree.
 
 ## Release Flow
 

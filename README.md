@@ -47,104 +47,25 @@ floo update --version v0.1.0
 
 ## Quick start
 
-For your own GitHub repository, follow the [full quickstart](https://getfloo.com/docs/introduction), also available through `floo docs golden-path` or `floo docs quickstart`.
+Follow the [web quickstart](https://getfloo.com/docs/introduction) to connect your
+GitHub repository and deploy your first app. For a floo-hosted repository without
+a GitHub account, follow the [managed-project guide](https://getfloo.com/agents.md).
+
+## Find commands and documentation
 
 ```bash
-# Authenticate; select the intended floo organization before linking GitHub
-floo auth login
-# If needed: floo orgs switch <org-slug>
+floo commands --json          # command tree
+floo <command> --help         # syntax for the installed CLI
+floo docs --json              # documentation topics and URLs
+floo docs golden-path --json  # quickstart URL
 ```
 
-[Install the floo GitHub App](https://github.com/apps/getfloo/installations/new)
-on the GitHub account or organization that owns `owner/repo`, select that
-repository, and install or save. Wait for organization-owner approval if required.
-Then link the installation to your active floo organization:
+`floo docs` returns links to current web documentation. It does not bundle
+articles or pin them to your CLI version. Command help is version-matched to
+the installed binary.
 
-```bash
-floo apps github setup
-```
-
-Authorize floo with GitHub in the browser and choose the repository's owner if
-prompted. Return to the terminal after GitHub access is confirmed. For an agent,
-use `floo apps github setup --no-browser`, give the printed link to the user,
-and resume after they finish. Installing the App alone does not link it to floo.
-
-```bash
-# Initialize, validate, and push the config GitHub will deploy
-cd my-project
-floo init my-app
-floo preflight
-git add floo.app.toml Dockerfile AGENTS.md
-git commit -m "chore: configure floo"
-git push origin main
-
-# Create the floo app, connect GitHub, and deploy the pushed commit
-floo apps github connect owner/repo
-
-# Manage apps
-floo apps list
-floo apps show my-app
-floo apps delete my-app
-
-# Environment variables
-floo env set DATABASE_URL --stdin --secret --app my-app
-floo env list --app my-app
-
-# Custom domains: declare [domains."app.example.com"] service = "web"
-# in floo.app.toml and release to prod, then publish the DNS records shown.
-floo domains list --app my-app
-floo domains show app.example.com --app my-app
-floo domains watch app.example.com --app my-app
-# Remove the block and release to prod to retire the domain.
-# Certificates are kept 7 days; re-declare the block to restore.
-
-# Edge routes
-floo edge routes list --app my-app --json
-
-# Edge policy (IP/CIDR firewall, Team plan) - configured in floo.app.toml [edge], read via CLI
-floo edge policy get --env prod
-floo edge policy check 203.0.113.7 --env prod
-```
-
-All commands are invoked with the production alias: `floo`.
-
-### Managed projects without a GitHub account
-
-With a floo API key, create a managed app with hosted, invite-only login and
-postgres, then clone its source into your workspace:
-
-```bash
-floo projects create client-portal
-floo projects list
-floo projects clone client-portal
-cd client-portal
-# Read AGENTS.md before editing, then commit and push with git.
-floo deploys watch --app client-portal
-```
-
-Create starts the first deploy and prints the watch command without waiting.
-Clone accepts a project name or app ID and an optional destination directory.
-It configures git only in the cloned repository, using the absolute path of the
-current floo binary. Keep that binary in place for later fetches and pushes.
-The helper fetches one-hour tokens per git operation through floo; no GitHub
-account or stored GitHub credential is needed. Only the floo API key is stored.
-Inherited credential helpers are reset for the repository to prevent caching.
-
-## Agent / programmatic use
-
-User-facing commands support `--json` for structured output:
-
-```bash
-# JSON to stdout, human output to stderr
-floo redeploy --json 2>/dev/null | jq '.data.deploy.url'
-
-# Success: {"success": true, "data": {...}}
-# Error:   {"success": false, "error": {"code": "...", "message": "...", "suggestion": "..."}}
-```
-
-The internal `floo projects git-credential get` command is used by git and emits
-only git's credential protocol, even with `--json`. Its `store` and `erase`
-operations are no-ops. Never capture its password output in logs or files.
+For agent setup and the JSON output contract, read the
+[agent guide](https://getfloo.com/docs/guides/agent-setup).
 
 ## Building from source
 
@@ -189,7 +110,7 @@ The pre-push hook blocks a push whose Rust changes fail `./scripts/test`; bypass
 
 ## Documentation
 
-- Run `floo docs` for the version-matched offline topic index (`floo docs --json` for agents).
+- Run `floo docs` for the web documentation index (`floo docs --json` for agents).
 - [Getting Started](https://getfloo.com/docs/introduction)
 - [CLI Reference](https://getfloo.com/docs/cli/overview)
 - [Configuration Reference](https://getfloo.com/docs/reference/config-spec)
