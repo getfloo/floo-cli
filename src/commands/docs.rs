@@ -34,9 +34,9 @@ const CONFIG_ALIASES: &[&str] = &["app-toml"];
 pub(crate) const TOPICS: &[Topic] = &[
     Topic {
         name: "golden-path",
-        summary: "Golden path and decision table",
+        summary: "GitHub setup, floo organization linking, and first deploy",
         aliases: NO_ALIASES,
-        path: "guides/cli",
+        path: "introduction",
     },
     Topic {
         name: "quickstart",

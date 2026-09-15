@@ -47,10 +47,29 @@ floo update --version v0.1.0
 
 ## Quick start
 
-```bash
-# Authenticate
-floo auth login
+For your own GitHub repository, follow the [full quickstart](https://getfloo.com/docs/introduction), also available through `floo docs golden-path` or `floo docs quickstart`.
 
+```bash
+# Authenticate; select the intended floo organization before linking GitHub
+floo auth login
+# If needed: floo orgs switch <org-slug>
+```
+
+[Install the floo GitHub App](https://github.com/apps/getfloo/installations/new)
+on the GitHub account or organization that owns `owner/repo`, select that
+repository, and install or save. Wait for organization-owner approval if required.
+Then link the installation to your active floo organization:
+
+```bash
+floo apps github setup
+```
+
+Authorize floo with GitHub in the browser and choose the repository's owner if
+prompted. Return to the terminal after GitHub access is confirmed. For an agent,
+use `floo apps github setup --no-browser`, give the printed link to the user,
+and resume after they finish. Installing the App alone does not link it to floo.
+
+```bash
 # Initialize, validate, and push the config GitHub will deploy
 cd my-project
 floo init my-app

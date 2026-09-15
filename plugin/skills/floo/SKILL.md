@@ -39,8 +39,8 @@ Deploys are git-driven:
 - A push or merge to the connected branch deploys dev.
 - A GitHub release promotes prod.
 - The CLI never uploads source and `floo init` only writes local config.
-- For a user-owned GitHub repo, `floo apps github connect` creates the app and triggers its first deploy
-  from GitHub. Run preflight, commit, and push generated config before connect.
+- For a user-owned GitHub repo, read the page linked by `floo docs golden-path` and complete both browser steps before connecting: the user installs the floo GitHub App on the repository's owner and selects the repo; then `floo apps github setup --no-browser` prints the link they open to authorize it for the active floo organization. Confirm the intended floo organization before setup and wait for the user to finish.
+- `floo apps github connect` creates the app and triggers its first deploy from GitHub. Run preflight, commit, and push generated config before connect. GitHub setup confirmation alone does not mean the repository is connected or deployed.
 - `floo redeploy --app <app>` restarts existing images with fresh server-side env values; it does not rebuild or read local env files.
 - `floo redeploy --app <app> --rebuild` rebuilds the current GitHub default-branch HEAD and reparses immutable contracts. If a restart reports an unavailable immutable contract, use the exact rebuild command it returns.
 - To re-sync configured local `env_file` values, run `floo redeploy --sync-env` from the project directory without `--app` or `--service`. The CLI rejects `--sync-env` with `--service` (including the `--services` alias). With `--app` alone, `--sync-env` has no effect. Redeploy requires an existing dev deploy; push code changes through git.
@@ -87,8 +87,8 @@ Never place credentials in source, committed `.env` files, floo TOML, logs, erro
 ## Topic routing
 
 - Managed projects without a GitHub account (hosted invite-only login and managed Postgres): `floo projects --help` for create, list, and clone; https://getfloo.com/agents.md for the full workflow.
-- Setup and first deploy: `floo docs quickstart`
-- Decision flow: `floo docs golden-path`
+- Setup and first deploy: `floo docs golden-path` or `floo docs quickstart`
+- GitHub installation, authorization, and recovery: `floo docs github`
 - Config and secret behavior: `floo docs config`
 - Services and data: `floo docs services`
 - Availability, scaling, and CPU behavior: `floo docs scaling`
