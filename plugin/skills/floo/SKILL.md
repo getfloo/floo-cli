@@ -23,29 +23,17 @@ For automation, pass `--json`. JSON responses go to stdout; human output goes to
 
 ## Deploy invariant
 
-For an app without a user-owned GitHub repo, use `floo projects create <name>`,
-`floo projects list`, and `floo projects clone <name-or-id> [dir]`; check
-`floo projects --help` for details. Create starts the first deploy; follow the
-printed watch command. After cloning, read the project's `AGENTS.md` before
-editing. Keep the floo binary at its installed path: the repo-local git helper
-uses that absolute path and fetches one-hour tokens through floo per operation.
-Only the floo API key is stored; never cache GitHub tokens or configure global
-git credentials. The internal `floo projects git-credential get` is used by git,
-emits a plaintext password protocol rather than JSON, and must not be logged.
-Its `store` and `erase` operations do nothing.
+Use the topic routing below and read the linked web guide before setup,
+deployment, or recovery.
 
-Deploys are git-driven:
+Deploys are git-driven: pushes deploy dev and GitHub releases promote prod.
+App configuration belongs in the repository; commit and
+push generated config before connecting because the first deploy reads GitHub.
+After cloning a project, read its `AGENTS.md` before editing.
 
-- A push or merge to the connected branch deploys dev.
-- A GitHub release promotes prod.
-- The CLI never uploads source and `floo init` only writes local config.
-- For a user-owned GitHub repo, `floo apps github connect` creates the app and triggers its first deploy
-  from GitHub. Run preflight, commit, and push generated config before connect.
-- `floo redeploy --app <app>` restarts existing images with fresh server-side env values; it does not rebuild or read local env files.
-- `floo redeploy --app <app> --rebuild` rebuilds the current GitHub default-branch HEAD and reparses immutable contracts. If a restart reports an unavailable immutable contract, use the exact rebuild command it returns.
-- To re-sync configured local `env_file` values, run `floo redeploy --sync-env` from the project directory without `--app` or `--service`. The CLI rejects `--sync-env` with `--service` (including the `--services` alias). With `--app` alone, `--sync-env` has no effect. Redeploy requires an existing dev deploy; push code changes through git.
-
-There is no normal deploy command. Validate with `floo preflight`, push through git, then observe with the current `deploys` and `logs` help surfaces.
+Never cache GitHub tokens or configure global git credentials for managed
+projects. The internal git credential helper emits a plaintext password
+protocol and must not be logged.
 
 ## Source of truth
 
@@ -61,7 +49,7 @@ When older projects use a legacy authoring surface, follow the migration guidanc
 - services remove does not edit the manifest. Leaving a managed-service declaration means the next push re-provisions it. `enabled=false` is a removal proposal, not proof of cleanup or authorization to destroy data.
 - always `[services.NAME.env]` in `floo.app.toml`. This also applies to single-service apps; do not use top-level `[env]` for their contracts.
 - verify by comparing `services list --json` names to the manifest and treating a partial read as failure. Run `floo services list --app <app> --env <env> --json` and compare both `app_services` and `managed_services` names with their declarations, reporting missing and extra names. A `running` status can be inherited from the environment deploy and does not prove per-service health. Managed-list failure can appear as an empty list in success JSON, with its warning suppressed in JSON mode. Repeat the read without `--json` to check for a partial-view warning; if completeness is uncertain, stop and report verification failure.
-- report retained resources rather than claiming cleanup. Cron removal leaves the Cloud Run Job (getfloo/floo#1371); name retained app services, managed resources, and jobs explicitly, and report anything whose retention could not be verified.
+- report retained resources rather than claiming cleanup. Name retained app services, managed resources, and scheduled jobs explicitly, and report anything whose retention could not be verified.
 
 ## Audit every mutation
 
@@ -71,7 +59,7 @@ No state change is complete until a read-only command confirms the resulting sta
 - Before a mutation, use its `--preflight` form when available.
 - After an environment change, inspect the relevant `env` read surface and run preflight.
 - A `[domains."<host>"]` block goes live on the prod release. Publish the DNS records the deploy output prints (also `floo domains show <host>`), then `floo domains watch <host>`.
-- After a git-triggered deploy, watch the deployment and inspect runtime logs.
+- After a git-triggered deploy, use `floo deploys status --json` to verify the result. Inspect logs only when needed and keep sensitive output out of transcripts.
 - If the audit differs from intent, stop and investigate before another mutation or push.
 
 `--dry-run` is a compatibility alias for `--preflight`. Use `--preflight` in new work.
@@ -87,13 +75,13 @@ Never place credentials in source, committed `.env` files, floo TOML, logs, erro
 ## Topic routing
 
 - Managed projects without a GitHub account (hosted invite-only login and managed Postgres): `floo projects --help` for create, list, and clone; https://getfloo.com/agents.md for the full workflow.
-- Setup and first deploy: `floo docs quickstart`
-- Decision flow: `floo docs golden-path`
+- Setup and first deploy: `floo docs golden-path` or `floo docs quickstart`
+- GitHub installation, authorization, and recovery: `floo docs github`
 - Config and secret behavior: `floo docs config`
 - Services and data: `floo docs services`
 - Availability, scaling, and CPU behavior: `floo docs scaling`
 - Managed-service health and accounts drift: `floo docs doctor`
-- Git-driven deployment: `floo docs deploy`
+- Git-driven deployment: `floo docs deploy`; `floo redeploy --help` for restart and rebuild syntax
 - Routes and access controls: `floo docs edge`
 - Hosted-app authentication: `floo docs auth`
 - Scheduled jobs: `floo docs cron`

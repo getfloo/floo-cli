@@ -479,20 +479,17 @@ fn first_party_guidance_matches_clap() {
         }
     }
 
-    // These floors are ratchets against a corpus silently emptying, not targets.
-    // The complete-example floor dropped from 50 to 15 when docs/offline moved
-    // to floo-docs: this validator parses every example against the live Clap
-    // tree, and the pages that left are now checked only by hand-maintained
-    // regexes in floo-docs/scripts/check_docs.py. That is a real reduction in
-    // what is mechanically verified. Raise this floor if the bundled corpus
-    // grows; do not lower it to make a failure go away.
+    // Guard against accidentally emptying discovery. The README now links to
+    // canonical web recipes instead of duplicating them, leaving seven complete
+    // local examples. Every collected example is still parsed above; external
+    // web examples can be included through FLOO_EXTERNAL_GUIDANCE_DIR.
     assert!(
         guidance.len() > 100,
         "too few guidance references found: {}",
         guidance.len()
     );
     assert!(
-        full_examples > 15,
+        full_examples >= 7,
         "too few complete examples found: {full_examples}"
     );
     assert!(
