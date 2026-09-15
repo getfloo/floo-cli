@@ -41,4 +41,6 @@ Start with the installed binary; `floo docs` routes to the canonical page for ea
 
 Auditable access and edge policy belongs in `floo.app.toml` and moves through git. Inspect it with read-only CLI surfaces, run `floo preflight --json`, and review the diff before pushing. Do not create an imperative second write path for the same policy.
 
-Resolve the exact app and environment before any security mutation. Preview with `--preflight` where supported, audit the resulting state, and require explicit user authorization for destructive or data-bearing targets.
+Resolve the exact app and environment before any security mutation. Preview with `--preflight` where supported and audit the resulting state. Follow the core floo skill's Destructive actions section: existing delegation authorizes work within scope, while explicit policy and host approval requirements still apply.
+
+Repository write access alone cannot broaden app authentication. After committing and pushing the intended change, an authorized floo org-admin agent can run `floo redeploy --app <app> --rebuild` with an admin-scoped credential to apply the current GitHub default-branch HEAD. The access transition needs no dashboard approval; any separately configured infrastructure-review policy still applies.
