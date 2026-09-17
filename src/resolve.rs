@@ -150,6 +150,7 @@ mod tests {
 
     fn make_app(id: &str, name: &str) -> App {
         App {
+            lifecycle_state: None,
             id: id.to_string(),
             name: name.to_string(),
             org_id: None,
