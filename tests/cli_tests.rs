@@ -2918,6 +2918,8 @@ fn test_json_mode_no_version_check_output() {
 #[allow(deprecated)]
 fn test_automatic_update_gate_table() {
     use std::process::Stdio;
+    // This HTTP-only gate test must not spend its 500ms exit window loading OS trust.
+    let trust = tempfile::tempdir().unwrap();
     // A real stdout PTY isolates the JSON guard from the non-TTY guard.
     for (profile, json, tty, disabled, expected) in [
         ("floo", false, true, false, true),
@@ -2951,6 +2953,8 @@ fn test_automatic_update_gate_table() {
             .args(["init", "example", "--dry-run"])
             .current_dir(home.path())
             .env("HOME", home.path())
+            .env_remove("SSL_CERT_FILE")
+            .env("SSL_CERT_DIR", trust.path())
             .env_remove("FLOO_CONFIG_DIR")
             .env_remove("FLOO_NO_UPDATE_CHECK")
             .env("FLOO_UPDATE_TARGET_PATH", &target)
