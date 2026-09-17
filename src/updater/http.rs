@@ -1,11 +1,11 @@
 //! TLS trust and diagnostics shared by foreground and background updates.
-use std::{env, fs, time::Duration};
+use std::{env, error::Error, fs, time::Duration};
 
 use reqwest::{blocking::Client, Certificate};
 
 use crate::errors::{ErrorCode, FlooError};
 
-const CONNECTION_HINT: &str = "Check the reported connection cause. Behind a TLS-inspecting proxy, set SSL_CERT_FILE to its trusted PEM CA bundle.";
+pub(super) const CONNECTION_HINT: &str = "Check the reported connection cause. Behind a TLS-inspecting proxy, set SSL_CERT_FILE to its trusted PEM CA bundle.";
 
 /// Keep bundled roots and native trust, validating an explicit CA bundle strictly.
 pub(crate) fn build_client(connect_secs: u64, timeout_secs: u64) -> Result<Client, FlooError> {
@@ -18,7 +18,7 @@ pub(crate) fn build_client(connect_secs: u64, timeout_secs: u64) -> Result<Clien
         let pem =
             fs::read(path).map_err(|e| client_error(format!("Cannot read SSL_CERT_FILE: {e}")))?;
         let certs = Certificate::from_pem_bundle(&pem)
-            .map_err(|e| client_error(format!("Invalid SSL_CERT_FILE: {e}")))?;
+            .map_err(|e| client_error(format!("Invalid SSL_CERT_FILE: {}", error_chain(e))))?;
         if certs.is_empty() {
             return Err(client_error(
                 "SSL_CERT_FILE contains no PEM certificates".into(),
@@ -28,7 +28,7 @@ pub(crate) fn build_client(connect_secs: u64, timeout_secs: u64) -> Result<Clien
             builder = builder.add_root_certificate(cert);
         }
     }
-    builder.build().map_err(|e| client_error(e.to_string()))
+    builder.build().map_err(|e| client_error(error_chain(e)))
 }
 
 fn client_error(cause: String) -> FlooError {
@@ -37,6 +37,25 @@ fn client_error(cause: String) -> FlooError {
         format!("Failed to initialize update client: {cause}"),
         CONNECTION_HINT,
     )
+}
+
+/// Retain source errors without exposing request URLs or credential-shaped text.
+pub(super) fn error_chain(error: reqwest::Error) -> String {
+    // Release redirects carry signed query parameters; diagnostics need the cause,
+    // not a URL. Suppress any remaining URL-bearing source messages below.
+    let error = error.without_url();
+    let mut current: Option<&(dyn Error + 'static)> = Some(&error);
+    let mut parts = Vec::new();
+    while let Some(cause) = current {
+        let message = cause.to_string();
+        if message.contains("://") || crate::redact::is_secret("message", &message) {
+            parts.push(crate::redact::REDACTED_PLACEHOLDER.to_string());
+        } else if parts.last() != Some(&message) {
+            parts.push(message);
+        }
+        current = cause.source();
+    }
+    parts.join(": ")
 }
 
 #[cfg(test)]
@@ -130,12 +149,18 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn unknown_ca_is_rejected() {
-        through_proxy("updater::http::tests::unknown_ca_is_rejected", || {
-            env::remove_var("SSL_CERT_FILE");
-            let error = crate::updater::check_update(None).err().unwrap();
-            assert_eq!(error.code, ErrorCode::ReleaseLookupFailed);
-        });
+    fn unknown_ca_retains_certificate_cause() {
+        through_proxy(
+            "updater::http::tests::unknown_ca_retains_certificate_cause",
+            || {
+                env::remove_var("SSL_CERT_FILE");
+                let error = crate::updater::check_update(None).err().unwrap();
+                assert_eq!(error.code, ErrorCode::ReleaseLookupFailed);
+                assert!(error.message.contains("UnknownIssuer"), "{}", error.message);
+                assert!(error.suggestion.unwrap().contains("SSL_CERT_FILE"));
+                assert!(!error.message.contains("proxy-secret"));
+            },
+        );
     }
 
     #[test]
@@ -145,7 +170,11 @@ pub(crate) mod tests {
             || {
                 env::set_var("FLOO_UPDATE_API_BASE", "https://wrong-host.test/releases");
                 let error = crate::updater::check_update(None).err().unwrap();
-                assert_eq!(error.code, ErrorCode::ReleaseLookupFailed);
+                assert!(
+                    error.message.contains("not valid for name"),
+                    "{}",
+                    error.message
+                );
             },
         );
     }
