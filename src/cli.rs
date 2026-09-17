@@ -789,7 +789,20 @@ pub enum AppsCommands {
         app: Option<String>,
     },
 
-    /// Permanently delete an app and all its data.
+    /// Take all environments offline while retaining data and settings.
+    /// Retained data services may still incur charges. Repeat to finish incomplete cleanup.
+    Stop {
+        /// App name or ID.
+        app_name: String,
+    },
+
+    /// Allow Git-based deployments again. The app goes live after a successful deployment.
+    Resume {
+        /// App name or ID.
+        app_name: String,
+    },
+
+    /// Permanently delete an app and all its data. The GitHub repository stays.
     ///
     /// Tier-3 destructive: interactive mode requires typing the app name
     /// to confirm; non-interactive requires --yes-i-know-this-destroys-data.
@@ -2403,6 +2416,12 @@ pub fn run() {
                 confirmed,
                 preflight: _,
             } => commands::apps::delete(&app_name, confirmed),
+            AppsCommands::Stop { app_name } => {
+                commands::apps::lifecycle(&app_name, crate::api_types::AppLifecycleAction::Stop)
+            }
+            AppsCommands::Resume { app_name } => {
+                commands::apps::lifecycle(&app_name, crate::api_types::AppLifecycleAction::Resume)
+            }
             AppsCommands::Github(gh_sub) => match gh_sub {
                 GitHubCommands::Connect {
                     repo,

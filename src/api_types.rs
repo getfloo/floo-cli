@@ -286,6 +286,8 @@ pub struct App {
     pub name: String,
     pub org_id: Option<String>,
     pub status: Option<String>,
+    #[serde(default)]
+    pub lifecycle_state: Option<String>,
     pub url: Option<String>,
     pub runtime: Option<String>,
     /// Direct Cloud Run runtime URL of the primary user-facing service.
@@ -295,6 +297,12 @@ pub struct App {
     pub created_at: Option<String>,
     #[serde(default)]
     pub environments: Vec<EnvironmentSummary>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum AppLifecycleAction {
+    Stop,
+    Resume,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

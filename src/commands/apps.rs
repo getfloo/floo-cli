@@ -1,5 +1,6 @@
 use std::process;
 
+use crate::api_types::AppLifecycleAction;
 use crate::errors::ErrorCode;
 use crate::output;
 
@@ -231,6 +232,29 @@ pub fn delete(app_name: &str, destroy_data_flag: bool) {
     );
 }
 
+/// Change runtime availability without deleting managed data or repository bindings.
+pub fn lifecycle(app_name: &str, action: AppLifecycleAction) {
+    super::require_auth();
+    let client = super::init_client(None);
+    let app = super::resolve_app_or_exit(&client, app_name);
+    let result = match client.change_app_lifecycle(&app.id, action) {
+        Ok(result) => result,
+        Err(error) => {
+            output::error(&error.message, &ErrorCode::from_api(&error.code), None);
+            process::exit(1);
+        }
+    };
+    let message = match action {
+        AppLifecycleAction::Stop => {
+            "App stopped. Data and settings retained; data services may still incur charges."
+        }
+        AppLifecycleAction::Resume => {
+            "Deployments enabled. The app goes live after a successful Git-based deployment."
+        }
+    };
+    output::success(message, Some(output::to_value(&result)));
+}
+
 pub fn show_password(app_name: &str) {
     super::require_auth();
     let client = super::init_client(None);
@@ -374,5 +398,56 @@ pub fn remove_member(membership_id: &str, app_flag: Option<&str>) {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    use crate::api_client::FlooClient;
+    use crate::config::FlooConfig;
+
+    #[test]
+    fn stop_returns_stopped_state_without_a_live_url() {
+        output::set_json_mode(false);
+        output::set_dry_run_mode(false);
+        let mut server = mockito::Server::new();
+        let stopped = server.mock("POST", "/v1/apps/app-1/stop")
+            .with_status(200).with_header("content-type", "application/json")
+            .with_body(r#"{"id":"app-1","name":"example","status":"stopped","lifecycle_state":"stopped","url":null}"#)
+            .create();
+        let client = FlooClient::new(Some(FlooConfig {
+            api_url: server.url(),
+            ..Default::default()
+        }))
+        .unwrap();
+        let app = client
+            .change_app_lifecycle("app-1", AppLifecycleAction::Stop)
+            .unwrap();
+        assert_eq!(app.lifecycle_state.as_deref(), Some("stopped"));
+        assert!(app.url.is_none());
+        stopped.assert();
+    }
+
+    #[test]
+    fn resume_preserves_offline_state_until_deployment() {
+        output::set_json_mode(false);
+        output::set_dry_run_mode(false);
+        let mut server = mockito::Server::new();
+        let resumed = server.mock("POST", "/v1/apps/app-1/resume")
+            .with_status(200).with_header("content-type", "application/json")
+            .with_body(r#"{"id":"app-1","name":"example","status":"stopped","lifecycle_state":"active","url":null}"#)
+            .create();
+        let client = FlooClient::new(Some(FlooConfig {
+            api_url: server.url(),
+            ..Default::default()
+        }))
+        .unwrap();
+        let app = client
+            .change_app_lifecycle("app-1", AppLifecycleAction::Resume)
+            .unwrap();
+        assert_eq!(app.lifecycle_state.as_deref(), Some("active"));
+        assert_eq!(app.status.as_deref(), Some("stopped"));
+        resumed.assert();
     }
 }

@@ -467,6 +467,22 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn change_app_lifecycle(
+        &self,
+        app_id: &str,
+        action: AppLifecycleAction,
+    ) -> Result<App, FlooApiError> {
+        let operation = match action {
+            AppLifecycleAction::Stop => "stop",
+            AppLifecycleAction::Resume => "resume",
+        };
+        let resp = self.post_json(
+            &format!("/v1/apps/{app_id}/{operation}"),
+            &serde_json::json!({}),
+        )?;
+        self.handle_response(resp)
+    }
+
     pub fn get_app_password(&self, app_id: &str) -> Result<AppPasswordResponse, FlooApiError> {
         let resp = self.get(&format!("/v1/apps/{app_id}/password"))?;
         self.handle_response(resp)
