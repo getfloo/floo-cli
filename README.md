@@ -45,6 +45,12 @@ floo update
 floo update --version v0.1.0
 ```
 
+Updates retain bundled public CAs and also use native certificate trust.
+`SSL_CERT_FILE` selects a PEM CA bundle instead of native store discovery.
+If an older CLI cannot update behind your proxy, rerun the curl installer above
+with your organization’s trusted CA configured for curl. The installer verifies
+both the release checksum and signature.
+
 ## Quick start
 
 Follow the [web quickstart](https://getfloo.com/docs/introduction) to connect your
