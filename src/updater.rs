@@ -90,8 +90,8 @@ pub(crate) fn fetch_release_json(
         .map_err(|e| {
             FlooError::with_suggestion(
                 ErrorCode::ReleaseLookupFailed,
-                format!("Failed to fetch release metadata: {e}"),
-                "Check your network and try again.",
+                format!("Failed to fetch release metadata: {}", http::error_chain(e)),
+                http::CONNECTION_HINT,
             )
         })?;
 
@@ -194,8 +194,8 @@ pub(crate) fn download_bytes(client: &Client, url: &str) -> Result<Vec<u8>, Floo
         .map_err(|e| {
             FlooError::with_suggestion(
                 ErrorCode::DownloadFailed,
-                format!("Failed to download update asset: {e}"),
-                "Check your network and try again.",
+                format!("Failed to download update asset: {}", http::error_chain(e)),
+                http::CONNECTION_HINT,
             )
         })?;
 
@@ -210,7 +210,7 @@ pub(crate) fn download_bytes(client: &Client, url: &str) -> Result<Vec<u8>, Floo
     response.bytes().map(|bytes| bytes.to_vec()).map_err(|e| {
         FlooError::with_suggestion(
             ErrorCode::DownloadFailed,
-            format!("Failed to read downloaded bytes: {e}"),
+            format!("Failed to read downloaded bytes: {}", http::error_chain(e)),
             "Try again.",
         )
     })

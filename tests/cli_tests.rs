@@ -3475,3 +3475,37 @@ fn test_preflight_app_flag_cannot_hide_ancestor_legacy_config() {
         .failure()
         .stdout(predicate::str::contains(r#""code":"LEGACY_CONFIG""#));
 }
+
+#[test]
+fn update_errors_keep_connection_cause_without_request_secrets() {
+    for json in [false, true] {
+        let config = tempfile::tempdir().unwrap();
+        let mut command = floo();
+        command
+            .args(["update", "--preflight"])
+            .env("FLOO_CONFIG_DIR", config.path())
+            .env_remove("SSL_CERT_FILE")
+            .env_remove("SSL_CERT_DIR")
+            .env("NO_PROXY", "*")
+            .env("no_proxy", "*")
+            .env(
+                "FLOO_UPDATE_API_BASE",
+                "http://user:request-secret@127.0.0.1:0/releases?signature=signed-secret",
+            );
+        if json {
+            command.arg("--json");
+        }
+        let result = command.assert().failure();
+        let output = result.get_output();
+        let message = if json {
+            let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(value["error"]["code"], "RELEASE_LOOKUP_FAILED");
+            value["error"]["message"].as_str().unwrap().to_owned()
+        } else {
+            String::from_utf8(output.stderr.clone()).unwrap()
+        };
+        assert!(message.to_lowercase().contains("connect"), "{message}");
+        assert!(!message.contains("request-secret"));
+        assert!(!message.contains("signed-secret"));
+    }
+}
