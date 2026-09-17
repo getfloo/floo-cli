@@ -145,11 +145,7 @@ fn is_newer(remote: &str, local: &str) -> bool {
 }
 
 fn build_client(timeout_secs: u64) -> Option<Client> {
-    Client::builder()
-        .connect_timeout(Duration::from_secs(CHECK_TIMEOUT_SECS))
-        .timeout(Duration::from_secs(timeout_secs))
-        .build()
-        .ok()
+    updater::http::build_client(CHECK_TIMEOUT_SECS, timeout_secs).ok()
 }
 
 /// Fetch latest release version from GitHub. Returns (tag_name, full release JSON)
@@ -400,6 +396,25 @@ impl VersionCheckHandle {
 mod tests {
     use super::*;
     use crate::errors::ErrorCode;
+
+    #[test]
+    fn background_stages_verified_update_through_tls_proxy() {
+        updater::http::tests::through_proxy(
+            "version_check::tests::background_stages_verified_update_through_tls_proxy",
+            || {
+                let handle = spawn_check("0.0.0").unwrap();
+                assert!(matches!(
+                    handle.rx.recv_timeout(Duration::from_secs(10)).unwrap(),
+                    CheckResult::Downloaded
+                ));
+                assert_eq!(
+                    fs::read(staged_binary_path().unwrap()).unwrap(),
+                    b"fake-binary-content"
+                );
+                assert_eq!(read_staged_meta().unwrap().version, "v9999.0.0");
+            },
+        );
+    }
 
     #[test]
     fn permission_denied_staged_update_reports_diagnostics_and_cleans_staging() {

@@ -1,7 +1,6 @@
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use reqwest::blocking::Client;
@@ -11,6 +10,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::errors::{ErrorCode, FlooError};
+
+pub(crate) mod http;
 
 const DEFAULT_RELEASES_API_BASE: &str = "https://api.github.com/repos/getfloo/floo-cli/releases";
 // ring verifies RSA signatures against PKCS#1 DER, so keep this as
@@ -73,20 +74,6 @@ fn build_release_url(api_base: &str, version: Option<&str>) -> String {
         Some(v) if !v.trim().is_empty() => format!("{api_base}/tags/{v}"),
         _ => format!("{api_base}/latest"),
     }
-}
-
-fn build_http_client() -> Result<Client, FlooError> {
-    Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(|e| {
-        FlooError::with_suggestion(
-            ErrorCode::UpdateHttpClientError,
-            format!("Failed to initialize update client: {e}"),
-            "Try again. If it persists, reinstall via curl -fsSL https://getfloo.com/install.sh | bash",
-        )
-    })
 }
 
 pub(crate) fn fetch_release_json(
@@ -436,7 +423,7 @@ fn run_update_with(
 }
 
 pub fn run_update(version: Option<&str>) -> Result<UpdateResult, FlooError> {
-    let client = build_http_client()?;
+    let client = http::build_client(10, 30)?;
     let api_base = releases_api_base();
     let install_path = resolve_install_path()?;
 
@@ -455,7 +442,7 @@ pub struct UpdatePlan {
 /// Reports the release the updater would have targeted so `--dry-run` callers
 /// can see the plan without mutating the binary. See feedback 7b98b798.
 pub fn check_update(version: Option<&str>) -> Result<UpdatePlan, FlooError> {
-    let client = build_http_client()?;
+    let client = http::build_client(10, 30)?;
     let api_base = releases_api_base();
     let install_path = resolve_install_path()?;
     let asset_name = target_asset_name()?;
@@ -518,7 +505,7 @@ mod tests {
     }
 
     static ENV_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
-    const FAKE_BINARY_SIGNATURE_B64: &str = "asvfjb0bQYA5IrimKSPkA+BgWNHyuP3ax4H4qDQPM3jbsHL1C1fQvjmeKbgadkR3t1QxdDF+62s4pJ81LlDFzW6Iz/BXY9nUUabDSVRLVDqN9F21RWxIor/m89snTJSnanhvbh1+nJ3SeYDJSmKVBqRlNld1ACykNVBlU6eXOcD+hc2faJD4m3VSdaQvRUZsXCGTL5YzyyHV86PbUk4tYt9LQsGsa/CAA0h5TX2UMNmkk12byCh7IbV9tt58lXr3+e26+54UhjDSPX29jLcHEATDPgpnllXDGUyZLtJO1GsT7ojyWrlj18M1zvNg7el9l794HSaK8uTFq2bhvURRsGKjOe3NH13+fZYvL/azLrnvT8/zOrAbpToHVcJeuNo4DUHRJMc/U6ulykHYpeF4ebafr6JREmzOQ9VVUP8vBSco7Ocw7fCxyc77dfmZnTMGooIoifKKUhIjk9ZFIUykXU9BRRuZWVap8vNy6NHZw+EM3wxk4o+vA4/wAgAvliU5";
+    pub(super) const FAKE_BINARY_SIGNATURE_B64: &str = "asvfjb0bQYA5IrimKSPkA+BgWNHyuP3ax4H4qDQPM3jbsHL1C1fQvjmeKbgadkR3t1QxdDF+62s4pJ81LlDFzW6Iz/BXY9nUUabDSVRLVDqN9F21RWxIor/m89snTJSnanhvbh1+nJ3SeYDJSmKVBqRlNld1ACykNVBlU6eXOcD+hc2faJD4m3VSdaQvRUZsXCGTL5YzyyHV86PbUk4tYt9LQsGsa/CAA0h5TX2UMNmkk12byCh7IbV9tt58lXr3+e26+54UhjDSPX29jLcHEATDPgpnllXDGUyZLtJO1GsT7ojyWrlj18M1zvNg7el9l794HSaK8uTFq2bhvURRsGKjOe3NH13+fZYvL/azLrnvT8/zOrAbpToHVcJeuNo4DUHRJMc/U6ulykHYpeF4ebafr6JREmzOQ9VVUP8vBSco7Ocw7fCxyc77dfmZnTMGooIoifKKUhIjk9ZFIUykXU9BRRuZWVap8vNy6NHZw+EM3wxk4o+vA4/wAgAvliU5";
 
     fn fake_binary_signature() -> Vec<u8> {
         BASE64_STANDARD
@@ -601,7 +588,7 @@ mod tests {
             .with_body(signature.as_slice())
             .create();
 
-        let client = build_http_client().unwrap();
+        let client = http::build_client(10, 30).unwrap();
         let temp_dir = tempfile::tempdir().unwrap();
         let install_path = temp_dir.path().join("floo");
 
@@ -653,7 +640,7 @@ mod tests {
             .with_body(b"not-a-valid-signature".as_slice())
             .create();
 
-        let client = build_http_client().unwrap();
+        let client = http::build_client(10, 30).unwrap();
         let temp_dir = tempfile::tempdir().unwrap();
         let install_path = temp_dir.path().join("floo");
 
@@ -745,7 +732,7 @@ mod tests {
             .with_body(format!("{wrong_checksum}  {asset_name}"))
             .create();
 
-        let client = build_http_client().unwrap();
+        let client = http::build_client(10, 30).unwrap();
         let temp_dir = tempfile::tempdir().unwrap();
         let install_path = temp_dir.path().join("floo");
 
@@ -774,7 +761,7 @@ mod tests {
             .with_body("not found")
             .create();
 
-        let client = build_http_client().unwrap();
+        let client = http::build_client(10, 30).unwrap();
         let temp_dir = tempfile::tempdir().unwrap();
         let install_path = temp_dir.path().join("floo");
 
