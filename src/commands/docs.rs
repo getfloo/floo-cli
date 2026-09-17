@@ -34,9 +34,9 @@ const CONFIG_ALIASES: &[&str] = &["app-toml"];
 pub(crate) const TOPICS: &[Topic] = &[
     Topic {
         name: "golden-path",
-        summary: "Golden path and decision table",
+        summary: "GitHub setup, floo organization linking, and first deploy",
         aliases: NO_ALIASES,
-        path: "guides/cli",
+        path: "introduction",
     },
     Topic {
         name: "quickstart",
@@ -142,9 +142,9 @@ pub(crate) const TOPICS: &[Topic] = &[
     },
     Topic {
         name: "auth",
-        summary: "Authentication for floo and hosted apps",
+        summary: "Hosted app authentication, identity, and access",
         aliases: NO_ALIASES,
-        path: "cli/auth",
+        path: "guides/app-auth",
     },
     Topic {
         name: "notifications",
@@ -221,9 +221,9 @@ pub fn docs(topic: Option<&str>) {
 fn render_overview() -> String {
     let mut rendered = format!(
         "floo documentation is published at {DOCS_BASE}.\n\n\
-         `floo docs <topic>` prints the canonical page for a topic. The CLI \
-         routes to the docs rather than embedding a copy, so guidance cannot \
-         drift between the binary you have and the site.\n\n## Topics\n\n"
+         `floo docs <topic>` prints the canonical web URL for a topic. Read that \
+         page for current guidance; articles are not bundled or version-pinned. \
+         Use `floo <command> --help` for syntax matching your installed CLI.\n\n## Topics\n\n"
     );
     for topic in TOPICS {
         let aliases = if topic.aliases.is_empty() {

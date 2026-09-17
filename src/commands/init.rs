@@ -11,16 +11,9 @@ use crate::project_config::{self, AppFileAppSection, AppFileConfig, AppServiceEn
 
 /// Header comment block written above `[app]` on `floo init`.
 ///
-/// This is the lever that closes two recurring friction points:
-/// `88e32b22` (access_mode placement is non-obvious) and `c9b70eb5`
-/// (no in-CLI signal that pushing to GitHub auto-deploys to dev). Both
-/// were reported on `floo-artifact` 2026-05-01 — the user only learned
-/// either fact by reading the hosted docs. Putting the answer in the
-/// file the user is about to edit (and in the file every coding agent
-/// reads when it lands in this repo) makes the discovery cost zero.
-///
-/// Keep this short — a wall of comments at the top of every config
-/// becomes noise. Anchor to canonical doc URLs for depth.
+/// Keep the push-before-connect invariant beside the file it protects. Link
+/// configuration details to web docs so generated comments do not become a
+/// second platform reference.
 const APP_TOML_HEADER: &str = r#"# floo.app.toml — see https://getfloo.com/docs/reference/config-spec.md
 #
 # Commit and push this file before `floo apps github connect`. Connect creates
@@ -28,17 +21,9 @@ const APP_TOML_HEADER: &str = r#"# floo.app.toml — see https://getfloo.com/doc
 # After that, every push to your default branch builds and deploys to the dev
 # environment automatically (no manual deploy command needed). Cutting a
 # GitHub release promotes that build to production. See
-# https://getfloo.com/docs/guides/golden-path.md.
+# https://getfloo.com/docs/introduction.
 #
-# Common knobs to add when you need them (under [app], applies to every env):
-#   access_mode = "accounts"   # require sign-in (Pay as you go+) — public, password,
-#                              #   accounts, or sso. The [app] level is the
-#                              #   one that actually applies on push deploys
-#                              #   today; per-env overrides via
-#                              #   [environments.<name>] are documented but
-#                              #   not yet applied server-side.
-#
-# Run `floo docs config` for the full schema."#;
+# Run `floo docs config` for the configuration reference."#;
 
 pub fn init(name: Option<String>, path: PathBuf) {
     let project_path = match path.canonicalize() {
@@ -176,76 +161,15 @@ fn init_dry_run(project_path: &std::path::Path, name: Option<String>, detection:
     );
 }
 
-/// Agent-safe operating notes scaffold. Written next to floo.app.toml on
-/// every `floo init` so any AI coding assistant working in the project
-/// has the floo-specific gotchas at hand without needing to crawl docs.
-///
-/// The content mirrors the public app-auth checklist on getfloo.com so
-/// the same advice is available to a coding agent reading local files
-/// AND to a human reading the docs site. Closes feedback 9494ea44
-/// (floo-artifact, 2026-04-30): "floo should publish an agent-safe
-/// checklist/template for apps using accounts mode... could live in
-/// docs and/or be generated into AGENTS.md by floo init."
-const AGENTS_MD_TEMPLATE: &str = r#"# Agent operating notes
+/// Point new projects to canonical guidance; never embed a second operating manual.
+const AGENTS_MD_TEMPLATE: &str = r#"# floo documentation
 
-This file is for AI coding assistants working in this floo app. It
-captures the floo-specific gotchas that aren't obvious from the code.
+Read https://getfloo.com/docs/guides/agent-setup before working on this app.
+Use `floo docs quickstart` for the first-deploy guide and `floo docs --json`
+to find configuration, services, authentication, and deployment documentation.
+These commands return URLs; read the linked pages.
 
-## Working with floo
-
-- **Run `floo preflight` before every deploy.** Catches config drift,
-  missing managed-service env vars, runtime detection issues, and
-  destructive plan changes — most deploy failures are preventable here.
-- **Discover the installed CLI locally first.** Run `floo commands
-  --json`, `floo <command> --help`, then `floo docs <topic> --json`.
-  These surfaces match the installed version. Use the hosted docs for
-  longer explanations after checking them.
-- **Commit before connecting GitHub.** `floo apps github connect`
-  creates the floo app and triggers its first deploy from GitHub. Run
-  preflight, commit, and push before connecting. For a fresh app,
-  declare managed services with `[managed.<name>]` in `floo.app.toml`;
-  `floo services add` requires an existing app.
-- **Deploy by pushing to GitHub.** `git push` to your default branch
-  triggers a dev deploy; cutting a GitHub release promotes to prod.
-  Don't deploy with another cloud provider's CLI — it bypasses
-  the floo pipeline.
-
-## Agent-safe deploy debugging
-
-- **Use `floo deploys status --json` instead of `floo deploys watch`.**
-  `status` returns a compact summary (deploy id, derived phase
-  booleans, gateway URL, next recommended command) without dumping
-  build logs that may contain audit payloads. `watch` is fine for
-  humans; for scripts and agents, prefer `status`.
-- **`/health` on the direct runtime URL is for infrastructure
-  probes, not authenticated requests.** Platform liveness/startup
-  probes hit it without any session, so don't infer auth state from
-  whatever can reach `/health`.
-- **Test the floo gateway URL after every deploy.** A 502 on
-  `*.on.getfloo.com` (or your custom domain) means the deploy didn't
-  finalize even if the direct runtime URL serves new code. `floo
-  deploys status --json` reports `host_bound: false` in that state.
-
-## If you set `access_mode = "accounts"` (or `"password"`)
-
-- **Trust `X-Floo-User-Email`, `X-Floo-User-Id`, `X-Floo-User-Name`,
-  and `X-Floo-User-Role` on every request your app receives.** The
-  floo gateway is the only path into your container. Ingress is
-  locked to the internal load balancer and there is no public
-  invoker grant. The deploy pipeline raises if a deploy would
-  somehow ship with public ingress.
-- **Don't curl the direct runtime URL in scripts or tests.** It
-  returns 403 before reaching your container — by design.
-- **Don't accept identity headers from any other path.** The trust
-  boundary is the gateway, not the network in general. Authenticate
-  inter-service or internal-cron calls separately.
-- **Use `floo dev --fixture-user` for local dev.** It injects the
-  same headers the gateway would, so your code path stays the same
-  with no auth-mode toggling.
-
-The full background — how the deploy-time invariant works, what
-exactly is enforced, and how to verify the boundary — lives at
-`https://getfloo.com/docs/guides/app-auth.md`.
+Use `floo commands --json` and `floo <command> --help` for installed syntax.
 "#;
 
 fn write_agents_md(project_path: &std::path::Path) -> bool {
