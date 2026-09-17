@@ -104,7 +104,7 @@ The installed binary owns command syntax and documentation discovery:
 - `src/commands/command_tree.rs` owns the machine-readable command catalog.
 - The typed registry in `src/commands/docs.rs` owns topic names, aliases, summaries, URLs, and JSON discovery.
 - https://getfloo.com/docs owns platform guidance, onboarding, examples, and troubleshooting. `floo docs` returns links to those current pages; articles are neither bundled nor pinned to the installed CLI version.
-- `plugin/skills/**/SKILL.md` route agents to command help and web docs while preserving durable safety policy. The CLI embeds these same files for installation and refresh.
+- `plugin/skills/floo/SKILL.md` is the single entry point to command help and web docs; operational guidance lives on the website. The CLI embeds this same file for installation and refresh.
 - README owns installation and contributor instructions and links to the web quickstart.
 
 When behavior changes, update its canonical web documentation and any affected

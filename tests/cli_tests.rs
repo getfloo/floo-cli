@@ -24,24 +24,39 @@ fn test_help() {
 }
 
 #[test]
-fn printed_skill_preserves_manifest_lifecycle_rules() {
+fn printed_skill_matches_installed_entry_point() {
     let skill = include_str!("../plugin/skills/floo/SKILL.md");
-    assert!(skill.contains("names are identities."));
-    assert!(skill.contains("rename does not migrate."));
-    assert!(skill.contains("removing a block does not retire the runtime."));
-    assert!(skill.contains("services remove does not edit the manifest."));
-    assert!(skill.contains("always `[services.NAME.env]` in `floo.app.toml`."));
-    assert!(skill.contains(
-        "verify by comparing `services list --json` names to the manifest and treating a partial read as failure."
-    ));
-    assert!(skill.contains("report retained resources rather than claiming cleanup."));
-
     floo()
         .env("FLOO_NO_UPDATE_CHECK", "1")
         .args(["skills", "install", "--print"])
         .assert()
         .success()
         .stdout(skill);
+}
+
+#[test]
+fn skill_install_writes_one_documentation_entry_point() {
+    let target = tempfile::TempDir::new().unwrap();
+    let config = tempfile::TempDir::new().unwrap();
+    let result = floo()
+        .env("FLOO_NO_UPDATE_CHECK", "1")
+        .env("FLOO_CONFIG_DIR", config.path())
+        .args([
+            "skills",
+            "install",
+            "--path",
+            target.path().to_str().unwrap(),
+            "--json",
+        ])
+        .assert()
+        .success();
+    let output: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    assert_eq!(output["data"]["plugin_skills"], serde_json::json!([]));
+    assert_eq!(std::fs::read_dir(target.path()).unwrap().count(), 1);
+    assert_eq!(
+        std::fs::read_to_string(target.path().join("SKILL.md")).unwrap(),
+        include_str!("../plugin/skills/floo/SKILL.md")
+    );
 }
 
 /// Assert stdout contains a line that, when trimmed, equals exactly `tag`.
@@ -1043,10 +1058,9 @@ fn test_init_creates_config_json() {
 
     let agents = std::fs::read_to_string(project.path().join("AGENTS.md")).unwrap();
     assert!(agents.contains("floo commands --json"));
-    assert!(agents.contains("floo docs <topic> --json"));
-    assert!(agents.contains("commit, and push before connecting"));
+    assert!(agents.contains("https://getfloo.com/docs/guides/agent-setup"));
     assert!(agents.contains("floo docs quickstart"));
-    assert!(agents.contains("floo docs auth"));
+    assert!(agents.contains("floo docs --json"));
 }
 
 #[test]

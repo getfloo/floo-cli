@@ -161,40 +161,15 @@ fn init_dry_run(project_path: &std::path::Path, name: Option<String>, detection:
     );
 }
 
-/// Agent-safe operating notes scaffold. Written next to floo.app.toml on
-/// every `floo init`. Keep durable safety rules here and route workflows to
-/// canonical web docs instead of copying a second platform guide.
-const AGENTS_MD_TEMPLATE: &str = r#"# Agent operating notes
+/// Point new projects to canonical guidance; never embed a second operating manual.
+const AGENTS_MD_TEMPLATE: &str = r#"# floo documentation
 
-## Discover before acting
+Read https://getfloo.com/docs/guides/agent-setup before working on this app.
+Use `floo docs quickstart` for the first-deploy guide and `floo docs --json`
+to find configuration, services, authentication, and deployment documentation.
+These commands return URLs; read the linked pages.
 
-Use `floo commands --json` to discover commands and `floo <command> --help`
-for syntax matching the installed CLI. `floo docs <topic> --json` returns a
-web URL and metadata; read that page for current platform guidance. Web
-articles are not bundled or pinned to the installed version.
-
-- First deploy and GitHub setup: `floo docs quickstart`.
-- App configuration: `floo docs config`.
-- Managed services and credentials: `floo docs services`.
-- Hosted sign-in and identity headers: `floo docs auth`.
-- Deploy lifecycle and recovery: `floo docs deploy`.
-
-## Working safely
-
-- App configuration belongs in `floo.app.toml` and changes through Git.
-  Run `floo preflight`, commit, and push before connecting a repository;
-  the first deploy reads the already-pushed commit.
-- Pushes deploy to dev; GitHub releases promote to prod. Use the floo
-  pipeline for deployment and verify the resulting app state.
-- Use `floo deploys status --json` for agent-safe deploy inspection.
-  Review logs only when needed, and keep credentials and sensitive
-  payloads out of transcripts.
-- Verify the floo gateway URL or custom domain after a deploy.
-- Trust identity headers only through the authenticated gateway boundary
-  documented in the app-auth guide. Authenticate internal calls separately.
-- Keep secrets out of source, floo TOML, browser code, and logs. Resolve
-  the exact app and environment before mutations, and require explicit
-  user authorization before destructive operations.
+Use `floo commands --json` and `floo <command> --help` for installed syntax.
 "#;
 
 fn write_agents_md(project_path: &std::path::Path) -> bool {

@@ -479,12 +479,11 @@ fn first_party_guidance_matches_clap() {
         }
     }
 
-    // Guard against accidentally emptying discovery. The README now links to
-    // canonical web recipes instead of duplicating them, leaving seven complete
-    // local examples. Every collected example is still parsed above; external
-    // web examples can be included through FLOO_EXTERNAL_GUIDANCE_DIR.
+    // Keep a discovery floor as prose moves to canonical web docs. Every
+    // collected example is still parsed; include web examples through
+    // FLOO_EXTERNAL_GUIDANCE_DIR.
     assert!(
-        guidance.len() > 100,
+        guidance.len() >= 80,
         "too few guidance references found: {}",
         guidance.len()
     );

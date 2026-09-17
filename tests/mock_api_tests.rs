@@ -6496,20 +6496,6 @@ fn test_version_human_reports_up_to_date_after_successful_check() {
     std::fs::create_dir_all(&skill_dir).unwrap();
     let skill_path = skill_dir.join("SKILL.md");
     std::fs::write(&skill_path, include_str!("../plugin/skills/floo/SKILL.md")).unwrap();
-    for (name, content) in [
-        (
-            "floo-services",
-            include_str!("../plugin/skills/floo-services/SKILL.md"),
-        ),
-        (
-            "floo-security",
-            include_str!("../plugin/skills/floo-security/SKILL.md"),
-        ),
-    ] {
-        let plugin_dir = skill_dir.join(name);
-        std::fs::create_dir_all(&plugin_dir).unwrap();
-        std::fs::write(plugin_dir.join("SKILL.md"), content).unwrap();
-    }
     let config_dir = home.path().join(".floo");
     std::fs::create_dir_all(&config_dir).unwrap();
     std::fs::write(

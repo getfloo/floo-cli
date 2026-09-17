@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 use colored::Colorize;
+use sha2::{Digest, Sha256};
 
 use crate::config::{load_config, save_config};
 use crate::constants::VERSION;
@@ -11,32 +12,40 @@ use crate::errors::ErrorCode;
 use crate::output;
 
 const SKILL_CONTENT: &str = include_str!("../../plugin/skills/floo/SKILL.md");
-const SKILL_SERVICES: &str = include_str!("../../plugin/skills/floo-services/SKILL.md");
-const SKILL_SECURITY: &str = include_str!("../../plugin/skills/floo-security/SKILL.md");
-
-/// All plugin skills to install alongside the main skill.
-const PLUGIN_SKILLS: &[(&str, &str)] = &[
-    ("floo-services", SKILL_SERVICES),
-    ("floo-security", SKILL_SECURITY),
+// Exact hashes of previously bundled skills. Preserve user-edited files.
+const RETIRED_SKILLS: &[(&str, &[&str])] = &[
+    (
+        "floo-services",
+        &[
+            "20fddf528159335b25121ff369d59dcef33c34281d668709aaa6d40f4f5d889e",
+            "2d053bd8886486ecc2192356bf3ff69a1972cb6e9d3a5512c0b7b7891392c4d1",
+            "3633afa6a160b7177701bf0be11c1ef8765f55316551132fb2ecbd6ef4298cef",
+            "7dc5606d43e323b04324d34b09aab4190517e4d1486d4aa61dfbeeae8ac88566",
+            "9b3afdf8e98edcc97b1671c9c5cea5eb0518eefe7bf825470bd31bd4e908bc29",
+            "a5e23e6ebfc15ecbba91b4bcf46e176db48a3d1f8738e78051986cdb4638804b",
+            "c79d5ce7c3915f1ab977a001a8ba75a9471980d70a054e32f543c6a4f31c8883",
+            "fee270e9757f20c74b00d5ef0a443e35f34b794165a4e8fae756cde0aa843d24",
+        ],
+    ),
+    (
+        "floo-security",
+        &[
+            "597693fa1f42d69c5375ee7bc7f38a5a57ea648f83c75371f3a7718fd0f71df0",
+            "77199cdde5970bc7d9dabf9542f37ef3365261a723af10cf353df3c41a789e24",
+            "86bdb9f5692370b20b47545607c9afe38af492977fc4fa1e4a4886177f318974",
+            "f78bac846c502d44cd87c0d3d76b9978602efcac9714115cb11932b52b5679a3",
+        ],
+    ),
 ];
 
 pub fn install(path: Option<PathBuf>, print: bool) {
     if print {
         if output::is_json_mode() {
-            let plugin_skills: Vec<serde_json::Value> = PLUGIN_SKILLS
-                .iter()
-                .map(|(name, content)| {
-                    serde_json::json!({
-                        "name": name,
-                        "content": content,
-                    })
-                })
-                .collect();
             output::success(
                 "Skill content",
                 Some(serde_json::json!({
                     "content": SKILL_CONTENT,
-                    "plugin_skills": plugin_skills,
+                    "plugin_skills": [],
                     "version": VERSION,
                 })),
             );
@@ -102,26 +111,13 @@ pub fn install(path: Option<PathBuf>, print: bool) {
         process::exit(1);
     }
 
-    // Install plugin skills as sibling directories
-    for (skill_name, skill_content) in PLUGIN_SKILLS {
-        let skill_dir = dir.join(skill_name);
-        if let Err(e) = fs::create_dir_all(&skill_dir) {
-            output::error(
-                &format!("Failed to create directory '{}': {e}", skill_dir.display()),
-                &ErrorCode::FileError,
-                None,
-            );
-            process::exit(1);
-        }
-        let skill_path = skill_dir.join("SKILL.md");
-        if let Err(e) = fs::write(&skill_path, skill_content) {
-            output::error(
-                &format!("Failed to write '{}': {e}", skill_path.display()),
-                &ErrorCode::FileError,
-                None,
-            );
-            process::exit(1);
-        }
+    if let Err(e) = remove_retired_skills(&dir, RETIRED_SKILLS) {
+        output::error(
+            &format!("Failed to retire old skills: {e}"),
+            &ErrorCode::FileError,
+            None,
+        );
+        process::exit(1);
     }
 
     // Track the path in config
@@ -152,14 +148,12 @@ pub fn install(path: Option<PathBuf>, print: bool) {
 
     let (read_only, read_write) = recommended_permissions();
 
-    let plugin_skill_names: Vec<&str> = PLUGIN_SKILLS.iter().map(|(name, _)| *name).collect();
-
     if output::is_json_mode() {
         output::success(
-            &format!("Installed agent skills to {}", dir.display()),
+            &format!("Installed floo skill to {}", dir.display()),
             Some(serde_json::json!({
                 "path": abs_str,
-                "plugin_skills": plugin_skill_names,
+                "plugin_skills": [],
                 "version": VERSION,
                 "recommended_permissions": {
                     "read_only": read_only,
@@ -168,14 +162,7 @@ pub fn install(path: Option<PathBuf>, print: bool) {
             })),
         );
     } else {
-        output::success(
-            &format!(
-                "Installed agent skills to {} (floo, {})",
-                dir.display(),
-                plugin_skill_names.join(", ")
-            ),
-            None,
-        );
+        output::success(&format!("Installed floo skill to {}", dir.display()), None);
         print_permission_recommendations(&read_only, &read_write);
     }
 }
@@ -190,26 +177,35 @@ fn write_if_changed(path: &Path, content: &str) -> io::Result<bool> {
     Ok(true)
 }
 
-/// Refresh one tracked skill bundle. Returns whether any bundled file changed.
-fn refresh_skill_bundle(path: &Path) -> io::Result<bool> {
-    let mut changed = write_if_changed(path, SKILL_CONTENT)?;
-
-    if let Some(parent) = path.parent() {
-        for (skill_name, skill_content) in PLUGIN_SKILLS {
-            let skill_dir = parent.join(skill_name);
-            let _ = fs::create_dir_all(&skill_dir);
-            let skill_path = skill_dir.join("SKILL.md");
-            match write_if_changed(&skill_path, skill_content) {
-                Ok(plugin_changed) => changed |= plugin_changed,
-                Err(e) => {
-                    if !output::is_json_mode() {
-                        eprintln!("  Warning: failed to refresh {skill_name} skill: {e}");
-                    }
-                }
-            }
+/// Remove only unchanged retired skill files; never follow user-created symlinks.
+fn remove_retired_skills(dir: &Path, retired: &[(&str, &[&str])]) -> io::Result<bool> {
+    let mut changed = false;
+    for (name, hashes) in retired {
+        let directory = dir.join(name);
+        let path = directory.join("SKILL.md");
+        if directory.is_symlink() || path.is_symlink() {
+            continue;
+        }
+        let content = match fs::read(&path) {
+            Ok(content) => content,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e),
+        };
+        let hash = format!("{:x}", Sha256::digest(&content));
+        if hashes.contains(&hash.as_str()) {
+            fs::remove_file(path)?;
+            changed = true;
         }
     }
+    Ok(changed)
+}
 
+/// Refresh the tracked entry point and retire unchanged companion skills.
+fn refresh_skill_bundle(path: &Path) -> io::Result<bool> {
+    let mut changed = write_if_changed(path, SKILL_CONTENT)?;
+    if let Some(parent) = path.parent() {
+        changed |= remove_retired_skills(parent, RETIRED_SKILLS)?;
+    }
     Ok(changed)
 }
 
@@ -415,81 +411,59 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_skill_content_is_embedded() {
-        assert!(!SKILL_CONTENT.is_empty());
-        assert!(SKILL_CONTENT.contains("# floo"));
-    }
-
-    #[test]
-    fn test_skill_content_has_key_sections() {
-        assert!(SKILL_CONTENT.contains("## Discover before acting"));
-        assert!(SKILL_CONTENT.contains("## Deploy invariant"));
-        assert!(SKILL_CONTENT.contains("floo docs"));
-        assert!(SKILL_CONTENT.contains("floo commands --json"));
-        assert!(SKILL_CONTENT.contains("--json"));
-    }
-
-    #[test]
-    fn test_plugin_skills_are_embedded() {
-        assert_eq!(PLUGIN_SKILLS.len(), 2);
-        for (name, content) in PLUGIN_SKILLS {
-            assert!(!name.is_empty());
-            assert!(!content.is_empty());
-            assert!(content.contains("---"), "{name} skill missing frontmatter");
-            assert!(
-                content.contains(&format!("name: {name}")),
-                "{name} skill frontmatter name mismatch"
-            );
-        }
-    }
-
-    #[test]
-    fn test_skill_bundle_refresh_is_idempotent() {
+    fn skill_refresh_updates_stale_content_once() {
         let dir = tempfile::tempdir().unwrap();
-        let skill_path = dir.path().join("SKILL.md");
-
-        assert!(refresh_skill_bundle(&skill_path).unwrap());
-        assert_eq!(fs::read_to_string(&skill_path).unwrap(), SKILL_CONTENT);
-        for (name, content) in PLUGIN_SKILLS {
-            assert_eq!(
-                fs::read_to_string(dir.path().join(name).join("SKILL.md")).unwrap(),
-                *content
-            );
-        }
-
-        assert!(!refresh_skill_bundle(&skill_path).unwrap());
+        let path = dir.path().join("SKILL.md");
+        fs::write(&path, "stale entry point").unwrap();
+        assert!(refresh_skill_bundle(&path).unwrap());
+        assert_eq!(fs::read_to_string(&path).unwrap(), SKILL_CONTENT);
+        assert!(!refresh_skill_bundle(&path).unwrap());
     }
 
     #[test]
-    fn test_skill_bundle_refresh_repairs_plugin_drift_once() {
+    fn retirement_removes_only_known_content_and_preserves_other_files() {
         let dir = tempfile::tempdir().unwrap();
-        let skill_path = dir.path().join("SKILL.md");
-        refresh_skill_bundle(&skill_path).unwrap();
+        let legacy_dir = dir.path().join("floo-services");
+        fs::create_dir(&legacy_dir).unwrap();
+        let path = legacy_dir.join("SKILL.md");
+        fs::write(&path, "old bundled skill").unwrap();
+        fs::write(legacy_dir.join("notes.md"), "user notes").unwrap();
+        let hash = format!("{:x}", Sha256::digest(b"old bundled skill"));
+        let retired = [("floo-services", &[hash.as_str()][..])];
 
-        let plugin_path = dir.path().join("floo-services").join("SKILL.md");
-        fs::write(&plugin_path, "stale skill").unwrap();
-
-        assert!(refresh_skill_bundle(&skill_path).unwrap());
-        assert_eq!(fs::read_to_string(plugin_path).unwrap(), SKILL_SERVICES);
-        assert!(!refresh_skill_bundle(&skill_path).unwrap());
+        assert!(remove_retired_skills(dir.path(), &retired).unwrap());
+        assert!(!path.exists());
+        assert_eq!(
+            fs::read_to_string(legacy_dir.join("notes.md")).unwrap(),
+            "user notes"
+        );
+        assert!(!remove_retired_skills(dir.path(), &retired).unwrap());
     }
 
     #[test]
-    fn test_services_skill_covers_all_services() {
-        assert!(SKILL_SERVICES.contains("floo docs services"));
-        assert!(SKILL_SERVICES.contains("Postgres"));
-        assert!(SKILL_SERVICES.contains("Redis"));
-        assert!(SKILL_SERVICES.contains("Storage"));
-        assert!(SKILL_SERVICES.contains("DATABASE_URL"));
-        assert!(SKILL_SERVICES.contains("REDIS_URL"));
+    fn retirement_preserves_customized_skills() {
+        let dir = tempfile::tempdir().unwrap();
+        let legacy_dir = dir.path().join("floo-security");
+        fs::create_dir(&legacy_dir).unwrap();
+        let path = legacy_dir.join("SKILL.md");
+        fs::write(&path, "custom instructions").unwrap();
+
+        assert!(!remove_retired_skills(dir.path(), RETIRED_SKILLS).unwrap());
+        assert_eq!(fs::read_to_string(path).unwrap(), "custom instructions");
     }
 
+    #[cfg(unix)]
     #[test]
-    fn test_security_skill_has_anti_patterns() {
-        assert!(SKILL_SECURITY.contains("## Secrets"));
-        assert!(SKILL_SECURITY.contains("## Data access"));
-        assert!(SKILL_SECURITY.contains("floo docs auth"));
-        assert!(SKILL_SECURITY.contains("Never hardcode"));
+    fn retirement_does_not_follow_symlinked_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        fs::write(external.path().join("SKILL.md"), "old bundled skill").unwrap();
+        std::os::unix::fs::symlink(external.path(), dir.path().join("floo-services")).unwrap();
+        let hash = format!("{:x}", Sha256::digest(b"old bundled skill"));
+        let retired = [("floo-services", &[hash.as_str()][..])];
+
+        assert!(!remove_retired_skills(dir.path(), &retired).unwrap());
+        assert!(external.path().join("SKILL.md").exists());
     }
 
     #[test]

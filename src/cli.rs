@@ -377,7 +377,7 @@ Examples:
         options: LogsOptions,
     },
 
-    /// Install agent skills for AI coding assistants.
+    /// Install the floo documentation skill for coding assistants.
     #[command(subcommand)]
     Skills(SkillsCommands),
 
