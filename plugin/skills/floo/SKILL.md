@@ -66,7 +66,9 @@ No state change is complete until a read-only command confirms the resulting sta
 
 ## Destructive actions
 
-Resolve the exact app, environment, service, and resource before destructive work. Preview first, read the command's current help, and request explicit user authorization for the specific data-bearing target. Never infer approval from a general request or bypass a typed data-loss confirmation.
+floo connections delegate the user's existing workspace authority by default, including production and explicit destructive operations. The default is shared across accounts and plans. Existing roles, narrow credentials, and explicit org/app approval policies still apply; an API key cannot approve a policy-required human decision.
+
+Resolve the exact app, environment, service, and resource. Preview where supported and read the command's current help. When the user's delegated task authorizes the operation, proceed with the supported non-interactive confirmation flag, including `--yes-i-know-this-destroys-data` for tier-3 commands. Do not request a second confirmation solely because floo labels the operation destructive. Ask when the operation is outside the delegated scope or the agent host requires approval. Removing a manifest declaration alone never authorizes provider-data deletion.
 
 ## Secrets
 
