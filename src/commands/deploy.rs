@@ -123,18 +123,15 @@ fn build_runtime_plan(services: &[ServiceConfig], environment: &str) -> Vec<Runt
                     notes: Vec::new(),
                 }
             } else {
-                let min_instances = service
-                    .min_instances
-                    .or_else(|| (environment != "prod").then_some(0));
+                // Omitted min_instances scales to zero on every plan and in every
+                // environment (getfloo/floo#2881); warm capacity is an explicit opt-in.
+                let min_instances = service.min_instances.unwrap_or(0);
                 let max_instances = service.max_instances.unwrap_or(LOCAL_DEFAULT_MAX_INSTANCES);
-                let server_resolved_prod_default = environment == "prod" && min_instances.is_none();
                 RuntimePlan {
                     service: service.name.clone(),
                     service_type: service.service_type.to_string(),
                     environment: environment.to_string(),
-                    availability: if server_resolved_prod_default {
-                        "server_resolved"
-                    } else if min_instances == Some(0) {
+                    availability: if min_instances == 0 {
                         "on_demand"
                     } else {
                         "warm"
@@ -142,13 +139,18 @@ fn build_runtime_plan(services: &[ServiceConfig], environment: &str) -> Vec<Runt
                     .to_string(),
                     configured,
                     locally_resolved: RuntimePlanValues {
-                        min_instances,
+                        min_instances: Some(min_instances),
                         max_instances: Some(max_instances),
                         instances: None,
                     },
                     sources: RuntimePlanSources {
-                        min_instances: service.min_instances.map(|_| "configured".to_string()).or_else(
-                            || (environment != "prod").then(|| "platform_default".to_string()),
+                        min_instances: Some(
+                            if service.min_instances.is_some() {
+                                "configured"
+                            } else {
+                                "platform_default"
+                            }
+                            .to_string(),
                         ),
                         max_instances: Some(
                             if service.max_instances.is_some() {
@@ -163,11 +165,7 @@ fn build_runtime_plan(services: &[ServiceConfig], environment: &str) -> Vec<Runt
                     cpu_allocation: "request_based".to_string(),
                     cpu_allocation_reason: "http_request_scoped".to_string(),
                     server_resolution_required: true,
-                    notes: if server_resolved_prod_default {
-                        vec!["Paid production defaults to one warm instance and bills continuously. Set min_instances = 0 to opt out.".to_string()]
-                    } else {
-                        Vec::new()
-                    },
+                    notes: Vec::new(),
                 }
             }
         })
@@ -2408,11 +2406,6 @@ fn display_preflight_human(
                 runtime.availability,
                 runtime.locally_resolved.instances.unwrap_or(0),
             );
-        } else if runtime.availability == "server_resolved" {
-            eprintln!(
-                "    availability: server-resolved for {}; authenticate to resolve the app plan",
-                runtime.environment,
-            );
         } else {
             eprintln!(
                 "    availability: {}, scales {}\u{2013}{}, request-based CPU",
@@ -3330,17 +3323,36 @@ port = 8000
     }
 
     #[test]
-    fn prod_omission_waits_for_server_tier_resolution_and_explains_cost() {
+    fn prod_omission_scales_to_zero_like_every_other_environment() {
         let services = vec![runtime_service("web", ServiceType::Web, None, None, None)];
 
         let plan = build_runtime_plan(&services, "prod");
 
         assert_eq!(plan[0].environment, "prod");
-        assert_eq!(plan[0].availability, "server_resolved");
-        assert_eq!(plan[0].locally_resolved.min_instances, None);
-        assert_eq!(plan[0].sources.min_instances, None);
-        assert!(plan[0].notes[0].contains("bills continuously"));
-        assert!(plan[0].notes[0].contains("min_instances = 0"));
+        assert_eq!(plan[0].availability, "on_demand");
+        assert_eq!(plan[0].locally_resolved.min_instances, Some(0));
+        assert_eq!(
+            plan[0].sources.min_instances.as_deref(),
+            Some("platform_default")
+        );
+        assert!(plan[0].notes.is_empty());
+    }
+
+    #[test]
+    fn prod_explicit_warm_minimum_stays_warm() {
+        let services = vec![runtime_service(
+            "web",
+            ServiceType::Web,
+            Some(1),
+            None,
+            None,
+        )];
+
+        let plan = build_runtime_plan(&services, "prod");
+
+        assert_eq!(plan[0].availability, "warm");
+        assert_eq!(plan[0].locally_resolved.min_instances, Some(1));
+        assert_eq!(plan[0].sources.min_instances.as_deref(), Some("configured"));
     }
 
     // The stream prints in chunks and the poll prints from the whole log. The
