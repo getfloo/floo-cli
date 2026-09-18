@@ -25,7 +25,7 @@
 //! not redaction was applied, so `--reveal-secrets` doesn't strip the
 //! signal.
 //!
-//! Mirrors the API-side redactor in `api/app/services/logs.py`. When
+//! Mirrors the API-side redactor in `api/app/redaction.py`. When
 //! adding patterns, update both.
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -49,7 +49,7 @@ pub const CONTAINS_SECRETS_KEY: &str = "contains_secrets";
 
 /// Lower-case JSON field names whose string value is always a secret.
 ///
-/// Mirrors `_SECRET_KEY_PATTERN` in `api/app/services/logs.py` plus the
+/// Mirrors `_SECRET_KEY_TOKENS` in `api/app/redaction.py` plus the
 /// CLI-specific response field names (`generated_password`, etc.). Keep
 /// these as exact lowercase matches — substring matching here would
 /// false-positive on innocuous fields like `api_endpoint` or
@@ -121,13 +121,14 @@ const ENV_VAR_ALLOWLIST: &[&str] = &[
 
 static URI_CREDENTIAL_RE: Lazy<Regex> = Lazy::new(|| {
     // postgres://user:pass@host, mysql://user:pass@..., redis://:pass@... .
-    // Mirrors api/app/services/logs.py::_URI_CREDENTIAL_RE.
+    // Mirrors api/app/redaction.py::_URI_CREDENTIAL_RE.
     Regex::new(r"(?i)\b[a-z][a-z0-9+.\-]*://[^@\s/]+:[^@\s/]+@").unwrap()
 });
 
 static FLOO_API_KEY_RE: Lazy<Regex> = Lazy::new(|| {
-    // floo_<urlsafe-token-32+>. Mirrors api `_FLOO_API_KEY_RE`.
-    Regex::new(r"\bfloo_[A-Za-z0-9_\-]{20,}\b").unwrap()
+    // App and platform keys. Mirrors api/app/redaction.py::_FLOO_API_KEY_RE.
+    Regex::new(r"\bfloo_(?:consumer|user)\.[A-Za-z0-9_-]{20,}\b|\bfloo_[A-Za-z0-9_-]{20,}\b")
+        .unwrap()
 });
 
 static AWS_ACCESS_KEY_RE: Lazy<Regex> = Lazy::new(|| {
@@ -418,6 +419,38 @@ mod tests {
     }
 
     #[test]
+    fn floo_consumer_key_in_free_text_redacted() {
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
+        let (out, found) = redact(json!({
+            "note": "use floo_consumer.abcdefghijklmnopqrstuvwxyz0123456789-_ABCDE for auth"
+        }));
+        assert!(found);
+        assert_eq!(out["note"], REDACTED_PLACEHOLDER);
+    }
+
+    #[test]
+    fn floo_user_key_in_free_text_redacted() {
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
+        let (out, found) = redact(json!({
+            "note": "use floo_user.abcdefghijklmnopqrstuvwxyz0123456789-_ABCDE for auth"
+        }));
+        assert!(found);
+        assert_eq!(out["note"], REDACTED_PLACEHOLDER);
+    }
+
+    #[test]
+    fn is_secret_recognizes_bare_consumer_key_with_innocent_name() {
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
+        assert!(is_secret(
+            "NOTE",
+            "floo_consumer.abcdefghijklmnopqrstuvwxyz0123456789-_ABCDE"
+        ));
+    }
+
+    #[test]
     fn aws_access_key_in_value_redacted() {
         let (out, found) = redact(json!({"hint": "key AKIAIOSFODNN7EXAMPLE was rotated"}));
         assert!(found);
@@ -549,6 +582,7 @@ mod snapshots {
         "redis-token-9e13-rotate-me",
         "secret_key_base_xyzzy_9183",
         "floo_aaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "floo_consumer.abcdefghijklmnopqrstuvwxyz0123456789-_ABCDE",
         "AKIAIOSFODNN7EXAMPLE",
     ];
 
@@ -949,6 +983,7 @@ mod snapshots {
                     }
                 },
                 "auth": {"api_key": "floo_aaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+                "note": "use floo_consumer.abcdefghijklmnopqrstuvwxyz0123456789-_ABCDE for auth",
                 "warning": "rotate AKIAIOSFODNN7EXAMPLE",
                 "env_var": {"key": "DATABASE_URL", "value": "postgres://u:postgres-backed-pass-bd7fb@h/d"},
             }

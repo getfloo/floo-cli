@@ -58,7 +58,7 @@ When designing new commands:
 - **Don't** hand-roll scrubbing in command modules — the redactor is the single source of truth.
 - **Don't** invent a new envelope shape for env-var data; reuse the `EnvVar { key, value }` pair so the env-var-pair detector catches it.
 - **Do** add a snapshot test in `redact::snapshots::*` for any new command that surfaces credential-shaped data. Tests embed forbidden substrings and assert they don't survive — `kitchen_sink_no_forbidden_substring_survives` is the pattern to follow.
-- **Mirror the API redactor.** When adding patterns, also update `api/app/services/logs.py` (`_SECRET_KEY_PATTERN` + the URI/floo/AWS regex set) so server-side log scrubbing stays aligned.
+- **Mirror the API redactor.** When adding patterns, also update `api/app/redaction.py` (`_FLOO_API_KEY_RE` and `_SECRET_KEY_TOKENS`) so server-side log scrubbing stays aligned.
 
 ### API Client (`api_client.rs`)
 
