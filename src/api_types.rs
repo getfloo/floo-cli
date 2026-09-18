@@ -58,6 +58,17 @@ pub struct ProfileResponse {
 
 // --- Billing ---
 
+/// API spend-cap policy, preserving future policy strings for JSON output.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpendCapPolicy {
+    AlertsOnly,
+    FreezeNewSpend,
+    HardStop,
+    #[serde(untagged)]
+    Unknown(String),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppCostSummary {
     pub app_id: String,
@@ -107,6 +118,7 @@ pub struct OrgResponse {
     pub spend_cap: Option<u64>,
     pub current_period_spend_cents: Option<u64>,
     pub spend_cap_exceeded: Option<bool>,
+    pub spend_cap_policy: Option<SpendCapPolicy>,
 }
 
 impl OrgResponse {
@@ -1401,6 +1413,32 @@ mod managed_services_doctor_tests {
 mod billing_tests {
     use super::{OrgResponse, PlanLimitsResponse};
     use crate::output;
+
+    #[test]
+    fn org_json_round_trips_future_policy() {
+        output::set_json_mode(false);
+        output::set_dry_run_mode(false);
+        let org: OrgResponse = serde_json::from_value(serde_json::json!({
+            "id": "org-1",
+            "spend_cap_policy": "future_policy",
+        }))
+        .unwrap();
+        let payload = serde_json::to_value(org).unwrap();
+        assert_eq!(payload["spend_cap_policy"], "future_policy");
+    }
+
+    #[test]
+    fn org_json_round_trips_alerts_only_policy() {
+        output::set_json_mode(false);
+        output::set_dry_run_mode(false);
+        let org: OrgResponse = serde_json::from_value(serde_json::json!({
+            "id": "org-1",
+            "spend_cap_policy": "alerts_only",
+        }))
+        .unwrap();
+        let payload = serde_json::to_value(org).unwrap();
+        assert_eq!(payload["spend_cap_policy"], "alerts_only");
+    }
 
     #[test]
     fn plan_limits_accepts_null_plan() {

@@ -1,7 +1,33 @@
 use std::process;
 
+use crate::api_types::SpendCapPolicy;
 use crate::errors::ErrorCode;
 use crate::output;
+
+struct SpendCapStatus {
+    deploys_blocked: bool,
+    message: Option<&'static str>,
+}
+
+fn spend_cap_status(exceeded: bool, policy: Option<&SpendCapPolicy>) -> SpendCapStatus {
+    if !exceeded {
+        return SpendCapStatus {
+            deploys_blocked: false,
+            message: None,
+        };
+    }
+    let message = match policy {
+        Some(SpendCapPolicy::AlertsOnly) => "Spend cap exceeded. Budget alerts only: nothing is blocked. Raise the cap: floo billing spend-cap set <amount>",
+        Some(SpendCapPolicy::FreezeNewSpend) => "Spend cap exceeded. New deploys are paused until you raise the cap or the next billing period begins. Raise the cap: floo billing spend-cap set <amount>",
+        // Missing policies default to hard_stop; unknown policies use the same
+        // conservative messaging until the CLI understands their behavior.
+        Some(SpendCapPolicy::HardStop | SpendCapPolicy::Unknown(_)) | None => "Spend cap exceeded. Deploys are blocked and running services are scaled to zero until you raise the cap or the next billing period begins. Raise the cap: floo billing spend-cap set <amount>",
+    };
+    SpendCapStatus {
+        deploys_blocked: !matches!(policy, Some(SpendCapPolicy::AlertsOnly)),
+        message: Some(message),
+    }
+}
 
 fn canonical_plan(plan: Option<&str>) -> Option<&str> {
     match plan {
@@ -103,6 +129,7 @@ pub fn spend_cap_get() {
         );
         process::exit(1);
     });
+    let cap_status = spend_cap_status(exceeded, org.spend_cap_policy.as_ref());
 
     // Cap is cents-denominated; emit it as `spend_cap_cents` to match
     // `billing usage` and every other *_cents field. One key per concept so
@@ -111,6 +138,8 @@ pub fn spend_cap_get() {
         "spend_cap_cents": spend_cap,
         "current_period_spend_cents": current_spend,
         "spend_cap_exceeded": exceeded,
+        "spend_cap_policy": org.spend_cap_policy,
+        "deploys_blocked": cap_status.deploys_blocked,
     });
 
     if output::is_json_mode() {
@@ -125,8 +154,8 @@ pub fn spend_cap_get() {
         _ => eprintln!("  Spend cap: none (unlimited)"),
     }
     eprintln!("  Current spend: ${:.2}", current_spend as f64 / 100.0);
-    if exceeded {
-        output::warn("Spend cap exceeded \u{2014} deploys are blocked.");
+    if let Some(message) = cap_status.message {
+        output::warn(message);
     }
     if canonical_plan(org.plan.as_deref()).is_none() {
         eprintln!("  Upgrade: floo billing upgrade --plan paygo");
@@ -208,6 +237,18 @@ pub fn usage(period: &str) {
     let period_spend_cents = (breakdown.total_cost_usd * 100.0).round() as u64;
     let exceeded = matches!(spend_cap, Some(cap) if cap > 0 && period_spend_cents >= cap);
 
+    // Deployment restrictions reflect the API's current status, independently
+    // of the historical/partial-period spend displayed above.
+    let current_exceeded = org.spend_cap_exceeded.unwrap_or_else(|| {
+        output::error(
+            "Response missing 'spend_cap_exceeded' field.",
+            &ErrorCode::ParseError,
+            Some("This is a bug. Please report it."),
+        );
+        process::exit(1);
+    });
+    let cap_status = spend_cap_status(current_exceeded, org.spend_cap_policy.as_ref());
+
     let (plan_label, plan_price) = plan_display(plan);
 
     let data = serde_json::json!({
@@ -216,6 +257,8 @@ pub fn usage(period: &str) {
         "max_spend_cap_cents": max_cap,
         "period_spend_cents": period_spend_cents,
         "spend_cap_exceeded": exceeded,
+        "spend_cap_policy": org.spend_cap_policy,
+        "deploys_blocked": cap_status.deploys_blocked,
         "period": period,
         "total_cost_usd": breakdown.total_cost_usd,
         "included_cost_usd": breakdown.included_cost_usd,
@@ -267,30 +310,87 @@ pub fn usage(period: &str) {
     }
 
     if !breakdown.apps.is_empty() {
-        eprintln!();
         eprintln!("  By app:");
         for app in &breakdown.apps {
             eprintln!("    {:<30}  ${:.2}", app.name, app.total_cost_usd);
         }
     }
 
-    if exceeded {
-        eprintln!();
-        if period == "last_month" {
-            output::warn(&format!(
-                "Spend exceeded the cap in {}.",
-                breakdown.period.label
-            ));
-        } else {
-            output::warn("Spend cap exceeded \u{2014} deploys are blocked.");
-        }
+    if exceeded && period == "last_month" {
+        output::warn(&format!(
+            "Spend exceeded the cap in {}.",
+            breakdown.period.label
+        ));
+    }
+    if let Some(message) = cap_status.message {
+        output::warn(message);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{canonical_plan, plan_display};
+    use super::{canonical_plan, plan_display, spend_cap_status};
+    use crate::api_types::SpendCapPolicy;
     use crate::output;
+
+    #[test]
+    fn cap_not_exceeded_has_no_message_or_block() {
+        output::set_json_mode(false);
+        output::set_dry_run_mode(false);
+        let status = spend_cap_status(false, Some(&SpendCapPolicy::HardStop));
+        assert_eq!(status.message, None);
+        assert!(!status.deploys_blocked);
+    }
+
+    #[test]
+    fn alerts_only_exceeded_blocks_nothing() {
+        output::set_json_mode(false);
+        output::set_dry_run_mode(false);
+        let policy: SpendCapPolicy = serde_json::from_str(r#""alerts_only""#).unwrap();
+        let status = spend_cap_status(true, Some(&policy));
+        assert_eq!(status.message, Some("Spend cap exceeded. Budget alerts only: nothing is blocked. Raise the cap: floo billing spend-cap set <amount>"));
+        assert!(!status.deploys_blocked);
+    }
+
+    #[test]
+    fn freeze_new_spend_exceeded_pauses_new_deploys() {
+        output::set_json_mode(false);
+        output::set_dry_run_mode(false);
+        let policy: SpendCapPolicy = serde_json::from_str(r#""freeze_new_spend""#).unwrap();
+        let status = spend_cap_status(true, Some(&policy));
+        assert_eq!(status.message, Some("Spend cap exceeded. New deploys are paused until you raise the cap or the next billing period begins. Raise the cap: floo billing spend-cap set <amount>"));
+        assert!(status.deploys_blocked);
+    }
+
+    #[test]
+    fn hard_stop_exceeded_blocks_deploys_and_scales_services_to_zero() {
+        output::set_json_mode(false);
+        output::set_dry_run_mode(false);
+        let policy: SpendCapPolicy = serde_json::from_str(r#""hard_stop""#).unwrap();
+        let status = spend_cap_status(true, Some(&policy));
+        assert_eq!(status.message, Some("Spend cap exceeded. Deploys are blocked and running services are scaled to zero until you raise the cap or the next billing period begins. Raise the cap: floo billing spend-cap set <amount>"));
+        assert!(status.deploys_blocked);
+    }
+
+    #[test]
+    fn null_policy_exceeded_defaults_to_hard_stop() {
+        output::set_json_mode(false);
+        output::set_dry_run_mode(false);
+        let policy: Option<SpendCapPolicy> = serde_json::from_str("null").unwrap();
+        let status = spend_cap_status(true, policy.as_ref());
+        assert_eq!(status.message, Some("Spend cap exceeded. Deploys are blocked and running services are scaled to zero until you raise the cap or the next billing period begins. Raise the cap: floo billing spend-cap set <amount>"));
+        assert!(status.deploys_blocked);
+    }
+
+    #[test]
+    fn unknown_policy_exceeded_uses_hard_stop_messaging() {
+        output::set_json_mode(false);
+        output::set_dry_run_mode(false);
+        let policy: SpendCapPolicy = serde_json::from_str(r#""future_policy""#).unwrap();
+        let status = spend_cap_status(true, Some(&policy));
+        assert_eq!(status.message, Some("Spend cap exceeded. Deploys are blocked and running services are scaled to zero until you raise the cap or the next billing period begins. Raise the cap: floo billing spend-cap set <amount>"));
+        assert!(status.deploys_blocked);
+    }
 
     #[test]
     fn plan_display_projects_legacy_offers_into_the_canonical_catalog() {

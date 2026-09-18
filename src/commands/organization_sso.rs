@@ -439,6 +439,7 @@ mod tests {
             spend_cap: None,
             current_period_spend_cents: None,
             spend_cap_exceeded: None,
+            spend_cap_policy: None,
         };
         assert_eq!(
             next_action(OrganizationSsoNextAction::OpenSsoSetup, &org),
