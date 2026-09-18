@@ -830,6 +830,14 @@ pub enum AppsCommands {
     #[command(subcommand)]
     Github(GitHubCommands),
 
+    /// Manage app API key consumers.
+    #[command(subcommand)]
+    Consumers(ConsumerCommands),
+
+    /// Manage app API keys.
+    #[command(subcommand)]
+    Keys(AppKeyCommands),
+
     /// Show the shared password for a password-protected app.
     ///
     /// `--json` redacts the password by default. Pass
@@ -900,6 +908,76 @@ pub enum AppsCommands {
     /// Remove an app member and revoke their app sessions and user API keys.
     MemberRemove {
         membership_id: String,
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+}
+
+/// Manage consumers within the selected app.
+#[derive(Subcommand)]
+pub enum ConsumerCommands {
+    /// List the app's API key consumers.
+    List {
+        /// App name or ID (uses config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+    /// Create a consumer for app API keys.
+    Create {
+        /// Consumer name.
+        name: String,
+        /// App name or ID (uses config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+    /// Delete a consumer and revoke all its active keys.
+    Delete {
+        /// Consumer name (case-insensitive) or ID.
+        consumer: String,
+        /// App name or ID (uses config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+        /// Skip typed-name confirmation; required in JSON mode, CI, and pipes.
+        #[arg(long = "yes-i-know-this-destroys-data", alias = "force")]
+        confirmed: bool,
+    },
+}
+
+/// Manage keys within the selected app.
+#[derive(Subcommand)]
+pub enum AppKeyCommands {
+    /// List a consumer's active app API keys.
+    List {
+        /// Consumer name (case-insensitive) or ID.
+        #[arg(long)]
+        consumer: String,
+        /// App name or ID (uses config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+    /// Create a one-time app API key. Human stdout contains only the raw key.
+    /// JSON redacts raw_key unless --reveal-secrets is set.
+    Create {
+        /// Key name.
+        name: String,
+        /// Consumer name (case-insensitive) or ID.
+        #[arg(long)]
+        consumer: String,
+        /// Scope grant; repeat for multiple scopes. Use '*' explicitly for all scopes.
+        #[arg(long = "scope", required = true)]
+        scopes: Vec<String>,
+        /// Requests per minute (server default: 600).
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..=100_000))]
+        rate_limit_rpm: Option<u32>,
+        /// App name or ID (uses config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+    /// Revoke an app API key by ID (idempotent).
+    Revoke {
+        /// Key ID.
+        key_id: String,
+        /// App name or ID (uses config if omitted).
         #[arg(short, long)]
         app: Option<String>,
     },
@@ -2422,6 +2500,38 @@ pub fn run() {
             AppsCommands::Resume { app_name } => {
                 commands::apps::lifecycle(&app_name, crate::api_types::AppLifecycleAction::Resume)
             }
+            AppsCommands::Consumers(sub) => match sub {
+                ConsumerCommands::List { app } => commands::apps::consumers(app.as_deref()),
+                ConsumerCommands::Create { name, app } => {
+                    commands::apps::create_consumer(&name, app.as_deref())
+                }
+                ConsumerCommands::Delete {
+                    consumer,
+                    app,
+                    confirmed,
+                } => commands::apps::delete_consumer(&consumer, app.as_deref(), confirmed),
+            },
+            AppsCommands::Keys(sub) => match sub {
+                AppKeyCommands::List { consumer, app } => {
+                    commands::apps::keys(&consumer, app.as_deref())
+                }
+                AppKeyCommands::Create {
+                    name,
+                    consumer,
+                    scopes,
+                    rate_limit_rpm,
+                    app,
+                } => commands::apps::create_key(
+                    &name,
+                    &consumer,
+                    &scopes,
+                    rate_limit_rpm,
+                    app.as_deref(),
+                ),
+                AppKeyCommands::Revoke { key_id, app } => {
+                    commands::apps::revoke_key(&key_id, app.as_deref())
+                }
+            },
             AppsCommands::Github(gh_sub) => match gh_sub {
                 GitHubCommands::Connect {
                     repo,

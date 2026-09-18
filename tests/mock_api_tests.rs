@@ -9404,3 +9404,422 @@ fn deploy_status_human_duration_names_whole_attempt() {
     assert!(stderr.contains("image_built:   false"));
     assert!(stderr.contains("deploy duration: 7m 44s"));
 }
+
+mod app_api_keys {
+    use super::*;
+    use serde_json::json;
+
+    const CONSUMER_ID: &str = "11111111-2222-3333-4444-555555555555";
+    const RAW_KEY: &str = "floo_consumer.one-time-secret-token";
+
+    fn mock_consumers(server: &mut Server) -> Mock {
+        server
+            .mock("GET", format!("/v1/apps/{TEST_APP_ID}/consumers").as_str())
+            .match_body("")
+            .with_status(200)
+            .with_body(
+                json!({"consumers": [{"id": CONSUMER_ID, "name": "Partner"}], "total": 1})
+                    .to_string(),
+            )
+            .create()
+    }
+
+    fn mock_create_key(server: &mut Server, body: serde_json::Value) -> Mock {
+        server
+            .mock(
+                "POST",
+                format!("/v1/apps/{TEST_APP_ID}/consumers/{CONSUMER_ID}/keys").as_str(),
+            )
+            .match_body(Matcher::Json(body))
+            .with_status(201)
+            .with_body(
+                json!({"id": "key-1", "app_id": TEST_APP_ID, "consumer_id": CONSUMER_ID,
+                "name": "worker", "prefix": "floo_consumer.abcd", "scopes": ["read", "write"],
+                "raw_key": RAW_KEY, "rate_limit_rpm": 600})
+                .to_string(),
+            )
+            .create()
+    }
+
+    fn create_key_command(home: &TempDir) -> Command {
+        let mut command = floo();
+        command.env("HOME", home.path()).args([
+            "apps",
+            "keys",
+            "create",
+            "worker",
+            "--consumer",
+            "pArTnEr",
+            "--app",
+            TEST_APP_NAME,
+        ]);
+        command
+    }
+
+    #[test]
+    fn consumers_list_resolves_app_name() {
+        let mut server = Server::new();
+        let home = setup_config(&server);
+        let resolve = mock_resolve_app(&mut server);
+        let consumers = mock_consumers(&mut server);
+        floo()
+            .env("HOME", home.path())
+            .args([
+                "--json",
+                "apps",
+                "consumers",
+                "list",
+                "--app",
+                TEST_APP_NAME,
+            ])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Partner"));
+        resolve[0].assert();
+        consumers.assert();
+    }
+
+    #[test]
+    fn consumers_create_posts_name_for_resolved_app() {
+        let mut server = Server::new();
+        let home = setup_config(&server);
+        let resolve = mock_resolve_app(&mut server);
+        let create = server
+            .mock("POST", format!("/v1/apps/{TEST_APP_ID}/consumers").as_str())
+            .match_body(Matcher::Json(json!({"name": "Partner"})))
+            .with_status(201)
+            .with_body(json!({"id": CONSUMER_ID, "name": "Partner"}).to_string())
+            .create();
+        floo()
+            .env("HOME", home.path())
+            .args([
+                "--json",
+                "apps",
+                "consumers",
+                "create",
+                "Partner",
+                "--app",
+                TEST_APP_NAME,
+            ])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(CONSUMER_ID));
+        resolve[0].assert();
+        create.assert();
+    }
+
+    #[test]
+    fn consumers_delete_resolves_names_and_reports_revoked_keys() {
+        let mut server = Server::new();
+        let home = setup_config(&server);
+        let resolve = mock_resolve_app(&mut server);
+        let consumers = mock_consumers(&mut server);
+        let delete = server
+            .mock(
+                "DELETE",
+                format!("/v1/apps/{TEST_APP_ID}/consumers/{CONSUMER_ID}").as_str(),
+            )
+            .match_body("")
+            .with_status(204)
+            .create();
+        floo()
+            .env("HOME", home.path())
+            .args([
+                "apps",
+                "consumers",
+                "delete",
+                "PARTNER",
+                "--app",
+                TEST_APP_NAME,
+                "--yes-i-know-this-destroys-data",
+            ])
+            .assert()
+            .success()
+            .stderr(predicate::str::contains("keys were revoked"));
+        resolve[0].assert();
+        consumers.assert();
+        delete.assert();
+    }
+
+    #[test]
+    fn consumers_delete_requires_confirmation() {
+        let mut server = Server::new();
+        let home = setup_config(&server);
+        let _resolve = mock_resolve_app(&mut server);
+        let _consumers = mock_consumers(&mut server);
+        let delete = server
+            .mock(
+                "DELETE",
+                format!("/v1/apps/{TEST_APP_ID}/consumers/{CONSUMER_ID}").as_str(),
+            )
+            .expect(0)
+            .create();
+        floo()
+            .env("HOME", home.path())
+            .args([
+                "--json",
+                "apps",
+                "consumers",
+                "delete",
+                "Partner",
+                "--app",
+                TEST_APP_NAME,
+            ])
+            .assert()
+            .failure()
+            .stdout(predicate::str::contains("CONFIRMATION_REQUIRED"));
+        delete.assert();
+    }
+
+    #[test]
+    fn keys_list_resolves_consumer_by_uuid() {
+        let mut server = Server::new();
+        let home = setup_config(&server);
+        let resolve = mock_resolve_app(&mut server);
+        let consumers = mock_consumers(&mut server);
+        let keys = server
+            .mock(
+                "GET",
+                format!("/v1/apps/{TEST_APP_ID}/consumers/{CONSUMER_ID}/keys").as_str(),
+            )
+            .match_body("")
+            .with_status(200)
+            .with_body(r#"{"keys":[{"id":"key-1","name":"worker"}],"total":1}"#)
+            .create();
+        floo()
+            .env("HOME", home.path())
+            .args([
+                "--json",
+                "apps",
+                "keys",
+                "list",
+                "--consumer",
+                CONSUMER_ID,
+                "--app",
+                TEST_APP_NAME,
+            ])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("key-1"));
+        resolve[0].assert();
+        consumers.assert();
+        keys.assert();
+    }
+
+    #[test]
+    fn keys_create_json_redacts_secret_and_passes_scopes_and_rate() {
+        let mut server = Server::new();
+        let home = setup_config(&server);
+        let resolve = mock_resolve_app(&mut server);
+        let consumers = mock_consumers(&mut server);
+        let create = mock_create_key(
+            &mut server,
+            json!({"name": "worker", "scopes": ["read", "write"], "rate_limit_rpm": 1200}),
+        );
+        let result = create_key_command(&home)
+            .args([
+                "--json",
+                "--scope",
+                "read",
+                "--scope",
+                "write",
+                "--rate-limit-rpm",
+                "1200",
+            ])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(RAW_KEY).not())
+            .stderr(predicate::str::contains(RAW_KEY).not());
+        let out: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+        assert_eq!(out["data"]["raw_key"], "***REDACTED***");
+        assert_eq!(out["contains_secrets"], true);
+        resolve[0].assert();
+        consumers.assert();
+        create.assert();
+    }
+
+    #[test]
+    fn keys_create_human_stdout_is_only_raw_key() {
+        let mut server = Server::new();
+        let home = setup_config(&server);
+        let _resolve = mock_resolve_app(&mut server);
+        let _consumers = mock_consumers(&mut server);
+        let create = mock_create_key(&mut server, json!({"name": "worker", "scopes": ["*"]}));
+        create_key_command(&home)
+            .args(["--scope", "*"])
+            .assert()
+            .success()
+            .stdout(format!("{RAW_KEY}\n"))
+            .stderr(predicate::str::contains(RAW_KEY).not())
+            .stderr(predicate::str::contains("shown once"))
+            .stderr(predicate::str::contains("cannot be retrieved again"))
+            .stderr(predicate::str::contains("key-1"))
+            .stderr(predicate::str::contains("floo_consumer.abcd"))
+            .stderr(predicate::str::contains("read"));
+        create.assert();
+    }
+
+    #[test]
+    fn keys_create_reveal_keeps_secret_marker() {
+        let mut server = Server::new();
+        let home = setup_config(&server);
+        let _resolve = mock_resolve_app(&mut server);
+        let _consumers = mock_consumers(&mut server);
+        let create = mock_create_key(&mut server, json!({"name": "worker", "scopes": ["*"]}));
+        create_key_command(&home)
+            .args(["--json", "--reveal-secrets", "--scope", "*"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(RAW_KEY))
+            .stdout(predicate::str::contains(r#""contains_secrets":true"#))
+            .stderr(predicate::str::contains(RAW_KEY).not());
+        create.assert();
+    }
+
+    #[test]
+    fn keys_revoke_uses_app_key_endpoint() {
+        let mut server = Server::new();
+        let home = setup_config(&server);
+        let resolve = mock_resolve_app(&mut server);
+        let revoke = server
+            .mock(
+                "DELETE",
+                format!("/v1/apps/{TEST_APP_ID}/api-keys/key-1").as_str(),
+            )
+            .match_body("")
+            .with_status(204)
+            .create();
+        floo()
+            .env("HOME", home.path())
+            .args([
+                "--json",
+                "apps",
+                "keys",
+                "revoke",
+                "key-1",
+                "--app",
+                TEST_APP_NAME,
+            ])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("key-1"));
+        resolve[0].assert();
+        revoke.assert();
+    }
+
+    #[test]
+    fn consumers_create_preserves_api_error_code() {
+        let mut server = Server::new();
+        let home = setup_config(&server);
+        let _resolve = mock_resolve_app(&mut server);
+        let create = server
+            .mock("POST", format!("/v1/apps/{TEST_APP_ID}/consumers").as_str())
+            .match_body(Matcher::Json(json!({"name": "Partner"})))
+            .with_status(409)
+            .with_body(r#"{"detail":{"code":"APP_CONSUMER_NAME_TAKEN","message":"Name taken."}}"#)
+            .create();
+        floo()
+            .env("HOME", home.path())
+            .args([
+                "--json",
+                "apps",
+                "consumers",
+                "create",
+                "Partner",
+                "--app",
+                TEST_APP_NAME,
+            ])
+            .assert()
+            .failure()
+            .stdout(predicate::str::contains("APP_CONSUMER_NAME_TAKEN"));
+        create.assert();
+    }
+
+    #[test]
+    fn keys_create_requires_explicit_scope() {
+        floo()
+            .args(["apps", "keys", "create", "worker", "--consumer", "Partner"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("--scope"));
+    }
+
+    #[test]
+    fn keys_list_missing_consumer_suggests_listing_consumers() {
+        let mut server = Server::new();
+        let home = setup_config(&server);
+        let _resolve = mock_resolve_app(&mut server);
+        let consumers = mock_consumers(&mut server);
+        floo()
+            .env("HOME", home.path())
+            .args([
+                "--json",
+                "apps",
+                "keys",
+                "list",
+                "--consumer",
+                "missing",
+                "--app",
+                TEST_APP_NAME,
+            ])
+            .assert()
+            .failure()
+            .stdout(predicate::str::contains("APP_CONSUMER_NOT_FOUND"))
+            .stdout(predicate::str::contains("floo apps consumers list"));
+        consumers.assert();
+    }
+
+    #[test]
+    fn keys_create_passes_invalid_scope_to_api_and_preserves_error_code_and_message() {
+        let mut server = Server::new();
+        let home = setup_config(&server);
+        let _resolve = mock_resolve_app(&mut server);
+        let _consumers = mock_consumers(&mut server);
+        let message = "Scope labels must match ^[a-z0-9][a-z0-9._-]{0,63}$ or be '*'.";
+        let create = server
+            .mock(
+                "POST",
+                format!("/v1/apps/{TEST_APP_ID}/consumers/{CONSUMER_ID}/keys").as_str(),
+            )
+            .match_body(Matcher::Json(
+                json!({"name": "worker", "scopes": ["INVALID SCOPE"]}),
+            ))
+            .with_status(400)
+            .with_body(
+                json!({"detail": {"code": "INVALID_SCOPE_LABEL", "message": message}}).to_string(),
+            )
+            .create();
+        let result = create_key_command(&home)
+            .args(["--json", "--scope", "INVALID SCOPE"])
+            .assert()
+            .failure();
+        let out: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+        assert_eq!(out["error"]["code"], "INVALID_SCOPE_LABEL");
+        assert_eq!(out["error"]["message"], message);
+        create.assert();
+    }
+
+    #[test]
+    fn keys_create_malformed_success_does_not_echo_secret() {
+        let mut server = Server::new();
+        let home = setup_config(&server);
+        let _resolve = mock_resolve_app(&mut server);
+        let _consumers = mock_consumers(&mut server);
+        let create = server
+            .mock(
+                "POST",
+                format!("/v1/apps/{TEST_APP_ID}/consumers/{CONSUMER_ID}/keys").as_str(),
+            )
+            .match_body(Matcher::Json(json!({"name": "worker", "scopes": ["read"]})))
+            .with_status(201)
+            .with_body(json!({"raw_key": RAW_KEY}).to_string())
+            .create();
+        create_key_command(&home)
+            .args(["--scope", "read"])
+            .assert()
+            .failure()
+            .stdout("")
+            .stderr(predicate::str::contains(RAW_KEY).not());
+        create.assert();
+    }
+}

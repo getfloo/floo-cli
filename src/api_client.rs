@@ -384,6 +384,63 @@ impl FlooClient {
         Ok(())
     }
 
+    /// List all API key consumers for an app.
+    pub fn list_app_consumers(&self, app_id: &str) -> Result<Value, FlooApiError> {
+        let resp = self.get(&format!("/v1/apps/{app_id}/consumers"))?;
+        self.handle_response(resp)
+    }
+
+    /// Create an app API key consumer with the given name.
+    pub fn create_app_consumer(&self, app_id: &str, name: &str) -> Result<Value, FlooApiError> {
+        let resp = self.post_json(
+            &format!("/v1/apps/{app_id}/consumers"),
+            &serde_json::json!({"name": name}),
+        )?;
+        self.handle_response(resp)
+    }
+
+    /// Delete a consumer and revoke its active keys.
+    pub fn delete_app_consumer(&self, app_id: &str, consumer_id: &str) -> Result<(), FlooApiError> {
+        let resp = self.delete(&format!("/v1/apps/{app_id}/consumers/{consumer_id}"))?;
+        if !resp.status().is_success() {
+            self.handle_response_value(resp)?;
+        }
+        Ok(())
+    }
+
+    /// List active keys for an app consumer.
+    pub fn list_app_consumer_keys(
+        &self,
+        app_id: &str,
+        consumer_id: &str,
+    ) -> Result<Value, FlooApiError> {
+        let resp = self.get(&format!("/v1/apps/{app_id}/consumers/{consumer_id}/keys"))?;
+        self.handle_response(resp)
+    }
+
+    /// Create a scoped key; raw_key is a one-time secret in the response.
+    pub fn create_app_consumer_key(
+        &self,
+        app_id: &str,
+        consumer_id: &str,
+        body: &Value,
+    ) -> Result<Value, FlooApiError> {
+        let resp = self.post_json(
+            &format!("/v1/apps/{app_id}/consumers/{consumer_id}/keys"),
+            body,
+        )?;
+        self.handle_response(resp)
+    }
+
+    /// Revoke a key by ID; repeated revocations are safe.
+    pub fn revoke_app_api_key(&self, app_id: &str, key_id: &str) -> Result<(), FlooApiError> {
+        let resp = self.delete(&format!("/v1/apps/{app_id}/api-keys/{key_id}"))?;
+        if !resp.status().is_success() {
+            self.handle_response_value(resp)?;
+        }
+        Ok(())
+    }
+
     pub fn list_app_members(
         &self,
         app_id: &str,

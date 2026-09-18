@@ -1,8 +1,12 @@
 use std::process;
 
+use crate::api_client::FlooClient;
 use crate::api_types::AppLifecycleAction;
+use crate::confirm::{confirm_tier3, ConfirmOutcome};
 use crate::errors::ErrorCode;
+use crate::errors::FlooApiError;
 use crate::output;
+use serde_json::{json, Value};
 
 pub fn list(page: u32, per_page: u32) {
     super::require_auth();
@@ -399,6 +403,174 @@ pub fn remove_member(membership_id: &str, app_flag: Option<&str>) {
             process::exit(1);
         }
     }
+}
+
+fn app_api_result<T>(result: Result<T, FlooApiError>) -> T {
+    result.unwrap_or_else(|error| {
+        output::error(&error.message, &ErrorCode::from_api(&error.code), None);
+        process::exit(1);
+    })
+}
+
+fn consumer_id(client: &FlooClient, app_id: &str, identifier: &str) -> String {
+    let result = app_api_result(client.list_app_consumers(app_id));
+    let Some(consumers) = result["consumers"].as_array() else {
+        output::error("Invalid consumers.", &ErrorCode::InvalidResponse, None);
+        process::exit(1);
+    };
+    let found = consumers
+        .iter()
+        .find(|c| c["id"].as_str() == Some(identifier))
+        .or_else(|| {
+            consumers.iter().find(|c| {
+                c["name"]
+                    .as_str()
+                    .is_some_and(|name| name.to_lowercase() == identifier.to_lowercase())
+            })
+        });
+    if let Some(id) = found.and_then(|c| c["id"].as_str()) {
+        return id.to_owned();
+    }
+    output::error(
+        "App consumer not found.",
+        &ErrorCode::from_api("APP_CONSUMER_NOT_FOUND"),
+        Some("Run `floo apps consumers list` to find a consumer."),
+    );
+    process::exit(1);
+}
+
+fn app_key_table(result: Value, collection: &str, columns: &[&str]) {
+    let Some(items) = result[collection].as_array() else {
+        output::error("Invalid list response.", &ErrorCode::InvalidResponse, None);
+        process::exit(1);
+    };
+    let rows = items
+        .iter()
+        .map(|item| {
+            columns
+                .iter()
+                .map(|column| match &item[column] {
+                    Value::String(value) => value.clone(),
+                    Value::Null => "-".to_owned(),
+                    value => value.to_string(),
+                })
+                .collect()
+        })
+        .collect::<Vec<_>>();
+    output::table(columns, &rows, Some(result));
+}
+
+/// List the selected app's API key consumers.
+pub fn consumers(app_flag: Option<&str>) {
+    super::require_auth();
+    let client = super::init_client(None);
+    let (app_id, _) = super::resolve_app_from_config(&client, app_flag);
+    let result = app_api_result(client.list_app_consumers(&app_id));
+    app_key_table(result, "consumers", &["id", "name", "created_at"]);
+}
+
+/// Create a named consumer within the selected app.
+pub fn create_consumer(name: &str, app_flag: Option<&str>) {
+    super::require_auth();
+    let client = super::init_client(None);
+    let (app_id, _) = super::resolve_app_from_config(&client, app_flag);
+    let result = app_api_result(client.create_app_consumer(&app_id, name));
+    output::success("Consumer created.", Some(result));
+}
+
+/// Delete a consumer after confirmation, revoking all its active keys.
+pub fn delete_consumer(consumer: &str, app_flag: Option<&str>, confirmed: bool) {
+    super::require_auth();
+    let client = super::init_client(None);
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
+    let id = consumer_id(&client, &app_id, consumer);
+    let preamble = [format!(
+        "Delete consumer '{consumer}' from '{app_name}' and revoke all its active keys. This cannot be undone."
+    )];
+    match confirm_tier3(consumer, &preamble, confirmed) {
+        ConfirmOutcome::Proceed => {}
+        ConfirmOutcome::Aborted => {
+            output::info("Cancelled — nothing was deleted.", None);
+            return;
+        }
+        ConfirmOutcome::Refused { suggestion } => {
+            crate::confirm::exit_refused(
+                "Consumer deletion requires explicit confirmation.",
+                &suggestion,
+            );
+        }
+    }
+    app_api_result(client.delete_app_consumer(&app_id, &id));
+    output::success(
+        "Consumer deleted; its keys were revoked.",
+        Some(json!({
+            "consumer_id": id, "app_id": app_id, "keys_revoked": true
+        })),
+    );
+}
+
+/// List a consumer's active keys, resolving its name within the selected app.
+pub fn keys(consumer: &str, app_flag: Option<&str>) {
+    super::require_auth();
+    let client = super::init_client(None);
+    let (app_id, _) = super::resolve_app_from_config(&client, app_flag);
+    let id = consumer_id(&client, &app_id, consumer);
+    let result = app_api_result(client.list_app_consumer_keys(&app_id, &id));
+    app_key_table(
+        result,
+        "keys",
+        &["id", "name", "prefix", "scopes", "rate_limit_rpm"],
+    );
+}
+
+/// Create a scoped key; emit its one-time secret only to the stdout success path.
+pub fn create_key(
+    name: &str,
+    consumer: &str,
+    scopes: &[String],
+    rate_limit_rpm: Option<u32>,
+    app_flag: Option<&str>,
+) {
+    super::require_auth();
+    let client = super::init_client(None);
+    let (app_id, _) = super::resolve_app_from_config(&client, app_flag);
+    let id = consumer_id(&client, &app_id, consumer);
+    let mut body = json!({"name": name, "scopes": scopes});
+    if let Some(rate) = rate_limit_rpm {
+        body["rate_limit_rpm"] = json!(rate);
+    }
+    let result = app_api_result(client.create_app_consumer_key(&app_id, &id, &body));
+    let (Some(raw_key), Some(key_id), Some(prefix), Some(grants)) = (
+        result["raw_key"].as_str(),
+        result["id"].as_str(),
+        result["prefix"].as_str(),
+        result["scopes"].as_array(),
+    ) else {
+        output::error("Invalid key response.", &ErrorCode::InvalidResponse, None);
+        process::exit(1);
+    };
+    if output::is_json_mode() {
+        output::success("App API key created.", Some(result));
+    } else {
+        output::info("Key shown once; it cannot be retrieved again.", None);
+        output::info(
+            &format!("ID: {key_id}  Prefix: {prefix}  Scopes: {}", json!(grants)),
+            None,
+        );
+        output::raw_value(raw_key);
+    }
+}
+
+/// Revoke a key within the selected app; repeated revocations are safe.
+pub fn revoke_key(key_id: &str, app_flag: Option<&str>) {
+    super::require_auth();
+    let client = super::init_client(None);
+    let (app_id, _) = super::resolve_app_from_config(&client, app_flag);
+    app_api_result(client.revoke_app_api_key(&app_id, key_id));
+    output::success(
+        "App API key revoked.",
+        Some(json!({"key_id": key_id, "app_id": app_id})),
+    );
 }
 
 #[cfg(test)]
