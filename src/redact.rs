@@ -64,6 +64,7 @@ const SECRET_FIELD_NAMES: &[&str] = &[
     "secret_key",
     "secret_key_base",
     "api_key",
+    "raw_key",
     "apikey",
     "auth_token",
     "access_token",
@@ -779,6 +780,22 @@ mod snapshots {
         let payload = json!({"success": true, "data": {"password": "hunter2"}});
         let out = through_print_json(payload);
         assert!(collect_leaks(&out).is_empty());
+        assert_eq!(out["contains_secrets"], true);
+    }
+
+    /// Consumer keys use a dotted token format; field-name redaction must catch them.
+    #[test]
+    fn floo_apps_keys_create_raw_key_default_redacts() {
+        let _g = lock_default_redact();
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
+        let raw_key = "floo_consumer.one-time-consumer-secret";
+        let out = through_print_json(json!({"success": true, "data": {
+            "id": "key-1", "prefix": "floo_consumer.abcd", "raw_key": raw_key
+        }}));
+        assert!(!out.to_string().contains(raw_key));
+        assert_eq!(out["data"]["raw_key"], REDACTED_PLACEHOLDER);
+        assert_eq!(out["data"]["prefix"], "floo_consumer.abcd");
         assert_eq!(out["contains_secrets"], true);
     }
 
