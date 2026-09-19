@@ -213,6 +213,13 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    /// Record explicit agreement to the version returned by whoami.
+    pub fn accept_terms(&self, version: &str) -> Result<WhoamiResponse, FlooApiError> {
+        let body = serde_json::json!({"version": version});
+        let resp = self.post_json("/v1/auth/terms/accept", &body)?;
+        self.handle_response(resp)
+    }
+
     pub fn update_profile(&self, name: &str) -> Result<ProfileResponse, FlooApiError> {
         let body = serde_json::json!({"name": name});
         let resp = self.patch_json("/v1/auth/me", &body)?;

@@ -585,6 +585,15 @@ pub enum AuthCommands {
     Logout,
     /// Show the currently authenticated user.
     Whoami,
+    /// Agree to the current floo Terms of Service and Privacy Policy.
+    #[command(
+        after_help = "Only pass --yes after the human has agreed to both policies.\n\nExample:\n  floo auth accept-terms --yes"
+    )]
+    AcceptTerms {
+        /// Explicitly agree without prompting; requires the human's agreement.
+        #[arg(long)]
+        yes: bool,
+    },
     /// Print the current API key to stdout.
     Token,
     /// Create a new floo account.
@@ -2427,6 +2436,14 @@ pub fn run() {
             }
             AuthCommands::Logout => commands::auth::logout(),
             AuthCommands::Whoami => commands::auth::whoami(),
+            AuthCommands::AcceptTerms { yes } => {
+                let consent = if yes {
+                    commands::auth::TermsConsent::Agreed
+                } else {
+                    commands::auth::TermsConsent::Prompt
+                };
+                commands::auth::accept_terms(consent)
+            }
             AuthCommands::Token => commands::auth::token(),
             AuthCommands::Register { email } => commands::auth::register(&email),
             AuthCommands::UpdateProfile { name } => commands::auth::update_profile(&name),

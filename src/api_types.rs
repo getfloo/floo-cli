@@ -34,6 +34,18 @@ pub struct ProjectGitTokenResponse {
 pub struct WhoamiResponse {
     pub email: String,
     pub name: Option<String>,
+    #[serde(default)]
+    pub current_terms_version: String,
+    #[serde(default)]
+    pub terms_accepted_version: Option<String>,
+}
+
+impl WhoamiResponse {
+    /// Missing terms metadata from older APIs never requires acceptance.
+    pub fn needs_terms_acceptance(&self) -> bool {
+        !self.current_terms_version.is_empty()
+            && self.terms_accepted_version.as_deref() != Some(&self.current_terms_version)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

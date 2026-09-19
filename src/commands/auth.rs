@@ -4,9 +4,119 @@ use std::time::{Duration, Instant};
 
 use colored::Colorize;
 
+use crate::api_client::FlooClient;
+use crate::api_types::WhoamiResponse;
 use crate::config::{clear_config, load_config, save_config};
-use crate::errors::ErrorCode;
+use crate::confirm::{confirm_tier2, ConfirmOutcome};
+use crate::errors::{ErrorCode, FlooApiError};
 use crate::output;
+
+const TERMS_URL: &str = "https://getfloo.com/legal/terms";
+const PRIVACY_URL: &str = "https://getfloo.com/legal/privacy";
+const ACCEPT_TERMS_HELP: &str = "Run 'floo auth accept-terms' or, after the human agrees to both policies, 'floo auth accept-terms --yes'.";
+
+fn terms_data(profile: &WhoamiResponse) -> serde_json::Value {
+    serde_json::json!({
+        "current_terms_version": profile.current_terms_version,
+        "terms_accepted_version": profile.terms_accepted_version,
+        "acceptance_required": profile.needs_terms_acceptance(),
+        "terms_url": TERMS_URL,
+        "privacy_url": PRIVACY_URL,
+    })
+}
+
+/// Whether agreement was explicitly supplied or must be requested interactively.
+pub enum TermsConsent {
+    Prompt,
+    Agreed,
+}
+
+fn request_terms_acceptance(
+    client: &FlooClient,
+    profile: WhoamiResponse,
+    consent: TermsConsent,
+) -> Result<WhoamiResponse, FlooApiError> {
+    output::dim_line(&format!("Terms of Service: {TERMS_URL}"));
+    output::dim_line(&format!("Privacy Policy: {PRIVACY_URL}"));
+    output::dim_line(&format!(
+        "Current terms version: {}",
+        profile.current_terms_version
+    ));
+    if !profile.needs_terms_acceptance() {
+        return Ok(profile);
+    }
+    match confirm_tier2(
+        "Do you agree to the floo",
+        "Terms of Service and Privacy Policy",
+        matches!(consent, TermsConsent::Agreed),
+    ) {
+        ConfirmOutcome::Proceed => client.accept_terms(&profile.current_terms_version),
+        ConfirmOutcome::Aborted | ConfirmOutcome::Refused { .. } => Err(FlooApiError::new(
+            0,
+            "CONFIRMATION_REQUIRED",
+            "The account cannot be used until you accept the floo Terms of Service and Privacy Policy. Non-interactive acceptance requires --yes.",
+        )),
+    }
+}
+
+/// Record agreement only after --yes or interactive confirmation; never cache it.
+pub fn accept_terms(consent: TermsConsent) {
+    super::require_auth();
+    let client = super::init_client(None);
+    let profile = match client.whoami() {
+        Ok(profile) => profile,
+        Err(error) => {
+            output::error(&error.message, &ErrorCode::from_api(&error.code), None);
+            process::exit(1);
+        }
+    };
+    let data = terms_data(&profile);
+    let message = if profile.current_terms_version.is_empty() {
+        "No terms acceptance is required by this API."
+    } else if !profile.needs_terms_acceptance() {
+        "Already accepted the current floo Terms of Service and Privacy Policy."
+    } else {
+        "Accepted the floo Terms of Service and Privacy Policy."
+    };
+    match request_terms_acceptance(&client, profile, consent) {
+        Ok(profile) => output::success(message, Some(terms_data(&profile))),
+        Err(error) => {
+            output::error_with_data(
+                &error.message,
+                &ErrorCode::from_api(&error.code),
+                Some(ACCEPT_TERMS_HELP),
+                Some(data),
+            );
+            process::exit(1);
+        }
+    }
+}
+
+// Terms failures cannot undo a successful login or emit a second JSON envelope.
+fn complete_login(
+    client: &FlooClient,
+    profile: Result<WhoamiResponse, FlooApiError>,
+    message: &str,
+    mut data: serde_json::Value,
+) {
+    let acceptance = profile.and_then(|profile| {
+        if !profile.needs_terms_acceptance() {
+            return Ok(profile);
+        }
+        data["terms"] = terms_data(&profile);
+        request_terms_acceptance(client, profile, TermsConsent::Prompt)
+    });
+    match acceptance {
+        Ok(profile) => data["terms"] = terms_data(&profile),
+        Err(error) => {
+            output::warn(&format!("{} {ACCEPT_TERMS_HELP}", error.message));
+            data["terms_acceptance_error"] = serde_json::json!({
+                "code": error.code, "message": error.message, "suggestion": ACCEPT_TERMS_HELP,
+            });
+        }
+    }
+    output::success(message, Some(data));
+}
 
 pub fn login(api_key: Option<&str>, force: bool) {
     // Path 1: --api-key flag — save directly and validate
@@ -30,9 +140,11 @@ pub fn login(api_key: Option<&str>, force: bool) {
                 let mut config = load_config();
                 config.user_email = Some(email.to_string());
                 let _ = save_config(&config);
-                output::success(
+                complete_login(
+                    &client,
+                    Ok(result.clone()),
                     &format!("Logged in as {email}"),
-                    Some(serde_json::json!({"email": email})),
+                    serde_json::json!({"email": email}),
                 );
             }
             Err(e) => {
@@ -57,9 +169,11 @@ pub fn login(api_key: Option<&str>, force: bool) {
             match client.whoami() {
                 Ok(result) => {
                     let email = &result.email;
-                    output::success(
+                    complete_login(
+                        &client,
+                        Ok(result.clone()),
                         &format!("Already logged in as {email}"),
-                        Some(serde_json::json!({"email": email, "already_authenticated": true})),
+                        serde_json::json!({"email": email, "already_authenticated": true}),
                     );
                     return;
                 }
@@ -166,9 +280,12 @@ pub fn login(api_key: Option<&str>, force: bool) {
                     );
                     process::exit(1);
                 }
-                output::success(
+                let authenticated_client = super::init_client(Some(config));
+                complete_login(
+                    &authenticated_client,
+                    authenticated_client.whoami(),
                     &format!("Logged in as {email}"),
-                    Some(serde_json::json!({"email": email})),
+                    serde_json::json!({"email": email}),
                 );
                 if !output::is_json_mode() {
                     eprintln!();
