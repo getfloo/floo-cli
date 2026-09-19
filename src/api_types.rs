@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
 
@@ -89,6 +89,66 @@ pub struct OrgCostBreakdownResponse {
     pub total_cost_usd: f64,
     pub included_cost_usd: f64,
     pub apps: Vec<AppCostSummary>,
+    #[serde(default)]
+    pub lines: Vec<CostLine>,
+}
+
+/// Recorded billing evidence; legacy usage can have unknown rate metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CostLine {
+    pub rate_key: Option<String>,
+    pub label: Option<String>,
+    pub quantity: f64,
+    pub unit: String,
+    pub display_unit: Option<String>,
+    pub rate: Option<f64>,
+    pub display_rate: Option<f64>,
+    pub rate_card_version: Option<String>,
+    pub effective_from: Option<String>,
+    pub cost_usd: f64,
+}
+
+/// API cost total for one resource type.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceCost {
+    pub cost_usd: f64,
+}
+
+/// Recorded costs and lines attributed to an application service.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceCostBreakdown {
+    pub service_id: Option<String>,
+    pub name: String,
+    pub costs: BTreeMap<String, ResourceCost>,
+    #[serde(default)]
+    pub lines: Vec<CostLine>,
+    pub total_usd: f64,
+}
+
+/// Recorded costs and lines attributed to a managed resource and environment.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManagedResourceCostBreakdown {
+    pub managed_service_id: Option<String>,
+    pub environment_managed_resource_id: Option<String>,
+    pub name: String,
+    pub environment: Option<String>,
+    pub costs: BTreeMap<String, ResourceCost>,
+    #[serde(default)]
+    pub lines: Vec<CostLine>,
+    pub total_usd: f64,
+}
+
+/// Per-app billing evidence returned by the cost-breakdown endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppCostBreakdownResponse {
+    pub app_id: String,
+    pub period: CostBreakdownPeriod,
+    pub total_cost_usd: f64,
+    pub services: Vec<ServiceCostBreakdown>,
+    #[serde(default)]
+    pub managed_resources: Vec<ManagedResourceCostBreakdown>,
+    #[serde(default)]
+    pub unattributed_cost_usd: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

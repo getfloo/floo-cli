@@ -1379,6 +1379,19 @@ impl FlooClient {
 
     // --- Billing usage ---
 
+    /// Fetch recorded per-service and managed-resource costs for an app.
+    pub fn get_app_cost_breakdown(
+        &self,
+        app_id: &str,
+        period: &str,
+    ) -> Result<AppCostBreakdownResponse, FlooApiError> {
+        let resp = self.get_with_query(
+            &format!("/v1/billing/apps/{app_id}/cost-breakdown"),
+            &[("period", period)],
+        )?;
+        self.handle_response(resp)
+    }
+
     pub fn get_org_cost_breakdown(
         &self,
         period: &str,

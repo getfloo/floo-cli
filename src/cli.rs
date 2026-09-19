@@ -613,10 +613,23 @@ pub enum BillingCommands {
         plan: Option<String>,
     },
 
-    /// Show current usage, spend cap, and per-app compute breakdown.
+    /// Show usage, spend cap, per-app totals, and recorded cost lines.
     Usage {
         /// Time period to show compute costs for.
         #[arg(short, long, default_value = "current_month", value_parser = ["current_month", "last_month", "last_7d"])]
+        period: String,
+    },
+
+    /// Show an app's service and managed-resource costs with recorded cost lines.
+    #[command(
+        after_help = "Examples:\n  floo billing cost-breakdown --app my-app\n  floo billing cost-breakdown --app my-app --period last_month --json"
+    )]
+    CostBreakdown {
+        /// App name or ID (defaults to app from floo.app.toml).
+        #[arg(short, long)]
+        app: Option<String>,
+        /// Time period to show costs for.
+        #[arg(short, long, default_value = "current_month", value_parser = ["current_billing_period", "current_month", "last_month", "last_7d"])]
         period: String,
     },
 
@@ -2439,6 +2452,9 @@ pub fn run() {
             },
             BillingCommands::Upgrade { plan } => commands::billing::upgrade(plan),
             BillingCommands::Usage { period } => commands::billing::usage(&period),
+            BillingCommands::CostBreakdown { app, period } => {
+                commands::billing::cost_breakdown(app.as_deref(), &period)
+            }
             BillingCommands::Contact => commands::billing::contact(),
         },
 

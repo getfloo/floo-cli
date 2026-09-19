@@ -1,6 +1,6 @@
-use std::process;
+use std::{collections::BTreeMap, process};
 
-use crate::api_types::SpendCapPolicy;
+use crate::api_types::{CostLine, ResourceCost, SpendCapPolicy};
 use crate::errors::ErrorCode;
 use crate::output;
 
@@ -262,11 +262,8 @@ pub fn usage(period: &str) {
         "period": period,
         "total_cost_usd": breakdown.total_cost_usd,
         "included_cost_usd": breakdown.included_cost_usd,
-        "apps": breakdown.apps.iter().map(|a| serde_json::json!({
-            "app_id": a.app_id,
-            "name": a.name,
-            "total_cost_usd": a.total_cost_usd,
-        })).collect::<Vec<_>>(),
+        "apps": breakdown.apps,
+        "lines": breakdown.lines,
     });
 
     if output::is_json_mode() {
@@ -283,8 +280,9 @@ pub fn usage(period: &str) {
         breakdown.included_cost_usd
     );
     eprintln!(
-        "  Compute used: ${:.2} ({})",
-        breakdown.total_cost_usd, breakdown.period.label
+        "  Compute used: {} ({})",
+        format_money(breakdown.total_cost_usd, MoneyFormat::Total),
+        breakdown.period.label
     );
 
     match spend_cap {
@@ -312,8 +310,17 @@ pub fn usage(period: &str) {
     if !breakdown.apps.is_empty() {
         eprintln!("  By app:");
         for app in &breakdown.apps {
-            eprintln!("    {:<30}  ${:.2}", app.name, app.total_cost_usd);
+            eprintln!(
+                "    {:<30}  {}",
+                app.name,
+                format_money(app.total_cost_usd, MoneyFormat::Total)
+            );
         }
+    }
+
+    if !breakdown.lines.is_empty() {
+        eprintln!("  Organization cost lines:");
+        render_cost_lines(&breakdown.lines);
     }
 
     if exceeded && period == "last_month" {
@@ -324,6 +331,117 @@ pub fn usage(period: &str) {
     }
     if let Some(message) = cap_status.message {
         output::warn(message);
+    }
+}
+
+/// Show the API's per-app costs without reconstructing quantities or prices.
+pub fn cost_breakdown(app: Option<&str>, period: &str) {
+    super::require_auth();
+    let client = super::init_client(None);
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app);
+    let breakdown = match client.get_app_cost_breakdown(&app_id, period) {
+        Ok(b) => b,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+    if output::is_json_mode() {
+        output::success("", Some(output::to_value(&breakdown)));
+        return;
+    }
+    eprintln!("  App: {app_name} ({})", breakdown.period.label);
+    eprintln!(
+        "  Total cost: {}",
+        format_money(breakdown.total_cost_usd, MoneyFormat::Total)
+    );
+    for service in &breakdown.services {
+        render_resource_costs(
+            &format!("Service: {}", service.name),
+            service.total_usd,
+            &service.costs,
+            &service.lines,
+        );
+    }
+    for resource in &breakdown.managed_resources {
+        render_resource_costs(
+            &format!(
+                "Managed resource: {} ({})",
+                resource.name,
+                resource
+                    .environment
+                    .as_deref()
+                    .unwrap_or("unknown environment")
+            ),
+            resource.total_usd,
+            &resource.costs,
+            &resource.lines,
+        );
+    }
+    eprintln!(
+        "  Unattributed cost: {}",
+        format_money(breakdown.unattributed_cost_usd, MoneyFormat::Total)
+    );
+}
+
+enum MoneyFormat {
+    Total,
+    Line,
+}
+
+fn render_resource_costs(
+    label: &str,
+    total: f64,
+    costs: &BTreeMap<String, ResourceCost>,
+    lines: &[CostLine],
+) {
+    eprintln!("  {label} — {}", format_money(total, MoneyFormat::Total));
+    for (kind, cost) in costs {
+        eprintln!(
+            "    {kind}: {}",
+            format_money(cost.cost_usd, MoneyFormat::Total)
+        );
+    }
+    render_cost_lines(lines);
+}
+
+fn format_money(amount: f64, format: MoneyFormat) -> String {
+    const MIN_LINE_AMOUNT: f64 = 0.0001;
+    match format {
+        MoneyFormat::Total => format!("${amount:.2}"),
+        MoneyFormat::Line if amount > 0.0 && amount < MIN_LINE_AMOUNT => "<$0.0001".into(),
+        MoneyFormat::Line => {
+            let rounded = format!("{amount:.4}");
+            format!("${}", rounded.trim_end_matches('0').trim_end_matches('.'))
+        }
+    }
+}
+
+fn render_cost_lines(lines: &[CostLine]) {
+    for line in lines {
+        let (rate, rate_unit) = match (line.display_rate, line.display_unit.as_deref()) {
+            (Some(rate), Some(unit)) => (Some(rate), unit),
+            _ => (line.rate, line.unit.as_str()),
+        };
+        let rate = rate.map_or_else(|| "unknown".into(), |r| format_money(r, MoneyFormat::Line));
+        eprintln!(
+            "    {} ({})",
+            line.label.as_deref().unwrap_or("Cost line"),
+            line.rate_key.as_deref().unwrap_or("unknown rate key")
+        );
+        eprintln!(
+            "      Quantity: {} {} | Rate: {} / {} | Amount: {}",
+            line.quantity,
+            line.unit,
+            rate,
+            rate_unit,
+            format_money(line.cost_usd, MoneyFormat::Line)
+        );
+        eprintln!(
+            "      Rate card: {} | Effective from: {}",
+            line.rate_card_version.as_deref().unwrap_or("unknown"),
+            line.effective_from.as_deref().unwrap_or("unknown")
+        );
     }
 }
 
