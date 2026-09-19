@@ -288,18 +288,10 @@ pub fn usage(period: &str) {
     match spend_cap {
         Some(cents) if cents > 0 => {
             let max_str = match max_cap {
-                Some(m) => format!(
-                    " (max {} for {})",
-                    format_money(m as f64 / 100.0, MoneyFormat::Total),
-                    plan_label
-                ),
+                Some(m) => format!(" (max ${} for {})", m / 100, plan_label),
                 None => String::new(),
             };
-            eprintln!(
-                "  Spend cap: {}/month{}",
-                format_money(cents as f64 / 100.0, MoneyFormat::Total),
-                max_str
-            );
+            eprintln!("  Spend cap: ${:.2}/month{}", cents as f64 / 100.0, max_str);
 
             let pct = ((period_spend_cents as f64 / cents as f64) * 100.0).min(100.0);
             let filled = (pct / 100.0 * 30.0).round() as usize;
