@@ -7806,7 +7806,7 @@ fn mock_doctor_accounts(server: &mut Server, body: &str) -> Mock {
 
 fn doctor_body(drift_detected_field: &str, drift_items: &str) -> String {
     format!(
-        r#"{{"app_id":"{TEST_APP_ID}","app_name":"{TEST_APP_NAME}","requested":{{"access_mode":"accounts","access_policy":"invite","allowed_domains":[]}},"serving":[],"latest_deploy":null{drift_detected_field},"drift":[{drift_items}]}}"#
+        r#"{{"app_id":"{TEST_APP_ID}","app_name":"{TEST_APP_NAME}","requested":{{"access_mode":"accounts","access_policy":"invite"}},"serving":[],"latest_deploy":null{drift_detected_field},"drift":[{drift_items}]}}"#
     )
 }
 
