@@ -144,14 +144,6 @@ fn render_human(result: &AccountsDoctorResponse) {
     output::info("Requested config:", None);
     eprintln!("  access_mode:    {}", result.requested.access_mode);
     eprintln!("  access_policy:  {}", result.requested.access_policy);
-    eprintln!(
-        "  allowed_domains: {}",
-        if result.requested.allowed_domains.is_empty() {
-            "(none)".to_string()
-        } else {
-            result.requested.allowed_domains.join(", ")
-        }
-    );
     eprintln!();
 
     output::info(

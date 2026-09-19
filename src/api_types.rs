@@ -1199,7 +1199,6 @@ pub struct AccountsDoctorRoute {
 pub struct AccountsDoctorRequested {
     pub access_mode: String,
     pub access_policy: String,
-    pub allowed_domains: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
