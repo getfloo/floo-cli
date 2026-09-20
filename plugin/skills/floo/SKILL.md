@@ -1,19 +1,23 @@
 ---
 name: floo
-description: Find floo documentation and CLI commands when building, deploying, or operating an app on floo.
+description: Find floo documentation and CLI commands when building, deploying, or operating an app on floo, including building a new app for a user who has no GitHub account.
 user-invocable: false
 ---
 
 # floo
 
-Read the relevant canonical documentation before changing a floo app:
+Building a new app for your user? Read https://getfloo.com/agents.md and
+follow it. That page is the whole path — install, log in,
+`floo projects create`, clone, build, push, invite — and your user needs no
+GitHub account.
 
-- [Quickstart](https://getfloo.com/docs/introduction) for setup and a first deploy.
-- [Agent setup](https://getfloo.com/docs/guides/agent-setup) for authority, verification, and operational guidance.
-- [Documentation index](https://getfloo.com/docs/llms.txt) for configuration, services, authentication, and other topics.
+Deploying a GitHub repository your user already has? Read
+https://getfloo.com/docs/introduction instead, then
+https://getfloo.com/docs/guides/agent-setup for authority and verification.
 
-Use `floo docs --json` to find topic URLs and `floo docs <topic> --json`
-to select one. These commands return links; fetch and read the linked page.
+For everything else — configuration, services, authentication, logs — use
+`floo docs --json` to find topic URLs and `floo docs <topic> --json` to
+select one. These commands return links; fetch and read the linked page.
 
 Use `floo commands --json` to discover commands and `floo <command> --help`
 for syntax supported by the installed version. Use `--json` for structured output.
