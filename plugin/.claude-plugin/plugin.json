@@ -1,6 +1,6 @@
 {
   "name": "floo",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "CLI guidance for the floo deployment platform, including managed services and security patterns for agents",
   "author": {
     "name": "floo",
