@@ -12,7 +12,8 @@ follow it. That page is the whole path — install, log in,
 GitHub account.
 
 Deploying a GitHub repository your user already has? Read
-https://getfloo.com/docs/introduction instead.
+https://getfloo.com/docs/introduction instead, then
+https://getfloo.com/docs/guides/agent-setup for authority and verification.
 
 For everything else — configuration, services, authentication, logs — use
 `floo docs --json` to find topic URLs and `floo docs <topic> --json` to
