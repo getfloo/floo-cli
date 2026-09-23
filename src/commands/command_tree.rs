@@ -216,7 +216,6 @@ mod tests {
             "doctor",
             "services add",
             "services remove",
-            "db connections",
             "releases rollback",
             "deploys status",
             "previews up",

@@ -6909,8 +6909,6 @@ fn test_services_add_to_another_app_writes_nothing_local() {
             "postgres",
             "--app",
             TEST_APP_NAME,
-            "--tier",
-            "basic",
         ])
         .env("HOME", home.path())
         .current_dir(project.path())

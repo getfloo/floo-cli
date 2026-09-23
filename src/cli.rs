@@ -1351,10 +1351,9 @@ pub enum ServicesCommands {
         #[arg(short, long)]
         app: Option<String>,
 
-        /// Deprecated and ignored. floo does not provide connection or
-        /// statement-timeout tiers.
-        #[arg(long, default_value = "basic", value_parser = ["basic", "standard", "performance"])]
-        tier: String,
+        /// Deprecated service tier.
+        #[arg(long, hide = true)]
+        tier: Option<String>,
 
         /// Service row name (lowercase, alphanumeric + underscores).
         #[arg(long, default_value = "default")]
@@ -1836,8 +1835,8 @@ Examples:
         preflight: PreflightArgs,
     },
 
-    /// Show current Postgres connection usage for an older shared-database service.
-    /// New managed Postgres services return `MANAGED_POSTGRES_NOT_ON_NEON_YET`.
+    /// Show current Postgres connection usage.
+    #[command(hide = true)]
     #[command(after_help = "\
 Examples:
   floo db connections --app my-app                Show dev connection usage
@@ -1853,8 +1852,8 @@ Examples:
         env: String,
     },
 
-    /// Create a backup for an older shared-database service. New managed
-    /// Postgres services return `MANAGED_POSTGRES_NOT_ON_NEON_YET`.
+    /// Create a Postgres backup.
+    #[command(hide = true)]
     #[command(after_help = "\
 Examples:
   floo db backup --app my-app               Back up dev (default)
@@ -1873,8 +1872,8 @@ Examples:
         env: String,
     },
 
-    /// List backups for an older shared-database service. New managed Postgres
-    /// services return `MANAGED_POSTGRES_NOT_ON_NEON_YET`.
+    /// List Postgres backups.
+    #[command(hide = true)]
     Backups {
         /// App name or ID (reads from config if omitted).
         #[arg(short, long)]
@@ -1889,9 +1888,8 @@ Examples:
         env: Option<String>,
     },
 
-    /// Restore a backup for an older shared-database service. New managed
-    /// Postgres services return `MANAGED_POSTGRES_NOT_ON_NEON_YET`; restores
-    /// for managed Postgres are handled by request through support.
+    /// Restore a Postgres backup.
+    #[command(hide = true)]
     #[command(after_help = "\
 Examples:
   floo db restore 018f... --app my-app --env dev
@@ -1955,15 +1953,12 @@ Examples:
         name: String,
     },
 
-    /// Reset one preview database branch for an older shared-database service.
-    /// New managed Postgres services return `MANAGED_POSTGRES_NOT_ON_NEON_YET`.
+    /// Reset one preview database branch.
+    #[command(hide = true)]
     #[command(after_help = "\
 Examples:
   floo db branches reset feat-db-abcde --app my-app --name default
-  floo db branches reset feat-db-abcde --app my-app --yes --json
-
-This applies only to older shared-database services. It does not apply to
-managed Postgres services.")]
+  floo db branches reset feat-db-abcde --app my-app --yes --json")]
     Reset {
         /// Preview slug from PR preview URLs or `floo previews` surfaces.
         preview: String,
@@ -2686,7 +2681,7 @@ pub fn run() {
                 app,
                 tier,
                 name,
-            } => commands::services::add(&service_type, app.as_deref(), &tier, &name),
+            } => commands::services::add(&service_type, app.as_deref(), tier.as_deref(), &name),
             ServicesCommands::Remove {
                 service_type,
                 app,

@@ -719,7 +719,8 @@ pub struct CreateManagedServiceRequest<'a> {
     #[serde(rename = "type")]
     pub service_type: &'a str,
     pub name: &'a str,
-    pub tier: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tier: Option<&'a str>,
 }
 
 /// Detail response. Deliberately skips `credentials` — the CLI must never print
