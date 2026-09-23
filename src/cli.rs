@@ -2632,7 +2632,7 @@ pub fn run() {
                     restart,
                     &env,
                     &value_source,
-                    commands::env::requested_type(secret, config),
+                    commands::env::requested_is_secret(secret, config),
                 )
             }
             EnvCommands::List { app, services, env } => {
@@ -2661,16 +2661,16 @@ pub fn run() {
                 env,
                 preflight: _,
             } => {
-                let var_type = commands::env::requested_type(secret, config);
+                let secret = commands::env::requested_is_secret(secret, config);
                 if all {
-                    commands::env::import_all_services(app.as_deref(), &env, var_type);
+                    commands::env::import_all_services(app.as_deref(), &env, secret);
                 } else {
                     commands::env::import_vars(
                         file.as_deref(),
                         app.as_deref(),
                         &services,
                         &env,
-                        var_type,
+                        secret,
                     );
                 }
             }

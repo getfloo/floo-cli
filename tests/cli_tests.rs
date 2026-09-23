@@ -2343,14 +2343,14 @@ fn test_dry_run_env_set() {
 }
 
 #[test]
-fn test_dry_run_env_set_type_flags() {
-    // The requested type flows into the dry-run payload and the human
+fn test_dry_run_env_set_is_secret_flags() {
+    // The requested is_secret flows into the dry-run payload and the human
     // preview, so the operator sees it before committing. No flag leaves
-    // the type to the API (`null`).
-    for (flag, json_type, clause) in [
+    // it to the API (`null`).
+    for (flag, is_secret, clause) in [
         (None, "null", ""),
-        (Some("--secret"), r#""secret""#, " as secret"),
-        (Some("--config"), r#""config""#, " as config"),
+        (Some("--secret"), "true", " as secret"),
+        (Some("--config"), "false", " as config"),
     ] {
         let mut args = vec!["--dry-run", "env", "set", "KEY=value", "--app", "test"];
         args.extend(flag);
@@ -2360,7 +2360,9 @@ fn test_dry_run_env_set_type_flags() {
             .env("HOME", "/tmp/floo-test-nonexistent")
             .assert()
             .success()
-            .stdout(predicate::str::contains(format!(r#""type":{json_type}"#)));
+            .stdout(predicate::str::contains(format!(
+                r#""is_secret":{is_secret}"#
+            )));
         floo()
             .args(&args)
             .env("HOME", "/tmp/floo-test-nonexistent")
@@ -2392,12 +2394,12 @@ fn test_env_set_rejects_secret_with_config() {
 }
 
 #[test]
-fn test_env_import_accepts_type_flags() {
+fn test_env_import_accepts_is_secret_flags() {
     // The dry-run preview resolves the file, so give it a real one.
     let dir = tempfile::tempdir().unwrap();
     let env_file = dir.path().join(".env");
     std::fs::write(&env_file, "A_KEY=one\n").unwrap();
-    for (flag, json_type) in [("--secret", "secret"), ("--config", "config")] {
+    for (flag, is_secret) in [("--secret", "true"), ("--config", "false")] {
         floo()
             .args([
                 "--json",
@@ -2412,7 +2414,9 @@ fn test_env_import_accepts_type_flags() {
             .env("HOME", "/tmp/floo-test-nonexistent")
             .assert()
             .success()
-            .stdout(predicate::str::contains(format!(r#""type":"{json_type}""#)));
+            .stdout(predicate::str::contains(format!(
+                r#""is_secret":{is_secret}"#
+            )));
     }
 }
 

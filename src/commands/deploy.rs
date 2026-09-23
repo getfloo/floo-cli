@@ -3015,8 +3015,8 @@ pub(crate) fn sync_env_vars_if_needed(
             );
         }
 
-        // No type: the API makes new keys secrets and keeps existing keys'
-        // types (getfloo/floo#3134).
+        // No is_secret: the API applies its default to new keys and keeps
+        // existing keys' types (getfloo/floo#3134).
         if let Err(e) = client.import_env_vars(app_id, &vars, Some(svc_id), "dev", None) {
             if force_sync {
                 return Err(e.message);

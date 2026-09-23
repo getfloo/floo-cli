@@ -1417,10 +1417,24 @@ fn mock_env_set(
     status: usize,
     body: impl Into<String>,
 ) -> Mock {
+    mock_env_set_matching(
+        server,
+        Matcher::Regex(format!(r#""service_id":"{service_id}""#)),
+        status,
+        body,
+    )
+}
+
+fn mock_env_set_matching(
+    server: &mut Server,
+    request: Matcher,
+    status: usize,
+    body: impl Into<String>,
+) -> Mock {
     server
         .mock("POST", format!("/v1/apps/{TEST_APP_ID}/env").as_str())
         .match_query(Matcher::UrlEncoded("env".into(), "dev".into()))
-        .match_body(Matcher::Regex(format!(r#""service_id":"{service_id}""#)))
+        .match_body(request)
         .with_status(status)
         .with_header("content-type", "application/json")
         .with_body(body.into())
@@ -2209,48 +2223,44 @@ fn test_env_set_stdin() {
         .stdout(predicate::str::contains(r#""success":true"#));
 }
 
-fn assert_env_set_sends_body(flags: &[&str], body: serde_json::Value) {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let _resolve = mock_resolve_app(&mut server);
-    let _services = mock_list_services_one(&mut server);
-    let set = server
-        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/env").as_str())
-        .match_query(Matcher::UrlEncoded("env".into(), "dev".into()))
-        .match_body(Matcher::Json(body))
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(set_env_response_body())
-        .create();
-
-    let mut args = vec!["--json", "env", "set", "API_KEY=v", "--app", TEST_APP_NAME];
-    args.extend_from_slice(flags);
-    floo()
-        .args(&args)
-        .env("HOME", home.path())
-        .assert()
-        .success();
-    set.assert();
-}
-
 #[test]
-fn test_env_set_sends_requested_type() {
-    // No flag leaves the type to the API: a new key becomes a secret and an
-    // existing key keeps its type (getfloo/floo#3134).
-    let body = |var_type: Option<&str>| {
-        let mut body = serde_json::json!({
+fn test_env_set_sends_requested_is_secret() {
+    // No flag leaves is_secret out, so the API decides: a new key becomes a
+    // secret unless it has a build-time prefix, and an existing key keeps its
+    // type (getfloo/floo#3141).
+    for (flag, is_secret) in [
+        (None, None),
+        (Some("--secret"), Some(true)),
+        (Some("--config"), Some(false)),
+    ] {
+        let mut server = Server::new();
+        let home = setup_config(&server);
+        let _resolve = mock_resolve_app(&mut server);
+        let _services = mock_list_services_one(&mut server);
+        let mut request = serde_json::json!({
             "key": "API_KEY",
             "value": "v",
             "service_id": TEST_SERVICE_ID,
         });
-        if let Some(var_type) = var_type {
-            body["type"] = serde_json::json!(var_type);
+        if let Some(is_secret) = is_secret {
+            request["is_secret"] = serde_json::json!(is_secret);
         }
-        body
-    };
-    assert_env_set_sends_body(&[], body(None));
-    assert_env_set_sends_body(&["--secret"], body(Some("secret")));
-    assert_env_set_sends_body(&["--config"], body(Some("config")));
+        let set = mock_env_set_matching(
+            &mut server,
+            Matcher::Json(request),
+            200,
+            set_env_response_body(),
+        );
+
+        let mut args = vec!["--json", "env", "set", "API_KEY=v", "--app", TEST_APP_NAME];
+        args.extend(flag);
+        floo()
+            .args(&args)
+            .env("HOME", home.path())
+            .assert()
+            .success();
+        set.assert();
+    }
 }
 
 #[test]

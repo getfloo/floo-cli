@@ -733,7 +733,7 @@ impl FlooClient {
         value: &str,
         service_id: Option<&str>,
         env: &str,
-        var_type: Option<EnvVarType>,
+        is_secret: Option<bool>,
     ) -> Result<SetEnvVarResponse, FlooApiError> {
         let mut body = serde_json::json!({"key": key, "value": value});
         if let Some(sid) = service_id {
@@ -741,12 +741,12 @@ impl FlooClient {
                 .unwrap()
                 .insert("service_id".to_string(), Value::String(sid.to_string()));
         }
-        // Omitted, the API makes a new key a secret and keeps an existing
-        // key's type.
-        if let Some(var_type) = var_type {
+        // Omitted, the API makes a new key a secret unless it has a
+        // build-time prefix, and keeps an existing key's type.
+        if let Some(is_secret) = is_secret {
             body.as_object_mut()
                 .unwrap()
-                .insert("type".to_string(), serde_json::json!(var_type));
+                .insert("is_secret".to_string(), Value::Bool(is_secret));
         }
         let resp = self.post_json(&format!("/v1/apps/{app_id}/env?env={env}"), &body)?;
         self.handle_response(resp)
@@ -806,13 +806,16 @@ impl FlooClient {
         env_vars: &[(String, String)],
         service_id: Option<&str>,
         env: &str,
-        var_type: Option<EnvVarType>,
+        is_secret: Option<bool>,
     ) -> Result<Value, FlooApiError> {
         let vars: Vec<Value> = env_vars
             .iter()
-            .map(|(k, v)| match var_type {
-                Some(var_type) => serde_json::json!({"key": k, "value": v, "type": var_type}),
-                None => serde_json::json!({"key": k, "value": v}),
+            .map(|(k, v)| {
+                if let Some(is_secret) = is_secret {
+                    serde_json::json!({"key": k, "value": v, "is_secret": is_secret})
+                } else {
+                    serde_json::json!({"key": k, "value": v})
+                }
             })
             .collect();
         let mut body = serde_json::json!({"env_vars": vars});

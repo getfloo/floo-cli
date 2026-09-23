@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 use crate::api_client::FlooClient;
-use crate::api_types::{EnvVarType, ListEnvVarsResponse};
+use crate::api_types::ListEnvVarsResponse;
 use crate::deploy_status;
 use crate::errors::{ErrorCode, FlooError};
 use crate::output;
@@ -474,20 +474,21 @@ fn masked_cell(ev: &crate::api_types::EnvVar) -> String {
     }
 }
 
-/// The type `--secret` / `--config` asked for. `None` lets the API decide:
-/// a new key becomes a secret, an existing key keeps its type.
-pub fn requested_type(secret: bool, config: bool) -> Option<EnvVarType> {
+/// The `is_secret` that `--secret` / `--config` asked for. `None` lets the API
+/// decide: a new key becomes a secret unless it has a build-time prefix, and
+/// an existing key keeps its type.
+pub fn requested_is_secret(secret: bool, config: bool) -> Option<bool> {
     match (secret, config) {
-        (true, _) => Some(EnvVarType::Secret),
-        (_, true) => Some(EnvVarType::Config),
+        (true, _) => Some(true),
+        (_, true) => Some(false),
         _ => None,
     }
 }
 
-fn type_clause(var_type: Option<EnvVarType>) -> &'static str {
-    match var_type {
-        Some(EnvVarType::Secret) => " as secret",
-        Some(EnvVarType::Config) => " as config",
+fn type_clause(secret: Option<bool>) -> &'static str {
+    match secret {
+        Some(true) => " as secret",
+        Some(false) => " as config",
         None => "",
     }
 }
@@ -511,7 +512,7 @@ pub fn set(
     restart: bool,
     env: &str,
     value_source: &ValueSource,
-    var_type: Option<EnvVarType>,
+    secret: Option<bool>,
 ) {
     let from_side_channel = !matches!(value_source, ValueSource::Inline);
 
@@ -560,9 +561,9 @@ pub fn set(
             ValueSource::File(_) => " (value from file)",
             ValueSource::Inline => "",
         };
-        let type_clause = type_clause(var_type);
+        let secret_clause = type_clause(secret);
         let preview =
-            format!("Would set {key}{type_clause} on {target}{scope}{restart_clause}{source}.");
+            format!("Would set {key}{secret_clause} on {target}{scope}{restart_clause}{source}.");
         output::dry_run_preview(
             &preview,
             serde_json::json!({
@@ -572,7 +573,7 @@ pub fn set(
                 "services": service_names,
                 "env": env,
                 "will_restart": restart,
-                "type": var_type,
+                "is_secret": secret,
                 "value_source": match value_source {
                     ValueSource::Stdin => "stdin",
                     ValueSource::File(_) => "file",
@@ -648,7 +649,7 @@ pub fn set(
 
     let mut results: Vec<serde_json::Value> = Vec::new();
     for (index, (service_id, service_name)) in targets.iter().enumerate() {
-        match client.set_env_var(&app_id, &key, &value, service_id.as_deref(), env, var_type) {
+        match client.set_env_var(&app_id, &key, &value, service_id.as_deref(), env, secret) {
             Ok(result) => {
                 let target = format_target(&app_name, service_name.as_deref());
                 let marker = if result.is_secret { " (secret)" } else { "" };
@@ -1212,7 +1213,7 @@ fn plan_imports(
     files: &[(Vec<String>, PathBuf)],
     app_flag: Option<&str>,
     env: &str,
-    var_type: Option<EnvVarType>,
+    secret: Option<bool>,
 ) -> Option<Vec<Vec<(String, String)>>> {
     if !output::is_dry_run_mode() {
         super::require_auth();
@@ -1229,7 +1230,7 @@ fn plan_imports(
         let scope = format_env_scope(&service_names, env);
         let preview = format!(
             "Would import {count} variable(s){} from {} to {target}{scope}.\nKeys: {}",
-            type_clause(var_type),
+            type_clause(secret),
             env_file_path,
             keys.join(", "),
         );
@@ -1240,7 +1241,7 @@ fn plan_imports(
                 "file": env_file_path,
                 "app": target,
                 "services": service_names,
-                "type": var_type,
+                "is_secret": secret,
                 "env": env,
                 "keys": keys,
                 "count": count,
@@ -1257,14 +1258,14 @@ pub fn import_vars(
     app_flag: Option<&str>,
     service_names: &[String],
     env: &str,
-    var_type: Option<EnvVarType>,
+    secret: Option<bool>,
 ) {
     let (resolved, env_file_path) = resolve_import_file(file_flag, app_flag, service_names);
     let Some(plan) = plan_imports(
         &[(service_names.to_vec(), env_file_path)],
         resolved.as_ref().map(|r| r.app_name.as_str()).or(app_flag),
         env,
-        var_type,
+        secret,
     ) else {
         return;
     };
@@ -1285,10 +1286,10 @@ pub fn import_vars(
 
     let targets = resolve_service_ids(&client, &app_id, &app_name, service_names);
 
-    let marker = type_clause(var_type);
+    let marker = type_clause(secret);
     let mut results: Vec<serde_json::Value> = Vec::new();
     for (service_id, service_name) in &targets {
-        match client.import_env_vars(&app_id, vars, service_id.as_deref(), env, var_type) {
+        match client.import_env_vars(&app_id, vars, service_id.as_deref(), env, secret) {
             Ok(result) => {
                 let target = format_target(&app_name, service_name.as_deref());
                 if output::is_json_mode() {
@@ -1325,7 +1326,7 @@ pub fn import_vars(
     }
 }
 
-pub fn import_all_services(app_flag: Option<&str>, env: &str, var_type: Option<EnvVarType>) {
+pub fn import_all_services(app_flag: Option<&str>, env: &str, secret: Option<bool>) {
     let cwd = super::read_cwd_or_exit();
 
     let resolved = match project_config::resolve_app_context(&cwd, app_flag) {
@@ -1364,7 +1365,7 @@ pub fn import_all_services(app_flag: Option<&str>, env: &str, var_type: Option<E
         .iter()
         .map(|(name, path)| (vec![name.clone()], path.clone()))
         .collect();
-    let Some(plan) = plan_imports(&files, Some(&resolved.app_name), env, var_type) else {
+    let Some(plan) = plan_imports(&files, Some(&resolved.app_name), env, secret) else {
         return;
     };
     super::require_auth();
@@ -1408,10 +1409,10 @@ pub fn import_all_services(app_flag: Option<&str>, env: &str, var_type: Option<E
             process::exit(1);
         }
 
-        match client.import_env_vars(&app_id, vars, service_id, env, var_type) {
+        match client.import_env_vars(&app_id, vars, service_id, env, secret) {
             Ok(result) => {
                 let target = format!("{app_name}/{svc_name}");
-                let marker = type_clause(var_type);
+                let marker = type_clause(secret);
                 if output::is_json_mode() {
                     results.push(serde_json::json!({"service": svc_name, "result": result}));
                 } else {
@@ -1473,7 +1474,6 @@ mod tests {
             masked_value: masked.map(String::from),
             service_id: None,
             is_secret,
-            var_type: None,
         }
     }
 

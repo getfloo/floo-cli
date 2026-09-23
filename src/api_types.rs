@@ -551,15 +551,6 @@ pub struct ListDeploysResponse {
 
 // --- Env Var ---
 
-/// A customer env var's type (getfloo/floo#3134). A `secret` is write-only:
-/// the API never returns its value. A `config` value can be read back.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum EnvVarType {
-    Secret,
-    Config,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvVar {
     pub key: String,
@@ -575,9 +566,6 @@ pub struct EnvVar {
     // refuses `get` with ENV_VAR_WRITE_ONLY before a body is ever built).
     #[serde(default)]
     pub is_secret: bool,
-    // Absent on `env get` responses and from APIs before getfloo/floo#3134.
-    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
-    pub var_type: Option<EnvVarType>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -595,8 +583,6 @@ pub struct SetEnvVarResponse {
     pub masked_value: Option<String>,
     #[serde(default)]
     pub is_secret: bool,
-    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
-    pub var_type: Option<EnvVarType>,
     pub created_at: String,
     pub updated_at: String,
 }
