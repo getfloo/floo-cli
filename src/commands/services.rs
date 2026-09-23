@@ -383,7 +383,7 @@ fn render_redis_health(
     }
 }
 
-pub fn add(service_type: &str, app: Option<&str>, tier: &str, name: &str) {
+pub fn add(service_type: &str, app: Option<&str>, tier: Option<&str>, name: &str) {
     super::require_auth();
     let client = super::init_client(None);
 
@@ -426,7 +426,7 @@ pub fn add(service_type: &str, app: Option<&str>, tier: &str, name: &str) {
 
     output::success(
         &format!(
-            "Provisioned {service_type} (name: {}, tier: {tier}) for {app_name}.",
+            "Provisioned {service_type} (name: {}) for {app_name}.",
             detail.name
         ),
         Some(output::to_value(&detail)),

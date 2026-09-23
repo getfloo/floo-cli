@@ -124,10 +124,10 @@ Examples:
 
     /// Run a one-shot command with a service's managed env vars injected.
     ///
-    /// Creates a scoped dev session to fetch the service's env vars (DATABASE_URL,
-    /// REDIS_URL, and any custom vars set via `floo env`), authorizes Postgres for
-    /// direct connections if provisioned, runs the command in the service's directory,
-    /// then tears down the session when the command exits.
+    /// Creates a scoped dev session to fetch and inject the service's managed env
+    /// vars (DATABASE_URL, REDIS_URL, and any custom vars set via `floo env`),
+    /// runs the command in the service's directory, then tears down the session
+    /// when the command exits.
     ///
     /// Exit code propagates exactly — a failing test suite returns non-zero.
     #[command(after_help = "\
@@ -1351,12 +1351,9 @@ pub enum ServicesCommands {
         #[arg(short, long)]
         app: Option<String>,
 
-        /// Deprecated. Every managed Postgres service now ships with the
-        /// same defaults (25 connections, 60s statement timeout); the tier
-        /// value is recorded but ignored. For sustained higher concurrency,
-        /// email team@getfloo.com for a dedicated instance.
-        #[arg(long, default_value = "basic", value_parser = ["basic", "standard", "performance"])]
-        tier: String,
+        /// Deprecated service tier.
+        #[arg(long, hide = true)]
+        tier: Option<String>,
 
         /// Service row name (lowercase, alphanumeric + underscores).
         #[arg(long, default_value = "default")]
@@ -1785,19 +1782,14 @@ pub enum SkillsCommands {
 pub enum DbCommands {
     /// Run a SQL query against the app's managed database.
     ///
-    /// Tables live in a per-app namespaced Postgres schema (e.g.
-    /// `app_<unique_id>_<env>`), not `public`. The API auto-sets
-    /// `search_path` to that schema, so unqualified references like
-    /// `SELECT * FROM users` work. Introspection queries that hard-code
-    /// `WHERE table_schema = 'public'` will return empty. Use
-    /// `current_schema()` or run `floo db schema` to see the actual schema
-    /// name.
+    /// Tables live in the standard `public` Postgres schema. Catalog queries
+    /// against `pg_*` and `information_schema` work. `floo db schema` reports
+    /// `public`.
     #[command(after_help = "\
 Examples:
   floo db query --app my-app \"SELECT id, email FROM users LIMIT 5\"
   floo db query --app my-app \"SELECT COUNT(*) FROM orders\" --env prod
-  floo db query --app my-app \"SELECT * FROM logs\" --limit 50
-  floo db query --app my-app \"SELECT current_schema()\"   Show the namespaced schema")]
+  floo db query --app my-app \"SELECT * FROM logs\" --limit 50")]
     Query {
         /// SQL query to execute.
         sql: String,
@@ -1843,12 +1835,8 @@ Examples:
         preflight: PreflightArgs,
     },
 
-    /// Show current Postgres connection usage versus the role's limit.
-    ///
-    /// Useful for diagnosing "too many connections" errors and for
-    /// deciding whether the app needs more capacity. Prints a percentage
-    /// and surfaces team@getfloo.com when the role is near-saturated so
-    /// you can request a dedicated instance without context-switching.
+    /// Show current Postgres connection usage.
+    #[command(hide = true)]
     #[command(after_help = "\
 Examples:
   floo db connections --app my-app                Show dev connection usage
@@ -1864,7 +1852,8 @@ Examples:
         env: String,
     },
 
-    /// Create a restorable backup of the app's managed Postgres schema.
+    /// Create a Postgres backup.
+    #[command(hide = true)]
     #[command(after_help = "\
 Examples:
   floo db backup --app my-app               Back up dev (default)
@@ -1883,7 +1872,8 @@ Examples:
         env: String,
     },
 
-    /// List restorable managed Postgres backups.
+    /// List Postgres backups.
+    #[command(hide = true)]
     Backups {
         /// App name or ID (reads from config if omitted).
         #[arg(short, long)]
@@ -1898,7 +1888,8 @@ Examples:
         env: Option<String>,
     },
 
-    /// Restore a managed Postgres backup into its original env schema.
+    /// Restore a Postgres backup.
+    #[command(hide = true)]
     #[command(after_help = "\
 Examples:
   floo db restore 018f... --app my-app --env dev
@@ -1963,13 +1954,11 @@ Examples:
     },
 
     /// Reset one preview database branch.
+    #[command(hide = true)]
     #[command(after_help = "\
 Examples:
   floo db branches reset feat-db-abcde --app my-app --name default
-  floo db branches reset feat-db-abcde --app my-app --yes --json
-
-Reset drops and recreates preview-owned state only. It does not touch dev or
-prod databases.")]
+  floo db branches reset feat-db-abcde --app my-app --yes --json")]
     Reset {
         /// Preview slug from PR preview URLs or `floo previews` surfaces.
         preview: String,
@@ -2692,7 +2681,7 @@ pub fn run() {
                 app,
                 tier,
                 name,
-            } => commands::services::add(&service_type, app.as_deref(), &tier, &name),
+            } => commands::services::add(&service_type, app.as_deref(), tier.as_deref(), &name),
             ServicesCommands::Remove {
                 service_type,
                 app,
