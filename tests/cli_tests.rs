@@ -2343,64 +2343,81 @@ fn test_dry_run_env_set() {
 }
 
 #[test]
-fn test_dry_run_env_set_secret_flag() {
-    // --secret flows into the dry-run payload (is_secret) and the human
-    // preview says "as write-only" so the operator sees the marker before
-    // committing to it.
-    floo()
-        .args([
-            "--json",
-            "--dry-run",
-            "env",
-            "set",
-            "KEY=value",
-            "--secret",
-            "--app",
-            "test",
-        ])
-        .env("HOME", "/tmp/floo-test-nonexistent")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""is_secret":true"#));
-
-    floo()
-        .args([
-            "--dry-run",
-            "env",
-            "set",
-            "KEY=value",
-            "--secret",
-            "--app",
-            "test",
-        ])
-        .env("HOME", "/tmp/floo-test-nonexistent")
-        .assert()
-        .success()
-        .stderr(predicate::str::contains(
-            "Would set KEY as write-only on test",
-        ));
+fn test_dry_run_env_set_is_secret_flags() {
+    // The requested is_secret flows into the dry-run payload and the human
+    // preview, so the operator sees it before committing. No flag leaves
+    // it to the API (`null`).
+    for (flag, is_secret, clause) in [
+        (None, "null", ""),
+        (Some("--secret"), "true", " as secret"),
+        (Some("--config"), "false", " as config"),
+    ] {
+        let mut args = vec!["--dry-run", "env", "set", "KEY=value", "--app", "test"];
+        args.extend(flag);
+        floo()
+            .arg("--json")
+            .args(&args)
+            .env("HOME", "/tmp/floo-test-nonexistent")
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(format!(
+                r#""is_secret":{is_secret}"#
+            )));
+        floo()
+            .args(&args)
+            .env("HOME", "/tmp/floo-test-nonexistent")
+            .assert()
+            .success()
+            .stderr(predicate::str::contains(format!(
+                "Would set KEY{clause} on test"
+            )));
+    }
 }
 
 #[test]
-fn test_env_import_accepts_secret_flag() {
-    // `env import --secret` is a valid invocation; the dry-run preview
-    // resolves the file, so give it a real one.
-    let dir = tempfile::tempdir().unwrap();
-    let env_file = dir.path().join(".env");
-    std::fs::write(&env_file, "A_KEY=one\n").unwrap();
+fn test_env_set_rejects_secret_with_config() {
     floo()
         .args([
             "--dry-run",
             "env",
-            "import",
-            env_file.to_str().unwrap(),
+            "set",
+            "KEY=value",
+            "--secret",
+            "--config",
             "--app",
             "test",
-            "--secret",
         ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
-        .success();
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"));
+}
+
+#[test]
+fn test_env_import_accepts_is_secret_flags() {
+    // The dry-run preview resolves the file, so give it a real one.
+    let dir = tempfile::tempdir().unwrap();
+    let env_file = dir.path().join(".env");
+    std::fs::write(&env_file, "A_KEY=one\n").unwrap();
+    for (flag, is_secret) in [("--secret", "true"), ("--config", "false")] {
+        floo()
+            .args([
+                "--json",
+                "--dry-run",
+                "env",
+                "import",
+                env_file.to_str().unwrap(),
+                "--app",
+                "test",
+                flag,
+            ])
+            .env("HOME", "/tmp/floo-test-nonexistent")
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(format!(
+                r#""is_secret":{is_secret}"#
+            )));
+    }
 }
 
 #[test]

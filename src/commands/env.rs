@@ -463,14 +463,33 @@ fn read_value_file(path: &Path) -> String {
 // Commands
 // ---------------------------------------------------------------------------
 
-/// Value cell for list tables: the fixed mask, with an explicit write-only
-/// marker so a user knows reveal/get will refuse rather than return it.
+/// Value cell for list tables: the fixed mask, with an explicit secret
+/// marker so a user knows `env get` will refuse rather than return it.
 fn masked_cell(ev: &crate::api_types::EnvVar) -> String {
     let base = ev.masked_value.as_deref().unwrap_or("-");
     if ev.is_secret {
-        format!("{base} (write-only)")
+        format!("{base} (secret)")
     } else {
         base.to_string()
+    }
+}
+
+/// The `is_secret` that `--secret` / `--config` asked for. `None` lets the API
+/// decide: a new key becomes a secret unless it has a build-time prefix, and
+/// an existing key keeps its type.
+pub fn requested_is_secret(secret: bool, config: bool) -> Option<bool> {
+    match (secret, config) {
+        (true, _) => Some(true),
+        (_, true) => Some(false),
+        _ => None,
+    }
+}
+
+fn type_clause(secret: Option<bool>) -> &'static str {
+    match secret {
+        Some(true) => " as secret",
+        Some(false) => " as config",
+        None => "",
     }
 }
 
@@ -493,7 +512,7 @@ pub fn set(
     restart: bool,
     env: &str,
     value_source: &ValueSource,
-    secret: bool,
+    secret: Option<bool>,
 ) {
     let from_side_channel = !matches!(value_source, ValueSource::Inline);
 
@@ -542,7 +561,7 @@ pub fn set(
             ValueSource::File(_) => " (value from file)",
             ValueSource::Inline => "",
         };
-        let secret_clause = if secret { " as write-only" } else { "" };
+        let secret_clause = type_clause(secret);
         let preview =
             format!("Would set {key}{secret_clause} on {target}{scope}{restart_clause}{source}.");
         output::dry_run_preview(
@@ -633,11 +652,7 @@ pub fn set(
         match client.set_env_var(&app_id, &key, &value, service_id.as_deref(), env, secret) {
             Ok(result) => {
                 let target = format_target(&app_name, service_name.as_deref());
-                let marker = if result.is_secret {
-                    " (write-only)"
-                } else {
-                    ""
-                };
+                let marker = if result.is_secret { " (secret)" } else { "" };
                 results.push(output::to_value(&result));
                 if !output::is_json_mode() {
                     output::success(&format!("Set {key}{marker} on {target}."), None);
@@ -1085,11 +1100,11 @@ pub fn get(key: &str, app_flag: Option<&str>, service_flag: Option<&str>, env: &
     let result = match client.get_env_var(&app_id, &key, service_id.as_deref(), env) {
         Ok(r) => r,
         Err(e) => {
-            // A write-only row refuses reads by design; point at the two
-            // recovery paths instead of leaving a bare API error.
+            // A secret refuses reads by design; point at the two recovery
+            // paths instead of leaving a bare API error.
             let suggestion = if e.code == "ENV_VAR_WRITE_ONLY" {
                 Some(format!(
-                    "Set a new value with `floo env set {key} --stdin --secret` or remove it with `floo env unset {key}`."
+                    "{key} is a secret; secrets cannot be read back. Overwrite it with `floo env set {key} --stdin` or remove it with `floo env unset {key}`."
                 ))
             } else {
                 None
@@ -1198,7 +1213,7 @@ fn plan_imports(
     files: &[(Vec<String>, PathBuf)],
     app_flag: Option<&str>,
     env: &str,
-    secret: bool,
+    secret: Option<bool>,
 ) -> Option<Vec<Vec<(String, String)>>> {
     if !output::is_dry_run_mode() {
         super::require_auth();
@@ -1215,7 +1230,7 @@ fn plan_imports(
         let scope = format_env_scope(&service_names, env);
         let preview = format!(
             "Would import {count} variable(s){} from {} to {target}{scope}.\nKeys: {}",
-            if secret { " as write-only" } else { "" },
+            type_clause(secret),
             env_file_path,
             keys.join(", "),
         );
@@ -1243,7 +1258,7 @@ pub fn import_vars(
     app_flag: Option<&str>,
     service_names: &[String],
     env: &str,
-    secret: bool,
+    secret: Option<bool>,
 ) {
     let (resolved, env_file_path) = resolve_import_file(file_flag, app_flag, service_names);
     let Some(plan) = plan_imports(
@@ -1271,7 +1286,7 @@ pub fn import_vars(
 
     let targets = resolve_service_ids(&client, &app_id, &app_name, service_names);
 
-    let marker = if secret { " as write-only" } else { "" };
+    let marker = type_clause(secret);
     let mut results: Vec<serde_json::Value> = Vec::new();
     for (service_id, service_name) in &targets {
         match client.import_env_vars(&app_id, vars, service_id.as_deref(), env, secret) {
@@ -1311,7 +1326,7 @@ pub fn import_vars(
     }
 }
 
-pub fn import_all_services(app_flag: Option<&str>, env: &str, secret: bool) {
+pub fn import_all_services(app_flag: Option<&str>, env: &str, secret: Option<bool>) {
     let cwd = super::read_cwd_or_exit();
 
     let resolved = match project_config::resolve_app_context(&cwd, app_flag) {
@@ -1397,7 +1412,7 @@ pub fn import_all_services(app_flag: Option<&str>, env: &str, secret: bool) {
         match client.import_env_vars(&app_id, vars, service_id, env, secret) {
             Ok(result) => {
                 let target = format!("{app_name}/{svc_name}");
-                let marker = if secret { " as write-only" } else { "" };
+                let marker = type_clause(secret);
                 if output::is_json_mode() {
                     results.push(serde_json::json!({"service": svc_name, "result": result}));
                 } else {
@@ -1468,17 +1483,17 @@ mod tests {
     }
 
     #[test]
-    fn test_masked_cell_write_only_row_is_marked() {
+    fn test_masked_cell_secret_row_is_marked() {
         assert_eq!(
             masked_cell(&env_var(true, Some("********"))),
-            "******** (write-only)"
+            "******** (secret)"
         );
     }
 
     #[test]
     fn test_masked_cell_missing_mask_falls_back_to_dash() {
         assert_eq!(masked_cell(&env_var(false, None)), "-");
-        assert_eq!(masked_cell(&env_var(true, None)), "- (write-only)");
+        assert_eq!(masked_cell(&env_var(true, None)), "- (secret)");
     }
 
     fn write_env_file(dir: &TempDir, name: &str, content: &str) -> std::path::PathBuf {
