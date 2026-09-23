@@ -63,15 +63,20 @@ jobs:
         if: matrix.target == 'aarch64-unknown-linux-musl'
         run: cross build --release --target ${{ matrix.target }}
 
-      - name: Strip binary (Unix)
-        if: runner.os != 'Windows' && matrix.target != 'aarch64-unknown-linux-musl'
-        run: strip target/${{ matrix.target }}/release/${{ matrix.binary }}
-
       - name: Package binary (Unix)
         if: runner.os != 'Windows'
         run: |
           cp target/${{ matrix.target }}/release/${{ matrix.binary }} ${{ matrix.name }}
           shasum -a 256 ${{ matrix.name }} > ${{ matrix.name }}.sha256
+
+      # floo-launch is the entrypoint floo's builder copies into Linux customer
+      # images (getfloo/floo#3133), so it ships only for the musl targets.
+      - name: Package floo-launch (Linux)
+        if: contains(matrix.target, 'linux-musl')
+        run: |
+          launcher=floo-launch-${{ matrix.target }}
+          cp target/${{ matrix.target }}/release/floo-launch "$launcher"
+          shasum -a 256 "$launcher" > "$launcher.sha256"
 
       - name: Package binary (Windows)
         if: runner.os == 'Windows'
@@ -87,6 +92,7 @@ jobs:
           name: ${{ matrix.name }}
           path: |
             ${{ matrix.name }}*
+            floo-launch-*
           # Hard-fail if the binary or its .sha256 companion is missing.
           # The CLI's updater verifies checksums, so silently publishing a
           # binary without its sha would break installs for every user.

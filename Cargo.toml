@@ -24,6 +24,12 @@ path = "src/main.rs"
 name = "floo-dev"
 path = "src/main.rs"
 
+# Container entrypoint that unseals an app's secrets (getfloo/floo#3133).
+# Standalone: it shares dependencies with the CLI, not code.
+[[bin]]
+name = "floo-launch"
+path = "src/launch.rs"
+
 [dependencies]
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
