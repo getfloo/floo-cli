@@ -1097,11 +1097,17 @@ pub enum EnvCommands {
         #[arg(long, value_name = "PATH", conflicts_with = "stdin")]
         value_file: Option<PathBuf>,
 
-        /// Mark the variable write-only: floo never returns its value.
-        /// Deploys still receive it. To change it, set a new value or unset it.
-        /// Omitting the flag on a later set keeps an existing write-only marker.
-        #[arg(long)]
+        /// Store the variable as a secret: floo never returns its value, and
+        /// deploys still receive it. A new key is a secret unless you pass
+        /// `--config`; use this flag to turn an existing config key into a
+        /// secret.
+        #[arg(long, conflicts_with = "config")]
         secret: bool,
+
+        /// Store the variable as readable config, which `floo env get`
+        /// returns. A secret cannot become config; unset it first.
+        #[arg(long)]
+        config: bool,
 
         #[command(flatten)]
         preflight: PreflightArgs,
@@ -1148,9 +1154,10 @@ pub enum EnvCommands {
         preflight: PreflightArgs,
     },
 
-    /// Get an environment variable's plaintext value.
+    /// Get a config variable's plaintext value.
     ///
-    /// Human output refuses secret-shaped values unless you pass
+    /// Secrets are write-only and cannot be read back; overwrite them with
+    /// `floo env set` instead. Human output refuses secret-shaped values unless you pass
     /// `--reveal-secrets`. JSON output redacts them by default and stamps the
     /// envelope with `contains_secrets: true`; reveal only when you control the
     /// destination. Plain, non-secret values print without the flag.
@@ -1194,10 +1201,14 @@ pub enum EnvCommands {
         #[arg(long)]
         all: bool,
 
-        /// Mark every imported variable write-only: floo never returns their
-        /// values. Deploys still receive them.
-        #[arg(long)]
+        /// Store every imported variable as a secret (the default for new
+        /// keys): floo never returns their values. Deploys still receive them.
+        #[arg(long, conflicts_with = "config")]
         secret: bool,
+
+        /// Store every imported variable as readable config.
+        #[arg(long)]
+        config: bool,
 
         /// Environment: dev or prod.
         #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
@@ -2604,6 +2615,7 @@ pub fn run() {
                 stdin,
                 value_file,
                 secret,
+                config,
                 preflight: _,
             } => {
                 let value_source = if stdin {
@@ -2620,7 +2632,7 @@ pub fn run() {
                     restart,
                     &env,
                     &value_source,
-                    secret,
+                    commands::env::requested_type(secret, config),
                 )
             }
             EnvCommands::List { app, services, env } => {
@@ -2645,18 +2657,20 @@ pub fn run() {
                 services,
                 all,
                 secret,
+                config,
                 env,
                 preflight: _,
             } => {
+                let var_type = commands::env::requested_type(secret, config);
                 if all {
-                    commands::env::import_all_services(app.as_deref(), &env, secret);
+                    commands::env::import_all_services(app.as_deref(), &env, var_type);
                 } else {
                     commands::env::import_vars(
                         file.as_deref(),
                         app.as_deref(),
                         &services,
                         &env,
-                        secret,
+                        var_type,
                     );
                 }
             }

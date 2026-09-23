@@ -2209,6 +2209,79 @@ fn test_env_set_stdin() {
         .stdout(predicate::str::contains(r#""success":true"#));
 }
 
+fn assert_env_set_sends_body(flags: &[&str], body: serde_json::Value) {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
+    let set = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/env").as_str())
+        .match_query(Matcher::UrlEncoded("env".into(), "dev".into()))
+        .match_body(Matcher::Json(body))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(set_env_response_body())
+        .create();
+
+    let mut args = vec!["--json", "env", "set", "API_KEY=v", "--app", TEST_APP_NAME];
+    args.extend_from_slice(flags);
+    floo()
+        .args(&args)
+        .env("HOME", home.path())
+        .assert()
+        .success();
+    set.assert();
+}
+
+#[test]
+fn test_env_set_sends_requested_type() {
+    // No flag leaves the type to the API: a new key becomes a secret and an
+    // existing key keeps its type (getfloo/floo#3134).
+    let body = |var_type: Option<&str>| {
+        let mut body = serde_json::json!({
+            "key": "API_KEY",
+            "value": "v",
+            "service_id": TEST_SERVICE_ID,
+        });
+        if let Some(var_type) = var_type {
+            body["type"] = serde_json::json!(var_type);
+        }
+        body
+    };
+    assert_env_set_sends_body(&[], body(None));
+    assert_env_set_sends_body(&["--secret"], body(Some("secret")));
+    assert_env_set_sends_body(&["--config"], body(Some("config")));
+}
+
+#[test]
+fn test_env_get_secret_explains_it_cannot_be_read_back() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _services = mock_list_services_one(&mut server);
+    let _m_get = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/env/STRIPE_KEY").as_str(),
+        )
+        .match_query(Matcher::Any)
+        .with_status(403)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"detail":{"code":"ENV_VAR_WRITE_ONLY","message":"'STRIPE_KEY' is write-only."}}"#,
+        )
+        .create();
+
+    floo()
+        .args(["--json", "env", "get", "STRIPE_KEY", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            "STRIPE_KEY is a secret; secrets cannot be read back.",
+        ));
+}
+
 #[test]
 fn test_env_set_value_file() {
     let mut server = Server::new();

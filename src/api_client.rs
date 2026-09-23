@@ -733,7 +733,7 @@ impl FlooClient {
         value: &str,
         service_id: Option<&str>,
         env: &str,
-        is_secret: bool,
+        var_type: Option<EnvVarType>,
     ) -> Result<SetEnvVarResponse, FlooApiError> {
         let mut body = serde_json::json!({"key": key, "value": value});
         if let Some(sid) = service_id {
@@ -741,13 +741,12 @@ impl FlooClient {
                 .unwrap()
                 .insert("service_id".to_string(), Value::String(sid.to_string()));
         }
-        // Sent only when true: omitting the flag preserves an existing row's
-        // write-only marker server-side (sticky), so a plain re-set never
-        // silently downgrades a secret.
-        if is_secret {
+        // Omitted, the API makes a new key a secret and keeps an existing
+        // key's type.
+        if let Some(var_type) = var_type {
             body.as_object_mut()
                 .unwrap()
-                .insert("is_secret".to_string(), Value::Bool(true));
+                .insert("type".to_string(), serde_json::json!(var_type));
         }
         let resp = self.post_json(&format!("/v1/apps/{app_id}/env?env={env}"), &body)?;
         self.handle_response(resp)
@@ -807,16 +806,13 @@ impl FlooClient {
         env_vars: &[(String, String)],
         service_id: Option<&str>,
         env: &str,
-        is_secret: bool,
+        var_type: Option<EnvVarType>,
     ) -> Result<Value, FlooApiError> {
         let vars: Vec<Value> = env_vars
             .iter()
-            .map(|(k, v)| {
-                if is_secret {
-                    serde_json::json!({"key": k, "value": v, "is_secret": true})
-                } else {
-                    serde_json::json!({"key": k, "value": v})
-                }
+            .map(|(k, v)| match var_type {
+                Some(var_type) => serde_json::json!({"key": k, "value": v, "type": var_type}),
+                None => serde_json::json!({"key": k, "value": v}),
             })
             .collect();
         let mut body = serde_json::json!({"env_vars": vars});
