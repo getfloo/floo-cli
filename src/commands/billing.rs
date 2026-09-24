@@ -31,10 +31,20 @@ fn spend_cap_status(exceeded: bool, policy: Option<&SpendCapPolicy>) -> SpendCap
 
 pub fn upgrade() {
     super::require_auth();
+    let client = super::init_client(None);
+    // The org the CLI acts on, which the browser tab may not have selected.
+    let org = match client.get_org_me() {
+        Ok(o) => o,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
     // The dashboard's billing page sends an org without a plan to the plan
-    // picker, so one link covers both picking and changing a plan.
+    // picker, so one link covers both picking and changing a plan. The
+    // dashboard adopts `org_id` as the tab's current org.
     let dashboard = super::dashboard_url_or_exit(&crate::config::load_config().api_url);
-    let url = format!("{dashboard}/billing");
+    let url = format!("{dashboard}/billing?org_id={}", org.id);
     if output::is_json_mode() {
         output::success("", Some(serde_json::json!({"url": url})));
         return;

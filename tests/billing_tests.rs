@@ -108,7 +108,14 @@ fn billing_paid_plan_does_not_prompt_to_upgrade() {
 }
 
 #[test]
-fn billing_upgrade_json_returns_the_dashboard_billing_url() {
+fn billing_upgrade_json_returns_the_org_scoped_dashboard_billing_url() {
+    let mut server = Server::new();
+    let org = server
+        .mock("GET", "/v1/orgs/me")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(serde_json::json!({"id": "org-b", "plan": null}).to_string())
+        .create();
     let home = TempDir::new().unwrap();
     let config_dir = home.path().join(".floo-local");
     std::fs::create_dir_all(&config_dir).unwrap();
@@ -120,15 +127,16 @@ fn billing_upgrade_json_returns_the_dashboard_billing_url() {
     let result = Command::new(assert_cmd::cargo::cargo_bin!("floo-local"))
         .args(["billing", "upgrade", "--json"])
         .env("HOME", home.path())
-        .env("FLOO_API_URL", "http://127.0.0.1:9")
+        .env("FLOO_API_URL", server.url())
         .env("FLOO_APP_URL", "https://dashboard.example.test/")
         .env_remove("FLOO_CONFIG_DIR")
         .assert()
         .success();
+    org.assert();
     let payload: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
     assert_eq!(
         payload["data"]["url"],
-        "https://dashboard.example.test/billing"
+        "https://dashboard.example.test/billing?org_id=org-b"
     );
 }
 
