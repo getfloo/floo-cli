@@ -1834,82 +1834,6 @@ Examples:
         preflight: PreflightArgs,
     },
 
-    /// Show current Postgres connection usage.
-    #[command(hide = true)]
-    #[command(after_help = "\
-Examples:
-  floo db connections --app my-app                Show dev connection usage
-  floo db connections --app my-app --env prod     Show prod connection usage
-  floo db connections --app my-app --json         Machine-readable output")]
-    Connections {
-        /// App name or ID (reads from config if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-
-        /// Environment to query: dev or prod.
-        #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
-        env: String,
-    },
-
-    /// Create a Postgres backup.
-    #[command(hide = true)]
-    #[command(after_help = "\
-Examples:
-  floo db backup --app my-app               Back up dev (default)
-  floo db backup --app my-app --env prod    Back up prod")]
-    Backup {
-        /// App name or ID (reads from config if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-
-        /// Managed Postgres service name.
-        #[arg(long, default_value = "default")]
-        name: String,
-
-        /// Environment to back up: dev or prod.
-        #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
-        env: String,
-    },
-
-    /// List Postgres backups.
-    #[command(hide = true)]
-    Backups {
-        /// App name or ID (reads from config if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-
-        /// Managed Postgres service name.
-        #[arg(long, default_value = "default")]
-        name: String,
-
-        /// Environment to filter by: dev or prod.
-        #[arg(long, value_parser = ["dev", "prod"])]
-        env: Option<String>,
-    },
-
-    /// Restore a Postgres backup.
-    #[command(hide = true)]
-    #[command(after_help = "\
-Examples:
-  floo db restore 018f... --app my-app --env dev
-  floo db restore 018f... --app my-app --env prod")]
-    Restore {
-        /// Backup ID returned by `floo db backups`.
-        backup_id: String,
-
-        /// App name or ID (reads from config if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-
-        /// Managed Postgres service name.
-        #[arg(long, default_value = "default")]
-        name: String,
-
-        /// Environment to restore: dev or prod.
-        #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
-        env: String,
-    },
-
     /// Inspect and reset preview database branches.
     #[command(subcommand)]
     Branches(DbBranchesCommands),
@@ -2773,19 +2697,6 @@ pub fn run() {
                 env,
                 preflight: _,
             } => commands::db::migrate(app.as_deref(), &env),
-            DbCommands::Connections { app, env } => commands::db::connections(app.as_deref(), &env),
-            DbCommands::Backup { app, name, env } => {
-                commands::db::backup(app.as_deref(), &name, &env)
-            }
-            DbCommands::Backups { app, name, env } => {
-                commands::db::backups(app.as_deref(), &name, env.as_deref())
-            }
-            DbCommands::Restore {
-                backup_id,
-                app,
-                name,
-                env,
-            } => commands::db::restore(app.as_deref(), &name, &env, &backup_id),
             DbCommands::Branches(sub) => match sub {
                 DbBranchesCommands::List { preview, app } => {
                     commands::db::branches_list(app.as_deref(), &preview)
