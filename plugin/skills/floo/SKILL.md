@@ -21,3 +21,7 @@ select one. These commands return links; fetch and read the linked page.
 
 Use `floo commands --json` to discover commands and `floo <command> --help`
 for syntax supported by the installed version. Use `--json` for structured output.
+Without the CLI, the same operations are plain HTTP at `https://api.getfloo.com`
+with a bearer key; the reference is https://api.getfloo.com/openapi.json.
+HTTP replies are not redacted: capture keys, tokens, passwords and env values
+straight into variables and never print or log them.
