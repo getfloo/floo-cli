@@ -204,24 +204,6 @@ pub fn login(api_key: Option<&str>, force: bool) {
                 );
                 process::exit(1);
             }
-            Err(e) if e.code == "SIGNUP_DISABLED" => {
-                spinner.finish();
-                output::error(
-                    &e.message,
-                    &ErrorCode::SignupDisabled,
-                    Some("Join the waitlist at https://getfloo.com to request access."),
-                );
-                process::exit(1);
-            }
-            Err(e) if e.code == "WAITLISTED" => {
-                spinner.finish();
-                output::error(
-                    "You're on the waitlist! We'll email you when your account is ready.",
-                    &ErrorCode::Waitlisted,
-                    None,
-                );
-                process::exit(1);
-            }
             Err(e) if e.status_code == 0 => {
                 // Network error — retry up to 3 times
                 network_retries += 1;
@@ -266,47 +248,6 @@ pub fn token() {
                 // Print raw key to stdout for piping
                 println!("{key}");
             }
-        }
-    }
-}
-
-pub fn register(email: &str) {
-    let spinner = output::Spinner::new("Creating account...");
-    let client = super::init_client(None);
-    match client.register(email) {
-        Ok(result) => {
-            spinner.finish();
-            let api_key = &result.api_key;
-            let resp_email = &result.email;
-            let mut config = load_config();
-            config.api_key = Some(api_key.to_string());
-            config.user_email = Some(resp_email.to_string());
-            if let Err(e) = save_config(&config) {
-                output::error(
-                    &format!("Failed to save credentials: {e}"),
-                    &ErrorCode::ConfigError,
-                    None,
-                );
-                process::exit(1);
-            }
-            output::success(
-                &format!("Account created! Logged in as {resp_email}"),
-                Some(serde_json::json!({"email": resp_email})),
-            );
-        }
-        Err(e) if e.code == "EMAIL_TAKEN" => {
-            spinner.finish();
-            output::error(
-                "This email is already registered.",
-                &ErrorCode::EmailTaken,
-                Some("Use 'floo auth login' to sign in."),
-            );
-            process::exit(1);
-        }
-        Err(e) => {
-            spinner.finish();
-            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-            process::exit(1);
         }
     }
 }

@@ -72,6 +72,36 @@ pub(crate) fn read_cwd_or_exit() -> std::path::PathBuf {
     })
 }
 
+/// The floo dashboard origin for `api_url`, or exit when the API environment
+/// has no known dashboard and `FLOO_APP_URL` is unset.
+pub(crate) fn dashboard_url_or_exit(api_url: &str) -> String {
+    dashboard_url(api_url).unwrap_or_else(|| {
+        output::error(
+            "The dashboard URL for this API environment is not configured.",
+            &ErrorCode::Other("DASHBOARD_URL_UNAVAILABLE".to_string()),
+            Some("Set FLOO_APP_URL to the matching floo dashboard origin and try again."),
+        );
+        process::exit(1);
+    })
+}
+
+fn dashboard_url(api_url: &str) -> Option<String> {
+    if let Ok(value) = std::env::var("FLOO_APP_URL") {
+        let value = value.trim_end_matches('/');
+        if !value.is_empty() {
+            return Some(value.to_string());
+        }
+    }
+    match api_url.trim_end_matches('/') {
+        "https://api.getfloo.com" => Some("https://app.getfloo.com".to_string()),
+        "https://api.dev.getfloo.com" => Some("https://app.dev.getfloo.com".to_string()),
+        "http://localhost:8000" | "http://127.0.0.1:8000" => {
+            Some("http://localhost:5173".to_string())
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn require_auth() {
     let config = load_config();
     if config.api_key.is_none() {
@@ -208,6 +238,23 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn dashboard_url_tracks_known_api_environments() {
+        assert_eq!(
+            dashboard_url("https://api.getfloo.com"),
+            Some("https://app.getfloo.com".to_string())
+        );
+        assert_eq!(
+            dashboard_url("https://api.dev.getfloo.com"),
+            Some("https://app.dev.getfloo.com".to_string())
+        );
+        assert_eq!(
+            dashboard_url("http://localhost:8000"),
+            Some("http://localhost:5173".to_string())
+        );
+        assert_eq!(dashboard_url("https://api.custom.example"), None);
+    }
 
     #[test]
     fn load_app_config_for_resolved_app_uses_resolved_config_dir() {

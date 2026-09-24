@@ -341,7 +341,6 @@ const RECOMMENDED_PERMISSIONS: &[Permission] = &[
     permission!(ReadOnly, ["doctor", "accounts"]),
     permission!(ReadOnly, ["doctor", "managed-services"]),
     permission!(ReadOnly, ["orgs", "members", "list"]),
-    permission!(ReadOnly, ["billing", "contact"]),
     permission!(ReadWrite, ["apps", "password"]),
     permission!(ReadWrite, ["env", "get"]),
     permission!(ReadWrite, ["redeploy"]),

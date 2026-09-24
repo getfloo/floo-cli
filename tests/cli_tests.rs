@@ -342,24 +342,6 @@ fn test_floo_dev_auth_login_without_key_fails_with_api_key_instruction() {
 }
 
 #[test]
-fn test_auth_register_help() {
-    floo()
-        .args(["auth", "register", "--help"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Create a new floo account"));
-}
-
-#[test]
-fn test_auth_register_missing_email() {
-    floo()
-        .args(["auth", "register"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("required"));
-}
-
-#[test]
 fn test_auth_whoami_not_authenticated() {
     floo()
         .args(["auth", "whoami"])
