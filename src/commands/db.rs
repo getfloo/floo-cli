@@ -2,10 +2,7 @@ use std::process;
 
 use serde_json::Value;
 
-use crate::api_types::{
-    ManagedPostgresBackup, ManagedPostgresRestoreResponse, ManagedServiceSummary,
-    PreviewDatabaseBranch, PreviewEnvironment,
-};
+use crate::api_types::{PreviewDatabaseBranch, PreviewEnvironment};
 use crate::errors::{ErrorCode, FlooError};
 use crate::output;
 
@@ -321,181 +318,6 @@ pub fn migrate(app_flag: Option<&str>, env: &str) {
     }
 }
 
-pub fn connections(app_flag: Option<&str>, env: &str) {
-    super::require_auth();
-    let client = super::init_client(None);
-    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
-    let service = resolve_postgres_service(&client, &app_id, &app_name, "default");
-
-    let usage = match client.managed_postgres_connection_usage(&app_id, &service.id, env) {
-        Ok(v) => v,
-        Err(e) => {
-            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-            process::exit(1);
-        }
-    };
-
-    if output::is_json_mode() {
-        output::success("Connection usage retrieved.", Some(usage));
-        return;
-    }
-
-    let used = usage
-        .get("active_connections")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let limit = usage
-        .get("connection_limit")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let ratio = usage.get("ratio").and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let near = usage
-        .get("near_capacity")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let support_email = usage
-        .get("support_email")
-        .and_then(|v| v.as_str())
-        .unwrap_or("team@getfloo.com");
-
-    let percent = (ratio * 100.0).round() as u32;
-
-    output::info(
-        &format!("{app_name} ({env}): {used}/{limit} Postgres connections in use ({percent}%)"),
-        None,
-    );
-
-    if near {
-        output::info(
-            "Heads up — you're near capacity. Most apps that hit this either need \
-             connection pooling at the application layer (PgBouncer, SQLAlchemy pool \
-             tuning) or more raw capacity.",
-            None,
-        );
-        output::info(
-            &format!("Need more? Email {support_email} — we can provision a dedicated instance."),
-            None,
-        );
-    }
-}
-
-pub fn backup(app_flag: Option<&str>, name: &str, env: &str) {
-    super::require_auth();
-    let client = super::init_client(None);
-    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
-    let service = resolve_postgres_service(&client, &app_id, &app_name, name);
-
-    let backup = match client.create_managed_postgres_backup(&app_id, &service.id, env) {
-        Ok(response) => response,
-        Err(e) => {
-            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-            process::exit(1);
-        }
-    };
-
-    if output::is_json_mode() {
-        output::success("Postgres backup created.", Some(output::to_value(&backup)));
-        return;
-    }
-
-    output::success(
-        &format!("Created Postgres backup for {app_name} (postgres:{name}, env={env})."),
-        None,
-    );
-    render_backup(&backup);
-}
-
-pub fn backups(app_flag: Option<&str>, name: &str, env: Option<&str>) {
-    super::require_auth();
-    let client = super::init_client(None);
-    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
-    let service = resolve_postgres_service(&client, &app_id, &app_name, name);
-
-    let response = match client.list_managed_postgres_backups(&app_id, &service.id, env) {
-        Ok(response) => response,
-        Err(e) => {
-            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-            process::exit(1);
-        }
-    };
-
-    if output::is_json_mode() {
-        output::success(
-            "Postgres backups retrieved.",
-            Some(output::to_value(&response)),
-        );
-        return;
-    }
-
-    let env_label = env.unwrap_or("all");
-    output::info(
-        &format!("Postgres backups for {app_name} (postgres:{name}, env={env_label}):"),
-        None,
-    );
-    if response.backups.is_empty() {
-        output::info("No backups found.", None);
-        return;
-    }
-
-    let rows: Vec<Vec<String>> = response
-        .backups
-        .iter()
-        .map(|backup| {
-            vec![
-                backup.id.clone(),
-                backup.env.clone(),
-                backup.status.clone(),
-                backup.size_human.clone(),
-                backup.created_at.clone(),
-                backup.expires_at.clone(),
-                backup
-                    .last_restored_at
-                    .clone()
-                    .unwrap_or_else(|| "-".to_string()),
-            ]
-        })
-        .collect();
-    output::table(
-        &[
-            "Backup ID",
-            "Env",
-            "Status",
-            "Size",
-            "Created",
-            "Expires",
-            "Restored",
-        ],
-        &rows,
-        None,
-    );
-}
-
-pub fn restore(app_flag: Option<&str>, name: &str, env: &str, backup_id: &str) {
-    super::require_auth();
-    let client = super::init_client(None);
-    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
-    let service = resolve_postgres_service(&client, &app_id, &app_name, name);
-
-    let response =
-        match client.restore_managed_postgres_backup(&app_id, &service.id, backup_id, env) {
-            Ok(response) => response,
-            Err(e) => {
-                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-                process::exit(1);
-            }
-        };
-
-    if output::is_json_mode() {
-        output::success(
-            "Postgres backup restored.",
-            Some(output::to_value(&response)),
-        );
-        return;
-    }
-
-    render_restore(&response, &app_name, name, env);
-}
-
 pub fn branches_list(app_flag: Option<&str>, preview_identifier: &str) {
     super::require_auth();
     let client = super::init_client(None);
@@ -689,37 +511,6 @@ pub fn branches_reset(app_flag: Option<&str>, preview_identifier: &str, name: &s
     render_branch_detail(&branch);
 }
 
-fn resolve_postgres_service(
-    client: &crate::api_client::FlooClient,
-    app_id: &str,
-    app_name: &str,
-    name: &str,
-) -> ManagedServiceSummary {
-    let listing = match client.list_managed_services(app_id) {
-        Ok(response) => response,
-        Err(e) => {
-            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-            process::exit(1);
-        }
-    };
-    let service = listing
-        .managed_services
-        .into_iter()
-        .find(|service| service.service_type == "postgres" && service.name == name);
-
-    match service {
-        Some(service) => service,
-        None => {
-            output::error(
-                &format!("No managed Postgres service named '{name}' on {app_name}."),
-                &ErrorCode::ManagedServiceNotFound,
-                Some("Run 'floo services list' to see managed Postgres services."),
-            );
-            process::exit(1);
-        }
-    }
-}
-
 fn resolve_preview_slug(
     client: &crate::api_client::FlooClient,
     app_id: &str,
@@ -898,28 +689,6 @@ fn reset_status(branch: &PreviewDatabaseBranch) -> String {
             .clone()
             .unwrap_or_else(|| "blocked".to_string())
     }
-}
-
-fn render_backup(backup: &ManagedPostgresBackup) {
-    output::info(&format!("  Backup ID: {}", backup.id), None);
-    output::info(&format!("  Env: {}", backup.env), None);
-    output::info(&format!("  Size: {}", backup.size_human), None);
-    output::info(&format!("  Expires: {}", backup.expires_at), None);
-}
-
-fn render_restore(
-    response: &ManagedPostgresRestoreResponse,
-    app_name: &str,
-    service_name: &str,
-    env: &str,
-) {
-    output::success(
-        &format!("Restored Postgres backup on {app_name} (postgres:{service_name}, env={env})."),
-        None,
-    );
-    output::info(&format!("  Backup ID: {}", response.backup.id), None);
-    output::info(&format!("  Restored at: {}", response.restored_at), None);
-    output::info(&format!("  Size: {}", response.backup.size_human), None);
 }
 
 fn value_to_display(v: &Value) -> String {
