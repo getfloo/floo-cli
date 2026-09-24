@@ -29,74 +29,19 @@ fn spend_cap_status(exceeded: bool, policy: Option<&SpendCapPolicy>) -> SpendCap
     }
 }
 
-fn canonical_plan(plan: Option<&str>) -> Option<&str> {
-    match plan {
-        // Older APIs use "free" for an org that has no plan yet.
-        Some("free") => None,
-        Some("hobby" | "pro") => Some("paygo"),
-        current => current,
-    }
-}
-
-fn plan_display(plan: Option<&str>) -> (&'static str, Option<&'static str>) {
-    match canonical_plan(plan) {
-        Some("paygo") => ("Pay as you go", Some("$0 commitment")),
-        Some("team") => ("Team", Some("$250/mo")),
-        Some("enterprise") => ("Enterprise", Some("Custom")),
-        Some(_) => ("Unknown plan", None),
-        None => ("No plan", None),
-    }
-}
-
-pub fn upgrade(plan: Option<String>) {
+pub fn upgrade() {
     super::require_auth();
-    let client = super::init_client(None);
-
-    match client.create_billing_checkout(plan.as_deref()) {
-        Ok(result) => {
-            if result.upgraded {
-                let plan_name = canonical_plan(result.plan.as_deref());
-                if output::is_json_mode() {
-                    output::success(
-                        "",
-                        Some(serde_json::json!({"upgraded": true, "plan": plan_name})),
-                    );
-                } else {
-                    output::success(
-                        &format!("Upgraded to {}", plan_name.unwrap_or("No plan")),
-                        None,
-                    );
-                }
-            } else if let Some(url) = &result.url {
-                if output::is_json_mode() {
-                    output::success("", Some(serde_json::json!({"url": url})));
-                } else {
-                    output::info("Opening billing page in browser...", None);
-                    if open::that(url).is_err() {
-                        output::warn(&format!("Open this URL manually: {url}"));
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-            process::exit(1);
-        }
-    }
-}
-
-pub fn contact() {
+    // The dashboard's billing page sends an org without a plan to the plan
+    // picker, so one link covers both picking and changing a plan.
+    let dashboard = super::dashboard_url_or_exit(&crate::config::load_config().api_url);
+    let url = format!("{dashboard}/billing");
     if output::is_json_mode() {
-        output::success(
-            "",
-            Some(serde_json::json!({
-                "email": "sales@getfloo.com",
-                "subject": "Enterprise inquiry",
-            })),
-        );
-    } else {
-        eprintln!("  Enterprise & custom plans: sales@getfloo.com");
-        eprintln!("  Subject: Enterprise inquiry");
+        output::success("", Some(serde_json::json!({"url": url})));
+        return;
+    }
+    output::info("Opening billing page in browser...", None);
+    if open::that(&url).is_err() {
+        output::warn(&format!("Open this URL manually: {url}"));
     }
 }
 
@@ -157,8 +102,8 @@ pub fn spend_cap_get() {
     if let Some(message) = cap_status.message {
         output::warn(message);
     }
-    if canonical_plan(org.plan.as_deref()).is_none() {
-        eprintln!("  Upgrade: floo billing upgrade --plan paygo");
+    if org.plan.is_none() {
+        eprintln!("  Pick a plan: floo billing upgrade");
     }
 }
 
@@ -249,10 +194,10 @@ pub fn usage(period: &str) {
     });
     let cap_status = spend_cap_status(current_exceeded, org.spend_cap_policy.as_ref());
 
-    let (plan_label, plan_price) = plan_display(plan);
+    let plan_label = plan.unwrap_or("none");
 
     let data = serde_json::json!({
-        "plan": canonical_plan(plan),
+        "plan": plan,
         "spend_cap_cents": spend_cap,
         "max_spend_cap_cents": max_cap,
         "period_spend_cents": period_spend_cents,
@@ -271,10 +216,7 @@ pub fn usage(period: &str) {
         return;
     }
 
-    match plan_price {
-        Some(price) => eprintln!("  Plan: {plan_label} ({price})"),
-        None => eprintln!("  Plan: {plan_label}"),
-    }
+    eprintln!("  Plan: {plan_label}");
     eprintln!(
         "  floo credits included: {:.2}/month",
         breakdown.included_cost_usd
@@ -447,7 +389,7 @@ fn render_cost_lines(lines: &[CostLine]) {
 
 #[cfg(test)]
 mod tests {
-    use super::{canonical_plan, plan_display, spend_cap_status};
+    use super::spend_cap_status;
     use crate::api_types::SpendCapPolicy;
     use crate::output;
 
@@ -508,39 +450,5 @@ mod tests {
         let status = spend_cap_status(true, Some(&policy));
         assert_eq!(status.message, Some("Spend cap exceeded. Deploys are blocked and running services are scaled to zero until you raise the cap or the next billing period begins. Raise the cap: floo billing spend-cap set <amount>"));
         assert!(status.deploys_blocked);
-    }
-
-    #[test]
-    fn plan_display_projects_legacy_offers_into_the_canonical_catalog() {
-        output::set_json_mode(false);
-        output::set_dry_run_mode(false);
-        for plan in ["hobby", "pro", "paygo"] {
-            assert_eq!(canonical_plan(Some(plan)), Some("paygo"));
-            assert_eq!(
-                plan_display(Some(plan)),
-                ("Pay as you go", Some("$0 commitment"))
-            );
-        }
-        assert_eq!(plan_display(Some("team")), ("Team", Some("$250/mo")));
-        assert_eq!(
-            plan_display(Some("enterprise")),
-            ("Enterprise", Some("Custom"))
-        );
-    }
-
-    #[test]
-    fn missing_plan_has_no_price() {
-        output::set_json_mode(false);
-        output::set_dry_run_mode(false);
-        assert_eq!(canonical_plan(None), None);
-        assert_eq!(plan_display(None), ("No plan", None));
-    }
-
-    #[test]
-    fn legacy_free_is_a_missing_plan() {
-        output::set_json_mode(false);
-        output::set_dry_run_mode(false);
-        assert_eq!(canonical_plan(Some("free")), None);
-        assert_eq!(plan_display(Some("free")), ("No plan", None));
     }
 }

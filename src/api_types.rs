@@ -152,14 +152,6 @@ pub struct AppCostBreakdownResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BillingCheckoutResponse {
-    pub url: Option<String>,
-    #[serde(default)]
-    pub upgraded: bool,
-    pub plan: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanLimitsResponse {
     pub plan: Option<String>,
     pub max_spend_cap_cents: Option<u64>,

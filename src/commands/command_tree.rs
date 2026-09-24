@@ -24,8 +24,6 @@ const AUTH_EXEMPT_PATHS: &[&[&str]] = &[
     &["auth"],
     &["auth", "login"],
     &["auth", "logout"],
-    &["auth", "register"],
-    &["billing", "contact"],
     &["docs"],
     &["commands"],
     &["skills"],
@@ -294,7 +292,6 @@ mod tests {
         assert!(!requires_auth(&["auth", "login"]));
         assert!(!requires_auth(&["docs"]));
         assert!(!requires_auth(&["preflight"]));
-        assert!(!requires_auth(&["billing", "contact"]));
         // Authenticated commands, including auth subcommands that need a session.
         assert!(requires_auth(&["auth", "whoami"]));
         assert!(requires_auth(&["apps", "show"]));

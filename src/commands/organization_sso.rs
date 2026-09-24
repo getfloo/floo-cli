@@ -81,14 +81,7 @@ fn browser_handoff(org_selector: Option<&str>, action: &str, no_browser: bool) {
     if let Err(error) = context.client.get_organization_sso_doctor(&context.org.id) {
         exit_api_error(error, Some(&context.org));
     }
-    let app_url = dashboard_url(&context.config.api_url).unwrap_or_else(|| {
-        output::error(
-            "The dashboard URL for this API environment is not configured.",
-            &ErrorCode::Other("SSO_DASHBOARD_URL_UNAVAILABLE".to_string()),
-            Some("Set FLOO_APP_URL to the matching floo dashboard origin and try again."),
-        );
-        process::exit(1);
-    });
+    let app_url = super::dashboard_url_or_exit(&context.config.api_url);
     let url = format!(
         "{app_url}/sso/manage?org={}&action={action}",
         context.org.id
@@ -149,23 +142,6 @@ fn resolve_organization(selector: Option<&str>) -> OrganizationContext {
         client,
         org,
         config,
-    }
-}
-
-fn dashboard_url(api_url: &str) -> Option<String> {
-    if let Ok(value) = std::env::var("FLOO_APP_URL") {
-        let value = value.trim_end_matches('/');
-        if !value.is_empty() {
-            return Some(value.to_string());
-        }
-    }
-    match api_url.trim_end_matches('/') {
-        "https://api.getfloo.com" => Some("https://app.getfloo.com".to_string()),
-        "https://api.dev.getfloo.com" => Some("https://app.dev.getfloo.com".to_string()),
-        "http://localhost:8000" | "http://127.0.0.1:8000" => {
-            Some("http://localhost:5173".to_string())
-        }
-        _ => None,
     }
 }
 
@@ -410,23 +386,6 @@ fn access_label(value: OrganizationSsoEnforcementAccess) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn dashboard_url_tracks_known_api_environments() {
-        assert_eq!(
-            dashboard_url("https://api.getfloo.com"),
-            Some("https://app.getfloo.com".to_string())
-        );
-        assert_eq!(
-            dashboard_url("https://api.dev.getfloo.com"),
-            Some("https://app.dev.getfloo.com".to_string())
-        );
-        assert_eq!(
-            dashboard_url("http://localhost:8000"),
-            Some("http://localhost:5173".to_string())
-        );
-        assert_eq!(dashboard_url("https://api.custom.example"), None);
-    }
 
     #[test]
     fn stable_next_actions_render_exact_commands() {

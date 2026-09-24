@@ -167,12 +167,6 @@ impl FlooClient {
 
     // --- Auth ---
 
-    pub fn register(&self, email: &str) -> Result<AuthTokenResponse, FlooApiError> {
-        let body = serde_json::json!({"email": email});
-        let resp = self.post_json("/v1/auth/register", &body)?;
-        self.handle_response(resp)
-    }
-
     pub fn device_authorize(&self) -> Result<DeviceAuthorizeResponse, FlooApiError> {
         let resp = self.post_json("/v1/auth/device", &serde_json::json!({}))?;
         self.handle_response(resp)
@@ -486,18 +480,6 @@ impl FlooClient {
 
     pub fn get_billing_limits(&self) -> Result<PlanLimitsResponse, FlooApiError> {
         let resp = self.get("/v1/billing/limits")?;
-        self.handle_response(resp)
-    }
-
-    pub fn create_billing_checkout(
-        &self,
-        plan: Option<&str>,
-    ) -> Result<BillingCheckoutResponse, FlooApiError> {
-        let body = match plan {
-            Some(p) => serde_json::json!({"plan": p}),
-            None => serde_json::json!({}),
-        };
-        let resp = self.post_json("/v1/billing/checkout", &body)?;
         self.handle_response(resp)
     }
 

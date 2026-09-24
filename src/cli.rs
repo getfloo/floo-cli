@@ -587,11 +587,6 @@ pub enum AuthCommands {
     Whoami,
     /// Print the current API key to stdout.
     Token,
-    /// Create a new floo account.
-    Register {
-        /// Account email address.
-        email: String,
-    },
     /// Update your display name.
     UpdateProfile {
         /// New display name.
@@ -606,12 +601,8 @@ pub enum BillingCommands {
     #[command(subcommand)]
     SpendCap(SpendCapCommands),
 
-    /// Upgrade your plan via Stripe Checkout or Billing Portal.
-    Upgrade {
-        /// Plan to upgrade to: paygo or team. Omit to open billing portal.
-        #[arg(long, value_parser = ["paygo", "team"])]
-        plan: Option<String>,
-    },
+    /// Open the billing page to pick or change your plan.
+    Upgrade,
 
     /// Show usage, spend cap, per-app totals, and recorded cost lines.
     Usage {
@@ -632,9 +623,6 @@ pub enum BillingCommands {
         #[arg(short, long, default_value = "current_month", value_parser = ["current_billing_period", "current_month", "last_month", "last_7d"])]
         period: String,
     },
-
-    /// Print enterprise contact information.
-    Contact,
 }
 
 #[derive(Subcommand)]
@@ -2441,7 +2429,6 @@ pub fn run() {
             AuthCommands::Logout => commands::auth::logout(),
             AuthCommands::Whoami => commands::auth::whoami(),
             AuthCommands::Token => commands::auth::token(),
-            AuthCommands::Register { email } => commands::auth::register(&email),
             AuthCommands::UpdateProfile { name } => commands::auth::update_profile(&name),
         },
 
@@ -2450,12 +2437,11 @@ pub fn run() {
                 SpendCapCommands::Get => commands::billing::spend_cap_get(),
                 SpendCapCommands::Set { amount } => commands::billing::spend_cap_set(amount),
             },
-            BillingCommands::Upgrade { plan } => commands::billing::upgrade(plan),
+            BillingCommands::Upgrade => commands::billing::upgrade(),
             BillingCommands::Usage { period } => commands::billing::usage(&period),
             BillingCommands::CostBreakdown { app, period } => {
                 commands::billing::cost_breakdown(app.as_deref(), &period)
             }
-            BillingCommands::Contact => commands::billing::contact(),
         },
 
         Commands::Projects(sub) => match sub {
@@ -3498,23 +3484,6 @@ mod tests {
 
         let err = parse_err(&["floo", "orgs", "invite", "a@x.com", "--role", "owner"]);
         assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
-    }
-
-    #[test]
-    fn billing_upgrade_accepts_only_canonical_self_serve_plans() {
-        for plan in ["paygo", "team"] {
-            let cli = Cli::try_parse_from(["floo", "billing", "upgrade", "--plan", plan])
-                .unwrap_or_else(|e| panic!("clap rejected canonical plan {plan}: {e}"));
-            let Commands::Billing(BillingCommands::Upgrade { plan: parsed }) = cli.command else {
-                panic!("expected Billing::Upgrade");
-            };
-            assert_eq!(parsed.as_deref(), Some(plan));
-        }
-
-        for legacy in ["hobby", "pro"] {
-            let err = parse_err(&["floo", "billing", "upgrade", "--plan", legacy]);
-            assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
-        }
     }
 
     // --- `--json` arg-error contract (#1156) ---
