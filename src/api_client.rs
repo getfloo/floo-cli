@@ -887,6 +887,58 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn list_storage_objects(
+        &self,
+        app_id: &str,
+        service_id: &str,
+        env: &str,
+        prefix: &str,
+        limit: u8,
+    ) -> Result<StorageObjectsResponse, FlooApiError> {
+        let limit = limit.to_string();
+        let query = [("env", env), ("prefix", prefix), ("limit", limit.as_str())];
+        let resp = self.get_with_query(
+            &format!("/v1/apps/{app_id}/managed-services/{service_id}/objects"),
+            &query,
+        )?;
+        self.handle_response(resp)
+    }
+
+    pub fn get_storage_usage(
+        &self,
+        app_id: &str,
+        service_id: &str,
+        env: &str,
+    ) -> Result<StorageUsageResponse, FlooApiError> {
+        let resp = self.get_with_query(
+            &format!("/v1/apps/{app_id}/managed-services/{service_id}/usage"),
+            &[("env", env)],
+        )?;
+        self.handle_response(resp)
+    }
+
+    pub fn delete_storage_object(
+        &self,
+        app_id: &str,
+        service_id: &str,
+        env: &str,
+        object_path: &str,
+    ) -> Result<(), FlooApiError> {
+        let path = format!("/v1/apps/{app_id}/managed-services/{service_id}/objects");
+        let req = self.apply_headers(
+            self.client
+                .delete(self.url(&path))
+                .query(&[("env", env), ("path", object_path)]),
+        );
+        let resp = req
+            .send()
+            .map_err(|e| FlooApiError::new(0, "CONNECTION_ERROR", e.to_string()))?;
+        if resp.status().as_u16() >= 400 {
+            return Err(self.handle_error(resp));
+        }
+        Ok(())
+    }
+
     pub fn restore_storage_object_generation(
         &self,
         app_id: &str,

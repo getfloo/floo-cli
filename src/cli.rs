@@ -335,8 +335,11 @@ Run `floo notifications list` to see the available categories."
     #[command(subcommand)]
     Services(ServicesCommands),
 
-    /// Recover objects from floo-managed storage.
-    #[command(subcommand)]
+    /// List, measure, remove, and recover objects in floo-managed storage.
+    #[command(
+        subcommand,
+        after_help = "Examples:\n  floo storage ls assets/ --app my-app --env dev\n  floo storage usage --app my-app --env prod\n  floo storage rm assets/logo.png --app my-app --yes\n  floo storage versions assets/logo.png --app my-app\n  floo docs storage"
+    )]
     Storage(StorageCommands),
 
     /// Inspect custom domains declared in floo.app.toml.
@@ -1386,6 +1389,66 @@ pub enum ServicesCommands {
 
 #[derive(Subcommand)]
 pub enum StorageCommands {
+    /// List live objects in managed storage.
+    Ls {
+        /// Optional path prefix to filter objects.
+        prefix: Option<String>,
+
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Managed storage service name.
+        #[arg(long, default_value = "default")]
+        name: String,
+
+        /// Environment to inspect: dev or prod.
+        #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
+        env: String,
+
+        /// Maximum number of objects to return (1-75).
+        #[arg(long, default_value_t = 75, value_parser = clap::value_parser!(u8).range(1..=75))]
+        limit: u8,
+    },
+
+    /// Show object count and bytes used in managed storage.
+    Usage {
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Managed storage service name.
+        #[arg(long, default_value = "default")]
+        name: String,
+
+        /// Environment to inspect: dev or prod.
+        #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
+        env: String,
+    },
+
+    /// Remove one live object; its previous version is restorable for 30 days.
+    Rm {
+        /// Exact object path inside the bucket.
+        #[arg(value_parser = clap::builder::NonEmptyStringValueParser::new())]
+        object_path: String,
+
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Managed storage service name.
+        #[arg(long, default_value = "default")]
+        name: String,
+
+        /// Environment to remove from: dev or prod.
+        #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
+        env: String,
+
+        /// Skip interactive confirmation; required in JSON mode and scripts.
+        #[arg(long)]
+        yes: bool,
+    },
+
     /// List restorable versions for a managed storage object.
     Versions {
         /// Object path inside the bucket.
@@ -2631,6 +2694,23 @@ pub fn run() {
         },
 
         Commands::Storage(sub) => match sub {
+            StorageCommands::Ls {
+                prefix,
+                app,
+                name,
+                env,
+                limit,
+            } => commands::storage::ls(app.as_deref(), &name, &env, prefix.as_deref(), limit),
+            StorageCommands::Usage { app, name, env } => {
+                commands::storage::usage(app.as_deref(), &name, &env)
+            }
+            StorageCommands::Rm {
+                object_path,
+                app,
+                name,
+                env,
+                yes,
+            } => commands::storage::rm(app.as_deref(), &name, &env, &object_path, yes),
             StorageCommands::Versions {
                 object_path,
                 app,
@@ -3487,5 +3567,25 @@ mod tests {
             panic!("expected Doctor::ManagedServices");
         };
         assert_eq!(app.as_deref(), Some("payments"));
+    }
+
+    #[test]
+    fn storage_commands_require_exact_remove_path_and_bounded_limit() {
+        let ls = Cli::try_parse_from([
+            "floo", "storage", "ls", "assets/", "--env", "prod", "--limit", "50",
+        ])
+        .expect("storage ls parses");
+        let Commands::Storage(StorageCommands::Ls {
+            prefix, env, limit, ..
+        }) = ls.command
+        else {
+            panic!("expected storage ls");
+        };
+        assert_eq!(prefix.as_deref(), Some("assets/"));
+        assert_eq!(env, "prod");
+        assert_eq!(limit, 50);
+        assert!(Cli::try_parse_from(["floo", "storage", "ls", "--limit", "76"]).is_err());
+        assert!(Cli::try_parse_from(["floo", "storage", "rm"]).is_err());
+        assert!(Cli::try_parse_from(["floo", "storage", "rm", ""]).is_err());
     }
 }
