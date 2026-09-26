@@ -213,18 +213,18 @@ fn test_docs_json_exposes_versioned_topic_catalog_offline() {
     assert_eq!(data["topic"], "overview");
     assert!(data["content"].as_str().unwrap().contains("## Topics"));
     assert!(data["topics"].as_array().unwrap().iter().any(|topic| {
-        topic["name"] == "services"
-            && topic["aliases"] == serde_json::json!(["storage"])
-            && topic["url"] == "https://getfloo.com/docs/guides/managed-services"
+        topic["name"] == "storage"
+            && topic["aliases"] == serde_json::json!([])
+            && topic["url"] == "https://getfloo.com/docs/guides/cloud-storage"
     }));
 }
 
 #[test]
-fn test_docs_alias_json_names_canonical_topic() {
+fn test_docs_storage_json_names_canonical_topic() {
     let output = offline_docs()
         .args(["--json", "docs", "storage"])
         .output()
-        .expect("run aliased docs topic");
+        .expect("run storage docs topic");
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
 
@@ -233,13 +233,9 @@ fn test_docs_alias_json_names_canonical_topic() {
     let data = &response["data"];
     assert_eq!(data["schema_version"], 2);
     assert_eq!(data["cli_version"], "0.0.0-dev");
-    assert_eq!(data["topic"], "services");
-    assert_eq!(
-        data["url"],
-        "https://getfloo.com/docs/guides/managed-services"
-    );
-    assert_eq!(data["requested_topic"], "storage");
-    assert_eq!(data["alias"], true);
+    assert_eq!(data["topic"], "storage");
+    assert_eq!(data["url"], "https://getfloo.com/docs/guides/cloud-storage");
+    assert!(data.get("alias").is_none());
 }
 
 // --- `--json` arg-error contract (#1156) ---

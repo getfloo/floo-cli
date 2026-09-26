@@ -5054,6 +5054,142 @@ fn test_storage_restore_json_restores_generation() {
         ));
 }
 
+fn mock_storage_service(server: &mut Server) -> Mock {
+    server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"managed_services":[{"id":"ms-storage-1","app_id":"app-uuid-1234","type":"storage","name":"default","status":"ready","env_var_keys":[],"created_at":null,"updated_at":null}],"total":1}"#)
+        .create()
+}
+
+#[test]
+fn storage_ls_sends_env_prefix_and_limit_and_returns_objects_json() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _storage = mock_storage_service(&mut server);
+    let objects = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services/ms-storage-1/objects").as_str(),
+        )
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("env".into(), "prod".into()),
+            Matcher::UrlEncoded("prefix".into(), "assets/".into()),
+            Matcher::UrlEncoded("limit".into(), "12".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"environment":"prod","bucket_name":"bucket","prefix":"assets/","objects":[{"name":"assets/logo.png","size":123,"human_size":"123 B","updated":"2026-09-25T00:00:00Z","content_type":"image/png"}],"total_returned":1,"truncated":false}"#)
+        .create();
+
+    let result = floo()
+        .args([
+            "--json",
+            "storage",
+            "ls",
+            "assets/",
+            "--env",
+            "prod",
+            "--limit",
+            "12",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success();
+    let json: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    assert_eq!(json["data"]["objects"][0]["name"], "assets/logo.png");
+    objects.assert();
+}
+
+#[test]
+fn storage_usage_sends_env_and_returns_totals_json() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _storage = mock_storage_service(&mut server);
+    let usage = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services/ms-storage-1/usage").as_str(),
+        )
+        .match_query(Matcher::UrlEncoded("env".into(), "dev".into()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"environment":"dev","bucket_name":"bucket","object_count":2,"total_size_bytes":1234}"#)
+        .create();
+
+    let result = floo()
+        .args(["--json", "storage", "usage", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success();
+    let json: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    assert_eq!(json["data"]["total_size_bytes"], 1234);
+    usage.assert();
+}
+
+#[test]
+fn storage_rm_requires_confirmation_before_delete() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _storage = mock_storage_service(&mut server);
+    let deletion = server
+        .mock(
+            "DELETE",
+            format!("/v1/apps/{TEST_APP_ID}/managed-services/ms-storage-1/objects").as_str(),
+        )
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("env".into(), "prod".into()),
+            Matcher::UrlEncoded("path".into(), "assets/my logo.png".into()),
+        ]))
+        .expect(1)
+        .with_status(204)
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "storage",
+            "rm",
+            "assets/my logo.png",
+            "--env",
+            "prod",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("CONFIRMATION_REQUIRED"));
+    let result = floo()
+        .args([
+            "--json",
+            "storage",
+            "rm",
+            "assets/my logo.png",
+            "--env",
+            "prod",
+            "--app",
+            TEST_APP_NAME,
+            "--yes",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success();
+    let json: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    assert_eq!(json["data"]["path"], "assets/my logo.png");
+    assert_eq!(json["data"]["restorable_days"], 30);
+    deletion.assert();
+}
+
 #[test]
 fn test_services_show_surfaces_api_errors() {
     let mut server = Server::new();

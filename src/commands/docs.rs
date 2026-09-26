@@ -26,7 +26,6 @@ impl Topic {
 const DOCS_BASE: &str = "https://getfloo.com/docs";
 
 const NO_ALIASES: &[&str] = &[];
-const SERVICES_ALIASES: &[&str] = &["storage"];
 const CONFIG_ALIASES: &[&str] = &["app-toml"];
 
 /// Canonical topics in display order. This registry owns discovery, aliases,
@@ -89,8 +88,14 @@ pub(crate) const TOPICS: &[Topic] = &[
     Topic {
         name: "services",
         summary: "App services and managed services",
-        aliases: SERVICES_ALIASES,
+        aliases: NO_ALIASES,
         path: "guides/managed-services",
+    },
+    Topic {
+        name: "storage",
+        summary: "List, measure, remove, and recover managed storage objects",
+        aliases: NO_ALIASES,
+        path: "guides/cloud-storage",
     },
     Topic {
         name: "doctor",

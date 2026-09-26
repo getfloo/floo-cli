@@ -769,6 +769,33 @@ pub struct StorageObjectRestoreResponse {
     pub content_type: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageObject {
+    pub name: String,
+    pub size: u64,
+    pub human_size: Option<String>,
+    pub updated: Option<String>,
+    pub content_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageObjectsResponse {
+    pub environment: String,
+    pub bucket_name: String,
+    pub prefix: String,
+    pub objects: Vec<StorageObject>,
+    pub total_returned: u32,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageUsageResponse {
+    pub environment: String,
+    pub bucket_name: String,
+    pub object_count: u64,
+    pub total_size_bytes: u64,
+}
+
 // --- Preview database branches ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
