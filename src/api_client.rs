@@ -478,6 +478,11 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn get_paygo_balance(&self) -> Result<PaygoBalanceResponse, FlooApiError> {
+        let resp = self.get("/v1/billing/paygo/balance")?;
+        self.handle_response(resp)
+    }
+
     pub fn get_billing_limits(&self) -> Result<PlanLimitsResponse, FlooApiError> {
         let resp = self.get("/v1/billing/limits")?;
         self.handle_response(resp)

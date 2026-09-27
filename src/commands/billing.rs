@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, process};
 
-use crate::api_types::{CostLine, ResourceCost, SpendCapPolicy};
+use crate::api_types::{CostLine, PaygoActivation, ResourceCost, SpendCapPolicy};
 use crate::errors::ErrorCode;
 use crate::output;
 
@@ -27,6 +27,64 @@ fn spend_cap_status(exceeded: bool, policy: Option<&SpendCapPolicy>) -> SpendCap
         deploys_blocked: !matches!(policy, Some(SpendCapPolicy::AlertsOnly)),
         message: Some(message),
     }
+}
+
+fn nanodollars_as_dollars(value: &str) -> Result<String, std::num::ParseIntError> {
+    let amount = value.parse::<i128>()?;
+    let magnitude = amount.unsigned_abs();
+    let sign = if amount < 0 { "-" } else { "" };
+    let whole = magnitude / 1_000_000_000;
+    let mut fraction = format!("{:09}", magnitude % 1_000_000_000);
+    while fraction.len() > 2 && fraction.ends_with('0') {
+        fraction.pop();
+    }
+    Ok(format!("{sign}${whole}.{fraction}"))
+}
+
+pub fn balance() {
+    super::require_auth();
+    let client = super::init_client(None);
+    let balance = match client.get_paygo_balance() {
+        Ok(balance) => balance,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+    let amounts = [
+        nanodollars_as_dollars(&balance.balance_nanodollars),
+        nanodollars_as_dollars(&balance.pending_nanodollars),
+    ];
+    let [Ok(available), Ok(pending)] = amounts else {
+        output::error(
+            "Billing response contains an invalid money amount.",
+            &ErrorCode::ParseError,
+            None,
+        );
+        process::exit(1);
+    };
+    if output::is_json_mode() {
+        output::success("", Some(serde_json::json!(balance)));
+        return;
+    }
+    eprintln!("  Prepaid balance: {available}");
+    eprintln!("  Pending funding: {pending} (not yet available)");
+    let activation = match balance.activation {
+        PaygoActivation::Dormant => "not activated",
+        PaygoActivation::Scheduled => "activation scheduled",
+        PaygoActivation::Active => "active",
+    };
+    eprintln!("  Prepaid billing: {activation}");
+    if let Some(recorded_at) = balance.recorded_at {
+        eprintln!("  Balance recorded: {recorded_at}");
+    }
+    if balance.funding_eligible {
+        eprintln!("  Add funds: floo billing upgrade");
+    } else {
+        eprintln!("  Prepaid funding is unavailable for this organization. Review billing: floo billing upgrade");
+    }
+    eprintln!("  Check your usage limit: floo billing spend-cap get");
+    eprintln!("  For interrupted apps, check recovery on the billing page: floo billing upgrade");
 }
 
 pub fn upgrade() {
