@@ -3504,3 +3504,43 @@ fn update_errors_keep_connection_cause_without_request_secrets() {
         assert!(!message.contains("signed-secret"));
     }
 }
+
+#[test]
+fn storage_remove_preflight_aliases_preview_without_auth_or_api_calls() {
+    for flag in ["--preflight", "--dry-run"] {
+        let mut server = Server::new();
+        let config = tempfile::TempDir::new().unwrap();
+        let reads = server.mock("GET", mockito::Matcher::Any).expect(0).create();
+        let deletes = server
+            .mock("DELETE", mockito::Matcher::Any)
+            .expect(0)
+            .create();
+        let result = floo()
+            .env("FLOO_CONFIG_DIR", config.path())
+            .env("FLOO_API_URL", server.url())
+            .env("FLOO_NO_UPDATE_CHECK", "1")
+            .args([
+                "storage",
+                "rm",
+                "assets/logo.png",
+                "--app",
+                "my-app",
+                "--env",
+                "prod",
+                flag,
+                "--json",
+            ])
+            .assert()
+            .success();
+        reads.assert();
+        deletes.assert();
+        let preview: serde_json::Value =
+            serde_json::from_slice(&result.get_output().stdout).unwrap();
+        assert_eq!(preview["success"], true);
+        assert_eq!(preview["data"]["action"], "storage_rm");
+        assert_eq!(preview["data"]["app"], "my-app");
+        assert_eq!(preview["data"]["environment"], "prod");
+        assert_eq!(preview["data"]["path"], "assets/logo.png");
+        assert!(preview["data"].get("deleted").is_none());
+    }
+}

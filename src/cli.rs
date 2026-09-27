@@ -1453,6 +1453,9 @@ pub enum StorageCommands {
         /// Skip interactive confirmation; required in JSON mode and scripts.
         #[arg(long)]
         yes: bool,
+
+        #[command(flatten)]
+        preflight: PreflightArgs,
     },
 
     /// List restorable versions for a managed storage object.
@@ -2717,6 +2720,7 @@ pub fn run() {
                 name,
                 env,
                 yes,
+                preflight: _,
             } => commands::storage::rm(app.as_deref(), &name, &env, &object_path, yes),
             StorageCommands::Versions {
                 object_path,
