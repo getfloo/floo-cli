@@ -2,6 +2,7 @@ use std::process;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::api_types::DnsRecord;
 use crate::errors::ErrorCode;
 use crate::output;
 
@@ -46,9 +47,7 @@ pub fn list(app: Option<&str>) {
             ),
             None,
         );
-        if let Some(dns) = domain.dns_instructions.as_deref() {
-            output::info(dns, None);
-        }
+        print_dns_records(&domain.dns_records);
     }
 }
 
@@ -99,9 +98,13 @@ pub fn status(hostname: &str, app: Option<&str>) {
     output::info(&format!("SSL:      {ssl}"), None);
     output::info(&format!("Verified: {verified}"), None);
     output::info(&format!("Service:  {service}"), None);
-    if let Some(dns) = domain.dns_instructions.as_deref() {
-        output::info(dns, None);
+    if let Some(blocker) = domain.blocker.as_deref() {
+        output::info(&format!("Blocker:  {blocker}"), None);
     }
+    if let Some(reason) = domain.status_reason.as_deref() {
+        output::info(reason, None);
+    }
+    print_dns_records(&domain.dns_records);
 }
 
 /// Poll until the domain is active, failed, or timeout expires.
@@ -114,6 +117,7 @@ pub fn watch(hostname: &str, app: Option<&str>, timeout_secs: u64) {
 
     let deadline = Instant::now() + Duration::from_secs(timeout_secs);
     let poll_interval = Duration::from_secs(5);
+    let mut previous_reason: Option<String> = None;
 
     if !output::is_json_mode() {
         output::info(
@@ -143,6 +147,13 @@ pub fn watch(hostname: &str, app: Option<&str>, timeout_secs: u64) {
             }
         };
         let current_status = result.status.as_deref().unwrap_or("unknown");
+        if !output::is_json_mode() && result.status_reason.as_deref() != previous_reason.as_deref()
+        {
+            if let Some(reason) = result.status_reason.as_deref() {
+                output::info(reason, None);
+            }
+            previous_reason = result.status_reason.clone();
+        }
 
         match current_status {
             "active" => {
@@ -184,7 +195,10 @@ pub fn watch(hostname: &str, app: Option<&str>, timeout_secs: u64) {
 
         if Instant::now() >= deadline {
             output::error(
-                &format!("Timed out waiting for {hostname} to become active."),
+                &format!(
+                    "Timed out waiting for {hostname} to become active ({}).",
+                    ErrorCode::DomainWatchTimeout.as_str()
+                ),
                 &ErrorCode::DomainWatchTimeout,
                 Some("DNS changes can take up to 24 hours. Re-run 'floo domains watch' to resume."),
             );
@@ -192,6 +206,27 @@ pub fn watch(hostname: &str, app: Option<&str>, timeout_secs: u64) {
         }
 
         thread::sleep(poll_interval);
+    }
+}
+
+fn print_dns_records(records: &[DnsRecord]) {
+    for record in records {
+        output::info(
+            &format!(
+                "  {}  {} -> {}  ({})",
+                record.r#type, record.name, record.value, record.purpose
+            ),
+            None,
+        );
+    }
+    if records
+        .iter()
+        .any(|record| record.purpose == "traffic_apex")
+    {
+        output::info(
+            "traffic_apex A records replace the traffic CNAME only at a zone apex.",
+            None,
+        );
     }
 }
 

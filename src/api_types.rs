@@ -1051,11 +1051,22 @@ pub struct PreflightPlan {
 pub struct Domain {
     pub hostname: String,
     pub status: Option<String>,
-    pub dns_instructions: Option<String>,
+    #[serde(default)]
+    pub dns_records: Vec<DnsRecord>,
+    pub blocker: Option<String>,
+    pub status_reason: Option<String>,
     pub service_name: Option<String>,
     pub ssl_status: Option<String>,
     pub verified: Option<bool>,
     pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DnsRecord {
+    pub r#type: String,
+    pub name: String,
+    pub value: String,
+    pub purpose: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

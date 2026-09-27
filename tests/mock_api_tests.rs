@@ -2893,7 +2893,7 @@ fn test_domains_list_json() {
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
-            r#"{"domains":[{"hostname":"app.example.com","status":"PENDING","dns_instructions":"Add CNAME"}]}"#,
+            r#"{"domains":[{"hostname":"app.example.com","status":"PENDING","dns_records":[{"type":"CNAME","name":"app.example.com","value":"test.getfloo.com","purpose":"traffic"}],"blocker":"AWAITING_DNS","status_reason":"Publish the DNS record."}]}"#,
         )
         .create();
 
@@ -2904,7 +2904,9 @@ fn test_domains_list_json() {
         .success()
         .stdout(predicate::str::contains(r#""success":true"#))
         .stdout(predicate::str::contains("domains"))
-        .stdout(predicate::str::contains("app.example.com"));
+        .stdout(predicate::str::contains("app.example.com"))
+        .stdout(predicate::str::contains(r#""dns_records":[{"#))
+        .stdout(predicate::str::contains(r#""blocker":"AWAITING_DNS""#));
 }
 
 #[test]
@@ -2924,7 +2926,7 @@ fn test_domains_list_is_app_level_on_multi_service() {
         )
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"domains":[{"hostname":"api.example.com","status":"ACTIVE","dns_instructions":""}]}"#)
+        .with_body(r#"{"domains":[{"hostname":"api.example.com","status":"ACTIVE","dns_records":[],"blocker":null,"status_reason":null}]}"#)
         .create();
 
     floo()
@@ -2950,7 +2952,7 @@ fn test_domains_show_json() {
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
-            r#"{"domains":[{"hostname":"app.example.com","status":"pending","dns_instructions":"CNAME app.example.com -> test.getfloo.com","service_name":"web","ssl_status":"pending","verified":false,"created_at":"2024-01-01T00:00:00Z"}]}"#,
+            r#"{"domains":[{"hostname":"app.example.com","status":"pending","dns_records":[{"type":"CNAME","name":"app.example.com","value":"test.getfloo.com","purpose":"traffic"}],"blocker":"AWAITING_DNS","status_reason":"Publish the DNS record.","service_name":"web","ssl_status":"pending","verified":false,"created_at":"2024-01-01T00:00:00Z"}]}"#,
         )
         .create();
 
@@ -2967,7 +2969,9 @@ fn test_domains_show_json() {
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""success":true"#))
-        .stdout(predicate::str::contains("app.example.com"));
+        .stdout(predicate::str::contains("app.example.com"))
+        .stdout(predicate::str::contains(r#""dns_records":[{"#))
+        .stdout(predicate::str::contains(r#""blocker":"AWAITING_DNS""#));
 }
 
 #[test]
@@ -3011,7 +3015,7 @@ fn test_domains_watch_becomes_active() {
         )
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"domains":[{"hostname":"app.example.com","status":"active","dns_instructions":null}]}"#)
+        .with_body(r#"{"domains":[{"hostname":"app.example.com","status":"active","dns_records":[{"type":"CNAME","name":"app.example.com","value":"test.getfloo.com","purpose":"traffic"}],"blocker":null,"status_reason":null}]}"#)
         .create();
 
     floo()
@@ -3029,7 +3033,9 @@ fn test_domains_watch_becomes_active() {
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""success":true"#))
-        .stdout(predicate::str::contains("active"));
+        .stdout(predicate::str::contains("active"))
+        .stdout(predicate::str::contains(r#""dns_records":[{"#))
+        .stdout(predicate::str::contains(r#""blocker":null"#));
 }
 
 #[test]
@@ -3045,7 +3051,7 @@ fn test_domains_watch_fails_on_failed_status() {
         )
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"domains":[{"hostname":"app.example.com","status":"failed","dns_instructions":null}]}"#)
+        .with_body(r#"{"domains":[{"hostname":"app.example.com","status":"failed","dns_records":[],"blocker":"CERT_FAILED","status_reason":"Certificate issuance failed."}]}"#)
         .create();
 
     floo()
@@ -3071,7 +3077,6 @@ fn test_domains_watch_timeout() {
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
 
-    // Always returns pending — watch should time out.
     let _m_list = server
         .mock(
             "GET",
@@ -3079,13 +3084,11 @@ fn test_domains_watch_timeout() {
         )
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"domains":[{"hostname":"app.example.com","status":"pending","dns_instructions":"CNAME app.example.com -> test.getfloo.com"}]}"#)
+        .with_body(r#"{"domains":[{"hostname":"app.example.com","status":"pending","dns_records":[{"type":"CNAME","name":"app.example.com","value":"test.getfloo.com","purpose":"traffic"}],"blocker":"AWAITING_DNS","status_reason":"Publish the DNS record."}]}"#)
         .create();
 
-    // --timeout 0 means the deadline is already expired after the first read.
     floo()
         .args([
-            "--json",
             "domains",
             "watch",
             "app.example.com",
@@ -3097,7 +3100,8 @@ fn test_domains_watch_timeout() {
         .env("HOME", home.path())
         .assert()
         .failure()
-        .stdout(predicate::str::contains("DOMAIN_WATCH_TIMEOUT"));
+        .stderr(predicate::str::contains("Publish the DNS record."))
+        .stderr(predicate::str::contains("DOMAIN_WATCH_TIMEOUT"));
 }
 
 // ───────────────────────── Rollbacks ─────────────────────────
@@ -8879,8 +8883,9 @@ fn test_failed_connect_reports_a_cleanup_it_could_not_perform() {
     delete.assert();
 }
 
-// Domain reads preserve the API's multiline DNS instructions exactly.
-const DOMAIN_DNS: &str = "CNAME app.example.com -> edge.example.com\nApex: use ALIAS/ANAME\nCNAME _acme.app.example.com -> auth.example.net";
+const DOMAIN_TRAFFIC_LINE: &str = "  CNAME  app.example.com -> edge.example.com  (traffic)";
+const DOMAIN_APEX_NOTE: &str =
+    "traffic_apex A records replace the traffic CNAME only at a zone apex.";
 
 fn run_domain_read(args: &[&str], status: &str) -> std::process::Output {
     let mut server = Server::new();
@@ -8892,7 +8897,13 @@ fn run_domain_read(args: &[&str], status: &str) -> std::process::Output {
         .with_header("content-type", "application/json")
         .with_body(
             serde_json::json!({"domains": [{
-                "hostname": "app.example.com", "status": status, "dns_instructions": DOMAIN_DNS
+                "hostname": "app.example.com", "status": status,
+                "dns_records": [
+                    {"type": "CNAME", "name": "app.example.com", "value": "edge.example.com", "purpose": "traffic"},
+                    {"type": "A", "name": "@", "value": "192.0.2.1", "purpose": "traffic_apex"},
+                    {"type": "CNAME", "name": "_acme.app.example.com", "value": "auth.example.net", "purpose": "certificate"}
+                ],
+                "blocker": "AWAITING_DNS", "status_reason": "Publish the DNS records."
             }]})
             .to_string(),
         )
@@ -8909,23 +8920,30 @@ fn run_domain_read(args: &[&str], status: &str) -> std::process::Output {
 }
 
 #[test]
-fn domains_list_pending_prints_verbatim_dns_beneath_status() {
+fn domains_list_pending_prints_dns_records_beneath_status() {
     let result = run_domain_read(&["domains", "list"], "pending");
     assert!(result.status.success());
     assert!(result.stdout.is_empty());
-    assert!(String::from_utf8(result.stderr)
-        .unwrap()
-        .contains(&format!("app.example.com: waiting on DNS\n{DOMAIN_DNS}\n")));
+    let stderr = String::from_utf8(result.stderr).unwrap();
+    assert!(stderr.contains(&format!(
+        "app.example.com: waiting on DNS\n{DOMAIN_TRAFFIC_LINE}\n"
+    )));
+    assert!(stderr.contains(DOMAIN_APEX_NOTE));
 }
 
 #[test]
-fn domains_show_pending_prints_verbatim_dns() {
+fn domains_show_pending_prints_dns_records_and_blocker() {
     let result = run_domain_read(&["domains", "show", "app.example.com"], "pending");
     assert!(result.status.success());
     assert!(result.stdout.is_empty());
     let stderr = String::from_utf8(result.stderr).unwrap();
     assert!(stderr.contains("Status:   waiting on DNS"));
-    assert!(stderr.contains(&format!("\n{DOMAIN_DNS}\n")));
+    assert!(stderr.contains(&format!("\n{DOMAIN_TRAFFIC_LINE}\n")));
+    assert!(stderr.contains("  A  @ -> 192.0.2.1  (traffic_apex)"));
+    assert!(stderr.contains("  CNAME  _acme.app.example.com -> auth.example.net  (certificate)"));
+    assert!(stderr.contains(DOMAIN_APEX_NOTE));
+    assert!(stderr.contains("Blocker:  AWAITING_DNS"));
+    assert!(stderr.contains("Publish the DNS records."));
 }
 
 #[test]
@@ -8956,12 +8974,15 @@ fn domains_watch_stops_on_retirement() {
 }
 
 #[test]
-fn domains_json_keeps_api_status_and_dns() {
+fn domains_json_keeps_api_status_dns_records_and_blocker() {
     let result = run_domain_read(&["--json", "domains", "show", "app.example.com"], "pending");
     assert!(result.status.success());
     let json: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(json["data"]["status"], "pending");
-    assert_eq!(json["data"]["dns_instructions"], DOMAIN_DNS);
+    assert_eq!(json["data"]["dns_records"][0]["purpose"], "traffic");
+    assert_eq!(json["data"]["dns_records"][1]["purpose"], "traffic_apex");
+    assert_eq!(json["data"]["blocker"], "AWAITING_DNS");
+    assert_eq!(json["data"]["status_reason"], "Publish the DNS records.");
     assert!(result.stderr.is_empty());
 }
 
