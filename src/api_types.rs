@@ -58,6 +58,26 @@ pub struct ProfileResponse {
 
 // --- Billing ---
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaygoActivation {
+    Dormant,
+    Scheduled,
+    Active,
+}
+
+/// Committed money observation, not spending or restoration authority.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaygoBalanceResponse {
+    pub billing_mode: Option<String>,
+    pub funding_eligible: bool,
+    pub activation: PaygoActivation,
+    pub usage_started_at: Option<String>,
+    pub pending_nanodollars: String,
+    pub balance_nanodollars: String,
+    pub recorded_at: Option<String>,
+}
+
 /// API spend-cap policy, preserving future policy strings for JSON output.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

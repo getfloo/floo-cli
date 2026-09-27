@@ -293,3 +293,129 @@ fn usage_partial_period_under_cap_still_reports_api_block() {
     );
     assert_eq!(payload["data"]["deploys_blocked"], true);
 }
+
+#[test]
+fn prepaid_balance_preserves_money_and_activation_without_claiming_authority() {
+    for (amount, pending, activation, eligible, expected) in [
+        ("25000000000", "1000000000", "active", true, "$25.00"),
+        (
+            "9007199254740993",
+            "0",
+            "active",
+            true,
+            "$9007199.254740993",
+        ),
+        ("-1", "0", "active", true, "-$0.000000001"),
+        ("0", "0", "dormant", false, "$0.00"),
+        ("25000000000", "0", "scheduled", true, "$25.00"),
+    ] {
+        for json in [false, true] {
+            let mut server = Server::new();
+            let home = TempDir::new().unwrap();
+            let config_dir = home.path().join(".floo-local");
+            std::fs::create_dir_all(&config_dir).unwrap();
+            std::fs::write(
+                config_dir.join("config.json"),
+                r#"{"api_key":"floo_test123","default_org":"org-b"}"#,
+            )
+            .unwrap();
+            let body = serde_json::json!({
+                "billing_mode": "prepaid", "funding_eligible": eligible,
+                "activation": activation, "usage_started_at": null,
+                "balance_nanodollars": amount, "pending_nanodollars": pending,
+                "recorded_at": "2026-09-26T12:00:00Z",
+            });
+            let read = server
+                .mock("GET", "/v1/billing/paygo/balance")
+                .match_header("authorization", "Bearer floo_test123")
+                .match_header("x-floo-org-id", "org-b")
+                .with_header("content-type", "application/json")
+                .with_body(body.to_string())
+                .create();
+            let mut command = Command::new(assert_cmd::cargo::cargo_bin!("floo-local"));
+            command
+                .args(["billing", "balance"])
+                .env("HOME", home.path())
+                .env("FLOO_API_URL", server.url())
+                .env_remove("FLOO_CONFIG_DIR");
+            if json {
+                command.arg("--json");
+            }
+            let result = command.assert().success();
+            read.assert();
+            if json {
+                let payload: serde_json::Value =
+                    serde_json::from_slice(&result.get_output().stdout).unwrap();
+                assert_eq!(payload["data"], body);
+                assert!(payload["data"].get("deploys_blocked").is_none());
+            } else {
+                result
+                    .stdout("")
+                    .stderr(predicate::str::contains(expected))
+                    .stderr(predicate::str::contains(match activation {
+                        "dormant" => "Prepaid billing: not activated",
+                        "scheduled" => "Prepaid billing: activation scheduled",
+                        _ => "Prepaid billing: active",
+                    }))
+                    .stderr(predicate::str::contains(if eligible {
+                        "Add funds: floo billing upgrade"
+                    } else {
+                        "Prepaid funding is unavailable for this organization."
+                    }))
+                    .stderr(predicate::str::contains(if pending == "0" {
+                        "Pending funding: $0.00 (not yet available)"
+                    } else {
+                        "Pending funding: $1.00 (not yet available)"
+                    }))
+                    .stderr(predicate::str::contains("floo billing upgrade"))
+                    .stderr(predicate::str::contains("floo billing spend-cap get"));
+            }
+        }
+    }
+}
+
+#[test]
+fn prepaid_balance_errors_never_become_zero_money() {
+    for (status, body) in [
+        (
+            403,
+            serde_json::json!({"detail":{"code":"INSUFFICIENT_KEY_SCOPE","message":"Read scope required"}}),
+        ),
+        (
+            200,
+            serde_json::json!({"activation":"active","funding_eligible":true}),
+        ),
+        (
+            200,
+            serde_json::json!({"activation":"active","funding_eligible":true,"balance_nanodollars":"NaN","pending_nanodollars":"0"}),
+        ),
+    ] {
+        let mut server = Server::new();
+        let home = TempDir::new().unwrap();
+        let config_dir = home.path().join(".floo-local");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("config.json"),
+            r#"{"api_key":"floo_test123"}"#,
+        )
+        .unwrap();
+        let read = server
+            .mock("GET", "/v1/billing/paygo/balance")
+            .with_status(status)
+            .with_header("content-type", "application/json")
+            .with_body(body.to_string())
+            .create();
+        let result = Command::new(assert_cmd::cargo::cargo_bin!("floo-local"))
+            .args(["billing", "balance", "--json"])
+            .env("HOME", home.path())
+            .env("FLOO_API_URL", server.url())
+            .env_remove("FLOO_CONFIG_DIR")
+            .assert()
+            .failure();
+        read.assert();
+        let payload: serde_json::Value =
+            serde_json::from_slice(&result.get_output().stdout).unwrap();
+        assert_eq!(payload["success"], false);
+        assert!(payload["data"].get("balance_nanodollars").is_none());
+    }
+}

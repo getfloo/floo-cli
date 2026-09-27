@@ -600,11 +600,17 @@ pub enum AuthCommands {
 
 #[derive(Subcommand)]
 pub enum BillingCommands {
+    /// Show committed prepaid balance, pending funding, and activation.
+    #[command(
+        after_help = "Examples:\n  floo billing balance\n  floo billing balance --json\n\nAdd funds or check recovery: floo billing upgrade\nCheck your usage limit: floo billing spend-cap get"
+    )]
+    Balance,
+
     /// Manage your org's compute spend cap.
     #[command(subcommand)]
     SpendCap(SpendCapCommands),
 
-    /// Open the billing page to pick or change your plan.
+    /// Open billing to pick a plan, add prepaid funds, or check recovery.
     Upgrade,
 
     /// Show usage, spend cap, per-app totals, and recorded cost lines.
@@ -2424,6 +2430,7 @@ pub fn run() {
                 SpendCapCommands::Get => commands::billing::spend_cap_get(),
                 SpendCapCommands::Set { amount } => commands::billing::spend_cap_set(amount),
             },
+            BillingCommands::Balance => commands::billing::balance(),
             BillingCommands::Upgrade => commands::billing::upgrade(),
             BillingCommands::Usage { period } => commands::billing::usage(&period),
             BillingCommands::CostBreakdown { app, period } => {
