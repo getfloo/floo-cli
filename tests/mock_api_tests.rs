@@ -5088,7 +5088,7 @@ fn storage_ls_sends_env_prefix_and_limit_and_returns_objects_json() {
         ]))
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"environment":"prod","bucket_name":"bucket","prefix":"assets/","objects":[{"name":"assets/logo.png","size":123,"human_size":"123 B","updated":"2026-09-25T00:00:00Z","content_type":"image/png"}],"total_returned":1,"truncated":false}"#)
+        .with_body(r#"{"environment":"prod","bucket_name":"bucket","prefix":"assets/","objects":[{"name":"assets/logo.png","size_bytes":123,"size_human":"123 B","updated_at":"2026-09-25T00:00:00Z","content_type":"image/png"}],"total_returned":1,"truncated":false}"#)
         .create();
 
     let result = floo()
@@ -5109,6 +5109,12 @@ fn storage_ls_sends_env_prefix_and_limit_and_returns_objects_json() {
         .success();
     let json: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
     assert_eq!(json["data"]["objects"][0]["name"], "assets/logo.png");
+    assert_eq!(json["data"]["objects"][0]["size_bytes"], 123);
+    assert_eq!(json["data"]["objects"][0]["size_human"], "123 B");
+    assert_eq!(
+        json["data"]["objects"][0]["updated_at"],
+        "2026-09-25T00:00:00Z"
+    );
     objects.assert();
 }
 
