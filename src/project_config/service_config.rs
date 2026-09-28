@@ -467,6 +467,8 @@ mod tests {
 
     #[test]
     fn managed_storage_env_keys_include_s3_credentials_for_default_and_named_services() {
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
         let default_keys = managed_env_attachment_keys("storage");
         assert_eq!(
             default_keys,
