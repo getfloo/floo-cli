@@ -1266,6 +1266,9 @@ tier = "basic"
 [redis]
 tier = "basic"
 
+[storage]
+tier = "basic"
+
 [services.web]
 type = "web"
 path = "./web"
@@ -1283,7 +1286,7 @@ ingress = "internal"
 
 [services.api.env]
 required = ["STRIPE_SECRET_KEY"]
-managed = ["postgres", "redis"]
+managed = ["postgres", "redis", "storage"]
 "#,
     )
     .unwrap();
@@ -1301,6 +1304,9 @@ managed = ["postgres", "redis"]
         .stdout(predicate::str::contains(r#""handle":"postgres""#))
         .stdout(predicate::str::contains(
             r#""keys":["DATABASE_URL","PGHOST""#,
+        ))
+        .stdout(predicate::str::contains(
+            r#""handle":"storage","keys":["STORAGE_BUCKET","STORAGE_S3_ENDPOINT","STORAGE_S3_ACCESS_KEY_ID","STORAGE_S3_SECRET_ACCESS_KEY","STORAGE_S3_REGION","STORAGE_URL"]"#,
         ))
         .stdout(predicate::str::contains(
             r#""managed":[],"optional":[],"required":[],"service":"web""#,

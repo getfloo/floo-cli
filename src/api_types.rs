@@ -792,9 +792,9 @@ pub struct StorageObjectRestoreResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageObject {
     pub name: String,
-    pub size: u64,
-    pub human_size: Option<String>,
-    pub updated: Option<String>,
+    pub size_bytes: u64,
+    pub size_human: String,
+    pub updated_at: Option<String>,
     pub content_type: Option<String>,
 }
 

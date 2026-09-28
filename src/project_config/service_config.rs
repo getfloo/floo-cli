@@ -206,10 +206,17 @@ pub fn managed_env_attachment_keys(handle: &str) -> Vec<String> {
         ],
         "postgres" => vec![format!("DATABASE_URL{suffix}")],
         "redis" => vec![format!("REDIS_URL{suffix}")],
-        "storage" => vec![
-            format!("STORAGE_BUCKET{suffix}"),
-            format!("STORAGE_URL{suffix}"),
-        ],
+        "storage" => [
+            "STORAGE_BUCKET",
+            "STORAGE_S3_ENDPOINT",
+            "STORAGE_S3_ACCESS_KEY_ID",
+            "STORAGE_S3_SECRET_ACCESS_KEY",
+            "STORAGE_S3_REGION",
+            "STORAGE_URL",
+        ]
+        .into_iter()
+        .map(|key| format!("{key}{suffix}"))
+        .collect(),
         _ => Vec::new(),
     }
 }
@@ -457,6 +464,37 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn managed_storage_env_keys_include_s3_credentials_for_default_and_named_services() {
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
+        let default_keys = managed_env_attachment_keys("storage");
+        assert_eq!(
+            default_keys,
+            [
+                "STORAGE_BUCKET",
+                "STORAGE_S3_ENDPOINT",
+                "STORAGE_S3_ACCESS_KEY_ID",
+                "STORAGE_S3_SECRET_ACCESS_KEY",
+                "STORAGE_S3_REGION",
+                "STORAGE_URL",
+            ]
+        );
+
+        let named_keys = managed_env_attachment_keys("storage:assets");
+        assert_eq!(
+            named_keys,
+            [
+                "STORAGE_BUCKET_ASSETS",
+                "STORAGE_S3_ENDPOINT_ASSETS",
+                "STORAGE_S3_ACCESS_KEY_ID_ASSETS",
+                "STORAGE_S3_SECRET_ACCESS_KEY_ASSETS",
+                "STORAGE_S3_REGION_ASSETS",
+                "STORAGE_URL_ASSETS",
+            ]
+        );
+    }
 
     #[test]
     fn test_max_request_body_mb_service_manifest_round_trip_and_omission() {

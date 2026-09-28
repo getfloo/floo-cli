@@ -37,11 +37,8 @@ pub fn ls(app: Option<&str>, name: &str, env: &str, prefix: Option<&str>, limit:
         .map(|object| {
             vec![
                 object.name.clone(),
-                object
-                    .human_size
-                    .clone()
-                    .unwrap_or_else(|| format!("{} B", object.size)),
-                object.updated.clone().unwrap_or_else(|| "-".to_string()),
+                object.size_human.clone(),
+                object.updated_at.clone().unwrap_or_else(|| "-".to_string()),
                 object
                     .content_type
                     .clone()
