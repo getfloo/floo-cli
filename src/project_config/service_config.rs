@@ -212,7 +212,6 @@ pub fn managed_env_attachment_keys(handle: &str) -> Vec<String> {
             "STORAGE_S3_ACCESS_KEY_ID",
             "STORAGE_S3_SECRET_ACCESS_KEY",
             "STORAGE_S3_REGION",
-            "STORAGE_URL",
         ]
         .into_iter()
         .map(|key| format!("{key}{suffix}"))
@@ -478,7 +477,6 @@ mod tests {
                 "STORAGE_S3_ACCESS_KEY_ID",
                 "STORAGE_S3_SECRET_ACCESS_KEY",
                 "STORAGE_S3_REGION",
-                "STORAGE_URL",
             ]
         );
 
@@ -491,7 +489,6 @@ mod tests {
                 "STORAGE_S3_ACCESS_KEY_ID_ASSETS",
                 "STORAGE_S3_SECRET_ACCESS_KEY_ASSETS",
                 "STORAGE_S3_REGION_ASSETS",
-                "STORAGE_URL_ASSETS",
             ]
         );
     }

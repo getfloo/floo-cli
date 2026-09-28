@@ -1306,7 +1306,7 @@ managed = ["postgres", "redis", "storage"]
             r#""keys":["DATABASE_URL","PGHOST""#,
         ))
         .stdout(predicate::str::contains(
-            r#""handle":"storage","keys":["STORAGE_BUCKET","STORAGE_S3_ENDPOINT","STORAGE_S3_ACCESS_KEY_ID","STORAGE_S3_SECRET_ACCESS_KEY","STORAGE_S3_REGION","STORAGE_URL"]"#,
+            r#""handle":"storage","keys":["STORAGE_BUCKET","STORAGE_S3_ENDPOINT","STORAGE_S3_ACCESS_KEY_ID","STORAGE_S3_SECRET_ACCESS_KEY","STORAGE_S3_REGION"]"#,
         ))
         .stdout(predicate::str::contains(
             r#""managed":[],"optional":[],"required":[],"service":"web""#,
