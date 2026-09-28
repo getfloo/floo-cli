@@ -15,7 +15,7 @@ Deploying a GitHub repository your user already has? Read
 https://getfloo.com/docs/introduction instead, then
 https://getfloo.com/docs/guides/agent-setup for authority and verification.
 
-For everything else — configuration, services, authentication, logs — use
+For everything else — configuration, services, file storage, authentication, logs — use
 `floo docs --json` to find topic URLs and `floo docs <topic> --json` to
 select one. These commands return links; fetch and read the linked page.
 
