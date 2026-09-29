@@ -214,7 +214,6 @@ mod tests {
             "doctor",
             "services add",
             "services remove",
-            "releases rollback",
             "deploys status",
             "previews up",
             "previews delete",

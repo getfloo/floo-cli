@@ -235,7 +235,6 @@ Note: Deploys are triggered by `git push`. Use `floo redeploy` to apply env var 
     /// View and manage deploy history.
     #[command(
         name = "deploys",
-        alias = "deploy",
         subcommand,
         after_help = "\
 Examples:
@@ -244,15 +243,13 @@ Examples:
   floo deploys watch --app my-app           Stream deploy progress
   floo deploys rollback my-app abc123       Rollback to a previous deploy
 
-Note: Push to the connected GitHub branch to deploy. `floo redeploy` restarts an app that already has a dev deploy; it cannot run the first one.
-`floo deploy ...` is a backwards-compatible alias for `floo deploys ...`."
+Note: Push to the connected GitHub branch to deploy. `floo redeploy` restarts an app that already has a dev deploy; it cannot run the first one."
     )]
     Deploys(DeploysSubcommands),
 
     /// Create and manage preview sandboxes for remote GitHub branches.
     #[command(
         name = "previews",
-        alias = "preview",
         subcommand,
         after_help = "\
 Examples:
@@ -802,7 +799,6 @@ pub enum AppsCommands {
     ///
     /// Accepts either a positional name or `--app` for parity with the rest
     /// of the CLI's flag-based API. Pass exactly one.
-    #[command(alias = "status")]
     Show {
         /// App name or ID (positional form). Mutually exclusive with `--app`.
         app_name: Option<String>,
@@ -810,19 +806,6 @@ pub enum AppsCommands {
         /// App name or ID. Mutually exclusive with the positional form.
         #[arg(short, long, conflicts_with = "app_name")]
         app: Option<String>,
-    },
-
-    /// Take all environments offline while retaining data and settings.
-    /// Retained data services may still incur charges. Repeat to finish incomplete cleanup.
-    Stop {
-        /// App name or ID.
-        app_name: String,
-    },
-
-    /// Allow Git-based deployments again. The app goes live after a successful deployment.
-    Resume {
-        /// App name or ID.
-        app_name: String,
     },
 
     /// Permanently delete an app, its data, and its floo-managed GitHub repository.
@@ -1374,10 +1357,6 @@ pub enum ServicesCommands {
         #[arg(short, long)]
         app: Option<String>,
 
-        /// Deprecated service tier.
-        #[arg(long, hide = true)]
-        tier: Option<String>,
-
         /// Service row name (lowercase, alphanumeric + underscores).
         #[arg(long, default_value = "default")]
         name: String,
@@ -1585,31 +1564,6 @@ pub enum ReleasesCommands {
         /// Release tag (auto-generated if omitted).
         #[arg(short, long)]
         tag: Option<String>,
-    },
-
-    /// Roll back to a previous live deploy by re-pointing gateway routes
-    /// at its image (no rebuild).
-    ///
-    /// Tier-2 destructive: interactive prompts `y/N`; non-interactive
-    /// requires `--yes` to confirm. Equivalent to
-    /// `floo deploys rollback <app> <id>`.
-    Rollback {
-        /// App name or ID.
-        #[arg(short, long)]
-        app: String,
-
-        /// Deploy ID to roll back to (the previous live deploy). Aliased
-        /// as `--deploy` for parity with the rest of the CLI's flag
-        /// vocabulary, which already speaks "deploy" everywhere else.
-        #[arg(long, alias = "deploy")]
-        to: String,
-
-        /// Skip the y/N prompt. Required in non-interactive contexts.
-        #[arg(long, alias = "force")]
-        yes: bool,
-
-        #[command(flatten)]
-        preflight: PreflightArgs,
     },
 }
 
@@ -1916,74 +1870,6 @@ Examples:
         /// Environment to migrate: dev or prod.
         #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
         env: String,
-
-        #[command(flatten)]
-        preflight: PreflightArgs,
-    },
-
-    /// Inspect and reset preview database branches.
-    #[command(subcommand)]
-    Branches(DbBranchesCommands),
-}
-
-#[derive(Subcommand)]
-pub enum DbBranchesCommands {
-    /// List managed Postgres branches backing one preview.
-    #[command(after_help = "\
-Examples:
-  floo db branches list feat-db-abcde --app my-app
-  floo db branches list feat-db-abcde --app my-app --json
-
-Preview database branches are preview-owned. Dev and prod databases are not
-listed or reset by this surface.")]
-    List {
-        /// Preview slug from PR preview URLs or `floo previews` surfaces.
-        preview: String,
-
-        /// App name or ID (reads from config if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-    },
-
-    /// Show one preview database branch.
-    #[command(after_help = "\
-Examples:
-  floo db branches show feat-db-abcde --app my-app
-  floo db branches show feat-db-abcde --app my-app --name analytics")]
-    Show {
-        /// Preview slug from PR preview URLs or `floo previews` surfaces.
-        preview: String,
-
-        /// App name or ID (reads from config if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-
-        /// Managed Postgres branch name.
-        #[arg(long, default_value = "default")]
-        name: String,
-    },
-
-    /// Reset one preview database branch.
-    #[command(hide = true)]
-    #[command(after_help = "\
-Examples:
-  floo db branches reset feat-db-abcde --app my-app --name default
-  floo db branches reset feat-db-abcde --app my-app --yes --json")]
-    Reset {
-        /// Preview slug from PR preview URLs or `floo previews` surfaces.
-        preview: String,
-
-        /// App name or ID (reads from config if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-
-        /// Managed Postgres branch name.
-        #[arg(long, default_value = "default")]
-        name: String,
-
-        /// Skip the y/N prompt. Required in non-interactive contexts.
-        #[arg(long)]
-        yes: bool,
 
         #[command(flatten)]
         preflight: PreflightArgs,
@@ -2511,12 +2397,6 @@ pub fn run() {
                 confirmed,
                 preflight: _,
             } => commands::apps::delete(&app_name, confirmed),
-            AppsCommands::Stop { app_name } => {
-                commands::apps::lifecycle(&app_name, crate::api_types::AppLifecycleAction::Stop)
-            }
-            AppsCommands::Resume { app_name } => {
-                commands::apps::lifecycle(&app_name, crate::api_types::AppLifecycleAction::Resume)
-            }
             AppsCommands::Consumers(sub) => match sub {
                 ConsumerCommands::List { app } => commands::apps::consumers(app.as_deref()),
                 ConsumerCommands::Create { name, app } => {
@@ -2694,9 +2574,8 @@ pub fn run() {
             ServicesCommands::Add {
                 service_type,
                 app,
-                tier,
                 name,
-            } => commands::services::add(&service_type, app.as_deref(), tier.as_deref(), &name),
+            } => commands::services::add(&service_type, app.as_deref(), &name),
             ServicesCommands::Remove {
                 service_type,
                 app,
@@ -2775,17 +2654,6 @@ pub fn run() {
             ReleasesCommands::Promote { app, tag } => {
                 commands::releases::promote(app.as_deref(), tag.as_deref())
             }
-            // `floo releases rollback --app X --to <id>` is the discoverable
-            // alias for `floo deploys rollback <app> <id>`. Routes to the
-            // same backend (`POST /v1/apps/{id}/rollback`) which re-points
-            // gateway routes at the previous deploy's image without
-            // rebuilding source.
-            ReleasesCommands::Rollback {
-                app,
-                to,
-                yes,
-                preflight: _,
-            } => commands::rollbacks::rollback(&app, &to, yes),
         },
 
         Commands::Skills(sub) => match sub {
@@ -2806,21 +2674,6 @@ pub fn run() {
                 env,
                 preflight: _,
             } => commands::db::migrate(app.as_deref(), &env),
-            DbCommands::Branches(sub) => match sub {
-                DbBranchesCommands::List { preview, app } => {
-                    commands::db::branches_list(app.as_deref(), &preview)
-                }
-                DbBranchesCommands::Show { preview, app, name } => {
-                    commands::db::branches_show(app.as_deref(), &preview, &name)
-                }
-                DbBranchesCommands::Reset {
-                    preview,
-                    app,
-                    name,
-                    yes,
-                    preflight: _,
-                } => commands::db::branches_reset(app.as_deref(), &preview, &name, yes),
-            },
         },
 
         Commands::Cron(sub) => match sub {
@@ -2977,27 +2830,25 @@ mod tests {
     }
 
     #[test]
-    fn removed_apps_status_is_a_hidden_compatibility_alias() {
-        let stale = concat!("sta", "tus");
-        let cli = Cli::try_parse_from(["floo", "apps", stale, "my-app"])
-            .unwrap_or_else(|error| panic!("hidden compatibility alias must parse: {error}"));
-        let Commands::Apps(AppsCommands::Show { app_name, app }) = cli.command else {
-            panic!("compatibility alias must dispatch to apps show");
-        };
-        assert_eq!(app_name.as_deref(), Some("my-app"));
-        assert_eq!(app, None);
-
-        let mut root = Cli::command();
-        let apps = root.find_subcommand_mut("apps").expect("apps command");
-        let show = apps.find_subcommand_mut("show").expect("apps show command");
-        assert!(
-            show.get_all_aliases().any(|alias| alias == stale),
-            "compatibility alias must remain parseable"
-        );
-        assert!(
-            show.get_visible_aliases().all(|alias| alias != stale),
-            "compatibility alias must stay out of first-party help"
-        );
+    fn removed_commands_and_service_tier_are_rejected() {
+        output::set_json_mode(false);
+        output::set_dry_run_mode(false);
+        for args in [
+            vec!["floo", "apps", "stop", "my-app"],
+            vec!["floo", "apps", "resume", "my-app"],
+            vec!["floo", "apps", "status", "my-app"],
+            vec![
+                "floo", "releases", "rollback", "--app", "my-app", "--to", "deploy-1",
+            ],
+            vec!["floo", "db", "branches", "list", "feat-db-abcde"],
+            vec!["floo", "db", "branches", "show", "feat-db-abcde"],
+            vec!["floo", "db", "branches", "reset", "feat-db-abcde"],
+            vec!["floo", "deploy", "list"],
+            vec!["floo", "preview", "list"],
+            vec!["floo", "services", "add", "postgres", "--tier", "basic"],
+        ] {
+            assert!(Cli::try_parse_from(&args).is_err(), "accepted {args:?}");
+        }
     }
 
     #[test]
@@ -3149,19 +3000,6 @@ mod tests {
                 &["floo", "deploys", "rollback", "myapp", "abc", "--preflight"],
             ),
             (
-                "releases rollback",
-                &[
-                    "floo",
-                    "releases",
-                    "rollback",
-                    "--app",
-                    "myapp",
-                    "--to",
-                    "abc",
-                    "--preflight",
-                ],
-            ),
-            (
                 "db migrate",
                 &["floo", "db", "migrate", "--app", "myapp", "--preflight"],
             ),
@@ -3172,19 +3010,6 @@ mod tests {
                     "db",
                     "query",
                     "SELECT 1",
-                    "--app",
-                    "myapp",
-                    "--preflight",
-                ],
-            ),
-            (
-                "db branches reset",
-                &[
-                    "floo",
-                    "db",
-                    "branches",
-                    "reset",
-                    "feat-db-abcde",
                     "--app",
                     "myapp",
                     "--preflight",

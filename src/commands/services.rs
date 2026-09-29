@@ -383,17 +383,13 @@ fn render_redis_health(
     }
 }
 
-pub fn add(service_type: &str, app: Option<&str>, tier: Option<&str>, name: &str) {
+pub fn add(service_type: &str, app: Option<&str>, name: &str) {
     super::require_auth();
     let client = super::init_client(None);
 
     let (app_id, app_name) = super::resolve_app_from_config(&client, app);
 
-    let body = CreateManagedServiceRequest {
-        service_type,
-        name,
-        tier,
-    };
+    let body = CreateManagedServiceRequest { service_type, name };
 
     let detail = match client.create_managed_service(&app_id, &body) {
         Ok(d) => d,

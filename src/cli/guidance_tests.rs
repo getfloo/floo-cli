@@ -322,8 +322,7 @@ fn validate_path_and_options(invocation: &str) -> Result<(), String> {
     if matches!(
         command_column(invocation),
         "floo --help" | "floo --version" | "floo -V" | "floo <command>" | "floo <path>"
-    ) || invocation.starts_with("floo deploy ...")
-    {
+    ) {
         return Ok(());
     }
 
@@ -520,9 +519,7 @@ fn guidance_validator_rejects_stale_syntax() {
 
 #[test]
 fn guidance_validator_skips_pr_comment_commands() {
-    // `/floo preview on` is a pull request comment command. `preview` is a
-    // compatibility alias of `previews`, so treating it as CLI syntax would
-    // make the comment command undocumentable in first-party guidance.
+    // `/floo preview on` is a pull request comment command, not CLI syntax.
     let mut comment = Vec::new();
     push_occurrences(
         "Comment `/floo preview on` on the pull request to opt it in.",
