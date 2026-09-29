@@ -2565,7 +2565,11 @@ fn test_dry_run_apps_delete() {
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
-        .stdout(predicate::str::contains(r#""action":"delete"#));
+        .stdout(predicate::str::contains(r#""action":"delete"#))
+        .stdout(predicate::str::contains("floo-managed GitHub repository"))
+        .stdout(predicate::str::contains(
+            "Connected customer-owned repositories are retained",
+        ));
 }
 
 #[test]
