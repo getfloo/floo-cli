@@ -126,6 +126,10 @@ pub struct CostLine {
     pub rate_card_version: Option<String>,
     pub effective_from: Option<String>,
     pub cost_usd: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<String>,
 }
 
 /// API cost total for one resource type.
