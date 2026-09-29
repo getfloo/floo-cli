@@ -1,6 +1,9 @@
 use std::{collections::BTreeMap, process};
 
-use crate::api_types::{CostLine, PaygoActivation, ResourceCost, SpendCapPolicy};
+use crate::api_types::{
+    CostLine, PaygoActivation, PaygoBalanceResponse, PaygoBindingAuthority, PaygoSpendState,
+    ResourceCost, SpendCapPolicy,
+};
 use crate::errors::ErrorCode;
 use crate::output;
 
@@ -63,6 +66,17 @@ pub fn balance() {
         );
         process::exit(1);
     };
+    let recovery = match prepaid_recovery(&balance) {
+        Ok(lines) => lines,
+        Err(_) => {
+            output::error(
+                "Billing authority contains an invalid money amount.",
+                &ErrorCode::ParseError,
+                None,
+            );
+            process::exit(1);
+        }
+    };
     if output::is_json_mode() {
         output::success("", Some(serde_json::json!(balance)));
         return;
@@ -84,7 +98,81 @@ pub fn balance() {
         eprintln!("  Prepaid funding is unavailable for this organization. Review billing: floo billing upgrade");
     }
     eprintln!("  Check your usage limit: floo billing spend-cap get");
-    eprintln!("  For interrupted apps, check recovery on the billing page: floo billing upgrade");
+    for line in recovery {
+        eprintln!("  {line}");
+    }
+}
+
+fn prepaid_recovery(
+    balance: &PaygoBalanceResponse,
+) -> Result<Vec<String>, std::num::ParseIntError> {
+    let Some(authority) = &balance.authority else {
+        return Ok(vec!["Spend authority and recovery status are unavailable. Check billing: floo billing upgrade".into()]);
+    };
+    let headroom = nanodollars_as_dollars(&authority.remaining_nanodollars)?;
+    // Reject malformed evidence before emitting either human or JSON success.
+    for amount in [
+        &authority.funds_remaining_nanodollars,
+        &authority.period_usage_nanodollars,
+        &authority.hard_limit_nanodollars,
+    ] {
+        nanodollars_as_dollars(amount)?;
+    }
+    let blocked = matches!(
+        authority.state,
+        PaygoSpendState::Exhausted | PaygoSpendState::Unknown | PaygoSpendState::PendingActivation
+    );
+    let mut lines = vec![
+        format!("Current spend headroom: {headroom}"),
+        format!("Authority observed: {}", authority.observed_at),
+    ];
+    if blocked
+        || matches!(
+            authority.state,
+            PaygoSpendState::Low | PaygoSpendState::Imminent
+        )
+    {
+        lines.push(
+            if blocked {
+                "New operations are blocked."
+            } else {
+                "Spend headroom is running low."
+            }
+            .into(),
+        );
+        lines.push(match authority.binding_authority {
+            PaygoBindingAuthority::Funds => "Add funds or wait for pending funding to settle: floo billing upgrade",
+            PaygoBindingAuthority::HardLimit => "Ask an organization admin to raise the monthly hard usage limit. Adding funds does not raise it: floo billing spend-cap get",
+            PaygoBindingAuthority::Activation if matches!(balance.activation, PaygoActivation::Scheduled) => "Wait for the scheduled activation time before retrying an operation.",
+            PaygoBindingAuthority::Activation => "Wait for funding to settle and account checks to complete.",
+            PaygoBindingAuthority::MeterFreshness => "Usage metering is delayed. Retry after it recovers; adding funds will not resolve this delay.",
+            PaygoBindingAuthority::Unknown => "floo is verifying billing. Retry when the check completes. Contact support if this persists.",
+        }.into());
+    }
+    let recovery = match &balance.enforcement {
+        None => "Workload recovery status is not yet available.",
+        Some(e) if e.desired_blocked && e.applied_generation == e.generation => {
+            "Workloads have been stopped for billing."
+        }
+        Some(e) if e.desired_blocked => "Workload stops are still in progress.",
+        Some(_) if blocked => "Workload status is awaiting the next billing check.",
+        Some(e) if e.applied_generation != e.generation => {
+            "Workload recovery is still in progress."
+        }
+        Some(_) => {
+            "Billing restrictions have been cleared. Check your apps for their current status."
+        }
+    };
+    lines.push(recovery.into());
+    if !blocked
+        && balance
+            .enforcement
+            .as_ref()
+            .is_some_and(|e| e.desired_blocked)
+    {
+        lines.push("Billing headroom is available; recovery is awaiting the next check.".into());
+    }
+    Ok(lines)
 }
 
 pub fn upgrade() {

@@ -600,7 +600,7 @@ pub enum AuthCommands {
 
 #[derive(Subcommand)]
 pub enum BillingCommands {
-    /// Show committed prepaid balance, pending funding, and activation.
+    /// Show prepaid balance, spend headroom, and recorded billing recovery.
     #[command(
         after_help = "Examples:\n  floo billing balance\n  floo billing balance --json\n\nAdd funds or check recovery: floo billing upgrade\nCheck your usage limit: floo billing spend-cap get"
     )]
