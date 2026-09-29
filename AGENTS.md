@@ -116,7 +116,7 @@ against the live Clap tree.
 
 1. Tag `v*` on main branch
 2. CI builds binaries for 5 targets (macOS x86/arm, Linux x86/arm, Windows x86)
-3. Signed binaries, checksums, signatures and installer are staged as a draft in `getfloo/floo-releases`, published after upload, then mirrored in the source repository for older clients.
+3. Signed binaries, checksums, signatures and the signed installer are staged as a draft in `getfloo/floo-releases`, published after upload, then mirrored in the source repository for older clients.
 4. Slack `#releases` ping fires (mirrors the platform's deploy.yml notification — gated on `secrets.SLACK_RELEASES_WEBHOOK`; skips with a warning if unset, fails the release if Slack rejects the post)
 5. Install script downloads from these releases and verifies checksum + signature before install
 

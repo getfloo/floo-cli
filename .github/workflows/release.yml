@@ -167,6 +167,8 @@ jobs:
             echo "No release binaries found to sign." >&2
             exit 1
           fi
+          openssl dgst -sha256 -sign "${key_path}" -out install.sh.sig install.sh
+          openssl dgst -sha256 -verify "${public_key_path}" -signature install.sh.sig install.sh
 
       # Publish the public assets before offering the transition binary to
       # existing clients that still poll the source repository.
@@ -181,6 +183,7 @@ jobs:
           files: |
             release-artifacts/floo-*/*
             install.sh
+            install.sh.sig
           fail_on_unmatched_files: true
           body: Signed floo CLI binaries, checksums, signatures and installer.
 
