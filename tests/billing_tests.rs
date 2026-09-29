@@ -368,7 +368,10 @@ fn prepaid_balance_preserves_money_and_activation_without_claiming_authority() {
                         "Pending funding: $1.00 (not yet available)"
                     }))
                     .stderr(predicate::str::contains("floo billing upgrade"))
-                    .stderr(predicate::str::contains("floo billing spend-cap get"));
+                    .stderr(predicate::str::contains("floo billing spend-cap get"))
+                    .stderr(predicate::str::contains(
+                        "Spend authority and recovery status are unavailable.",
+                    ));
             }
         }
     }
@@ -388,6 +391,19 @@ fn prepaid_balance_errors_never_become_zero_money() {
         (
             200,
             serde_json::json!({"activation":"active","funding_eligible":true,"balance_nanodollars":"NaN","pending_nanodollars":"0"}),
+        ),
+        (
+            200,
+            serde_json::json!({
+                "activation":"active", "funding_eligible":true,
+                "balance_nanodollars":"25000000000", "pending_nanodollars":"0",
+                "authority": {
+                    "state":"available", "binding_authority":"funds", "balance_sequence":1,
+                    "funds_remaining_nanodollars":"NaN", "period_usage_nanodollars":"0",
+                    "hard_limit_nanodollars":"50000000000", "remaining_nanodollars":"25000000000",
+                    "observed_at":"2026-09-29T02:00:00Z"
+                }
+            }),
         ),
     ] {
         let mut server = Server::new();
@@ -417,5 +433,112 @@ fn prepaid_balance_errors_never_become_zero_money() {
             serde_json::from_slice(&result.get_output().stdout).unwrap();
         assert_eq!(payload["success"], false);
         assert!(payload["data"].get("balance_nanodollars").is_none());
+    }
+}
+
+#[test]
+fn prepaid_recovery_preserves_server_evidence_and_distinguishes_provider_progress() {
+    for (state, cause, desired, applied, expected) in [
+        (
+            "exhausted",
+            "funds",
+            true,
+            1,
+            "Workload stops are still in progress.",
+        ),
+        (
+            "exhausted",
+            "hard_limit",
+            true,
+            2,
+            "Adding funds does not raise it",
+        ),
+        (
+            "unknown",
+            "meter_freshness",
+            false,
+            2,
+            "adding funds will not resolve this delay",
+        ),
+        (
+            "available",
+            "funds",
+            false,
+            1,
+            "Workload recovery is still in progress.",
+        ),
+        (
+            "available",
+            "funds",
+            false,
+            2,
+            "Billing restrictions have been cleared.",
+        ),
+        (
+            "available",
+            "funds",
+            true,
+            2,
+            "recovery is awaiting the next check",
+        ),
+        (
+            "exhausted",
+            "hard_limit",
+            false,
+            1,
+            "Workload status is awaiting the next billing check.",
+        ),
+    ] {
+        let mut server = Server::new();
+        let home = TempDir::new().unwrap();
+        std::fs::create_dir_all(home.path().join(".floo-local")).unwrap();
+        std::fs::write(
+            home.path().join(".floo-local/config.json"),
+            r#"{"api_key":"floo_test123"}"#,
+        )
+        .unwrap();
+        let body = serde_json::json!({
+            "billing_mode":"prepaid", "funding_eligible":true, "activation":"active",
+            "usage_started_at":null, "recorded_at":null,
+            "balance_nanodollars":"9007199254740993", "pending_nanodollars":"0",
+            "authority": {
+                "state":state, "binding_authority":cause, "balance_sequence":9,
+                "funds_remaining_nanodollars":"9007199254740993", "period_usage_nanodollars":"1",
+                "hard_limit_nanodollars":"25000000000", "remaining_nanodollars":"24999999999",
+                "observed_at":"2026-09-29T02:00:00Z"
+            },
+            "enforcement": {"desired_blocked":desired, "generation":2, "applied_generation":applied}
+        });
+        let read = server
+            .mock("GET", "/v1/billing/paygo/balance")
+            .with_header("content-type", "application/json")
+            .with_body(body.to_string())
+            .expect(2)
+            .create();
+        for json in [false, true] {
+            let mut command = Command::new(assert_cmd::cargo::cargo_bin!("floo-local"));
+            command
+                .args(["billing", "balance"])
+                .env("HOME", home.path())
+                .env("FLOO_API_URL", server.url())
+                .env_remove("FLOO_CONFIG_DIR");
+            if json {
+                command.arg("--json");
+            }
+            let result = command.assert().success();
+            if json {
+                let payload: serde_json::Value =
+                    serde_json::from_slice(&result.get_output().stdout).unwrap();
+                assert_eq!(payload["data"], body);
+            } else {
+                result
+                    .stdout("")
+                    .stderr(predicate::str::contains(expected))
+                    .stderr(predicate::str::contains(
+                        "Current spend headroom: $24.999999999",
+                    ));
+            }
+        }
+        read.assert();
     }
 }

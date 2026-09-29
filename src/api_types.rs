@@ -66,7 +66,50 @@ pub enum PaygoActivation {
     Active,
 }
 
-/// Committed money observation, not spending or restoration authority.
+/// Recorded admission inputs; reading them does not authorize a later operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaygoAuthority {
+    pub state: PaygoSpendState,
+    pub binding_authority: PaygoBindingAuthority,
+    pub balance_sequence: i64,
+    pub funds_remaining_nanodollars: String,
+    pub period_usage_nanodollars: String,
+    pub hard_limit_nanodollars: String,
+    pub remaining_nanodollars: String,
+    pub observed_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaygoSpendState {
+    PendingActivation,
+    Available,
+    Low,
+    Imminent,
+    Exhausted,
+    Recovered,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaygoBindingAuthority {
+    Funds,
+    HardLimit,
+    Activation,
+    MeterFreshness,
+    Unknown,
+}
+
+/// Recorded provider convergence, not live workload health.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaygoEnforcement {
+    pub desired_blocked: bool,
+    pub generation: i64,
+    pub applied_generation: i64,
+}
+
+/// Committed money plus separate admission and provider-enforcement observations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaygoBalanceResponse {
     pub billing_mode: Option<String>,
@@ -76,6 +119,10 @@ pub struct PaygoBalanceResponse {
     pub pending_nanodollars: String,
     pub balance_nanodollars: String,
     pub recorded_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority: Option<PaygoAuthority>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enforcement: Option<PaygoEnforcement>,
 }
 
 /// API spend-cap policy, preserving future policy strings for JSON output.
