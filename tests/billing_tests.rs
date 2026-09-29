@@ -558,7 +558,7 @@ fn billing_notifications_preserve_evidence_and_cursor_in_both_output_modes() {
         let body = serde_json::json!({"records":[{
             "id":"notice-1", "state":"imminent", "subject":"Low balance",
             "body":"Add funds to keep your apps running.",
-            "first_attempt_at":"2026-09-29T00:00:00Z", "last_attempt_at":"2026-09-29T00:00:00Z",
+            "first_attempt_at":"2026-09-28T01:00:00Z", "last_attempt_at":"2026-09-29T00:00:00Z",
             "provider_accepted":false, "closed_reason":"acceptance_unresolved"
         }], "next_before_id":"notice-1"});
         let read = server

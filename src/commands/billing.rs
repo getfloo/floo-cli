@@ -209,6 +209,11 @@ pub fn notifications(limit: u8, before_id: Option<&str>) {
             "Awaiting submission."
         };
         eprintln!("\n{}\n{status}", notice.subject);
+        if notice.first_attempt_at != notice.last_attempt_at {
+            if let Some(at) = notice.first_attempt_at {
+                eprintln!("First attempted: {at}");
+            }
+        }
         if let Some(at) = notice.last_attempt_at {
             eprintln!("Last attempted: {at}");
         }
