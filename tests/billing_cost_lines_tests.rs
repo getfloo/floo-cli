@@ -135,8 +135,8 @@ fn legacy_managed_fixture() -> Value {
     app["services"] = json!([]);
     app["total_cost_usd"] = json!(0.000000009);
     app["managed_resources"] = json!([{
-        "managed_service_id": null, "environment_managed_resource_id": APP_ID,
-        "name": "database", "environment": "production", "costs": {"storage": {"cost_usd": 0.000000009}},
+        "managed_service_id": null, "env_managed_resource_id": APP_ID,
+        "name": "database", "env": "production", "costs": {"storage": {"cost_usd": 0.000000009}},
         "total_usd": 0.000000009,
         "lines": [{"rate_key": null, "label": null, "quantity": 42.0, "unit": "GiB-second",
             "display_unit": null, "rate": null, "display_rate": null, "rate_card_version": null,

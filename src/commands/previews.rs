@@ -43,7 +43,7 @@ pub fn up(
                 "runtime": runtime,
                 "commit_sha": commit_sha,
                 "ref": ref_name,
-                "environment": "preview",
+                "env": "preview",
                 "github_source_only": true,
                 "dev_prod_untouched": true,
             }),
@@ -577,7 +577,7 @@ fn emit_preview_command_result(
                 "app": app_json(app_id, app_name),
                 "preview": preview.map(preview_json).unwrap_or_else(|| serde_json::json!({
                     "slug": deploy.preview_slug,
-                    "environment_name": "preview",
+                    "env": "preview",
                     "source_branch": deploy.source_branch,
                     "url": deploy.url,
                 })),
@@ -701,7 +701,7 @@ fn preview_json(preview: &PreviewEnvironment) -> serde_json::Value {
     serde_json::json!({
         "id": preview.id,
         "slug": preview.slug,
-        "environment_name": "preview",
+        "env": "preview",
         "source_branch": preview.source_branch,
         "pr_number": preview.pr_number,
         "url": preview.url,
@@ -763,7 +763,7 @@ fn render_resource_table(branches: &[PreviewManagedResourceBranch]) {
             vec![
                 branch.resource_key.clone(),
                 branch.resource_type.clone(),
-                branch.source_environment.clone(),
+                branch.source_env.clone(),
                 branch.resource_status.clone(),
                 branch.hydration_mode.clone(),
                 provider_identity(branch).unwrap_or_else(|| "-".to_string()),
@@ -792,7 +792,7 @@ fn render_resource_detail(branch: &PreviewManagedResourceBranch) {
     output::info(&format!("  Resource:  {}", branch.resource_key), None);
     output::info(&format!("  Type:      {}", branch.resource_type), None);
     output::info(&format!("  Preview:   {}", branch.preview_slug), None);
-    output::info(&format!("  Source:    {}", branch.source_environment), None);
+    output::info(&format!("  Source:    {}", branch.source_env), None);
     output::info(&format!("  Status:    {}", branch.resource_status), None);
     output::info(&format!("  Hydration: {}", branch.hydration_mode), None);
     output::info(

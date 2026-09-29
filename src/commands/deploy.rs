@@ -56,7 +56,7 @@ const LOCAL_DEFAULT_MAX_INSTANCES: u32 = 3;
 struct RuntimePlan {
     service: String,
     service_type: String,
-    environment: String,
+    env: String,
     availability: String,
     configured: RuntimePlanValues,
     locally_resolved: RuntimePlanValues,
@@ -97,7 +97,7 @@ fn build_runtime_plan(services: &[ServiceConfig], environment: &str) -> Vec<Runt
                 RuntimePlan {
                     service: service.name.clone(),
                     service_type: service.service_type.to_string(),
-                    environment: environment.to_string(),
+                    env: environment.to_string(),
                     availability: if instances == 0 { "paused" } else { "fixed" }.to_string(),
                     configured,
                     locally_resolved: RuntimePlanValues {
@@ -130,7 +130,7 @@ fn build_runtime_plan(services: &[ServiceConfig], environment: &str) -> Vec<Runt
                 RuntimePlan {
                     service: service.name.clone(),
                     service_type: service.service_type.to_string(),
-                    environment: environment.to_string(),
+                    env: environment.to_string(),
                     availability: if min_instances == 0 {
                         "on_demand"
                     } else {
@@ -1058,7 +1058,7 @@ pub fn deploy(
     let service_names: Vec<&str> = services.iter().map(|s| s.name.as_str()).collect();
 
     let env_display = deploy_data
-        .environment_name
+        .env
         .as_deref()
         .map(|e| format!("{e} \u{2192} "))
         .unwrap_or_default();
@@ -1216,7 +1216,7 @@ fn deploy_restart(
     }
 
     let env_display = deploy_data
-        .environment_name
+        .env
         .as_deref()
         .map(|e| format!("{e} \u{2192} "))
         .unwrap_or_default();
@@ -3074,7 +3074,7 @@ fn render_plan_human(plan: &crate::api_types::PreflightPlan, app_name: &str) {
         eprintln!("  Server-resolved runtime plan:");
         for service in &plan.runtime_services {
             let runtime = &service.runtime_plan;
-            let env = runtime.environment.as_deref();
+            let env = runtime.env.as_deref();
             let env = env.unwrap_or("selected environment");
             let effective = &runtime.effective;
             let scaling = if runtime.service_type == "worker" {
@@ -3327,7 +3327,7 @@ port = 8000
 
         let plan = build_runtime_plan(&services, "prod");
 
-        assert_eq!(plan[0].environment, "prod");
+        assert_eq!(plan[0].env, "prod");
         assert_eq!(plan[0].availability, "on_demand");
         assert_eq!(plan[0].locally_resolved.min_instances, Some(0));
         assert_eq!(

@@ -91,10 +91,7 @@ fn render_managed_services(result: &ManagedServicesDoctorResponse) {
         &format!("App: {} ({})", result.app_name, result.app_id),
         None,
     );
-    eprintln!(
-        "Checked Redis environments: {}",
-        result.checked_environments
-    );
+    eprintln!("Checked Redis environments: {}", result.checked_envs);
 
     if result.issues.is_empty() {
         output::info("Managed Redis data planes are healthy.", None);
@@ -111,7 +108,7 @@ fn render_managed_services(result: &ManagedServicesDoctorResponse) {
         .map(|issue| {
             vec![
                 issue.name.clone(),
-                issue.environment.clone(),
+                issue.env.clone(),
                 issue.status.clone(),
                 issue.reason.clone(),
                 issue
@@ -127,10 +124,7 @@ fn render_managed_services(result: &ManagedServicesDoctorResponse) {
         None,
     );
     for issue in &result.issues {
-        eprintln!(
-            "  {} ({}): {}",
-            issue.name, issue.environment, issue.remediation
-        );
+        eprintln!("  {} ({}): {}", issue.name, issue.env, issue.remediation);
     }
 }
 

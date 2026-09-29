@@ -515,10 +515,7 @@ pub fn cost_breakdown(app: Option<&str>, period: &str) {
             &format!(
                 "Managed resource: {} ({})",
                 resource.name,
-                resource
-                    .environment
-                    .as_deref()
-                    .unwrap_or("unknown environment")
+                resource.env.as_deref().unwrap_or("unknown environment")
             ),
             resource.total_usd,
             &resource.costs,
@@ -571,7 +568,7 @@ fn render_cost_lines(lines: &[CostLine]) {
             _ => (line.rate, line.unit.as_str()),
         };
         let rate = rate.map_or_else(|| "unknown".into(), |r| format_money(r, MoneyFormat::Line));
-        let origin: Vec<&str> = [line.resource_type.as_deref(), line.environment.as_deref()]
+        let origin: Vec<&str> = [line.resource_type.as_deref(), line.env.as_deref()]
             .into_iter()
             .flatten()
             .collect();

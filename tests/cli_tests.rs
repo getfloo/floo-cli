@@ -3549,7 +3549,7 @@ fn storage_remove_preflight_aliases_preview_without_auth_or_api_calls() {
         assert_eq!(preview["success"], true);
         assert_eq!(preview["data"]["action"], "storage_rm");
         assert_eq!(preview["data"]["app"], "my-app");
-        assert_eq!(preview["data"]["environment"], "prod");
+        assert_eq!(preview["data"]["env"], "prod");
         assert_eq!(preview["data"]["path"], "assets/logo.png");
         assert!(preview["data"].get("deleted").is_none());
     }

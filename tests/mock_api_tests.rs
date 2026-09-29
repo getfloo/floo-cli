@@ -141,7 +141,7 @@ fn mock_services_single_for_env(server: &mut Server, environment: Option<&str>) 
         .match_query(Matcher::AllOf(query))
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"services":[{"id":"svc-web-1","name":"web","type":"web","status":"live","url":"https://my-app-dev-web.on.getfloo.com","cloud_run_url":"https://floo-my-app-dev-web-l3txcgkazq-uc.a.run.app","port":3000,"cpu":"2","memory":"1Gi","max_instances":10,"min_instances":1,"instances":null,"max_request_body_mb":32,"runtime_plan":{"environment":"dev","service_type":"web","availability":"warm","declared":{"cpu":"2","memory":"1Gi","min_instances":1,"max_instances":10,"instances":null},"effective":{"cpu":"2","memory":"1Gi","min_instances":1,"max_instances":10,"instances":null},"sources":{"cpu":"configured","memory":"configured","min_instances":"configured","max_instances":"configured","instances":null},"cpu_allocation":"request_based","cpu_allocation_reason":"http_request_scoped","warnings":[]}}]}"#)
+        .with_body(r#"{"services":[{"id":"svc-web-1","name":"web","type":"web","status":"live","url":"https://my-app-dev-web.on.getfloo.com","cloud_run_url":"https://floo-my-app-dev-web-l3txcgkazq-uc.a.run.app","port":3000,"cpu":"2","memory":"1Gi","max_instances":10,"min_instances":1,"instances":null,"max_request_body_mb":32,"runtime_plan":{"env":"dev","service_type":"web","availability":"warm","declared":{"cpu":"2","memory":"1Gi","min_instances":1,"max_instances":10,"instances":null},"effective":{"cpu":"2","memory":"1Gi","min_instances":1,"max_instances":10,"instances":null},"sources":{"cpu":"configured","memory":"configured","min_instances":"configured","max_instances":"configured","instances":null},"cpu_allocation":"request_based","cpu_allocation_reason":"http_request_scoped","warnings":[]}}]}"#)
         .create()
 }
 
@@ -159,7 +159,7 @@ fn mock_managed_services_empty(server: &mut Server) -> Mock {
 }
 
 fn edge_routes_json() -> &'static str {
-    r#"{"routes":[{"id":"route-1","host":"my-app.on.getfloo.com","path_prefix":"/","environment_id":"env-prod","environment_name":"prod","environment_slug":"prod","service_id":"svc-web-1","service_name":"web","service_type":"web","access_mode":"accounts","api_key_enabled":true,"required_scope":"app:read","source":"deploy","source_of_truth":"gateway_routes","propagation_status":"unknown","created_at":"2026-07-03T10:00:00Z","updated_at":"2026-07-03T10:05:00Z"}],"total":1}"#
+    r#"{"routes":[{"id":"route-1","host":"my-app.on.getfloo.com","path_prefix":"/","env_id":"env-prod","env":"prod","env_slug":"prod","service_id":"svc-web-1","service_name":"web","service_type":"web","access_mode":"accounts","api_key_enabled":true,"required_scope":"app:read","source":"deploy","source_of_truth":"gateway_routes","propagation_status":"unknown","created_at":"2026-07-03T10:00:00Z","updated_at":"2026-07-03T10:05:00Z"}],"total":1}"#
 }
 
 fn preview_branch_json(name: &str, status: &str, reset_eligible: bool) -> String {
@@ -175,7 +175,7 @@ fn preview_branch_json(name: &str, status: &str, reset_eligible: bool) -> String
             "resource_type":"postgres",
             "name":"{name}",
             "resource_key":"postgres:{name}",
-            "source_environment":"dev",
+            "source_env":"dev",
             "preview_slug":"feat-db-abcde",
             "resource_status":"{status}",
             "hydration_mode":"clone-dev",
@@ -208,7 +208,7 @@ fn preview_redis_branch_json(name: &str, status: &str, reset_eligible: bool) -> 
             "resource_type":"redis",
             "name":"{name}",
             "resource_key":"redis:{name}",
-            "source_environment":"dev",
+            "source_env":"dev",
             "preview_slug":"feat-db-abcde",
             "resource_status":"{status}",
             "hydration_mode":"clone-dev",
@@ -260,8 +260,8 @@ fn preview_deploy_json(status: &str) -> String {
             "build_logs":null,
             "triggered_by":"manual",
             "commit_sha":"abc123",
-            "environment_id":"env-preview-1",
-            "environment_name":"preview",
+            "env_id":"env-preview-1",
+            "env":"preview",
             "preview_slug":"feat-db-abcde",
             "source_branch":"feat/db-branch",
             "created_at":"2026-06-24T10:00:00Z"
@@ -1324,7 +1324,7 @@ fn test_env_set_json() {
             r#"{
                 "id":"00000000-0000-0000-0000-000000000001",
                 "app_id":"00000000-0000-0000-0000-0000000000aa",
-                "environment_id":"00000000-0000-0000-0000-0000000000ee",
+                "env_id":"00000000-0000-0000-0000-0000000000ee",
                 "service_id":null,
                 "key":"MY_KEY",
                 "masked_value":"my_v****",
@@ -1354,7 +1354,7 @@ fn set_env_response_body() -> &'static str {
     r#"{
         "id":"00000000-0000-0000-0000-000000000001",
         "app_id":"00000000-0000-0000-0000-0000000000aa",
-        "environment_id":"00000000-0000-0000-0000-0000000000ee",
+        "env_id":"00000000-0000-0000-0000-0000000000ee",
         "service_id":null,
         "key":"API_KEY",
         "masked_value":"********",
@@ -1371,7 +1371,7 @@ fn env_set_response(key: &str, service_id: Option<&str>, id: &str) -> String {
         r#"{{
             "id":"{id}",
             "app_id":"00000000-0000-0000-0000-0000000000aa",
-            "environment_id":"00000000-0000-0000-0000-0000000000ee",
+            "env_id":"00000000-0000-0000-0000-0000000000ee",
             "service_id":{service_id},
             "key":"{key}",
             "masked_value":"value****",
@@ -3713,7 +3713,7 @@ fn test_services_list_json_returns_both_app_and_managed_services() {
     assert_eq!(service["max_instances"], 10);
     assert_eq!(service["min_instances"], 1);
     assert_eq!(service["max_request_body_mb"], 32);
-    assert_eq!(service["runtime_plan"]["environment"], "dev");
+    assert_eq!(service["runtime_plan"]["env"], "dev");
     assert_eq!(service["runtime_plan"]["availability"], "warm");
     assert_eq!(service["runtime_plan"]["cpu_allocation"], "request_based");
 }
@@ -3932,7 +3932,7 @@ fn test_previews_status_resolves_preview_url_identifier() {
         .env("HOME", home.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains(r#""environment_name":"preview""#))
+        .stdout(predicate::str::contains(r#""env":"preview""#))
         .stdout(predicate::str::contains(
             r#""deploy_id":"deploy-preview-1""#,
         ))
@@ -4385,7 +4385,7 @@ fn service_runtime_fixture() -> serde_json::Value {
         "id": "svc-web-1", "name": "web", "type": "web",
         "status": "live", "ingress": "public", "port": 3000,
         "runtime_plan": {
-            "environment": "dev", "service_type": "web", "availability": "on_demand",
+            "env": "dev", "service_type": "web", "availability": "on_demand",
             "declared": {
                 "cpu": null, "memory": null, "min_instances": null,
                 "max_instances": null, "instances": null
@@ -4568,7 +4568,7 @@ fn test_services_show_selects_prod_runtime_plan() {
         ]))
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"services":[{"id":"svc-web-1","name":"web","type":"web","status":"live","cloud_run_url":"https://web.floo.app","port":3000,"runtime_plan":{"environment":"prod","service_type":"web","availability":"on_demand","declared":{"cpu":null,"memory":null,"min_instances":null,"max_instances":null,"instances":null},"effective":{"cpu":"1","memory":"512Mi","min_instances":0,"max_instances":3,"instances":null},"sources":{"cpu":"platform_default","memory":"platform_default","min_instances":"platform_default","max_instances":"platform_default","instances":null},"cpu_allocation":"request_based","cpu_allocation_reason":"http_request_scoped","warnings":[]}}]}"#)
+        .with_body(r#"{"services":[{"id":"svc-web-1","name":"web","type":"web","status":"live","cloud_run_url":"https://web.floo.app","port":3000,"runtime_plan":{"env":"prod","service_type":"web","availability":"on_demand","declared":{"cpu":null,"memory":null,"min_instances":null,"max_instances":null,"instances":null},"effective":{"cpu":"1","memory":"512Mi","min_instances":0,"max_instances":3,"instances":null},"sources":{"cpu":"platform_default","memory":"platform_default","min_instances":"platform_default","max_instances":"platform_default","instances":null},"cpu_allocation":"request_based","cpu_allocation_reason":"http_request_scoped","warnings":[]}}]}"#)
         .create();
 
     let output = floo()
@@ -4588,7 +4588,7 @@ fn test_services_show_selects_prod_runtime_plan() {
 
     assert!(output.status.success(), "{output:?}");
     let json = parse_single_json_object(&output.stdout);
-    assert_eq!(json["data"]["runtime_plan"]["environment"], "prod");
+    assert_eq!(json["data"]["runtime_plan"]["env"], "prod");
 }
 
 #[test]
@@ -4859,7 +4859,7 @@ fn storage_ls_sends_env_prefix_and_limit_and_returns_objects_json() {
         ]))
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"environment":"prod","bucket_name":"bucket","prefix":"assets/","objects":[{"name":"assets/logo.png","size_bytes":123,"size_human":"123 B","updated_at":"2026-09-25T00:00:00Z","content_type":"image/png"}],"total_returned":1,"truncated":false}"#)
+        .with_body(r#"{"env":"prod","bucket_name":"bucket","prefix":"assets/","objects":[{"name":"assets/logo.png","size_bytes":123,"size_human":"123 B","updated_at":"2026-09-25T00:00:00Z","content_type":"image/png"}],"total_returned":1,"truncated":false}"#)
         .create();
 
     let result = floo()
@@ -4903,7 +4903,9 @@ fn storage_usage_sends_env_and_returns_totals_json() {
         .match_query(Matcher::UrlEncoded("env".into(), "dev".into()))
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"environment":"dev","bucket_name":"bucket","object_count":2,"total_size_bytes":1234}"#)
+        .with_body(
+            r#"{"env":"dev","bucket_name":"bucket","object_count":2,"total_size_bytes":1234}"#,
+        )
         .create();
 
     let result = floo()
@@ -7766,7 +7768,7 @@ fn test_doctor_managed_services_json_healthy_exits_zero() {
     let _doctor = mock_doctor_managed_services(
         &mut server,
         &format!(
-            r#"{{"app_id":"{TEST_APP_ID}","app_name":"{TEST_APP_NAME}","checked_environments":2,"degraded_detected":false,"issues":[]}}"#
+            r#"{{"app_id":"{TEST_APP_ID}","app_name":"{TEST_APP_NAME}","checked_envs":2,"degraded_detected":false,"issues":[]}}"#
         ),
     );
 
@@ -7792,7 +7794,7 @@ fn test_doctor_managed_services_json_issue_exits_one_and_redacts_credentials() {
     let _doctor = mock_doctor_managed_services(
         &mut server,
         &format!(
-            r#"{{"app_id":"{TEST_APP_ID}","app_name":"{TEST_APP_NAME}","checked_environments":2,"degraded_detected":false,"issues":[{{"resource_id":"redis-1","resource_kind":"managed_service","type":"redis","name":"default","environment":"prod","status":"throttled","reason":"throttle_daily_limit","observed_at":"2026-07-24T17:00:00Z","remediation":"Contact floo support to raise managed capacity."}}]}}"#
+            r#"{{"app_id":"{TEST_APP_ID}","app_name":"{TEST_APP_NAME}","checked_envs":2,"degraded_detected":false,"issues":[{{"resource_id":"redis-1","resource_kind":"managed_service","type":"redis","name":"default","env":"prod","status":"throttled","reason":"throttle_daily_limit","observed_at":"2026-07-24T17:00:00Z","remediation":"Contact floo support to raise managed capacity."}}]}}"#
         ),
     );
 
@@ -7918,7 +7920,7 @@ fn test_env_set_json_two_services_single_object() {
 
     let set_body = |svc: &str| {
         format!(
-            r#"{{"id":"ev-{svc}","app_id":"{TEST_APP_ID}","environment_id":"env-1","service_id":"{svc}","key":"K","masked_value":"********","is_secret":false,"created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-01T00:00:00Z"}}"#
+            r#"{{"id":"ev-{svc}","app_id":"{TEST_APP_ID}","env_id":"env-1","service_id":"{svc}","key":"K","masked_value":"********","is_secret":false,"created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-01T00:00:00Z"}}"#
         )
     };
     let _set = server
@@ -7996,7 +7998,7 @@ fn test_env_unset_json_two_services_single_object() {
 // --- Edge policy (#1358) ---
 
 fn edge_policy_json() -> &'static str {
-    r#"{"id":"pol-1","app_id":"app-123","environment":"prod","rules":[{"action":"allow","cidr":"203.0.113.0/24"},{"action":"deny","cidr":"198.51.100.0/24"}],"default_action":"deny","enabled":true,"created_at":"2026-07-05T10:00:00Z","updated_at":"2026-07-05T10:05:00Z"}"#
+    r#"{"id":"pol-1","app_id":"app-123","env":"prod","rules":[{"action":"allow","cidr":"203.0.113.0/24"},{"action":"deny","cidr":"198.51.100.0/24"}],"default_action":"deny","enabled":true,"created_at":"2026-07-05T10:00:00Z","updated_at":"2026-07-05T10:05:00Z"}"#
 }
 
 #[test]
@@ -8151,7 +8153,7 @@ fn test_edge_policy_check_matches_bare_ip_rule() {
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
-            r#"{"id":"pol-8","app_id":"app-123","environment":"prod","rules":[{"action":"allow","cidr":"203.0.113.7"}],"default_action":"deny","enabled":true,"created_at":"2026-07-05T10:00:00Z","updated_at":"2026-07-05T10:00:00Z"}"#,
+            r#"{"id":"pol-8","app_id":"app-123","env":"prod","rules":[{"action":"allow","cidr":"203.0.113.7"}],"default_action":"deny","enabled":true,"created_at":"2026-07-05T10:00:00Z","updated_at":"2026-07-05T10:00:00Z"}"#,
         )
         .create();
 
@@ -8221,7 +8223,7 @@ fn test_edge_policy_check_ipv6_first_match() {
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
-            r#"{"id":"pol-6","app_id":"app-123","environment":"prod","rules":[{"action":"allow","cidr":"2001:db8::/32"}],"default_action":"deny","enabled":true,"created_at":"2026-07-05T10:00:00Z","updated_at":"2026-07-05T10:00:00Z"}"#,
+            r#"{"id":"pol-6","app_id":"app-123","env":"prod","rules":[{"action":"allow","cidr":"2001:db8::/32"}],"default_action":"deny","enabled":true,"created_at":"2026-07-05T10:00:00Z","updated_at":"2026-07-05T10:00:00Z"}"#,
         )
         .create();
 
@@ -8291,7 +8293,7 @@ fn test_edge_policy_check_disabled_admits_all() {
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
-            r#"{"id":"pol-7","app_id":"app-123","environment":"prod","rules":[{"action":"deny","cidr":"0.0.0.0/0"}],"default_action":"deny","enabled":false,"created_at":"2026-07-05T10:00:00Z","updated_at":"2026-07-05T10:00:00Z"}"#,
+            r#"{"id":"pol-7","app_id":"app-123","env":"prod","rules":[{"action":"deny","cidr":"0.0.0.0/0"}],"default_action":"deny","enabled":false,"created_at":"2026-07-05T10:00:00Z","updated_at":"2026-07-05T10:00:00Z"}"#,
         )
         .create();
 
