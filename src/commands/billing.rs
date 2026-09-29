@@ -434,8 +434,17 @@ fn render_cost_lines(lines: &[CostLine]) {
             _ => (line.rate, line.unit.as_str()),
         };
         let rate = rate.map_or_else(|| "unknown".into(), |r| format_money(r, MoneyFormat::Line));
+        let origin: Vec<&str> = [line.resource_type.as_deref(), line.environment.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect();
+        let origin = if origin.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", origin.join(", "))
+        };
         eprintln!(
-            "    {} ({})",
+            "    {} ({}){origin}",
             line.label.as_deref().unwrap_or("Cost line"),
             line.rate_key.as_deref().unwrap_or("unknown rate key")
         );
