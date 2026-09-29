@@ -542,3 +542,69 @@ fn prepaid_recovery_preserves_server_evidence_and_distinguishes_provider_progres
         read.assert();
     }
 }
+
+#[test]
+fn billing_notifications_preserve_evidence_and_cursor_in_both_output_modes() {
+    for json in [false, true] {
+        let mut server = Server::new();
+        let home = TempDir::new().unwrap();
+        let config_dir = home.path().join(".floo-local");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("config.json"),
+            r#"{"api_key":"floo_test123","default_org":"org-b"}"#,
+        )
+        .unwrap();
+        let body = serde_json::json!({"records":[{
+            "id":"notice-1", "state":"imminent", "subject":"Low balance",
+            "body":"Add funds to keep your apps running.",
+            "first_attempt_at":"2026-09-29T00:00:00Z", "last_attempt_at":"2026-09-29T00:00:00Z",
+            "provider_accepted":false, "closed_reason":"acceptance_unresolved"
+        }], "next_before_id":"notice-1"});
+        let read = server
+            .mock("GET", "/v1/billing/paygo/notifications")
+            .match_header("authorization", "Bearer floo_test123")
+            .match_header("x-floo-org-id", "org-b")
+            .match_query(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::UrlEncoded("limit".into(), "1".into()),
+                mockito::Matcher::UrlEncoded("before_id".into(), "cursor&limit=100".into()),
+            ]))
+            .with_header("content-type", "application/json")
+            .with_body(body.to_string())
+            .create();
+        let mut command = Command::new(assert_cmd::cargo::cargo_bin!("floo-local"));
+        command
+            .args([
+                "billing",
+                "notifications",
+                "--limit",
+                "1",
+                "--before-id",
+                "cursor&limit=100",
+            ])
+            .env("HOME", home.path())
+            .env("FLOO_API_URL", server.url())
+            .env_remove("FLOO_CONFIG_DIR");
+        if json {
+            command.arg("--json");
+        }
+        let result = command.assert().success();
+        if json {
+            let payload: serde_json::Value =
+                serde_json::from_slice(&result.get_output().stdout).unwrap();
+            assert_eq!(payload["data"], body);
+        } else {
+            result.stdout("").stderr(
+                predicate::str::contains("Submission outcome unknown.")
+                    .and(predicate::str::contains(
+                        "Provider acceptance does not confirm inbox delivery.",
+                    ))
+                    .and(predicate::str::contains(
+                        "Last attempted: 2026-09-29T00:00:00Z",
+                    ))
+                    .and(predicate::str::contains("--before-id notice-1 --limit 1")),
+            );
+        }
+        read.assert();
+    }
+}

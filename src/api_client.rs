@@ -483,6 +483,20 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn get_paygo_notifications(
+        &self,
+        limit: u8,
+        before_id: Option<&str>,
+    ) -> Result<PaygoNotificationsResponse, FlooApiError> {
+        let limit = limit.to_string();
+        let mut query = vec![("limit", limit.as_str())];
+        if let Some(cursor) = before_id {
+            query.push(("before_id", cursor));
+        }
+        let resp = self.get_with_query("/v1/billing/paygo/notifications", &query)?;
+        self.handle_response(resp)
+    }
+
     pub fn get_billing_limits(&self) -> Result<PlanLimitsResponse, FlooApiError> {
         let resp = self.get("/v1/billing/limits")?;
         self.handle_response(resp)

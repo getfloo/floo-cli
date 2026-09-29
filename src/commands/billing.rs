@@ -175,6 +175,50 @@ fn prepaid_recovery(
     Ok(lines)
 }
 
+pub fn notifications(limit: u8, before_id: Option<&str>) {
+    super::require_auth();
+    let client = super::init_client(None);
+    let page = match client.get_paygo_notifications(limit, before_id) {
+        Ok(page) => page,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+    if output::is_json_mode() {
+        output::success("", Some(output::to_value(&page)));
+        return;
+    }
+    eprintln!(
+        "Recorded billing emails describe earlier observations, not current workload status."
+    );
+    eprintln!("Provider acceptance does not confirm inbox delivery. Current authority: floo billing balance");
+    if page.records.is_empty() {
+        eprintln!("No billing emails recorded.");
+    }
+    for notice in page.records {
+        let status = if notice.provider_accepted {
+            "Accepted by the email provider."
+        } else if notice.closed_reason.as_deref() == Some("acceptance_unresolved") {
+            "Submission outcome unknown."
+        } else if notice.closed_reason.is_some() {
+            "No further submission attempts."
+        } else if notice.first_attempt_at.is_some() {
+            "Awaiting confirmation from the email provider."
+        } else {
+            "Awaiting submission."
+        };
+        eprintln!("\n{}\n{status}", notice.subject);
+        if let Some(at) = notice.last_attempt_at {
+            eprintln!("Last attempted: {at}");
+        }
+        eprintln!("{}", notice.body);
+    }
+    if let Some(cursor) = page.next_before_id {
+        eprintln!("Older records: floo billing notifications --before-id {cursor} --limit {limit}");
+    }
+}
+
 pub fn upgrade() {
     super::require_auth();
     let client = super::init_client(None);
