@@ -125,6 +125,25 @@ pub struct PaygoBalanceResponse {
     pub enforcement: Option<PaygoEnforcement>,
 }
 
+/// Frozen customer email evidence, distinct from current authority or inbox delivery.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaygoNotification {
+    pub id: String,
+    pub state: PaygoSpendState,
+    pub subject: String,
+    pub body: String,
+    pub first_attempt_at: Option<String>,
+    pub last_attempt_at: Option<String>,
+    pub provider_accepted: bool,
+    pub closed_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaygoNotificationsResponse {
+    pub records: Vec<PaygoNotification>,
+    pub next_before_id: Option<String>,
+}
+
 /// API spend-cap policy, preserving future policy strings for JSON output.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

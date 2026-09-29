@@ -600,6 +600,19 @@ pub enum AuthCommands {
 
 #[derive(Subcommand)]
 pub enum BillingCommands {
+    /// Read retained billing emails and submission outcomes; does not send mail.
+    #[command(
+        after_help = "Examples:\n  floo billing notifications\n  floo billing notifications --limit 20 --json\n\nUse next_before_id with --before-id to read older records.\nFor current spend authority: floo billing balance"
+    )]
+    Notifications {
+        /// Maximum records to return (1–100).
+        #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u8).range(1..=100))]
+        limit: u8,
+        /// Read records older than this ID from the previous page.
+        #[arg(long)]
+        before_id: Option<String>,
+    },
+
     /// Show prepaid balance, spend headroom, and recorded billing recovery.
     #[command(
         after_help = "Examples:\n  floo billing balance\n  floo billing balance --json\n\nAdd funds or check recovery: floo billing upgrade\nCheck your usage limit: floo billing spend-cap get"
@@ -2436,6 +2449,9 @@ pub fn run() {
                 SpendCapCommands::Set { amount } => commands::billing::spend_cap_set(amount),
             },
             BillingCommands::Balance => commands::billing::balance(),
+            BillingCommands::Notifications { limit, before_id } => {
+                commands::billing::notifications(limit, before_id.as_deref())
+            }
             BillingCommands::Upgrade => commands::billing::upgrade(),
             BillingCommands::Usage { period } => commands::billing::usage(&period),
             BillingCommands::CostBreakdown { app, period } => {
