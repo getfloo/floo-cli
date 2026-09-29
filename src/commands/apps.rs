@@ -137,9 +137,9 @@ pub fn status(app_flag: Option<&str>) {
             &format!("  Created:  {}", app.created_at.as_deref().unwrap_or("-")),
             None,
         );
-        if !app.environments.is_empty() {
+        if !app.envs.is_empty() {
             let env_lines: Vec<String> = app
-                .environments
+                .envs
                 .iter()
                 .map(|e| {
                     let url = e.url.as_deref().unwrap_or("\u{2014}");

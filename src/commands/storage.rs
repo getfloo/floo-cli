@@ -92,7 +92,7 @@ pub fn rm(app: Option<&str>, name: &str, env: &str, object_path: &str, yes: bool
             &format!("Would remove storage object '{object_path}' from {env}."),
             serde_json::json!({
                 "action": "storage_rm", "app": app, "storage": name,
-                "environment": env, "path": object_path,
+                "env": env, "path": object_path,
                 "destructive": risk.destructive, "data_loss": risk.data_loss,
                 "tier": risk.tier,
             }),
@@ -129,7 +129,7 @@ pub fn rm(app: Option<&str>, name: &str, env: &str, object_path: &str, yes: bool
     output::success(
         &format!("Removed {object_path} from {app_name} (storage:{name}, env={env}). Restorable for 30 days with `floo storage restore`."),
         Some(serde_json::json!({
-            "path": object_path, "environment": env, "app": app_name,
+            "path": object_path, "env": env, "app": app_name,
             "storage": name, "deleted": true, "restorable_days": 30,
             "destructive": risk.destructive, "data_loss": risk.data_loss,
             "tier": risk.tier,

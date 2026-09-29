@@ -248,10 +248,7 @@ fn render_app_service(svc: &crate::api_types::ApiService, service_name: &str, ap
     output::info(&format!("    Max request body: {max_request_body}"), None);
 
     if let Some(runtime) = &svc.runtime_plan {
-        let environment = runtime
-            .environment
-            .as_deref()
-            .unwrap_or("selected environment");
+        let environment = runtime.env.as_deref().unwrap_or("selected environment");
         let effective = &runtime.effective;
         let scaling = if runtime.service_type == "worker" {
             format!(

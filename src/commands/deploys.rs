@@ -195,7 +195,7 @@ fn deploy_list_payload(result: &crate::api_types::ListDeploysResponse) -> serde_
                 "failing_stage": failure_stage(d),
                 "triggered_by": &d.triggered_by,
                 "commit_sha": &d.commit_sha,
-                "environment_name": &d.environment_name,
+                "env": &d.env,
             })
         })
         .collect();
@@ -244,7 +244,7 @@ pub fn list(app: Option<&str>, limit: u32, cursor: Option<&str>) {
                 .unwrap_or("\u{2014}");
             let short_id = truncate_id(&d.id);
             let status = d.status.as_deref().unwrap_or("-");
-            let env = d.environment_name.as_deref().unwrap_or("\u{2014}");
+            let env = d.env.as_deref().unwrap_or("\u{2014}");
             let created = d.created_at.as_deref().unwrap_or("-");
             let duration = format_duration_ms(d.duration_ms);
             let failure = failure_reason(d)
@@ -351,7 +351,7 @@ fn truncate_text(value: &str, max_chars: usize) -> String {
 fn print_deploy_header(deploy: &Deploy) {
     let id = &deploy.id;
     let status = deploy.status.as_deref().unwrap_or("unknown");
-    let env = deploy.environment_name.as_deref().unwrap_or("\u{2014}");
+    let env = deploy.env.as_deref().unwrap_or("\u{2014}");
     let commit = deploy
         .commit_sha
         .as_deref()
@@ -882,7 +882,7 @@ fn emit_commit_coalesced(lineage: &CoalescedCommit, deploy: &Deploy) {
 fn emit_deploy_found(deploy: &Deploy, app_name: &str) {
     let deploy_id = &deploy.id;
     let status = deploy.status.as_deref().unwrap_or("unknown");
-    let env = deploy.environment_name.as_deref().unwrap_or("unknown");
+    let env = deploy.env.as_deref().unwrap_or("unknown");
     let commit = deploy
         .commit_sha
         .as_deref()
@@ -895,7 +895,7 @@ fn emit_deploy_found(deploy: &Deploy, app_name: &str) {
             "deploy_id": deploy_id,
             "app": app_name,
             "status": status,
-            "environment": env,
+            "env": env,
             "commit": commit,
         }));
     } else {

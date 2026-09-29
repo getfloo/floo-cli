@@ -195,7 +195,7 @@ pub struct CostLine {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub environment: Option<String>,
+    pub env: Option<String>,
 }
 
 /// API cost total for one resource type.
@@ -219,9 +219,9 @@ pub struct ServiceCostBreakdown {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManagedResourceCostBreakdown {
     pub managed_service_id: Option<String>,
-    pub environment_managed_resource_id: Option<String>,
+    pub env_managed_resource_id: Option<String>,
     pub name: String,
-    pub environment: Option<String>,
+    pub env: Option<String>,
     pub costs: BTreeMap<String, ResourceCost>,
     #[serde(default)]
     pub lines: Vec<CostLine>,
@@ -450,7 +450,7 @@ pub struct App {
     pub runtime_url: Option<String>,
     pub created_at: Option<String>,
     #[serde(default)]
-    pub environments: Vec<EnvironmentSummary>,
+    pub envs: Vec<EnvironmentSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -466,9 +466,9 @@ pub struct EdgeRoute {
     pub id: String,
     pub host: String,
     pub path_prefix: String,
-    pub environment_id: Option<String>,
-    pub environment_name: Option<String>,
-    pub environment_slug: Option<String>,
+    pub env_id: Option<String>,
+    pub env: Option<String>,
+    pub env_slug: Option<String>,
     pub service_id: Option<String>,
     pub service_name: Option<String>,
     pub service_type: Option<String>,
@@ -498,7 +498,7 @@ pub struct EdgePolicyRule {
 pub struct EdgePolicyData {
     pub id: String,
     pub app_id: String,
-    pub environment: String,
+    pub env: String,
     pub rules: Vec<EdgePolicyRule>,
     pub default_action: String,
     pub enabled: bool,
@@ -560,7 +560,7 @@ pub struct Deploy {
     #[serde(default)]
     pub app_id: Option<String>,
     #[serde(default)]
-    pub environment_id: Option<String>,
+    pub env_id: Option<String>,
     pub status: Option<String>,
     pub url: Option<String>,
     pub build_logs: Option<String>,
@@ -576,7 +576,7 @@ pub struct Deploy {
     #[serde(default)]
     pub github_ref: Option<String>,
     #[serde(default)]
-    pub environment_name: Option<String>,
+    pub env: Option<String>,
     #[serde(default)]
     pub preview_slug: Option<String>,
     #[serde(default)]
@@ -653,7 +653,7 @@ pub struct ListEnvVarsResponse {
 pub struct SetEnvVarResponse {
     pub id: String,
     pub app_id: String,
-    pub environment_id: String,
+    pub env_id: String,
     pub service_id: Option<String>,
     pub key: String,
     pub masked_value: Option<String>,
@@ -699,7 +699,7 @@ pub struct ApiRuntimeComponent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiRuntimePlan {
-    pub environment: Option<String>,
+    pub env: Option<String>,
     pub service_type: String,
     pub availability: String,
     pub declared: ApiRuntimeValues,
@@ -862,7 +862,7 @@ pub struct StorageObject {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageObjectsResponse {
-    pub environment: String,
+    pub env: String,
     pub bucket_name: String,
     pub prefix: String,
     pub objects: Vec<StorageObject>,
@@ -872,7 +872,7 @@ pub struct StorageObjectsResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageUsageResponse {
-    pub environment: String,
+    pub env: String,
     pub bucket_name: String,
     pub object_count: u64,
     pub total_size_bytes: u64,
@@ -885,7 +885,7 @@ pub struct PreviewDatabaseBranch {
     pub id: Option<String>,
     pub managed_service_id: Option<String>,
     pub name: String,
-    pub source_environment: String,
+    pub source_env: String,
     pub preview_slug: String,
     pub resource_status: String,
     pub hydration_mode: String,
@@ -907,7 +907,7 @@ pub struct PreviewManagedResourceBranch {
     pub resource_type: String,
     pub name: String,
     pub resource_key: String,
-    pub source_environment: String,
+    pub source_env: String,
     pub preview_slug: String,
     pub resource_status: String,
     pub hydration_mode: String,
@@ -1386,7 +1386,7 @@ pub struct ManagedServiceDoctorIssue {
     #[serde(rename = "type")]
     pub service_type: String,
     pub name: String,
-    pub environment: String,
+    pub env: String,
     pub status: String,
     pub reason: String,
     pub observed_at: Option<String>,
@@ -1397,7 +1397,7 @@ pub struct ManagedServiceDoctorIssue {
 pub struct ManagedServicesDoctorResponse {
     pub app_id: String,
     pub app_name: String,
-    pub checked_environments: usize,
+    pub checked_envs: usize,
     pub degraded_detected: bool,
     pub issues: Vec<ManagedServiceDoctorIssue>,
 }
@@ -1495,14 +1495,14 @@ mod managed_services_doctor_tests {
         let response: ManagedServicesDoctorResponse = serde_json::from_value(serde_json::json!({
             "app_id": "app-1",
             "app_name": "payments",
-            "checked_environments": 2,
+            "checked_envs": 2,
             "degraded_detected": true,
             "issues": [{
                 "resource_id": "redis-1",
                 "resource_kind": "managed_service",
                 "type": "redis",
                 "name": "default",
-                "environment": "prod",
+                "env": "prod",
                 "status": "throttled",
                 "reason": "throttle_daily_limit",
                 "observed_at": "2026-07-24T17:00:00Z",

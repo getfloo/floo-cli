@@ -49,9 +49,9 @@ fn route_row(route: &EdgeRoute) -> Vec<String> {
         route.host.clone(),
         route.path_prefix.clone(),
         route
-            .environment_slug
+            .env_slug
             .as_deref()
-            .or(route.environment_name.as_deref())
+            .or(route.env.as_deref())
             .unwrap_or("unscoped")
             .to_string(),
         service_label(route),
@@ -91,7 +91,7 @@ pub fn policy_get(app: Option<&str>, env: &str) {
             // No policy is a valid state, not an error: all IPs admitted.
             output::info(
                 &format!("No edge policy for {app_name} in {env} — all IPs admitted."),
-                Some(serde_json::json!({ "policy": null, "environment": env })),
+                Some(serde_json::json!({ "policy": null, "env": env })),
             );
             return;
         }
@@ -243,7 +243,7 @@ pub fn policy_check(ip_str: &str, app: Option<&str>, env: &str) {
             &format!("Edge policy check for {app_name} in {env}."),
             Some(serde_json::json!({
                 "ip": ip_str,
-                "environment": env,
+                "env": env,
                 "admitted": admitted,
                 "enforced": enforced,
                 "matched_rule": matched_rule,

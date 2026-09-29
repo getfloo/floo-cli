@@ -65,7 +65,7 @@
     {
       "name": "web",
       "runtime_plan": {
-        "environment": "prod",
+        "env": "prod",
         "service_type": "web",
         "availability": "warm",
         "declared": {"cpu":null,"memory":null,"min_instances":null,"max_instances":null,"instances":null},
