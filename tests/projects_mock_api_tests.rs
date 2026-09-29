@@ -428,8 +428,8 @@ mod git_tests {
             let args = clone_args(&home);
             assert_eq!(args[0..4], ["clone", "-c", "credential.helper=", "-c"]);
             assert_eq!(
-                args[4],
-                format!("credential.helper=!{executable} projects git-credential")
+                shlex::split(args[4].strip_prefix("credential.helper=!").unwrap()).unwrap(),
+                [executable, "projects".into(), "git-credential".into()]
             );
             assert_eq!(args[5..8], ["-c", "credential.useHttpPath=true", "--"]);
             assert_eq!(args[8], project()["clone_url"]);
