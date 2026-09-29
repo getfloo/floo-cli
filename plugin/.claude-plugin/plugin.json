@@ -6,7 +6,7 @@
     "name": "floo",
     "url": "https://github.com/getfloo"
   },
-  "repository": "https://github.com/getfloo/floo-cli",
+  "repository": "https://github.com/getfloo/floo-releases",
   "license": "MIT",
   "keywords": ["floo", "deploy", "cloud", "security", "postgres", "redis"],
   "skills": "./skills/"

@@ -8,7 +8,7 @@ The command-line interface for [floo](https://getfloo.com) - manage and observe 
 curl -fsSL https://getfloo.com/install.sh | bash
 ```
 
-Or download a binary directly from [Releases](https://github.com/getfloo/floo-cli/releases).
+Or download a binary directly from [Releases](https://github.com/getfloo/floo-releases/releases).
 
 ### Installer options
 
@@ -30,7 +30,7 @@ curl -fsSL https://getfloo.com/install.sh | FLOO_INSTALL_DIR="$HOME/.local/bin" 
 | Linux | arm64 | `floo-aarch64-unknown-linux-musl` |
 | Windows | x86_64 | `floo-x86_64-pc-windows-msvc.exe` |
 
-**Windows:** Download `floo-x86_64-pc-windows-msvc.exe` from [Releases](https://github.com/getfloo/floo-cli/releases) and add it to your PATH.
+**Windows:** Download `floo-x86_64-pc-windows-msvc.exe` from [Releases](https://github.com/getfloo/floo-releases/releases) and add it to your PATH.
 
 ## Updating
 
