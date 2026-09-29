@@ -181,7 +181,7 @@ pub fn delete(app_name: &str, destroy_data_flag: bool) {
             serde_json::json!({
                 "action": "delete",
                 "app": app_name,
-                "warning": "This cannot be undone",
+                "warning": preview,
                 "destructive": risk.destructive,
                 "data_loss": risk.data_loss,
                 "tier": risk.tier,
