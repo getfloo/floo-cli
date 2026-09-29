@@ -812,7 +812,9 @@ pub enum AppsCommands {
         app_name: String,
     },
 
-    /// Permanently delete an app and all its data. The GitHub repository stays.
+    /// Permanently delete an app, its data, and its floo-managed GitHub repository.
+    ///
+    /// Connected customer-owned GitHub repositories are retained.
     ///
     /// Tier-3 destructive: interactive mode requires typing the app name
     /// to confirm; non-interactive requires --yes-i-know-this-destroys-data.

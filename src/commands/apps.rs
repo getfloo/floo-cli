@@ -174,7 +174,7 @@ pub fn delete(app_name: &str, destroy_data_flag: bool) {
     if output::is_dry_run_mode() {
         let risk: RiskMetadata = Tier::Three.into();
         let preview = format!(
-            "Would permanently delete app '{app_name}' (services, env vars, managed services, domains, deploy history). This cannot be undone."
+            "Would permanently delete app '{app_name}' (services, env vars, managed services, domains, deploy history, and its floo-managed GitHub repository). Connected customer-owned repositories are retained. This cannot be undone."
         );
         output::dry_run_preview(
             &preview,
@@ -197,7 +197,8 @@ pub fn delete(app_name: &str, destroy_data_flag: bool) {
     let preamble = vec![
         format!("\u{26a0} You are about to permanently delete app '{}'.", app.name),
         format!("    id:   {}", app.id),
-        "    This destroys all services, env vars, managed services, domains, and deploy history for the app.".to_string(),
+        "    This destroys all services, env vars, managed services, domains, deploy history, and the floo-managed GitHub repository for the app.".to_string(),
+        "    Connected customer-owned GitHub repositories are retained.".to_string(),
     ];
 
     match confirm_tier3(&app.name, &preamble, destroy_data_flag) {
