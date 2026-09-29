@@ -525,22 +525,6 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
-    pub fn change_app_lifecycle(
-        &self,
-        app_id: &str,
-        action: AppLifecycleAction,
-    ) -> Result<App, FlooApiError> {
-        let operation = match action {
-            AppLifecycleAction::Stop => "stop",
-            AppLifecycleAction::Resume => "resume",
-        };
-        let resp = self.post_json(
-            &format!("/v1/apps/{app_id}/{operation}"),
-            &serde_json::json!({}),
-        )?;
-        self.handle_response(resp)
-    }
-
     pub fn get_app_password(&self, app_id: &str) -> Result<AppPasswordResponse, FlooApiError> {
         let resp = self.get(&format!("/v1/apps/{app_id}/password"))?;
         self.handle_response(resp)
@@ -553,14 +537,14 @@ impl FlooClient {
     ) -> Result<EdgeRouteListResponse, FlooApiError> {
         let mut path = format!("/v1/apps/{app_id}/edge/routes");
         if let Some(env) = environment {
-            path.push_str(&format!("?environment_name={env}"));
+            path.push_str(&format!("?env={env}"));
         }
         let resp = self.get(&path)?;
         self.handle_response(resp)
     }
 
     pub fn get_edge_policy(&self, app_id: &str, env: &str) -> Result<EdgePolicyData, FlooApiError> {
-        let resp = self.get(&format!("/v1/apps/{app_id}/environments/{env}/edge-policy"))?;
+        let resp = self.get(&format!("/v1/apps/{app_id}/envs/{env}/edge-policy"))?;
         self.handle_response(resp)
     }
 
@@ -584,7 +568,7 @@ impl FlooClient {
         services: &[String],
         skip_migrations: bool,
     ) -> Result<Deploy, FlooApiError> {
-        let mut body = serde_json::json!({"runtime": runtime, "environment": "dev"});
+        let mut body = serde_json::json!({"runtime": runtime, "env": "dev"});
         if let Some(fw) = framework {
             body["framework"] = Value::String(fw.to_string());
         }
@@ -836,7 +820,7 @@ impl FlooClient {
     ) -> Result<ListServicesResponse, FlooApiError> {
         let mut path = format!("/v1/apps/{app_id}/services?page=1&per_page=100");
         if let Some(env) = environment {
-            path.push_str(&format!("&environment={env}"));
+            path.push_str(&format!("&env={env}"));
         }
         let resp = self.get(&path)?;
         self.handle_response(resp)
@@ -977,7 +961,7 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
-    // --- Preview database branches ---
+    // --- Previews ---
 
     pub fn list_previews(
         &self,
@@ -1003,7 +987,7 @@ impl FlooClient {
     ) -> Result<Deploy, FlooApiError> {
         let mut body = serde_json::json!({
             "runtime": request.runtime,
-            "environment": request.environment,
+            "env": request.environment,
             "branch": request.branch,
         });
         if let Some(commit_sha) = request.commit_sha {
@@ -1023,44 +1007,6 @@ impl FlooClient {
         }
         self.handle_response_value(resp)?;
         Ok(())
-    }
-
-    pub fn list_preview_database_branches(
-        &self,
-        app_id: &str,
-        preview_slug: &str,
-    ) -> Result<PreviewDatabaseBranchListResponse, FlooApiError> {
-        let resp = self.get(&format!(
-            "/v1/apps/{app_id}/previews/{preview_slug}/database-branches"
-        ))?;
-        self.handle_response(resp)
-    }
-
-    pub fn get_preview_database_branch(
-        &self,
-        app_id: &str,
-        preview_slug: &str,
-        branch_name: &str,
-    ) -> Result<PreviewDatabaseBranch, FlooApiError> {
-        let resp = self.get(&format!(
-            "/v1/apps/{app_id}/previews/{preview_slug}/database-branches/{branch_name}"
-        ))?;
-        self.handle_response(resp)
-    }
-
-    pub fn reset_preview_database_branch(
-        &self,
-        app_id: &str,
-        preview_slug: &str,
-        branch_name: &str,
-    ) -> Result<PreviewDatabaseBranch, FlooApiError> {
-        let resp = self.post_json(
-            &format!(
-                "/v1/apps/{app_id}/previews/{preview_slug}/database-branches/{branch_name}/reset"
-            ),
-            &serde_json::json!({}),
-        )?;
-        self.handle_response(resp)
     }
 
     pub fn list_preview_managed_resource_branches(
@@ -1186,7 +1132,7 @@ impl FlooClient {
             params.push(("deployment", dep));
         }
         if let Some(env) = environment {
-            params.push(("environment", env));
+            params.push(("env", env));
         }
         if let Some(cursor) = cursor {
             params.push(("cursor", cursor));
@@ -1219,12 +1165,6 @@ impl FlooClient {
 
     pub fn github_setup_poll(&self) -> Result<GitHubSetupPollResponse, FlooApiError> {
         let resp = self.get("/v1/github/setup/poll")?;
-        self.handle_response(resp)
-    }
-
-    #[allow(dead_code)]
-    pub fn github_installation_repos(&self, installation_id: u64) -> Result<Value, FlooApiError> {
-        let resp = self.get(&format!("/v1/github/installations/{installation_id}/repos"))?;
         self.handle_response(resp)
     }
 
@@ -1423,7 +1363,7 @@ impl FlooClient {
     ) -> Result<Value, FlooApiError> {
         let body = serde_json::json!({
             "sql": sql,
-            "environment": environment,
+            "env": environment,
             "limit": limit,
         });
         let resp = self.post_json(&format!("/v1/apps/{app_id}/db/query"), &body)?;
@@ -1438,7 +1378,7 @@ impl FlooClient {
     pub fn db_migrate(&self, app_id: &str, environment: &str) -> Result<Value, FlooApiError> {
         let resp = self.post_json(
             &format!("/v1/apps/{app_id}/db/migrate"),
-            &serde_json::json!({ "environment": environment }),
+            &serde_json::json!({ "env": environment }),
         )?;
         self.handle_response_value(resp)
     }

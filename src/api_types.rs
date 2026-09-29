@@ -453,12 +453,6 @@ pub struct App {
     pub environments: Vec<EnvironmentSummary>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum AppLifecycleAction {
-    Stop,
-    Resume,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListAppsResponse {
     pub apps: Vec<App>,
@@ -801,8 +795,6 @@ pub struct CreateManagedServiceRequest<'a> {
     #[serde(rename = "type")]
     pub service_type: &'a str,
     pub name: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tier: Option<&'a str>,
 }
 
 /// Detail response. Deliberately skips `credentials` — the CLI must never print
@@ -906,12 +898,6 @@ pub struct PreviewDatabaseBranch {
     pub expires_at: Option<String>,
     pub reset_eligible: bool,
     pub reset_blocked_reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PreviewDatabaseBranchListResponse {
-    pub database_branches: Vec<PreviewDatabaseBranch>,
-    pub total: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1024,6 +1010,7 @@ pub struct DeclaredRuntimeService {
 #[derive(Debug, Clone, Serialize)]
 pub struct DeclaredState {
     pub managed_services: Vec<DeclaredManagedService>,
+    #[serde(rename = "env")]
     pub environment: String,
     pub services: Vec<DeclaredRuntimeService>,
 }

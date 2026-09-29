@@ -131,10 +131,7 @@ fn mock_services_single_for_env(server: &mut Server, environment: Option<&str>) 
         Matcher::UrlEncoded("per_page".into(), "100".into()),
     ];
     if let Some(environment) = environment {
-        query.push(Matcher::UrlEncoded(
-            "environment".into(),
-            environment.into(),
-        ));
+        query.push(Matcher::UrlEncoded("env".into(), environment.into()));
     }
     server
         .mock(
@@ -3282,7 +3279,7 @@ fn test_logs_query_json_with_deployment_filter() {
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("limit".into(), "100".into()),
             Matcher::UrlEncoded("deployment".into(), "latest".into()),
-            Matcher::UrlEncoded("environment".into(), "prod".into()),
+            Matcher::UrlEncoded("env".into(), "prod".into()),
         ]))
         .with_status(200)
         .with_header("content-type", "application/json")
@@ -3722,229 +3719,6 @@ fn test_services_list_json_returns_both_app_and_managed_services() {
 }
 
 #[test]
-fn test_db_branches_list_json_returns_preview_context_and_branch_contract() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let _resolve = mock_resolve_app(&mut server);
-    let branch = preview_branch_json("default", "ready", true);
-    let _preview = server
-        .mock(
-            "GET",
-            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde").as_str(),
-        )
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(preview_detail_json(&branch))
-        .create();
-    let _branches = server
-        .mock(
-            "GET",
-            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde/database-branches").as_str(),
-        )
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(format!(r#"{{"database_branches":[{branch}],"total":1}}"#))
-        .create();
-
-    floo()
-        .args([
-            "--json",
-            "db",
-            "branches",
-            "list",
-            "feat-db-abcde",
-            "--app",
-            TEST_APP_NAME,
-        ])
-        .env("HOME", home.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""environment_name":"preview""#))
-        .stdout(predicate::str::contains(r#""source_environment":"dev""#))
-        .stdout(predicate::str::contains(r#""hydration_mode":"clone-dev""#))
-        .stdout(predicate::str::contains(r#""resource_status":"ready""#))
-        .stdout(predicate::str::contains(
-            "app_default_preview_feat_db_abcde",
-        ))
-        .stdout(predicate::str::contains("postgresql://").not())
-        .stdout(predicate::str::contains("password").not());
-}
-
-#[test]
-fn test_db_branches_list_empty_state_names_missing_managed_postgres() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let _resolve = mock_resolve_app(&mut server);
-    let _preview = server
-        .mock(
-            "GET",
-            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde").as_str(),
-        )
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(preview_detail_json(""))
-        .create();
-    let _branches = server
-        .mock(
-            "GET",
-            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde/database-branches").as_str(),
-        )
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(r#"{"database_branches":[],"total":0}"#)
-        .create();
-
-    floo()
-        .args([
-            "db",
-            "branches",
-            "list",
-            "feat-db-abcde",
-            "--app",
-            TEST_APP_NAME,
-        ])
-        .env("HOME", home.path())
-        .assert()
-        .success()
-        .stderr(predicate::str::contains(
-            "This preview has no managed Postgres attachment",
-        ));
-}
-
-#[test]
-fn test_db_branches_show_surfaces_branch_not_found_code() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let _resolve = mock_resolve_app(&mut server);
-    let _branch = server
-        .mock(
-            "GET",
-            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde/database-branches/analytics")
-                .as_str(),
-        )
-        .with_status(404)
-        .with_header("content-type", "application/json")
-        .with_body(
-            r#"{"detail":{"code":"PREVIEW_DATABASE_BRANCH_NOT_FOUND","message":"Preview database branch not found."}}"#,
-        )
-        .create();
-
-    floo()
-        .args([
-            "--json",
-            "db",
-            "branches",
-            "show",
-            "feat-db-abcde",
-            "--name",
-            "analytics",
-            "--app",
-            TEST_APP_NAME,
-        ])
-        .env("HOME", home.path())
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains(
-            "PREVIEW_DATABASE_BRANCH_NOT_FOUND",
-        ));
-}
-
-#[test]
-fn test_db_branches_source_branch_identifier_reports_ambiguous_preview() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let _resolve = mock_resolve_app(&mut server);
-    let branch = preview_branch_json("default", "ready", true);
-    let preview_a = preview_detail_json(&branch);
-    let preview_b = preview_a.replace("feat-db-abcde", "feat-db-f00ba");
-    let _previews = server
-        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/previews").as_str())
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(format!(
-            r#"{{"previews":[{preview_a},{preview_b}],"total":2}}"#
-        ))
-        .create();
-
-    floo()
-        .args([
-            "--json",
-            "db",
-            "branches",
-            "list",
-            "feat/db-branch",
-            "--app",
-            TEST_APP_NAME,
-        ])
-        .env("HOME", home.path())
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains("AMBIGUOUS_PREVIEW_IDENTIFIER"));
-}
-
-#[test]
-fn test_db_branches_reset_refuses_without_confirmation_in_json_mode() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let _resolve = mock_resolve_app(&mut server);
-
-    floo()
-        .args([
-            "--json",
-            "db",
-            "branches",
-            "reset",
-            "feat-db-abcde",
-            "--app",
-            TEST_APP_NAME,
-        ])
-        .env("HOME", home.path())
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains("CONFIRMATION_REQUIRED"))
-        .stdout(predicate::str::contains("dev/prod untouched"))
-        .stdout(predicate::str::contains("--yes"));
-}
-
-#[test]
-fn test_db_branches_reset_with_yes_calls_preview_scoped_endpoint() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let _resolve = mock_resolve_app(&mut server);
-    let _reset = server
-        .mock(
-            "POST",
-            format!(
-                "/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde/database-branches/default/reset"
-            )
-            .as_str(),
-        )
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(preview_branch_json("default", "ready", true))
-        .create();
-
-    floo()
-        .args([
-            "--json",
-            "db",
-            "branches",
-            "reset",
-            "feat-db-abcde",
-            "--app",
-            TEST_APP_NAME,
-            "--yes",
-        ])
-        .env("HOME", home.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""dev_prod_untouched":true"#))
-        .stdout(predicate::str::contains(r#""scope":"preview""#))
-        .stdout(predicate::str::contains(r#""database_branch":{"#))
-        .stdout(predicate::str::contains("postgresql://").not());
-}
-
-#[test]
 fn test_preview_resources_list_json_returns_all_managed_resource_branches() {
     let mut server = Server::new();
     let home = setup_config(&server);
@@ -4075,7 +3849,7 @@ fn test_previews_up_json_sends_preview_deploy_payload_and_returns_single_object(
     let _deploy = server
         .mock("POST", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
         .match_body(Matcher::PartialJson(serde_json::json!({
-            "environment": "preview",
+            "env": "preview",
             "branch": "feat/db-branch",
             "runtime": "nodejs",
             "commit_sha": "abc123",
@@ -4226,7 +4000,7 @@ fn test_previews_logs_reads_latest_preview_deploy_logs() {
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("limit".into(), "100".into()),
             Matcher::UrlEncoded("deployment".into(), "deploy-preview-1".into()),
-            Matcher::UrlEncoded("environment".into(), "preview".into()),
+            Matcher::UrlEncoded("env".into(), "preview".into()),
         ]))
         .with_status(200)
         .with_header("content-type", "application/json")
@@ -4353,7 +4127,7 @@ fn test_services_list_human_renders_em_dash_when_service_has_no_public_url() {
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("page".into(), "1".into()),
             Matcher::UrlEncoded("per_page".into(), "100".into()),
-            Matcher::UrlEncoded("environment".into(), "dev".into()),
+            Matcher::UrlEncoded("env".into(), "dev".into()),
         ]))
         .with_status(200)
         .with_header("content-type", "application/json")
@@ -4409,7 +4183,7 @@ fn test_services_list_empty_when_no_services_of_either_kind() {
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("page".into(), "1".into()),
             Matcher::UrlEncoded("per_page".into(), "100".into()),
-            Matcher::UrlEncoded("environment".into(), "dev".into()),
+            Matcher::UrlEncoded("env".into(), "dev".into()),
         ]))
         .with_status(200)
         .with_header("content-type", "application/json")
@@ -4446,10 +4220,7 @@ fn test_edge_routes_list_json_uses_customer_safe_endpoint() {
             "GET",
             format!("/v1/apps/{TEST_APP_ID}/edge/routes").as_str(),
         )
-        .match_query(Matcher::UrlEncoded(
-            "environment_name".into(),
-            "prod".into(),
-        ))
+        .match_query(Matcher::UrlEncoded("env".into(), "prod".into()))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(edge_routes_json())
@@ -4549,7 +4320,7 @@ fn test_services_show_json_preserves_null_resource_fields() {
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("page".into(), "1".into()),
             Matcher::UrlEncoded("per_page".into(), "100".into()),
-            Matcher::UrlEncoded("environment".into(), "dev".into()),
+            Matcher::UrlEncoded("env".into(), "dev".into()),
         ]))
         .with_status(200)
         .with_header("content-type", "application/json")
@@ -4640,7 +4411,7 @@ fn mock_service_runtime(server: &mut Server, service: &serde_json::Value) -> Moc
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("page".into(), "1".into()),
             Matcher::UrlEncoded("per_page".into(), "100".into()),
-            Matcher::UrlEncoded("environment".into(), "dev".into()),
+            Matcher::UrlEncoded("env".into(), "dev".into()),
         ]))
         .with_status(200)
         .with_header("content-type", "application/json")
@@ -4793,7 +4564,7 @@ fn test_services_show_selects_prod_runtime_plan() {
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("page".into(), "1".into()),
             Matcher::UrlEncoded("per_page".into(), "100".into()),
-            Matcher::UrlEncoded("environment".into(), "prod".into()),
+            Matcher::UrlEncoded("env".into(), "prod".into()),
         ]))
         .with_status(200)
         .with_header("content-type", "application/json")
@@ -4831,7 +4602,7 @@ fn test_services_show_routes_to_managed_service_by_type() {
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("page".into(), "1".into()),
             Matcher::UrlEncoded("per_page".into(), "100".into()),
-            Matcher::UrlEncoded("environment".into(), "dev".into()),
+            Matcher::UrlEncoded("env".into(), "dev".into()),
         ]))
         .with_status(200)
         .with_header("content-type", "application/json")
@@ -4892,7 +4663,7 @@ fn test_services_show_nothing_matches_lists_available() {
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("page".into(), "1".into()),
             Matcher::UrlEncoded("per_page".into(), "100".into()),
-            Matcher::UrlEncoded("environment".into(), "dev".into()),
+            Matcher::UrlEncoded("env".into(), "dev".into()),
         ]))
         .with_status(200)
         .with_header("content-type", "application/json")
@@ -5211,7 +4982,7 @@ fn test_services_show_surfaces_api_errors() {
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("page".into(), "1".into()),
             Matcher::UrlEncoded("per_page".into(), "100".into()),
-            Matcher::UrlEncoded("environment".into(), "dev".into()),
+            Matcher::UrlEncoded("env".into(), "dev".into()),
         ]))
         .with_status(500)
         .with_header("content-type", "application/json")
@@ -5595,7 +5366,7 @@ cron.cleanup = { schedule = '0 * * * *', command = 'echo cleanup', service = 'we
             "POST",
             format!("/v1/apps/{TEST_APP_ID}/deploys").as_str(),
         )
-        .match_body(Matcher::Json(serde_json::json!({"runtime": "nodejs", "framework": "Express", "environment": "dev"})))
+        .match_body(Matcher::Json(serde_json::json!({"runtime": "nodejs", "framework": "Express", "env": "dev"})))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
@@ -5686,7 +5457,7 @@ fn test_redeploy_rebuild_requests_server_resolved_github_head() {
     let _resolve = mock_resolve_app(&mut server);
     let rebuild = server
         .mock("POST", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
-        .match_body(Matcher::Json(serde_json::json!({"runtime": "nodejs", "environment": "dev"})))
+        .match_body(Matcher::Json(serde_json::json!({"runtime": "nodejs", "env": "dev"})))
         .with_status(201)
         .with_header("content-type", "application/json")
         .with_body(
@@ -5714,7 +5485,7 @@ fn test_redeploy_rebuild_requires_runtime_with_service_selectors() {
     let _resolve = mock_resolve_app(&mut server);
     let rebuild = server
         .mock("POST", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
-        .match_body(Matcher::Json(serde_json::json!({"runtime": "nodejs", "environment": "dev", "services": ["web"], "skip_migrations": true})))
+        .match_body(Matcher::Json(serde_json::json!({"runtime": "nodejs", "env": "dev", "services": ["web"], "skip_migrations": true})))
         .with_body(r#"{"id":"deploy-rebuilt","status":"live"}"#)
         .create();
     floo()
@@ -5824,7 +5595,7 @@ fn test_redeploy_restart_human_prints_invalid_contract_rebuild_command() {
 // a 404 carrying any other code. Keyed on status, the path fires regardless.
 
 // Guards the live `--app` resolution path (deploy.rs ~300, migrated by #157):
-// `floo deploy --app <missing>` must surface the friendly app-not-found error +
+// `floo redeploy --app <missing>` must surface the friendly app-not-found error +
 // suggestion even when the server's 404 carries a non-APP_NOT_FOUND code. The
 // `--app` early-return block handles every Some(app) case, so this is the only
 // reachable `--app` not-found path (the unreachable AppSource::Flag branch in
@@ -5909,7 +5680,7 @@ fn test_deploy_config_not_found_keyed_on_status_creates() {
     let _m_deploy = server
         .mock("POST", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
         .match_body(Matcher::Json(
-            serde_json::json!({"runtime": "nodejs", "environment": "dev", "services": ["web"], "skip_migrations": true}),
+            serde_json::json!({"runtime": "nodejs", "env": "dev", "services": ["web"], "skip_migrations": true}),
         ))
         .with_status(200)
         .with_header("content-type", "application/json")
@@ -6796,7 +6567,7 @@ fn preflight_with_plan(plan: &serde_json::Value, flags: &[&str]) -> std::process
     let _m_preflight = server
         .mock("POST", format!("/v1/apps/{TEST_APP_ID}/preflight").as_str())
         .match_body(Matcher::PartialJson(serde_json::json!({
-            "environment": "prod",
+            "env": "prod",
             "managed_services": [],
             "services": [{
                 "name": "web",
@@ -7674,10 +7445,43 @@ fn test_services_migrate_is_rejected_by_clap() {
 
 // ───────────────────────── Database ─────────────────────────
 
+#[test]
+fn test_db_migrate_sends_env_request_parameter() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let migrate = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/db/migrate").as_str(),
+        )
+        .match_body(Matcher::Json(serde_json::json!({"env": "prod"})))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"success":true}"#)
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "db",
+            "migrate",
+            "--app",
+            TEST_APP_NAME,
+            "--env",
+            "prod",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success();
+    migrate.assert();
+}
+
 /// Mock POST /v1/apps/{id}/db/query with a given response body.
 fn mock_db_query(server: &mut Server, body: &str) -> Mock {
     server
         .mock("POST", format!("/v1/apps/{TEST_APP_ID}/db/query").as_str())
+        .match_body(Matcher::PartialJson(serde_json::json!({"env": "dev"})))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(body)
@@ -8203,7 +8007,7 @@ fn test_edge_policy_get_json() {
     let _m = server
         .mock(
             "GET",
-            format!("/v1/apps/{TEST_APP_ID}/environments/prod/edge-policy").as_str(),
+            format!("/v1/apps/{TEST_APP_ID}/envs/prod/edge-policy").as_str(),
         )
         .with_status(200)
         .with_header("content-type", "application/json")
@@ -8237,7 +8041,7 @@ fn test_edge_policy_get_human_renders_rule_table() {
     let _m = server
         .mock(
             "GET",
-            format!("/v1/apps/{TEST_APP_ID}/environments/prod/edge-policy").as_str(),
+            format!("/v1/apps/{TEST_APP_ID}/envs/prod/edge-policy").as_str(),
         )
         .with_status(200)
         .with_header("content-type", "application/json")
@@ -8270,7 +8074,7 @@ fn test_edge_policy_get_not_found_is_a_valid_state() {
     let _m = server
         .mock(
             "GET",
-            format!("/v1/apps/{TEST_APP_ID}/environments/prod/edge-policy").as_str(),
+            format!("/v1/apps/{TEST_APP_ID}/envs/prod/edge-policy").as_str(),
         )
         .with_status(404)
         .with_header("content-type", "application/json")
@@ -8304,7 +8108,7 @@ fn test_edge_policy_check_admitted_by_rule() {
     let _m = server
         .mock(
             "GET",
-            format!("/v1/apps/{TEST_APP_ID}/environments/prod/edge-policy").as_str(),
+            format!("/v1/apps/{TEST_APP_ID}/envs/prod/edge-policy").as_str(),
         )
         .with_status(200)
         .with_header("content-type", "application/json")
@@ -8342,7 +8146,7 @@ fn test_edge_policy_check_matches_bare_ip_rule() {
     let _m = server
         .mock(
             "GET",
-            format!("/v1/apps/{TEST_APP_ID}/environments/prod/edge-policy").as_str(),
+            format!("/v1/apps/{TEST_APP_ID}/envs/prod/edge-policy").as_str(),
         )
         .with_status(200)
         .with_header("content-type", "application/json")
@@ -8378,7 +8182,7 @@ fn test_edge_policy_check_denied_by_default() {
     let _m = server
         .mock(
             "GET",
-            format!("/v1/apps/{TEST_APP_ID}/environments/prod/edge-policy").as_str(),
+            format!("/v1/apps/{TEST_APP_ID}/envs/prod/edge-policy").as_str(),
         )
         .with_status(200)
         .with_header("content-type", "application/json")
@@ -8412,7 +8216,7 @@ fn test_edge_policy_check_ipv6_first_match() {
     let _m = server
         .mock(
             "GET",
-            format!("/v1/apps/{TEST_APP_ID}/environments/prod/edge-policy").as_str(),
+            format!("/v1/apps/{TEST_APP_ID}/envs/prod/edge-policy").as_str(),
         )
         .with_status(200)
         .with_header("content-type", "application/json")
@@ -8448,7 +8252,7 @@ fn test_edge_policy_check_no_policy_admits_all() {
     let _m = server
         .mock(
             "GET",
-            format!("/v1/apps/{TEST_APP_ID}/environments/prod/edge-policy").as_str(),
+            format!("/v1/apps/{TEST_APP_ID}/envs/prod/edge-policy").as_str(),
         )
         .with_status(404)
         .with_header("content-type", "application/json")
@@ -8482,7 +8286,7 @@ fn test_edge_policy_check_disabled_admits_all() {
     let _m = server
         .mock(
             "GET",
-            format!("/v1/apps/{TEST_APP_ID}/environments/prod/edge-policy").as_str(),
+            format!("/v1/apps/{TEST_APP_ID}/envs/prod/edge-policy").as_str(),
         )
         .with_status(200)
         .with_header("content-type", "application/json")
@@ -9078,7 +8882,7 @@ fn deploy_status_accepts_absent_diagnostics() {
 #[test]
 fn failed_deploy_watch_renders_diagnostics_before_exiting() {
     let result = run_deploy_read(
-        &["deploy", "watch"],
+        &["deploys", "watch"],
         serde_json::json!({
             "id":"deploy-1", "status":"failed", "diagnostics": diagnostic_fixture()
         }),
@@ -9092,7 +8896,7 @@ fn failed_deploy_watch_renders_diagnostics_before_exiting() {
 #[test]
 fn deploy_watch_json_done_includes_diagnostics() {
     let result = run_deploy_read(
-        &["--json", "deploy", "watch"],
+        &["--json", "deploys", "watch"],
         serde_json::json!({
             "id":"deploy-1", "status":"live", "diagnostics": diagnostic_fixture()
         }),
