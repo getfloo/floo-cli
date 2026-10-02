@@ -941,6 +941,7 @@ pub fn deploy(
         detection.framework.as_deref(),
         &services_filter,
         skip_migrations,
+        false,
     ) {
         Ok(d) => {
             spinner.finish();
@@ -1270,7 +1271,14 @@ fn deploy_rebuild(
     }
 
     let spinner = output::Spinner::new("Rebuilding...");
-    let result = client.create_deploy(app_id, runtime, None, services_filter, skip_migrations);
+    let result = client.create_deploy(
+        app_id,
+        runtime,
+        None,
+        services_filter,
+        skip_migrations,
+        true,
+    );
     let mut deploy_data = match result {
         Ok(d) => {
             spinner.finish();
