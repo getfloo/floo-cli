@@ -1,6 +1,7 @@
 use std::process;
 
 use crate::confirm::{confirm_tier2, ConfirmOutcome, RiskMetadata, Tier};
+use crate::deploy_status;
 use crate::errors::ErrorCode;
 use crate::output;
 
@@ -67,6 +68,17 @@ pub fn rollback(app_name: &str, deploy_id: &str, yes: bool) {
     };
 
     spinner.finish();
+
+    // The API returns the rollback deploy while the worker is still running it.
+    let result = super::deploy::poll_deploy(&client, app_id, &result);
+    if deploy_status::is_failure(result.status.as_deref().unwrap_or("unknown")) {
+        output::error(
+            &format!("Rollback of {name} to deploy {deploy_id} failed."),
+            &ErrorCode::DeployFailed,
+            Some("Run `floo logs` for details."),
+        );
+        process::exit(1);
+    }
 
     let risk: RiskMetadata = Tier::Two.into();
     output::success(
