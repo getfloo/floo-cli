@@ -1149,6 +1149,7 @@ fn run_initial_deploy(
         detection.framework.as_deref(),
         &[],
         false, // skip_migrations — initial deploy from `floo apps github connect` always runs migrations
+        false, // rebuild — a first deploy has no image to reuse
     ) {
         Ok(d) => {
             spinner.finish();

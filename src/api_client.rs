@@ -567,6 +567,7 @@ impl FlooClient {
         framework: Option<&str>,
         services: &[String],
         skip_migrations: bool,
+        rebuild: bool,
     ) -> Result<Deploy, FlooApiError> {
         let mut body = serde_json::json!({"runtime": runtime, "env": "dev"});
         if let Some(fw) = framework {
@@ -577,6 +578,11 @@ impl FlooClient {
         }
         if skip_migrations {
             body["skip_migrations"] = Value::Bool(true);
+        }
+        // Without this the server reuses an image whose source and build args
+        // are unchanged, so `--rebuild` would not build anything.
+        if rebuild {
+            body["rebuild"] = Value::Bool(true);
         }
         let resp = self.post_json(&format!("/v1/apps/{app_id}/deploys"), &body)?;
         self.handle_response(resp)

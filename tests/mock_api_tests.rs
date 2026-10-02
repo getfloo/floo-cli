@@ -5459,7 +5459,7 @@ fn test_redeploy_rebuild_requests_server_resolved_github_head() {
     let _resolve = mock_resolve_app(&mut server);
     let rebuild = server
         .mock("POST", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
-        .match_body(Matcher::Json(serde_json::json!({"runtime": "nodejs", "env": "dev"})))
+        .match_body(Matcher::Json(serde_json::json!({"runtime": "nodejs", "env": "dev", "rebuild": true})))
         .with_status(201)
         .with_header("content-type", "application/json")
         .with_body(
@@ -5487,7 +5487,7 @@ fn test_redeploy_rebuild_requires_runtime_with_service_selectors() {
     let _resolve = mock_resolve_app(&mut server);
     let rebuild = server
         .mock("POST", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
-        .match_body(Matcher::Json(serde_json::json!({"runtime": "nodejs", "env": "dev", "services": ["web"], "skip_migrations": true})))
+        .match_body(Matcher::Json(serde_json::json!({"runtime": "nodejs", "env": "dev", "services": ["web"], "skip_migrations": true, "rebuild": true})))
         .with_body(r#"{"id":"deploy-rebuilt","status":"live"}"#)
         .create();
     floo()
