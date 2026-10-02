@@ -1,0 +1,16 @@
+{
+  "name": "floo",
+  "owner": {
+    "name": "floo"
+  },
+  "metadata": {
+    "description": "Deploy and operate apps on floo from your coding agent: create apps, deploy, read logs, promote and roll back."
+  },
+  "plugins": [
+    {
+      "name": "floo",
+      "source": "plugin",
+      "description": "Deploy and operate apps on floo from your coding agent: create apps, deploy, read logs, promote and roll back."
+    }
+  ]
+}

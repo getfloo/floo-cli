@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "floo": {
+      "type": "streamable-http",
+      "url": "https://api.getfloo.com/mcp"
+    }
+  }
+}
