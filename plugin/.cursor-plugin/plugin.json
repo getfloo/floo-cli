@@ -1,11 +1,12 @@
 {
   "name": "floo",
-  "version": "0.3.0",
   "description": "Deploy and operate apps on floo from your coding agent: create apps, deploy, read logs, promote and roll back.",
+  "version": "0.3.0",
   "author": {
     "name": "floo",
-    "url": "https://github.com/getfloo"
+    "url": "https://getfloo.com"
   },
+  "homepage": "https://getfloo.com",
   "repository": "https://github.com/getfloo/floo-cli",
   "license": "MIT",
   "keywords": [
@@ -15,6 +16,7 @@
     "cloud",
     "mcp"
   ],
-  "skills": "./skills/",
-  "mcpServers": "./.mcp.json"
+  "logo": "assets/logo.svg",
+  "skills": "skills/",
+  "mcpServers": "mcp.json"
 }
