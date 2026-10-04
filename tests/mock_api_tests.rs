@@ -8730,6 +8730,62 @@ fn test_github_connect_code_selects_the_repository_owner() {
 }
 
 #[test]
+fn test_github_connect_code_surfaces_settings_url_when_repo_access_is_missing() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let begin = server
+        .mock("POST", "/v1/github/setup/begin")
+        .expect(0)
+        .create();
+    let confirm = server
+        .mock("POST", "/v1/github/setup/confirm")
+        .match_body(Matcher::Json(serde_json::json!({"code": "K7MQ-3XVD"})))
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"status":"ready","installation_id":777}"#)
+        .create();
+    let connect = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/github/connection").as_str(),
+        )
+        .with_status(403)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"detail":{"code":"GITHUB_REPO_NOT_IN_INSTALLATION","message":"Repository access is missing.","settings_url":"https://github.com/settings/installations/777"}}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "apps",
+            "github",
+            "connect",
+            "myorg/myrepo",
+            "--app",
+            TEST_APP_NAME,
+            "--no-deploy",
+            "--no-browser",
+            "--code",
+            "K7MQ-3XVD",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            r#""code":"GITHUB_REPO_NOT_IN_INSTALLATION""#,
+        ))
+        .stdout(predicate::str::contains(
+            "https://github.com/settings/installations/777",
+        ))
+        .stdout(predicate::str::contains("Repository access"));
+    confirm.assert();
+    connect.assert();
+    begin.assert();
+}
+
+#[test]
 fn test_github_connect_poll_code_suggestion_preserves_the_command() {
     let mut server = Server::new();
     let home = setup_config(&server);

@@ -333,7 +333,7 @@ pub fn connect(
     // Phase 2: Connect to GitHub (handles installation + repo access)
     let result = match client.github_connect(&app_id, repo, branch, skip_env_check) {
         Ok(r) => r,
-        Err(e) if e.code == "GITHUB_APP_NOT_INSTALLED" && code.is_none() => {
+        Err(e) if e.code == "GITHUB_APP_NOT_INSTALLED" => {
             let install_url = e
                 .extra
                 .as_ref()
@@ -401,7 +401,7 @@ pub fn connect(
                 ),
             }
         }
-        Err(e) if e.code == "GITHUB_REPO_NOT_IN_INSTALLATION" && code.is_none() => {
+        Err(e) if e.code == "GITHUB_REPO_NOT_IN_INSTALLATION" => {
             let install_url = e
                 .extra
                 .as_ref()
