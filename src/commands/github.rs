@@ -461,10 +461,12 @@ pub fn connect(
                 );
             }
 
-            if let Err(failure) =
-                run_installation_flow(&client, install_url, &rerun_command, Some(repo), None)
-            {
-                abort_connect(&client, created_app.as_ref(), failure);
+            if code.is_none() {
+                if let Err(failure) =
+                    run_installation_flow(&client, install_url, &rerun_command, Some(repo), None)
+                {
+                    abort_connect(&client, created_app.as_ref(), failure);
+                }
             }
             if let Err(failure) = poll_repo_access(&client, repo, url, &rerun_command) {
                 abort_connect(&client, created_app.as_ref(), failure);
