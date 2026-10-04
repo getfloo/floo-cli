@@ -1238,6 +1238,7 @@ pub struct ServiceGitHubInfo {
 pub enum GitHubSetupStatus {
     None,
     AwaitingInstallation,
+    AwaitingCode,
     AwaitingOrgApproval,
     /// The authorizing GitHub identity can reach more than one floo
     /// installation, so the API refuses to guess which one the caller meant

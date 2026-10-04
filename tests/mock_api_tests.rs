@@ -8438,7 +8438,7 @@ fn test_github_setup_mints_a_link_regardless_of_install_state() {
         .success()
         .stdout(predicate::str::contains("setup_token=tok-123"))
         .stdout(predicate::str::contains(
-            r#""next":"floo apps github connect <owner>/<repo>""#,
+            r#""next":"floo apps github setup --no-browser --code <CODE>""#,
         ));
 
     begin.assert();
@@ -8475,6 +8475,281 @@ fn test_github_setup_no_browser_prints_link_without_polling() {
         .stderr(predicate::str::contains("setup_token=tok-456"));
 
     begin.assert();
+    poll.assert();
+}
+
+#[test]
+fn test_github_setup_code_confirms_without_replacing_session() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let begin = server
+        .mock("POST", "/v1/github/setup/begin")
+        .expect(0)
+        .create();
+    let confirm = server
+        .mock("POST", "/v1/github/setup/confirm")
+        .match_body(Matcher::Json(serde_json::json!({"code": "k7mq3xvd"})))
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"status":"ready","installation_id":777}"#)
+        .create();
+    let poll = server
+        .mock("GET", "/v1/github/setup/poll")
+        .expect(0)
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "apps",
+            "github",
+            "setup",
+            "--code",
+            "  k7mq3xvd  ",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""linked":true"#))
+        .stdout(predicate::str::contains("k7mq3xvd").not())
+        .stderr(predicate::str::contains("k7mq3xvd").not());
+    confirm.assert();
+    begin.assert();
+    poll.assert();
+}
+
+#[test]
+fn test_github_setup_poll_requires_code_in_json_mode() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let confirm = server
+        .mock("POST", "/v1/github/setup/confirm")
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"status":"awaiting_installation","installation_id":null}"#)
+        .create();
+    let poll = server
+        .mock("GET", "/v1/github/setup/poll")
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"status":"awaiting_code","installation_id":null,"candidates":[]}"#)
+        .create();
+
+    floo()
+        .args(["--json", "apps", "github", "setup", "--code", "K7MQ-3XVD"])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            r#""code":"GITHUB_SETUP_CODE_REQUIRED""#,
+        ))
+        .stdout(predicate::str::contains(
+            "GitHub authorization is complete; floo needs the code shown in the browser to finish.",
+        ))
+        .stdout(predicate::str::contains(
+            "floo apps github setup --no-browser --code <CODE>",
+        ));
+    confirm.assert();
+    poll.assert();
+}
+
+#[cfg(unix)]
+#[test]
+fn test_github_setup_prompts_again_after_an_invalid_code() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let initial = server
+        .mock("POST", "/v1/github/setup/confirm")
+        .match_body(Matcher::Json(serde_json::json!({"code": "INITIAL"})))
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"status":"awaiting_installation","installation_id":null}"#)
+        .create();
+    let poll = server
+        .mock("GET", "/v1/github/setup/poll")
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"status":"awaiting_code","installation_id":null,"candidates":[]}"#)
+        .create();
+    let invalid = server
+        .mock("POST", "/v1/github/setup/confirm")
+        .match_body(Matcher::Json(serde_json::json!({"code": "BAD-CODE"})))
+        .with_status(403)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"detail":{"code":"GITHUB_SETUP_CODE_INVALID","message":"Invalid setup code."}}"#,
+        )
+        .create();
+    let ready = server
+        .mock("POST", "/v1/github/setup/confirm")
+        .match_body(Matcher::Json(serde_json::json!({"code": "k7mq-3xvd"})))
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"status":"ready","installation_id":777}"#)
+        .create();
+    let (mut master, slave) = support::stdout_terminal();
+    std::io::Write::write_all(&mut master, b"BAD-CODE\n  k7mq-3xvd  \n")
+        .expect("write terminal input");
+
+    let result = std::process::Command::new(assert_cmd::cargo::cargo_bin!("floo-local"))
+        .args(["apps", "github", "setup", "--code", "INITIAL"])
+        .env("HOME", home.path())
+        .stdin(slave)
+        .output()
+        .expect("run setup");
+    let stderr = String::from_utf8(result.stderr).expect("UTF-8 output");
+    assert!(result.status.success(), "{stderr}");
+    assert!(stderr.contains("GitHub authorization complete. Enter the code shown in your browser."));
+    assert!(stderr.contains("That GitHub setup code is invalid."));
+    assert!(!stderr.contains("BAD-CODE"));
+    assert!(!stderr.contains("k7mq-3xvd"));
+    initial.assert();
+    poll.assert();
+    invalid.assert();
+    ready.assert();
+}
+
+#[test]
+fn test_github_setup_code_invalid_is_reported_without_echoing_code() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let confirm = server
+        .mock("POST", "/v1/github/setup/confirm")
+        .with_status(403)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"detail":{"code":"GITHUB_SETUP_CODE_INVALID","message":"Invalid setup code."}}"#,
+        )
+        .create();
+
+    floo()
+        .args(["--json", "apps", "github", "setup", "--code", "BAD-CODE"])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            r#""code":"GITHUB_SETUP_CODE_INVALID""#,
+        ))
+        .stdout(predicate::str::contains("BAD-CODE").not())
+        .stderr(predicate::str::contains("BAD-CODE").not());
+    confirm.assert();
+}
+
+#[test]
+fn test_github_setup_locked_code_requires_restart() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let confirm = server.mock("POST", "/v1/github/setup/confirm")
+        .with_status(403).with_header("content-type", "application/json")
+        .with_body(r#"{"detail":{"code":"GITHUB_SETUP_CODE_LOCKED","message":"Setup session is locked."}}"#).create();
+
+    floo()
+        .args(["--json", "apps", "github", "setup", "--code", "BAD-CODE"])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            r#""code":"GITHUB_SETUP_CODE_LOCKED""#,
+        ))
+        .stdout(predicate::str::contains(
+            "Restart setup: floo apps github setup --no-browser",
+        ));
+    confirm.assert();
+}
+
+#[test]
+fn test_github_setup_code_without_pending_session_requires_fresh_setup() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let confirm = server.mock("POST", "/v1/github/setup/confirm")
+        .with_status(400).with_header("content-type", "application/json")
+        .with_body(r#"{"detail":{"code":"GITHUB_SETUP_NOT_AWAITING_CODE","message":"No code is pending."}}"#).create();
+
+    floo()
+        .args(["--json", "apps", "github", "setup", "--code", "K7MQ-3XVD"])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            r#""code":"GITHUB_SETUP_NOT_AWAITING_CODE""#,
+        ))
+        .stdout(predicate::str::contains(
+            "Re-run without --code to start setup again: floo apps github setup --no-browser",
+        ));
+    confirm.assert();
+}
+
+#[test]
+fn test_github_connect_code_selects_the_repository_owner() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let begin = server
+        .mock("POST", "/v1/github/setup/begin")
+        .expect(0)
+        .create();
+    let confirm = server.mock("POST", "/v1/github/setup/confirm")
+        .match_body(Matcher::Json(serde_json::json!({"code": "K7MQ-3XVD"})))
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"status":"awaiting_selection","installation_id":null,"candidates":[{"installation_id":111,"owner_login":"elsewhere"},{"installation_id":777,"owner_login":"MyOrg"}]}"#).create();
+    let select = server
+        .mock("POST", "/v1/github/setup/select")
+        .match_body(Matcher::Json(serde_json::json!({"installation_id": 777})))
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"status":"ready","installation_id":777}"#)
+        .create();
+    let poll = server
+        .mock("GET", "/v1/github/setup/poll")
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"status":"ready","installation_id":777}"#)
+        .create();
+    let connect = server.mock("POST", format!("/v1/apps/{TEST_APP_ID}/github/connection").as_str())
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"app_id":"app-uuid-1234","name":"my-app","repo_full_name":"myorg/myrepo","default_branch":"main","installation_id":777}"#).create();
+
+    floo()
+        .args([
+            "--json",
+            "apps",
+            "github",
+            "connect",
+            "myorg/myrepo",
+            "--app",
+            TEST_APP_NAME,
+            "--branch",
+            "release",
+            "--skip-env-check",
+            "--no-deploy",
+            "--no-browser",
+            "--code",
+            "K7MQ-3XVD",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""connected":true"#));
+    confirm.assert();
+    select.assert();
+    poll.assert();
+    connect.assert();
+    begin.assert();
+}
+
+#[test]
+fn test_github_connect_poll_code_suggestion_preserves_the_command() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let confirm = server
+        .mock("POST", "/v1/github/setup/confirm")
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"status":"awaiting_org_approval","installation_id":null}"#)
+        .create();
+    let poll = server
+        .mock("GET", "/v1/github/setup/poll")
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"status":"awaiting_code","installation_id":null,"candidates":[]}"#)
+        .create();
+
+    floo().args(["apps", "github", "connect", "myorg/myrepo", "--app", TEST_APP_NAME,
+        "--branch", "release", "--skip-env-check", "--no-deploy", "--no-browser", "--code", "K7MQ-3XVD"])
+        .env("HOME", home.path()).assert().failure()
+        .stderr(predicate::str::contains("GitHub authorization is complete; floo needs the code shown in the browser to finish."))
+        .stderr(predicate::str::contains("floo apps github connect myorg/myrepo --app my-app --branch release --skip-env-check --no-deploy --no-browser --code <CODE>"));
+    confirm.assert();
     poll.assert();
 }
 

@@ -1174,6 +1174,20 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    /// Confirm the browser's one-time code without replacing the setup session.
+    pub fn github_setup_confirm(
+        &self,
+        code: &str,
+        installation_id: Option<i64>,
+    ) -> Result<GitHubSetupPollResponse, FlooApiError> {
+        let mut body = serde_json::json!({ "code": code });
+        if let Some(id) = installation_id {
+            body["installation_id"] = serde_json::json!(id);
+        }
+        let resp = self.post_json("/v1/github/setup/confirm", &body)?;
+        self.handle_response(resp)
+    }
+
     /// Bind one installation from the candidate list the poll returned.
     ///
     /// The API refuses an installation absent from that list, so the caller

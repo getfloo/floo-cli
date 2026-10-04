@@ -998,7 +998,9 @@ pub enum GitHubCommands {
     /// Requires the floo GitHub App installed on the account that OWNS the repo,
     /// with that repo selected. GitHub scopes an installation to one account, so
     /// installing on an organization grants nothing for a personal-account repo.
+    /// After authorization, enter the browser's code or re-run with --code.
     /// https://getfloo.com/docs/cli/github#granting-the-floo-github-app-access-to-a-repository
+    #[command(after_help = "Example:\n  floo apps github connect myorg/myrepo --code <CODE>")]
     Connect {
         /// GitHub repo (owner/repo).
         repo: String,
@@ -1024,6 +1026,10 @@ pub enum GitHubCommands {
         /// to install on, the URL, the repo to select, and the command to re-run.
         #[arg(long)]
         no_browser: bool,
+
+        /// Confirm the code shown after GitHub authorization, without starting setup again.
+        #[arg(long, value_name = "CODE")]
+        code: Option<String>,
     },
 
     /// Disconnect a GitHub repo from an app.
@@ -1049,10 +1055,17 @@ pub enum GitHubCommands {
     ///
     /// Run this again for a fresh authorization link if setup expired or the
     /// App was installed directly on GitHub. Select the intended floo org first.
+    /// After authorization, enter the browser's code or re-run with --code
+    /// to finish binding the installation without replacing the pending session.
+    #[command(after_help = "Example:\n  floo apps github setup --code <CODE>")]
     Setup {
         /// Never open a browser (for agents/CI). Prints the link instead.
         #[arg(long)]
         no_browser: bool,
+
+        /// Confirm the code shown after GitHub authorization, without starting setup again.
+        #[arg(long, value_name = "CODE")]
+        code: Option<String>,
     },
 }
 
@@ -2437,6 +2450,7 @@ pub fn run() {
                     skip_env_check,
                     no_deploy,
                     no_browser,
+                    code,
                 } => commands::github::connect(
                     &repo,
                     app.as_deref(),
@@ -2444,10 +2458,13 @@ pub fn run() {
                     skip_env_check,
                     no_deploy,
                     no_browser,
+                    code.as_deref(),
                 ),
                 GitHubCommands::Disconnect { app } => commands::github::disconnect(app.as_deref()),
                 GitHubCommands::Status { app } => commands::github::status(app.as_deref()),
-                GitHubCommands::Setup { no_browser } => commands::github::setup(no_browser),
+                GitHubCommands::Setup { no_browser, code } => {
+                    commands::github::setup(no_browser, code.as_deref())
+                }
             },
             AppsCommands::Password { app_name } => commands::apps::show_password(&app_name),
             AppsCommands::Invite { email, app, role } => {

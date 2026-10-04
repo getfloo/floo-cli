@@ -2,7 +2,7 @@ use std::path::Path;
 use std::process;
 use std::time::{Duration, Instant};
 
-use crate::api_types::{GitHubInstallationCandidate, GitHubSetupStatus};
+use crate::api_types::{GitHubInstallationCandidate, GitHubSetupPollResponse, GitHubSetupStatus};
 use crate::deploy_status::{self, Terminal};
 use crate::detection::detect;
 use crate::errors::{ErrorCode, FlooApiError};
@@ -51,6 +51,16 @@ impl ConnectFailure {
     fn from_api(e: &FlooApiError, suggestion: Option<String>) -> Self {
         Self::new(e.message.clone(), ErrorCode::from_api(&e.code), suggestion)
     }
+
+    fn code_required(rerun_command: &str) -> Self {
+        Self::new(
+            "GitHub authorization is complete; floo needs the code shown in the browser to finish.",
+            ErrorCode::from_api("GITHUB_SETUP_CODE_REQUIRED"),
+            Some(format!(
+                "Ask the person who authorized on GitHub for the code, then re-run: {rerun_command} --code <CODE>"
+            )),
+        )
+    }
 }
 
 /// Where a human grants the floo GitHub App access to one repository.
@@ -84,7 +94,7 @@ enum GrantAccessPage {
 /// nothing said that installing elsewhere grants nothing here.
 /// Installation and linking to the floo org are both required: the setup
 /// link handles both; during interactive installation the running command
-/// completes the link when GitHub reports the install.
+/// completes the link after the person enters the browser's code.
 fn grant_access_instructions(
     repo: &str,
     owner: &str,
@@ -109,7 +119,7 @@ fn grant_access_instructions(
     let mut actions = vec![format!("Open: {grant_url}")];
     if matches!(page, GrantAccessPage::Setup) {
         actions.push(
-            "Authorize floo when GitHub asks. This ties the installation to your floo org; floo then sends you to GitHub's install page."
+            "Authorize floo when GitHub asks, then follow the browser's installation steps."
                 .to_string(),
         );
     }
@@ -123,11 +133,15 @@ fn grant_access_instructions(
     actions.push("Save / Install.".to_string());
     if matches!(page, GrantAccessPage::InstallWhileWaiting) {
         actions.push(
-            "Leave this command running: it links the installation to your floo org as soon as GitHub reports the install."
+            "Leave this command running and enter the code shown in your browser when prompted to link the installation to your floo org."
                 .to_string(),
         );
         actions.push(format!(
-            "If this command has timed out, re-run: {rerun_command}"
+            "If this command has stopped and you have a code, re-run: {rerun_command} --code <CODE>"
+        ));
+    } else if matches!(page, GrantAccessPage::Setup) {
+        actions.push(format!(
+            "Ask the person who authorized on GitHub for the code shown in the browser, then re-run: {rerun_command} --code <CODE>"
         ));
     } else {
         actions.push(format!("Re-run: {rerun_command}"));
@@ -194,6 +208,7 @@ fn abort_connect(
     process::exit(1);
 }
 
+/// Connect a repository, confirming any supplied setup code before creating an app.
 pub fn connect(
     repo: &str,
     app: Option<&str>,
@@ -201,6 +216,7 @@ pub fn connect(
     skip_env_check: bool,
     no_deploy: bool,
     no_browser: bool,
+    code: Option<&str>,
 ) {
     super::require_auth();
     let client = super::init_client(None);
@@ -209,6 +225,18 @@ pub fn connect(
     let no_browser = no_browser || output::is_json_mode();
     let rerun_command =
         connect_rerun_command(repo, app, branch, skip_env_check, no_deploy, no_browser);
+
+    if let Some(code) = code {
+        if let Err(failure) = run_installation_flow(
+            &client,
+            DEFAULT_INSTALL_URL,
+            &rerun_command,
+            Some(repo),
+            Some(code),
+        ) {
+            abort_connect(&client, None, failure);
+        }
+    }
 
     let cwd = super::read_cwd_or_exit();
 
@@ -305,7 +333,7 @@ pub fn connect(
     // Phase 2: Connect to GitHub (handles installation + repo access)
     let result = match client.github_connect(&app_id, repo, branch, skip_env_check) {
         Ok(r) => r,
-        Err(e) if e.code == "GITHUB_APP_NOT_INSTALLED" => {
+        Err(e) if e.code == "GITHUB_APP_NOT_INSTALLED" && code.is_none() => {
             let install_url = e
                 .extra
                 .as_ref()
@@ -359,7 +387,7 @@ pub fn connect(
             }
 
             if let Err(failure) =
-                run_installation_flow(&client, install_url, &rerun_command, Some(repo))
+                run_installation_flow(&client, install_url, &rerun_command, Some(repo), None)
             {
                 abort_connect(&client, created_app.as_ref(), failure);
             }
@@ -373,7 +401,7 @@ pub fn connect(
                 ),
             }
         }
-        Err(e) if e.code == "GITHUB_REPO_NOT_IN_INSTALLATION" => {
+        Err(e) if e.code == "GITHUB_REPO_NOT_IN_INSTALLATION" && code.is_none() => {
             let install_url = e
                 .extra
                 .as_ref()
@@ -434,7 +462,7 @@ pub fn connect(
             }
 
             if let Err(failure) =
-                run_installation_flow(&client, install_url, &rerun_command, Some(repo))
+                run_installation_flow(&client, install_url, &rerun_command, Some(repo), None)
             {
                 abort_connect(&client, created_app.as_ref(), failure);
             }
@@ -582,22 +610,28 @@ pub fn disconnect(app: Option<&str>) {
     );
 }
 
-/// Mint a fresh GitHub App setup link regardless of install state.
+/// Start GitHub setup or confirm its browser code without replacing the session.
 ///
-/// `connect` mints one only on the `GITHUB_APP_NOT_INSTALLED` and
-/// `GITHUB_REPO_NOT_IN_INSTALLATION` branches. Once the App IS installed but
-/// floo holds no binding for the org, every connect returns
-/// `GITHUB_INSTALLATION_NOT_AUTHORIZED` and nothing re-mints the handshake —
-/// the dead end in getfloo/floo#2189, whose only exit was uninstalling the App
-/// from the GitHub org. This command is that exit.
-pub fn setup(no_browser: bool) {
+/// `connect` without `--code` mints a setup link only on the
+/// `GITHUB_APP_NOT_INSTALLED` and `GITHUB_REPO_NOT_IN_INSTALLATION` branches.
+/// Once the App IS installed but floo holds no binding for the org, connect
+/// without `--code` returns `GITHUB_INSTALLATION_NOT_AUTHORIZED` and nothing
+/// re-mints the handshake — the dead end in getfloo/floo#2189, whose only exit
+/// was uninstalling the App from the GitHub org. This command is that exit.
+/// With `--code`, it confirms the pending browser code instead of minting a fresh link.
+pub fn setup(no_browser: bool, code: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);
 
     // In JSON mode, never open a browser — agents can't use one.
     let no_browser = no_browser || output::is_json_mode();
+    let rerun_command = if no_browser {
+        "floo apps github setup --no-browser"
+    } else {
+        "floo apps github setup"
+    };
 
-    if no_browser {
+    if no_browser && code.is_none() {
         // Minted here only on this branch: run_installation_flow begins its own
         // session, so hoisting this above the `if` would burn two setup tokens
         // per interactive run and leave the first orphaned in Redis.
@@ -614,11 +648,13 @@ pub fn setup(no_browser: bool) {
         output::success(
             &format!(
                 "Open this link to link the floo GitHub App to your org:\n  {setup_url}\n\n\
-                 Then run: floo apps github connect <owner>/<repo>"
+                 After authorizing, ask the person for the code shown in the browser, then run: \
+                 {rerun_command} --code <CODE>\n\n\
+                 Once linked, run: floo apps github connect <owner>/<repo>"
             ),
             Some(serde_json::json!({
                 "setup_url": setup_url,
-                "next": "floo apps github connect <owner>/<repo>",
+                "next": format!("{rerun_command} --code <CODE>"),
             })),
         );
         return;
@@ -627,7 +663,7 @@ pub fn setup(no_browser: bool) {
     // `setup` creates no app, so a failure here has nothing to undo — but it
     // must still abort. Falling through would report a link that never landed.
     if let Err(failure) =
-        run_installation_flow(&client, DEFAULT_INSTALL_URL, "floo apps github setup", None)
+        run_installation_flow(&client, DEFAULT_INSTALL_URL, rerun_command, None, code)
     {
         abort_connect(&client, None, failure);
     }
@@ -866,18 +902,21 @@ fn run_installation_flow(
     install_url: &str,
     rerun_command: &str,
     repo: Option<&str>,
+    code: Option<&str>,
 ) -> Result<(), ConnectFailure> {
-    // Begin the setup session (stores pending state in Redis)
-    let setup_url = begin_setup(client, install_url)?;
-
-    // Open browser for installation
-    if !output::is_json_mode() {
-        output::info("Opening browser to install...", None);
-    }
-    if let Err(e) = open::that(&setup_url) {
-        output::warn(&format!("Could not open browser: {e}"));
-        output::warn(&format!("Open this URL manually: {setup_url}"));
-    }
+    let mut pending_response = if let Some(code) = code {
+        Some(confirm_setup(client, Some(code), rerun_command)?)
+    } else {
+        let setup_url = begin_setup(client, install_url)?;
+        if !output::is_json_mode() {
+            output::info("Opening browser to install...", None);
+        }
+        if let Err(e) = open::that(&setup_url) {
+            output::warn(&format!("Could not open browser: {e}"));
+            output::warn(&format!("Open this URL manually: {setup_url}"));
+        }
+        None
+    };
 
     let mut spinner = output::Spinner::new("Waiting for GitHub installation...");
     let start = Instant::now();
@@ -885,19 +924,29 @@ fn run_installation_flow(
     let mut installation_notice_shown = false;
 
     loop {
-        std::thread::sleep(INSTALLATION_POLL_INTERVAL);
+        let response = if let Some(resp) = pending_response.take() {
+            Ok(resp)
+        } else {
+            std::thread::sleep(INSTALLATION_POLL_INTERVAL);
+            if start.elapsed() > GITHUB_WAIT_TIMEOUT {
+                spinner.finish();
+                return Err(ConnectFailure::new(
+                    "Timed out waiting for GitHub App installation.",
+                    ErrorCode::Other("SETUP_TIMEOUT".into()),
+                    Some(setup_timeout_suggestion(rerun_command)),
+                ));
+            }
+            client.github_setup_poll()
+        };
 
-        if start.elapsed() > GITHUB_WAIT_TIMEOUT {
-            spinner.finish();
-            return Err(ConnectFailure::new(
-                "Timed out waiting for GitHub App installation.",
-                ErrorCode::Other("SETUP_TIMEOUT".into()),
-                Some(setup_timeout_suggestion(rerun_command)),
-            ));
-        }
-
-        match client.github_setup_poll() {
+        match response {
             Ok(resp) => match resp.status {
+                GitHubSetupStatus::AwaitingCode => {
+                    spinner.finish();
+                    let confirmed = confirm_setup(client, None, rerun_command)?;
+                    spinner = output::Spinner::new(setup_spinner_message(&confirmed.status));
+                    pending_response = Some(confirmed);
+                }
                 GitHubSetupStatus::Ready => {
                     spinner.finish();
                     if resp.installation_id.is_none() {
@@ -981,6 +1030,50 @@ fn run_installation_flow(
     }
 }
 
+/// Relay a trimmed code, retrying invalid attempts only when prompting a person.
+fn confirm_setup(
+    client: &crate::api_client::FlooClient,
+    code: Option<&str>,
+    rerun_command: &str,
+) -> Result<GitHubSetupPollResponse, ConnectFailure> {
+    if code.is_none() {
+        if !output::is_interactive() {
+            return Err(ConnectFailure::code_required(rerun_command));
+        }
+        output::info(
+            "GitHub authorization complete. Enter the code shown in your browser.",
+            None,
+        );
+    }
+    loop {
+        let mut input = String::new();
+        if code.is_none() {
+            let read = std::io::stdin()
+                .read_line(&mut input)
+                .map_err(|_| ConnectFailure::code_required(rerun_command))?;
+            if read == 0 {
+                return Err(ConnectFailure::code_required(rerun_command));
+            }
+        }
+        match client.github_setup_confirm(code.unwrap_or(&input).trim(), None) {
+            Ok(resp) => return Ok(resp),
+            Err(e) if e.code == "GITHUB_SETUP_CODE_INVALID" && code.is_none() => {
+                output::warn("That GitHub setup code is invalid. Enter the code shown in your browser again.");
+            }
+            Err(e) => {
+                let suggestion = match e.code.as_str() {
+                    "GITHUB_SETUP_CODE_LOCKED" => Some(format!("Restart setup: {rerun_command}")),
+                    "GITHUB_SETUP_NOT_AWAITING_CODE" => Some(format!(
+                        "Re-run without --code to start setup again: {rerun_command}"
+                    )),
+                    _ => None,
+                };
+                return Err(ConnectFailure::from_api(&e, suggestion));
+            }
+        }
+    }
+}
+
 fn import_env_vars_for_connect(
     client: &crate::api_client::FlooClient,
     app_id: &str,
@@ -992,6 +1085,7 @@ fn import_env_vars_for_connect(
 
 fn setup_spinner_message(status: &GitHubSetupStatus) -> &'static str {
     match status {
+        GitHubSetupStatus::AwaitingCode => "Waiting for the code shown in your browser...",
         GitHubSetupStatus::AwaitingOrgApproval => "Waiting for org admin approval...",
         GitHubSetupStatus::AwaitingInstallation => "Waiting for GitHub installation...",
         GitHubSetupStatus::Ready => "GitHub installation ready.",
@@ -1239,6 +1333,17 @@ mod tests {
     use crate::api_types::{GitHubSetupPollResponse, GitHubSetupStatus};
 
     #[test]
+    fn test_awaiting_code_is_a_known_status() {
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
+        let resp: GitHubSetupPollResponse = serde_json::from_str(
+            r#"{"status":"awaiting_code","installation_id":null,"candidates":[]}"#,
+        )
+        .expect("awaiting_code must deserialize");
+        assert_eq!(resp.status, GitHubSetupStatus::AwaitingCode);
+    }
+
+    #[test]
     fn test_setup_spinner_message_for_org_approval() {
         assert_eq!(
             setup_spinner_message(&GitHubSetupStatus::AwaitingOrgApproval),
@@ -1305,10 +1410,10 @@ mod tests {
         );
         assert!(steps.contains("does NOT grant access"));
         assert!(steps.contains("not a different organization"));
-        assert!(steps.contains("4. Save / Install.\n  5. Leave this command running: it links the installation to your floo org as soon as GitHub reports the install."));
+        assert!(steps.contains("4. Save / Install.\n  5. Leave this command running and enter the code shown in your browser when prompted to link the installation to your floo org."));
         assert!(!steps.contains("floo apps github setup"));
         assert!(steps.ends_with(
-            "6. If this command has timed out, re-run: floo apps github connect pdonohoe02/galleon"
+            "6. If this command has stopped and you have a code, re-run: floo apps github connect pdonohoe02/galleon --code <CODE>"
         ));
     }
 
@@ -1326,11 +1431,11 @@ mod tests {
         assert!(steps.contains("does NOT grant access"));
         assert!(steps.ends_with(
             "  1. Open: https://example.test/github/setup?intent=123\n  \
-             2. Authorize floo when GitHub asks. This ties the installation to your floo org; floo then sends you to GitHub's install page.\n  \
+             2. Authorize floo when GitHub asks, then follow the browser's installation steps.\n  \
              3. Choose the account \"pdonohoe02\" (not a different organization).\n  \
              4. Under \"Repository access\", select \"pdonohoe02/galleon\". If \"Only select repositories\" is set, \"pdonohoe02/galleon\" must appear in that list.\n  \
              5. Save / Install.\n  \
-             6. Re-run: floo apps github connect pdonohoe02/galleon --no-browser"
+             6. Ask the person who authorized on GitHub for the code shown in the browser, then re-run: floo apps github connect pdonohoe02/galleon --no-browser --code <CODE>"
         ));
         assert!(!steps.contains("floo apps github setup"));
     }
@@ -1349,9 +1454,9 @@ mod tests {
         assert!(steps.contains("1. Open: https://github.com/apps/getfloo/installations/new/permissions?suggested_target_id=pdonohoe02\n"));
         assert!(steps.contains("2. Choose the account \"pdonohoe02\""));
         assert!(steps.contains("3. Under \"Repository access\", select \"pdonohoe02/galleon\""));
-        assert!(steps.contains("5. Leave this command running: it links the installation to your floo org as soon as GitHub reports the install."));
+        assert!(steps.contains("5. Leave this command running and enter the code shown in your browser when prompted to link the installation to your floo org."));
         assert!(steps.ends_with(
-            "6. If this command has timed out, re-run: floo apps github connect pdonohoe02/galleon --app galleon --no-deploy"
+            "6. If this command has stopped and you have a code, re-run: floo apps github connect pdonohoe02/galleon --app galleon --no-deploy --code <CODE>"
         ));
     }
 
