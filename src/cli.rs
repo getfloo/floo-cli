@@ -846,16 +846,6 @@ pub enum AppsCommands {
     #[command(subcommand)]
     Keys(AppKeyCommands),
 
-    /// Show the shared password for a password-protected app.
-    ///
-    /// `--json` redacts the password by default. Pass
-    /// `--reveal-secrets` to print the plaintext value (the response
-    /// is still stamped with `contains_secrets: true` either way).
-    Password {
-        /// App name or ID.
-        app_name: String,
-    },
-
     /// Invite a floo identity to an app.
     Invite {
         /// Email address to invite.
@@ -2449,7 +2439,6 @@ pub fn run() {
                 GitHubCommands::Status { app } => commands::github::status(app.as_deref()),
                 GitHubCommands::Setup { no_browser } => commands::github::setup(no_browser),
             },
-            AppsCommands::Password { app_name } => commands::apps::show_password(&app_name),
             AppsCommands::Invite { email, app, role } => {
                 commands::apps::invite(&email, &role, app.as_deref())
             }

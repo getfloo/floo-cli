@@ -525,11 +525,6 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
-    pub fn get_app_password(&self, app_id: &str) -> Result<AppPasswordResponse, FlooApiError> {
-        let resp = self.get(&format!("/v1/apps/{app_id}/password"))?;
-        self.handle_response(resp)
-    }
-
     pub fn list_edge_routes(
         &self,
         app_id: &str,

@@ -285,14 +285,28 @@ impl EdgeSection {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq)]
+/// App and environment access modes accepted by the server.
+#[derive(Debug, Serialize, Clone, Copy, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum AppAccessMode {
     Public,
-    Password,
-    #[serde(alias = "floo_accounts")]
     Accounts,
-    Sso,
+}
+
+impl<'de> Deserialize<'de> for AppAccessMode {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        match value.as_str() {
+            "public" => Ok(Self::Public),
+            "accounts" | "floo_accounts" => Ok(Self::Accounts),
+            "password" | "sso" => Err(serde::de::Error::custom(format!(
+                "access_mode='{value}' is no longer supported. Valid values: public, accounts."
+            ))),
+            _ => Err(serde::de::Error::custom(format!(
+                "Invalid access_mode='{value}'. Valid values: public, accounts."
+            ))),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1304,37 +1318,56 @@ access_mode = "floo_accounts"
     }
 
     #[test]
-    fn test_load_app_config_with_access_mode_sso() {
-        let dir = TempDir::new().unwrap();
-        fs::write(
-            dir.path().join(super::super::APP_CONFIG_FILE),
-            r#"
-[app]
-name = "my-app"
-access_mode = "sso"
-"#,
-        )
-        .unwrap();
-
-        let config = load_app_config(dir.path()).unwrap().unwrap();
-        assert_eq!(config.app.access_mode, Some(AppAccessMode::Sso));
+    fn test_app_access_mode_rejects_password() {
+        let _guard = crate::output::GLOBAL_MODE_LOCK.lock().unwrap();
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
+        let err = parse_app_config("[app]\nname = 'my-app'\naccess_mode = 'password'").unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+        assert!(err.message.contains(
+            "access_mode='password' is no longer supported. Valid values: public, accounts."
+        ));
     }
 
     #[test]
-    fn test_load_app_config_with_access_mode_password() {
-        let dir = TempDir::new().unwrap();
-        fs::write(
-            dir.path().join(super::super::APP_CONFIG_FILE),
-            r#"
-[app]
-name = "my-app"
-access_mode = "password"
-"#,
-        )
-        .unwrap();
+    fn test_app_access_mode_rejects_sso() {
+        let _guard = crate::output::GLOBAL_MODE_LOCK.lock().unwrap();
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
+        let err = parse_app_config("[app]\nname = 'my-app'\naccess_mode = 'sso'").unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+        assert!(err
+            .message
+            .contains("access_mode='sso' is no longer supported. Valid values: public, accounts."));
+    }
 
-        let config = load_app_config(dir.path()).unwrap().unwrap();
-        assert_eq!(config.app.access_mode, Some(AppAccessMode::Password));
+    #[test]
+    fn test_environment_access_mode_rejects_password() {
+        let _guard = crate::output::GLOBAL_MODE_LOCK.lock().unwrap();
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
+        let err = parse_app_config(
+            "[app]\nname = 'my-app'\n[environments.preview]\naccess_mode = 'password'",
+        )
+        .unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+        assert!(err.message.contains(
+            "access_mode='password' is no longer supported. Valid values: public, accounts."
+        ));
+    }
+
+    #[test]
+    fn test_environment_access_mode_rejects_sso() {
+        let _guard = crate::output::GLOBAL_MODE_LOCK.lock().unwrap();
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
+        let err =
+            parse_app_config("[app]\nname = 'my-app'\n[environments.preview]\naccess_mode = 'sso'")
+                .unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
+        assert!(err
+            .message
+            .contains("access_mode='sso' is no longer supported. Valid values: public, accounts."));
     }
 
     #[test]

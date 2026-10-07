@@ -86,7 +86,7 @@ min_instances = 0
 max_instances = 2
 max_request_body_mb = 30
 [environments.preview]
-access_mode = "password"
+access_mode = "accounts"
 [environments.preview.edge]
 rules = [{ action = "deny", cidr = "192.0.2.0/24" }]
 default_action = "allow"
