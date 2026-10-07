@@ -806,17 +806,6 @@ mod snapshots {
         assert_eq!(out["contains_secrets"], true);
     }
 
-    /// `floo apps password --json` is explicitly designed to reveal a
-    /// secret. Default redaction must hold.
-    #[test]
-    fn floo_apps_password_default_redacts() {
-        let _g = lock_default_redact();
-        let payload = json!({"success": true, "data": {"password": "hunter2"}});
-        let out = through_print_json(payload);
-        assert!(collect_leaks(&out).is_empty());
-        assert_eq!(out["contains_secrets"], true);
-    }
-
     /// Consumer keys use a dotted token format; field-name redaction must catch them.
     #[test]
     fn floo_apps_keys_create_raw_key_default_redacts() {

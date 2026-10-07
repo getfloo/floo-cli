@@ -241,6 +241,10 @@ fn server_supported_app_keys_survive_roundtrip() {
     std::fs::write(dir.path().join(APP_CONFIG_FILE), manifest).unwrap();
 
     let config = load_app_config(dir.path()).unwrap().unwrap();
+    assert_eq!(
+        config.environments["preview"].access_mode,
+        Some(super::AppAccessMode::Accounts)
+    );
     let serialized = toml::to_string(&config).unwrap();
     assert_eq!(
         serialized.parse::<toml::Table>().unwrap(),

@@ -236,23 +236,6 @@ pub fn delete(app_name: &str, destroy_data_flag: bool) {
     );
 }
 
-pub fn show_password(app_name: &str) {
-    super::require_auth();
-    let client = super::init_client(None);
-    let app = super::resolve_app_or_exit(&client, app_name);
-
-    match client.get_app_password(&app.id) {
-        Ok(resp) => output::success(
-            "App password",
-            Some(serde_json::json!({ "password": resp.password })),
-        ),
-        Err(e) => {
-            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-            process::exit(1);
-        }
-    }
-}
-
 pub fn invite(email: &str, role: &str, app_flag: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);

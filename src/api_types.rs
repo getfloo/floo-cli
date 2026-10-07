@@ -566,7 +566,6 @@ pub struct Deploy {
     pub build_logs: Option<String>,
     pub runtime: Option<String>,
     pub created_at: Option<String>,
-    pub generated_password: Option<String>,
     pub triggered_by: Option<String>,
     pub commit_sha: Option<String>,
     #[serde(default)]
@@ -601,11 +600,6 @@ pub struct Deploy {
     pub finished_at: Option<String>,
     #[serde(default)]
     pub duration_ms: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AppPasswordResponse {
-    pub password: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

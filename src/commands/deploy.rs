@@ -950,7 +950,7 @@ pub fn deploy(
         Err(e) => {
             spinner.finish();
             let suggestion = match e.code.as_str() {
-                "PLAN_FEATURE_PASSWORD" | "PLAN_FEATURE_ACCOUNTS" | "PLAN_FEATURE_SSO" => {
+                "PLAN_FEATURE_ACCOUNTS" | "PLAN_FEATURE_SSO" => {
                     Some("Upgrade your plan at https://app.getfloo.com/settings/billing")
                 }
                 _ => None,
@@ -1040,10 +1040,6 @@ pub fn deploy(
     let url = deploy_data.url.as_deref().unwrap_or("");
 
     if !output::is_json_mode() {
-        if let Some(ref password) = deploy_data.generated_password {
-            output::info(&format!("  Generated password: {password}"), None);
-            output::info("  To retrieve later: floo apps password <name>", None);
-        }
         // Closes feedback c9b70eb5 — surface the auto-deploy contract the
         // moment a manual `floo redeploy` finishes, so the user knows the
         // next change ships via `git push` (no need to remember `floo redeploy`).
@@ -1287,7 +1283,7 @@ fn deploy_rebuild(
         Err(e) => {
             spinner.finish();
             let suggestion = match e.code.as_str() {
-                "PLAN_FEATURE_PASSWORD" | "PLAN_FEATURE_ACCOUNTS" | "PLAN_FEATURE_SSO" => {
+                "PLAN_FEATURE_ACCOUNTS" | "PLAN_FEATURE_SSO" => {
                     Some("Upgrade your plan at https://app.getfloo.com/settings/billing")
                 }
                 _ => None,
