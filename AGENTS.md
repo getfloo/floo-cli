@@ -116,13 +116,14 @@ against the live Clap tree.
 
 1. Tag `v*` on main branch
 2. CI builds binaries for 5 targets (macOS x86/arm, Linux x86/arm, Windows x86)
-3. GitHub Release created with binaries + SHA256 checksums + RSA signatures
+3. Signed binaries, checksums, signatures and the signed installer are staged as a draft in `getfloo/floo-releases`, published after upload, then mirrored in the source repository for older clients.
 4. Slack `#releases` ping fires (mirrors the platform's deploy.yml notification — gated on `secrets.SLACK_RELEASES_WEBHOOK`; skips with a warning if unset, fails the release if Slack rejects the post)
 5. Install script downloads from these releases and verifies checksum + signature before install
 
 ### Required secrets
 
+- `FLOO_DISTRIBUTION_TOKEN` — required publisher credential with Contents write limited to `getfloo/floo-releases`. Initialize that public repository with a `main` branch before enabling the workflow. No source files belong in its release assets.
 - `FLOO_RELEASE_SIGNING_KEY` — RSA private key whose public key is pinned into the CLI updater. Required to publish a signed release; the workflow fails fast if missing or mismatched.
 - `SLACK_RELEASES_WEBHOOK` — Slack incoming-webhook URL for the `#releases` channel. Optional; the notify step warns and skips when empty so a fork that cuts its own tag still gets a successful release.
 
-Both must be set at the org or repo level. **This is a public repo — never reference secret values in workflow files except via `secrets.NAME`, never echo them in `run:` blocks, and never expose them to fork PRs (the workflow's `push: tags` trigger already gates that — fork PRs cannot push tags to upstream).**
+Configure these at the org or repo level; the distribution and signing credentials are mandatory, while the Slack webhook is optional. **This is a public repo — never reference secret values in workflow files except via `secrets.NAME`, never echo them in `run:` blocks, and never expose them to fork PRs (the workflow's `push: tags` trigger already gates that — fork PRs cannot push tags to upstream).**
