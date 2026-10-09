@@ -7447,38 +7447,6 @@ fn test_services_migrate_is_rejected_by_clap() {
 
 // ───────────────────────── Database ─────────────────────────
 
-#[test]
-fn test_db_migrate_sends_env_request_parameter() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let _resolve = mock_resolve_app(&mut server);
-    let migrate = server
-        .mock(
-            "POST",
-            format!("/v1/apps/{TEST_APP_ID}/db/migrate").as_str(),
-        )
-        .match_body(Matcher::Json(serde_json::json!({"env": "prod"})))
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(r#"{"success":true}"#)
-        .create();
-
-    floo()
-        .args([
-            "--json",
-            "db",
-            "migrate",
-            "--app",
-            TEST_APP_NAME,
-            "--env",
-            "prod",
-        ])
-        .env("HOME", home.path())
-        .assert()
-        .success();
-    migrate.assert();
-}
-
 /// Mock POST /v1/apps/{id}/db/query with a given response body.
 fn mock_db_query(server: &mut Server, body: &str) -> Mock {
     server

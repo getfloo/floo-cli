@@ -417,14 +417,13 @@ Read the returned URL for guidance; page content is not bundled or version-pinne
         topic: Option<String>,
     },
 
-    /// Query, inspect schema, and run migrations for an app's managed database.
+    /// Query and inspect schema for an app's managed database.
     #[command(
         subcommand,
         after_help = "\
 Examples:
   floo db query --app my-app \"SELECT * FROM users LIMIT 10\"
-  floo db schema --app my-app
-  floo db migrate --app my-app"
+  floo db schema --app my-app"
     )]
     Db(DbCommands),
 
@@ -1846,24 +1845,6 @@ Examples:
         #[arg(short, long)]
         app: Option<String>,
     },
-
-    /// Run database migrations for an app.
-    #[command(after_help = "\
-Examples:
-  floo db migrate --app my-app              Run migrations against dev (default)
-  floo db migrate --app my-app --env prod   Run migrations against prod")]
-    Migrate {
-        /// App name or ID (reads from config if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-
-        /// Environment to migrate: dev or prod.
-        #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
-        env: String,
-
-        #[command(flatten)]
-        preflight: PreflightArgs,
-    },
 }
 
 #[derive(Subcommand)]
@@ -2658,11 +2639,6 @@ pub fn run() {
                 preflight: _,
             } => commands::db::query(app.as_deref(), &sql, &env, limit),
             DbCommands::Schema { app } => commands::db::schema(app.as_deref()),
-            DbCommands::Migrate {
-                app,
-                env,
-                preflight: _,
-            } => commands::db::migrate(app.as_deref(), &env),
         },
 
         Commands::Cron(sub) => match sub {
@@ -2987,10 +2963,6 @@ mod tests {
             (
                 "deploys rollback",
                 &["floo", "deploys", "rollback", "myapp", "abc", "--preflight"],
-            ),
-            (
-                "db migrate",
-                &["floo", "db", "migrate", "--app", "myapp", "--preflight"],
             ),
             (
                 "db query",

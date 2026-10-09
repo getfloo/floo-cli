@@ -51,7 +51,7 @@ pub fn accounts(app_flag: Option<&str>) {
 
     // Exit non-zero iff drift was detected so scripted agents can branch on the
     // `floo doctor accounts --json` exit code without parsing the body. Same
-    // convention as `preflight` and `db migrate --dry-run`.
+    // convention as `preflight`.
     if drift_detected {
         process::exit(1);
     }

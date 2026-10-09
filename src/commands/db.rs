@@ -54,7 +54,7 @@ pub fn query(app_flag: Option<&str>, sql: &str, environment: &str, limit: u32) {
     // Dry-run stays offline and side-effect-free. `db query` executes ARBITRARY
     // SQL (INSERT/UPDATE/DELETE/DDL), so it is NOT a read-only command — a dry
     // run must never reach the API. Like every other --dry-run handler it runs
-    // before require_auth() (mirrors cron.rs / db migrate above).
+    // before require_auth() (mirrors cron.rs).
     if output::is_dry_run_mode() {
         let target = app_flag.unwrap_or("(reads from config)");
         let preview = format!(
@@ -246,74 +246,6 @@ pub fn schema(app_flag: Option<&str>) {
             .collect();
 
         output::table(&["Column", "Type", "Nullable"], &rows, None);
-    }
-}
-
-pub fn migrate(app_flag: Option<&str>, env: &str) {
-    // Dry-run is a pure echo, like cron.rs:run — runs before require_auth()
-    // and resolve_app_from_config() so logged-out users and offline agents
-    // can preview the action without an API call. The preview reports the
-    // app + environment the migration would target; previewing the actual
-    // pending-migration set would require a server-side endpoint we don't
-    // yet expose.
-    if output::is_dry_run_mode() {
-        let target = app_flag.unwrap_or("(reads from config)");
-        let preview = format!("Would run pending migrations on '{target}' (env: {env}).");
-        output::dry_run_preview(
-            &preview,
-            serde_json::json!({
-                "action": "db_migrate",
-                "app": app_flag,
-                "env": env,
-            }),
-        );
-        return;
-    }
-
-    super::require_auth();
-    let client = super::init_client(None);
-    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
-
-    if !output::is_json_mode() {
-        output::info(
-            &format!("Running migrations for {app_name} ({env})..."),
-            None,
-        );
-    }
-
-    let result = match client.db_migrate(&app_id, env) {
-        Ok(r) => r,
-        Err(e) => {
-            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-            process::exit(1);
-        }
-    };
-
-    // Print streamed output if present.
-    if !output::is_json_mode() {
-        if let Some(output_str) = result.get("output").and_then(|v| v.as_str()) {
-            if !output_str.is_empty() {
-                for line in output_str.lines() {
-                    output::info(line, None);
-                }
-            }
-        }
-    }
-
-    let success = result
-        .get("success")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-
-    if success {
-        output::success("Migrations complete.", Some(result));
-    } else {
-        let msg = result
-            .get("error")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Migration failed.");
-        output::error(msg, &ErrorCode::Other("MIGRATION_FAILED".into()), None);
-        process::exit(1);
     }
 }
 
