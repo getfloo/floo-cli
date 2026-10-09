@@ -2771,42 +2771,13 @@ fn test_dry_run_redeploy_rebuild_human_has_preview() {
 }
 
 #[test]
-fn test_dry_run_db_migrate() {
+fn test_db_migrate_is_rejected_as_unknown_subcommand() {
     floo()
-        .args([
-            "--json",
-            "--dry-run",
-            "db",
-            "migrate",
-            "--app",
-            "test",
-            "--env",
-            "dev",
-        ])
-        .env("HOME", "/tmp/floo-test-nonexistent")
+        .args(["db", "migrate"])
         .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""action":"db_migrate"#))
-        .stdout(predicate::str::contains(r#""env":"dev"#));
-}
-
-#[test]
-fn test_dry_run_db_migrate_human_has_preview() {
-    floo()
-        .args([
-            "--dry-run",
-            "db",
-            "migrate",
-            "--app",
-            "test",
-            "--env",
-            "prod",
-        ])
-        .env("HOME", "/tmp/floo-test-nonexistent")
-        .assert()
-        .success()
+        .code(2)
         .stderr(predicate::str::contains(
-            "Would run pending migrations on 'test' (env: prod)",
+            "unrecognized subcommand 'migrate'",
         ));
 }
 

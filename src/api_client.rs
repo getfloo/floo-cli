@@ -1353,7 +1353,7 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
-    // --- Database query/schema/migrate ---
+    // --- Database query/schema ---
 
     pub fn db_query(
         &self,
@@ -1373,14 +1373,6 @@ impl FlooClient {
 
     pub fn db_schema(&self, app_id: &str) -> Result<Value, FlooApiError> {
         let resp = self.get(&format!("/v1/apps/{app_id}/db/schema"))?;
-        self.handle_response_value(resp)
-    }
-
-    pub fn db_migrate(&self, app_id: &str, environment: &str) -> Result<Value, FlooApiError> {
-        let resp = self.post_json(
-            &format!("/v1/apps/{app_id}/db/migrate"),
-            &serde_json::json!({ "env": environment }),
-        )?;
         self.handle_response_value(resp)
     }
 
