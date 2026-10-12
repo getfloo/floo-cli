@@ -619,6 +619,13 @@ pub enum BillingCommands {
     #[command(subcommand)]
     SpendCap(SpendCapCommands),
 
+    /// Manage your org's prepaid auto top-up.
+    #[command(
+        subcommand,
+        after_help = "Examples:\n  floo billing auto-top-up get\n  floo billing auto-top-up get --json\n  floo billing auto-top-up on\n  floo billing auto-top-up off"
+    )]
+    AutoTopUp(AutoTopUpCommands),
+
     /// Open billing to pick a plan, add prepaid funds, or check recovery.
     Upgrade,
 
@@ -652,6 +659,17 @@ pub enum SpendCapCommands {
         /// Spend cap amount in dollars (e.g., 20.00). Use 0 for no cap.
         amount: f64,
     },
+}
+
+/// Read or request the org's prepaid auto top-up state.
+#[derive(Subcommand)]
+pub enum AutoTopUpCommands {
+    /// Show auto top-up state, threshold, amount, and any off reason.
+    Get,
+    /// Turn on prepaid auto top-up.
+    On,
+    /// Turn off prepaid auto top-up.
+    Off,
 }
 
 #[derive(Subcommand)]
@@ -2304,6 +2322,11 @@ pub fn run() {
             BillingCommands::SpendCap(cap_sub) => match cap_sub {
                 SpendCapCommands::Get => commands::billing::spend_cap_get(),
                 SpendCapCommands::Set { amount } => commands::billing::spend_cap_set(amount),
+            },
+            BillingCommands::AutoTopUp(sub) => match sub {
+                AutoTopUpCommands::Get => commands::billing::auto_top_up_get(),
+                AutoTopUpCommands::On => commands::billing::auto_top_up_set(true),
+                AutoTopUpCommands::Off => commands::billing::auto_top_up_set(false),
             },
             BillingCommands::Balance => commands::billing::balance(),
             BillingCommands::Notifications { limit, before_id } => {

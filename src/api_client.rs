@@ -472,6 +472,19 @@ impl FlooClient {
 
     // --- Billing ---
 
+    /// Fetch the org's prepaid auto top-up state.
+    pub fn get_auto_top_up(&self) -> Result<AutoTopUpResponse, FlooApiError> {
+        let resp = self.get("/v1/billing/paygo/auto-top-up")?;
+        self.handle_response(resp)
+    }
+
+    /// Request an auto top-up state and return the API's resulting state.
+    pub fn set_auto_top_up(&self, enabled: bool) -> Result<AutoTopUpResponse, FlooApiError> {
+        let body = serde_json::json!({"enabled": enabled});
+        let resp = self.post_json("/v1/billing/paygo/auto-top-up", &body)?;
+        self.handle_response(resp)
+    }
+
     pub fn set_spend_cap(&self, spend_cap: u64) -> Result<Value, FlooApiError> {
         let body = serde_json::json!({"spend_cap": spend_cap});
         let resp = self.post_json("/v1/billing/spend-cap", &body)?;

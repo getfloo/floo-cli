@@ -155,6 +155,15 @@ pub enum SpendCapPolicy {
     Unknown(String),
 }
 
+/// API-owned prepaid auto top-up state; off reasons preserve future strings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoTopUpResponse {
+    pub enabled: bool,
+    pub off_reason: Option<String>,
+    pub threshold_cents: u64,
+    pub amount_cents: Option<u64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppCostSummary {
     pub app_id: String,
