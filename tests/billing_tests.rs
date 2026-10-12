@@ -608,3 +608,192 @@ fn billing_notifications_preserve_evidence_and_cursor_in_both_output_modes() {
         read.assert();
     }
 }
+
+fn auto_top_up_command(
+    method: &str,
+    request: mockito::Matcher,
+    status: usize,
+    response: serde_json::Value,
+    args: &[&str],
+) -> Assert {
+    let mut server = Server::new();
+    let home = TempDir::new().unwrap();
+    let config_dir = home.path().join(".floo-local");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("config.json"),
+        r#"{"api_key":"floo_test123","default_org":"org-b"}"#,
+    )
+    .unwrap();
+    let mock = server
+        .mock(method, "/v1/billing/paygo/auto-top-up")
+        .match_header("authorization", "Bearer floo_test123")
+        .match_header("x-floo-org-id", "org-b")
+        .match_body(request)
+        .with_status(status)
+        .with_header("content-type", "application/json")
+        .with_body(response.to_string())
+        .create();
+    let result = Command::new(assert_cmd::cargo::cargo_bin!("floo-local"))
+        .args(["billing", "auto-top-up"])
+        .args(args)
+        .env("HOME", home.path())
+        .env("FLOO_API_URL", server.url())
+        .env_remove("FLOO_CONFIG_DIR")
+        .assert();
+    mock.assert();
+    result
+}
+
+#[test]
+fn auto_top_up_get_human_reports_api_state_and_money() {
+    auto_top_up_command(
+        "GET", mockito::Matcher::Any, 200,
+        serde_json::json!({"enabled":true,"off_reason":null,"threshold_cents":725,"amount_cents":3750}),
+        &["get"],
+    ).success().stdout("").stderr(
+        predicate::str::contains("Auto top-up: on")
+            .and(predicate::str::contains("Threshold: $7.25"))
+            .and(predicate::str::contains("Amount: $37.50")),
+    );
+}
+
+#[test]
+fn auto_top_up_get_json_returns_one_complete_response() {
+    let response = serde_json::json!({"enabled":true,"off_reason":null,"threshold_cents":725,"amount_cents":3750});
+    let result = auto_top_up_command(
+        "GET",
+        mockito::Matcher::Any,
+        200,
+        response.clone(),
+        &["get", "--json"],
+    )
+    .success()
+    .stderr("");
+    let payload: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    assert_eq!(payload["success"], true);
+    assert_eq!(payload["data"], response);
+}
+
+#[test]
+fn auto_top_up_on_human_confirms_enabled() {
+    auto_top_up_command(
+        "POST", mockito::Matcher::Json(serde_json::json!({"enabled":true})), 200,
+        serde_json::json!({"enabled":true,"off_reason":null,"threshold_cents":500,"amount_cents":2500}),
+        &["on"],
+    ).success().stdout("").stderr(predicate::str::contains("Auto top-up is on."));
+}
+
+#[test]
+fn auto_top_up_on_json_returns_one_complete_response() {
+    let response = serde_json::json!({"enabled":true,"off_reason":null,"threshold_cents":500,"amount_cents":2500});
+    let result = auto_top_up_command(
+        "POST",
+        mockito::Matcher::Json(serde_json::json!({"enabled":true})),
+        200,
+        response.clone(),
+        &["on", "--json"],
+    )
+    .success()
+    .stderr("");
+    let payload: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    assert_eq!(payload["success"], true);
+    assert_eq!(payload["data"], response);
+}
+
+#[test]
+fn auto_top_up_off_human_confirms_disabled() {
+    auto_top_up_command(
+        "POST", mockito::Matcher::Json(serde_json::json!({"enabled":false})), 200,
+        serde_json::json!({"enabled":false,"off_reason":"customer","threshold_cents":500,"amount_cents":2500}),
+        &["off"],
+    ).success().stdout("").stderr(predicate::str::contains("Auto top-up is off."));
+}
+
+#[test]
+fn auto_top_up_off_json_returns_one_complete_response() {
+    let response = serde_json::json!({"enabled":false,"off_reason":"future_reason","threshold_cents":500,"amount_cents":null});
+    let result = auto_top_up_command(
+        "POST",
+        mockito::Matcher::Json(serde_json::json!({"enabled":false})),
+        200,
+        response.clone(),
+        &["off", "--json"],
+    )
+    .success()
+    .stderr("");
+    let payload: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    assert_eq!(payload["success"], true);
+    assert_eq!(payload["data"], response);
+}
+
+#[test]
+fn auto_top_up_on_confirmation_uses_response_instead_of_requested_state() {
+    auto_top_up_command(
+        "POST", mockito::Matcher::Json(serde_json::json!({"enabled":true})), 200,
+        serde_json::json!({"enabled":false,"off_reason":"charge_failed","threshold_cents":500,"amount_cents":2500}),
+        &["on"],
+    ).success().stdout("").stderr(predicate::str::contains("Auto top-up is off."));
+}
+
+#[test]
+fn auto_top_up_get_explains_customer_disabled_state() {
+    auto_top_up_command(
+        "GET", mockito::Matcher::Any, 200,
+        serde_json::json!({"enabled":false,"off_reason":"customer","threshold_cents":500,"amount_cents":2500}),
+        &["get"],
+    ).success().stdout("").stderr(
+        predicate::str::contains("Auto top-up: off")
+            .and(predicate::str::contains("Turned off by an org admin.")),
+    );
+}
+
+#[test]
+fn auto_top_up_get_explains_decline_and_recovery() {
+    auto_top_up_command(
+        "GET", mockito::Matcher::Any, 200,
+        serde_json::json!({"enabled":false,"off_reason":"charge_failed","threshold_cents":500,"amount_cents":2500}),
+        &["get"],
+    ).success().stdout("").stderr(
+        predicate::str::contains("floo turned it off after the card was declined.")
+            .and(predicate::str::contains("Add credits or run `floo billing auto-top-up on`.")),
+    );
+}
+
+#[test]
+fn auto_top_up_get_explains_purchase_authorization_and_null_amount() {
+    auto_top_up_command(
+        "GET", mockito::Matcher::Any, 200,
+        serde_json::json!({"enabled":false,"off_reason":"needs_purchase","threshold_cents":500,"amount_cents":null}),
+        &["get"],
+    ).success().stdout("").stderr(
+        predicate::str::contains("Amount: not yet authorized")
+            .and(predicate::str::contains("The saved card has not authorized top-ups."))
+            .and(predicate::str::contains("Run `floo billing upgrade` to add credits once.")),
+    );
+}
+
+#[test]
+fn auto_top_up_get_human_tolerates_future_off_reason() {
+    auto_top_up_command(
+        "GET", mockito::Matcher::Any, 200,
+        serde_json::json!({"enabled":false,"off_reason":"future_reason","threshold_cents":500,"amount_cents":null}),
+        &["get"],
+    ).success().stdout("").stderr(predicate::str::contains("Off reason: future_reason"));
+}
+
+#[test]
+fn auto_top_up_on_passes_purchase_conflict_code_and_message_to_json() {
+    let result = auto_top_up_command(
+        "POST", mockito::Matcher::Json(serde_json::json!({"enabled":true})), 409,
+        serde_json::json!({"detail":{"code":"AUTO_TOP_UP_NEEDS_PURCHASE","message":"Add credits once to authorize top-ups."}}),
+        &["on", "--json"],
+    ).failure().stderr("");
+    let payload: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    assert_eq!(payload["success"], false);
+    assert_eq!(payload["error"]["code"], "AUTO_TOP_UP_NEEDS_PURCHASE");
+    assert_eq!(
+        payload["error"]["message"],
+        "Add credits once to authorize top-ups."
+    );
+}

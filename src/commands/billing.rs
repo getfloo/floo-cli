@@ -250,6 +250,62 @@ pub fn upgrade() {
     }
 }
 
+/// Show the API's auto top-up state and recovery guidance.
+pub fn auto_top_up_get() {
+    super::require_auth();
+    let client = super::init_client(None);
+    let result = match client.get_auto_top_up() {
+        Ok(result) => result,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+    if output::is_json_mode() {
+        output::success("", Some(serde_json::json!(result)));
+        return;
+    }
+    let state = if result.enabled { "on" } else { "off" };
+    eprintln!("  Auto top-up: {state}");
+    eprintln!("  Threshold: ${:.2}", result.threshold_cents as f64 / 100.0);
+    match result.amount_cents {
+        Some(cents) => eprintln!("  Amount: ${:.2}", cents as f64 / 100.0),
+        None => eprintln!("  Amount: not yet authorized"),
+    }
+    match result.off_reason.as_deref() {
+        Some("customer") => eprintln!("  Turned off by an org admin."),
+        Some("charge_failed") => {
+            eprintln!("  floo turned it off after the card was declined.");
+            eprintln!("  Add credits or run `floo billing auto-top-up on`.");
+        }
+        Some("needs_purchase") => {
+            eprintln!("  The saved card has not authorized top-ups.");
+            eprintln!("  Run `floo billing upgrade` to add credits once.");
+        }
+        Some(reason) => eprintln!("  Off reason: {reason}"),
+        None => {}
+    }
+}
+
+/// Request auto top-up on or off and confirm the API's resulting state.
+pub fn auto_top_up_set(enabled: bool) {
+    super::require_auth();
+    let client = super::init_client(None);
+    match client.set_auto_top_up(enabled) {
+        Ok(result) => {
+            let state = if result.enabled { "on" } else { "off" };
+            output::success(
+                &format!("Auto top-up is {state}."),
+                Some(serde_json::json!(result)),
+            );
+        }
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    }
+}
+
 pub fn spend_cap_get() {
     super::require_auth();
     let client = super::init_client(None);
