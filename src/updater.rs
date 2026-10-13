@@ -13,7 +13,8 @@ use crate::errors::{ErrorCode, FlooError};
 
 pub(crate) mod http;
 
-const DEFAULT_RELEASES_API_BASE: &str = "https://api.github.com/repos/getfloo/floo-cli/releases";
+const DEFAULT_RELEASES_API_BASE: &str =
+    "https://api.github.com/repos/getfloo/floo-releases/releases";
 // ring verifies RSA signatures against PKCS#1 DER, so keep this as
 // "RSA PUBLIC KEY" rather than SubjectPublicKeyInfo "PUBLIC KEY" PEM.
 const DEFAULT_RELEASE_PUBLIC_KEY_PEM: &str = r#"-----BEGIN RSA PUBLIC KEY-----
@@ -61,7 +62,7 @@ pub(crate) fn target_asset_name() -> Result<String, FlooError> {
             return Err(FlooError::with_suggestion(
                 ErrorCode::UnsupportedPlatform,
                 format!("Platform '{os}/{arch}' is not supported for automatic updates."),
-                "Download a release binary manually from https://github.com/getfloo/floo-cli/releases",
+                "Download a release binary manually from https://github.com/getfloo/floo-releases/releases",
             ));
         }
     };
@@ -143,7 +144,7 @@ pub(crate) fn release_asset_from_json(
             FlooError::with_suggestion(
                 ErrorCode::ReleaseAssetMissing,
                 format!("No binary asset found for '{asset_name}'."),
-                "Check https://github.com/getfloo/floo-cli/releases for available artifacts.",
+                "Check https://github.com/getfloo/floo-releases/releases for available artifacts.",
             )
         })?;
 
