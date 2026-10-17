@@ -12,6 +12,10 @@ bearer key and https://api.getfloo.com/openapi.json for routes and request schem
 HTTP replies are not redacted: capture keys, tokens, passwords and env values
 straight into variables and never print or log them.
 
+When the `floo` MCP tools are available (plugin installed and signed in), prefer
+them for listing apps and deploys, deploying, reading logs, promoting and rolling
+back. Use the HTTP API or CLI for everything the tools do not cover.
+
 Deploying a GitHub repository your user already has? Read
 https://getfloo.com/docs/introduction instead, then
 https://getfloo.com/docs/guides/agent-setup for authority and verification.

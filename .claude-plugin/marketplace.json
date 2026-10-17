@@ -1,0 +1,14 @@
+{
+  "name": "floo",
+  "description": "The floo plugin: deploy and operate apps on floo from your coding agent.",
+  "owner": {
+    "name": "floo"
+  },
+  "plugins": [
+    {
+      "name": "floo",
+      "source": "./plugin",
+      "description": "Deploy and operate apps on floo from your coding agent: create apps, deploy, read logs, promote and roll back."
+    }
+  ]
+}
