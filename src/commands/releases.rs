@@ -78,7 +78,7 @@ pub fn list(app: Option<&str>) {
             output::success("No releases.", Some(serde_json::json!({"releases": []})));
         } else {
             output::info(
-                "No releases yet. Ship to prod by cutting a GitHub release: gh release create <tag>",
+                "No releases yet. Cut a GitHub release on the app's repo: gh release create <tag> --repo <owner/repo> --target <LIVE dev commit>",
                 None,
             );
         }
