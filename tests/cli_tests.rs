@@ -473,7 +473,9 @@ fn test_releases_promote_help() {
         .args(["releases", "promote", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Promote an app to prod"));
+        .stdout(predicate::str::contains(
+            "Promote a floo-managed project to prod",
+        ));
 }
 
 #[test]

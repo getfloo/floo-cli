@@ -1204,7 +1204,7 @@ pub struct ListReleasesResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromoteResponse {
     pub tag: String,
-    pub release_url: String,
+    pub release_url: Option<String>,
 }
 
 // --- GitHub ---

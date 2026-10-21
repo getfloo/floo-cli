@@ -1562,7 +1562,7 @@ pub enum ReleasesCommands {
         app: Option<String>,
     },
 
-    /// Promote an app to prod by creating a GitHub release.
+    /// Promote a floo-managed project to prod. Apps on your own GitHub repo ship by cutting a GitHub release.
     Promote {
         /// App name or ID (uses config file if omitted).
         #[arg(short, long)]
