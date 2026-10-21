@@ -16,16 +16,19 @@ pub fn promote(app: Option<&str>, tag: Option<&str>) {
     let result = match client.promote_app(app_id, tag) {
         Ok(r) => r,
         Err(e) => {
-            let suggestion = match e.code.as_str() {
-                "GITHUB_NOT_CONNECTED" => Some(
-                    "Connect a GitHub repo first: floo apps github connect org/repo --app <name>",
-                ),
+            // PROMOTE_USE_GITHUB_RELEASE carries the exact `gh release create` command.
+            let api_hint = e
+                .extra
+                .as_ref()
+                .and_then(|extra| extra.get("hint"))
+                .and_then(|hint| hint.as_str());
+            let suggestion = api_hint.or(match e.code.as_str() {
                 "NO_DEV_DEPLOY" => {
                     Some("Deploy to dev first: push to GitHub or run floo redeploy --app <name>")
                 }
                 "RELEASE_TAG_EXISTS" => Some("Use a different tag with --tag <tag>"),
                 _ => None,
-            };
+            });
             output::error(&e.message, &ErrorCode::from_api(&e.code), suggestion);
             process::exit(1);
         }
@@ -48,10 +51,10 @@ pub fn promote(app: Option<&str>, tag: Option<&str>) {
                 "release_url": release_url,
             })),
         );
-        if !release_url.is_empty() {
+        if let Some(release_url) = release_url {
             output::dim_line(&format!("Release: {release_url}"));
         }
-        output::dim_line("Deployment in progress via GitHub webhook.");
+        output::dim_line("Prod deploy in progress.");
     }
 }
 
@@ -75,7 +78,7 @@ pub fn list(app: Option<&str>) {
             output::success("No releases.", Some(serde_json::json!({"releases": []})));
         } else {
             output::info(
-                "No releases yet. Promote with: floo releases promote --app <name>",
+                "No releases yet. Cut a GitHub release on the app's repo: gh release create <tag> --repo <owner/repo> --target <LIVE dev commit>",
                 None,
             );
         }
