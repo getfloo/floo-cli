@@ -186,7 +186,6 @@ fn deploy_list_payload(result: &crate::api_types::ListDeploysResponse) -> serde_
                 "id": &d.id,
                 "status": &d.status,
                 "url": &d.url,
-                "runtime": &d.runtime,
                 "created_at": &d.created_at,
                 "started_at": &d.started_at,
                 "finished_at": &d.finished_at,

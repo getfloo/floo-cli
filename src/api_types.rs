@@ -452,7 +452,6 @@ pub struct App {
     #[serde(default)]
     pub lifecycle_state: Option<String>,
     pub url: Option<String>,
-    pub runtime: Option<String>,
     /// Direct Cloud Run runtime URL of the primary user-facing service.
     /// Debug-only — clients should hit `url` (the gateway URL).
     #[serde(default)]
@@ -573,7 +572,6 @@ pub struct Deploy {
     pub status: Option<String>,
     pub url: Option<String>,
     pub build_logs: Option<String>,
-    pub runtime: Option<String>,
     pub created_at: Option<String>,
     pub triggered_by: Option<String>,
     pub commit_sha: Option<String>,
@@ -975,7 +973,6 @@ pub struct PreviewEnvironmentListResponse {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CreatePreviewDeployRequest<'a> {
-    pub runtime: &'a str,
     pub environment: &'a str,
     pub branch: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]

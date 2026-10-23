@@ -1675,10 +1675,6 @@ pub enum PreviewsSubcommands {
         #[arg(long)]
         wait: bool,
 
-        /// Runtime hint for the deploy request.
-        #[arg(long, default_value = "auto")]
-        runtime: String,
-
         /// Exact remote commit SHA to deploy.
         #[arg(long)]
         commit_sha: Option<String>,
@@ -2262,7 +2258,6 @@ pub fn run() {
                 app,
                 branch,
                 wait,
-                runtime,
                 commit_sha,
                 ref_name,
                 preflight: _,
@@ -2270,7 +2265,6 @@ pub fn run() {
                 app.as_deref(),
                 &branch,
                 wait,
-                &runtime,
                 commit_sha.as_deref(),
                 ref_name.as_deref(),
             ),

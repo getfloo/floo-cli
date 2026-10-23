@@ -517,13 +517,8 @@ impl FlooClient {
 
     // --- Apps ---
 
-    pub fn create_app(&self, name: &str, runtime: Option<&str>) -> Result<App, FlooApiError> {
-        let mut body = serde_json::json!({"name": name});
-        if let Some(rt) = runtime {
-            body.as_object_mut()
-                .unwrap()
-                .insert("runtime".to_string(), Value::String(rt.to_string()));
-        }
+    pub fn create_app(&self, name: &str) -> Result<App, FlooApiError> {
+        let body = serde_json::json!({"name": name});
         let resp = self.post_json("/v1/apps", &body)?;
         self.handle_response(resp)
     }
@@ -571,13 +566,12 @@ impl FlooClient {
     pub fn create_deploy(
         &self,
         app_id: &str,
-        runtime: &str,
         framework: Option<&str>,
         services: &[String],
         skip_migrations: bool,
         rebuild: bool,
     ) -> Result<Deploy, FlooApiError> {
-        let mut body = serde_json::json!({"runtime": runtime, "env": "dev"});
+        let mut body = serde_json::json!({"env": "dev"});
         if let Some(fw) = framework {
             body["framework"] = Value::String(fw.to_string());
         }
@@ -1000,7 +994,6 @@ impl FlooClient {
         request: &CreatePreviewDeployRequest<'_>,
     ) -> Result<Deploy, FlooApiError> {
         let mut body = serde_json::json!({
-            "runtime": request.runtime,
             "env": request.environment,
             "branch": request.branch,
         });

@@ -908,7 +908,7 @@ pub fn deploy(
         Err(error) if error.is_not_found() => {
             spinner.finish();
             let spinner = output::Spinner::new(&format!("Creating app {}...", resolved.app_name));
-            match client.create_app(&resolved.app_name, Some(&detection.runtime)) {
+            match client.create_app(&resolved.app_name) {
                 Ok(a) => {
                     spinner.finish();
                     a
@@ -937,7 +937,6 @@ pub fn deploy(
     let spinner = output::Spinner::new("Deploying...");
     let mut deploy_data = match client.create_deploy(
         &app_id,
-        &detection.runtime,
         detection.framework.as_deref(),
         &services_filter,
         skip_migrations,
@@ -1235,7 +1234,6 @@ fn deploy_rebuild(
     skip_migrations: bool,
 ) {
     let app_id = &app_data.id;
-    let runtime = app_data.runtime.as_deref().unwrap_or("unknown");
 
     if output::is_dry_run_mode() {
         let service_names: Vec<&str> = services_filter.iter().map(|s| s.as_str()).collect();
@@ -1250,7 +1248,7 @@ fn deploy_rebuild(
             ""
         };
         let preview = format!(
-            "Would rebuild app '{}' (runtime: {runtime}){svc_clause}{mig_clause}.",
+            "Would rebuild app '{}'{svc_clause}{mig_clause}.",
             app_data.name
         );
         output::dry_run_preview(
@@ -1258,7 +1256,6 @@ fn deploy_rebuild(
             serde_json::json!({
                 "action": "rebuild",
                 "app": app_data.name,
-                "runtime": runtime,
                 "services": service_names,
                 "skip_migrations": skip_migrations,
             }),
@@ -1267,14 +1264,7 @@ fn deploy_rebuild(
     }
 
     let spinner = output::Spinner::new("Rebuilding...");
-    let result = client.create_deploy(
-        app_id,
-        runtime,
-        None,
-        services_filter,
-        skip_migrations,
-        true,
-    );
+    let result = client.create_deploy(app_id, None, services_filter, skip_migrations, true);
     let mut deploy_data = match result {
         Ok(d) => {
             spinner.finish();
