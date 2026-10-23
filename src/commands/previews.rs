@@ -17,7 +17,6 @@ pub fn up(
     app_flag: Option<&str>,
     branch: &str,
     wait: bool,
-    runtime: &str,
     commit_sha: Option<&str>,
     ref_name: Option<&str>,
 ) {
@@ -40,7 +39,6 @@ pub fn up(
                 "action": "preview_up",
                 "app": app_flag,
                 "branch": branch,
-                "runtime": runtime,
                 "commit_sha": commit_sha,
                 "ref": ref_name,
                 "env": "preview",
@@ -63,7 +61,6 @@ pub fn up(
     }
 
     let request = CreatePreviewDeployRequest {
-        runtime,
         environment: "preview",
         branch,
         commit_sha,

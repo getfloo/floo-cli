@@ -222,10 +222,8 @@ pub fn connect(
             Ok(a) => a,
             // 404 == app doesn't exist yet → create it (status, not code string).
             Err(e) if e.is_not_found() => {
-                // Create new app — try local detection for runtime, fall back to "unknown"
-                let runtime = detect(&cwd).runtime;
                 let spinner = output::Spinner::new(&format!("Creating app {app_flag}..."));
-                match client.create_app(app_flag, Some(&runtime)) {
+                match client.create_app(app_flag) {
                     Ok(a) => {
                         spinner.finish();
                         created_app = Some(CreatedApp {
@@ -264,9 +262,8 @@ pub fn connect(
             Ok(a) => a,
             // 404 == app doesn't exist yet → create it (status, not code string).
             Err(e) if e.is_not_found() => {
-                let detection = detect(&cwd);
                 let spinner = output::Spinner::new(&format!("Creating app {app_name}..."));
-                match client.create_app(&app_name, Some(&detection.runtime)) {
+                match client.create_app(&app_name) {
                     Ok(a) => {
                         spinner.finish();
                         created_app = Some(CreatedApp {
@@ -1145,7 +1142,6 @@ fn run_initial_deploy(
     let spinner = output::Spinner::new("Deploying...");
     let mut deploy_data = match client.create_deploy(
         app_id,
-        &detection.runtime,
         detection.framework.as_deref(),
         &[],
         false, // skip_migrations — initial deploy from `floo apps github connect` always runs migrations

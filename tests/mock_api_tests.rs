@@ -255,7 +255,6 @@ fn preview_deploy_json(status: &str) -> String {
             "id":"deploy-preview-1",
             "app_id":"{TEST_APP_ID}",
             "status":"{status}",
-            "runtime":"nodejs",
             "url":"https://my-app-preview-feat-db-abcde.on.getfloo.com",
             "build_logs":null,
             "triggered_by":"manual",
@@ -3851,7 +3850,6 @@ fn test_previews_up_json_sends_preview_deploy_payload_and_returns_single_object(
         .match_body(Matcher::PartialJson(serde_json::json!({
             "env": "preview",
             "branch": "feat/db-branch",
-            "runtime": "nodejs",
             "commit_sha": "abc123",
             "ref": "refs/heads/feat/db-branch"
         })))
@@ -3878,8 +3876,6 @@ fn test_previews_up_json_sends_preview_deploy_payload_and_returns_single_object(
             TEST_APP_NAME,
             "--branch",
             "feat/db-branch",
-            "--runtime",
-            "nodejs",
             "--commit-sha",
             "abc123",
             "--ref",
@@ -5368,7 +5364,7 @@ cron.cleanup = { schedule = '0 * * * *', command = 'echo cleanup', service = 'we
             "POST",
             format!("/v1/apps/{TEST_APP_ID}/deploys").as_str(),
         )
-        .match_body(Matcher::Json(serde_json::json!({"runtime": "nodejs", "framework": "Express", "env": "dev"})))
+        .match_body(Matcher::Json(serde_json::json!({"framework": "Express", "env": "dev"})))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(
@@ -5459,7 +5455,7 @@ fn test_redeploy_rebuild_requests_server_resolved_github_head() {
     let _resolve = mock_resolve_app(&mut server);
     let rebuild = server
         .mock("POST", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
-        .match_body(Matcher::Json(serde_json::json!({"runtime": "nodejs", "env": "dev", "rebuild": true})))
+        .match_body(Matcher::Json(serde_json::json!({"env": "dev", "rebuild": true})))
         .with_status(201)
         .with_header("content-type", "application/json")
         .with_body(
@@ -5487,7 +5483,7 @@ fn test_redeploy_rebuild_requires_runtime_with_service_selectors() {
     let _resolve = mock_resolve_app(&mut server);
     let rebuild = server
         .mock("POST", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
-        .match_body(Matcher::Json(serde_json::json!({"runtime": "nodejs", "env": "dev", "services": ["web"], "skip_migrations": true, "rebuild": true})))
+        .match_body(Matcher::Json(serde_json::json!({"env": "dev", "services": ["web"], "skip_migrations": true, "rebuild": true})))
         .with_body(r#"{"id":"deploy-rebuilt","status":"live"}"#)
         .create();
     floo()
@@ -5682,7 +5678,7 @@ fn test_deploy_config_not_found_keyed_on_status_creates() {
     let _m_deploy = server
         .mock("POST", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
         .match_body(Matcher::Json(
-            serde_json::json!({"runtime": "nodejs", "env": "dev", "services": ["web"], "skip_migrations": true}),
+            serde_json::json!({"env": "dev", "services": ["web"], "skip_migrations": true}),
         ))
         .with_status(200)
         .with_header("content-type", "application/json")

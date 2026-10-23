@@ -64,14 +64,13 @@ pub fn list(page: u32, per_page: u32) {
                 a.status.as_deref().unwrap_or("-").to_string(),
                 org.to_string(),
                 a.url.as_deref().unwrap_or("\u{2014}").to_string(),
-                a.runtime.as_deref().unwrap_or("\u{2014}").to_string(),
                 a.created_at.as_deref().unwrap_or("-").to_string(),
             ]
         })
         .collect();
 
     output::table(
-        &["Name", "Status", "Org", "URL", "Runtime", "Created"],
+        &["Name", "Status", "Org", "URL", "Created"],
         &rows,
         Some(
             serde_json::json!({"apps": output::to_value(&result.apps), "total": total, "page": page, "per_page": per_page}),
@@ -116,13 +115,6 @@ pub fn status(app_flag: Option<&str>) {
         );
         output::info(
             &format!("  URL:      {}", app.url.as_deref().unwrap_or("\u{2014}")),
-            None,
-        );
-        output::info(
-            &format!(
-                "  Runtime:  {}",
-                app.runtime.as_deref().unwrap_or("\u{2014}")
-            ),
             None,
         );
         if let Some(runtime_url) = app.runtime_url.as_deref() {
