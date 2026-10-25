@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-REPO="${FLOO_INSTALL_REPO:-getfloo/floo-cli}"
+REPO="${FLOO_INSTALL_REPO:-getfloo/floo-releases}"
 INSTALL_DIR="${FLOO_INSTALL_DIR:-/usr/local/bin}"
 REQUESTED_VERSION="${FLOO_INSTALL_VERSION:-}"
 BINARY_NAME="floo"

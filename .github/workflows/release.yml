@@ -103,8 +103,21 @@ jobs:
       contents: write
 
     steps:
+      - uses: actions/checkout@v5
+
+      - name: Require public distribution publisher
+        env:
+          DISTRIBUTION_TOKEN: ${{ secrets.FLOO_DISTRIBUTION_TOKEN }}
+        run: |
+          if [[ -z "$DISTRIBUTION_TOKEN" ]]; then
+            echo "FLOO_DISTRIBUTION_TOKEN must publish releases to getfloo/floo-releases." >&2
+            exit 1
+          fi
+
       - name: Download all artifacts
         uses: actions/download-artifact@v7
+        with:
+          path: release-artifacts
 
       - name: Sign release artifacts
         env:
@@ -148,18 +161,43 @@ jobs:
             found=1
             openssl dgst -sha256 -sign "${key_path}" -out "${asset}.sig" "${asset}"
             openssl dgst -sha256 -verify "${public_key_path}" -signature "${asset}.sig" "${asset}"
-          done < <(find floo-* -type f -name 'floo-*' -print0)
+          done < <(find release-artifacts/floo-* -type f -name 'floo-*' -print0)
 
           if [[ "${found}" -ne 1 ]]; then
             echo "No release binaries found to sign." >&2
             exit 1
           fi
+          openssl dgst -sha256 -sign "${key_path}" -out install.sh.sig install.sh
+          openssl dgst -sha256 -verify "${public_key_path}" -signature install.sh.sig install.sh
+
+      # Publish the public assets before offering the transition binary to
+      # existing clients that still poll the source repository.
+      - name: Stage public binary distribution
+        uses: softprops/action-gh-release@v3
+        with:
+          repository: getfloo/floo-releases
+          token: ${{ secrets.FLOO_DISTRIBUTION_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          target_commitish: main
+          draft: true
+          files: |
+            release-artifacts/floo-*/*
+            install.sh
+            install.sh.sig
+          fail_on_unmatched_files: true
+          body: Signed floo CLI binaries, checksums, signatures and installer.
+
+      - name: Publish complete public distribution
+        env:
+          GH_TOKEN: ${{ secrets.FLOO_DISTRIBUTION_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release edit "$RELEASE_TAG" --repo getfloo/floo-releases --draft=false
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           files: |
-            floo-*/*
+            release-artifacts/floo-*/*
           generate_release_notes: true
           # Hard-fail if the glob matches zero files. Default is false,
           # which would silently publish a release with zero assets if the
