@@ -1,13 +1,20 @@
 {
   "name": "floo",
-  "version": "0.2.1",
-  "description": "CLI guidance for the floo deployment platform, including managed services and security patterns for agents",
+  "version": "0.3.0",
+  "description": "Deploy and operate apps on floo from your coding agent: create apps, deploy, read logs, promote and roll back.",
   "author": {
     "name": "floo",
     "url": "https://github.com/getfloo"
   },
   "repository": "https://github.com/getfloo/floo-cli",
   "license": "MIT",
-  "keywords": ["floo", "deploy", "cloud", "security", "postgres", "redis"],
-  "skills": "./skills/"
+  "keywords": [
+    "floo",
+    "deploy",
+    "hosting",
+    "cloud",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
 }

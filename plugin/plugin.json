@@ -1,0 +1,40 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "floo",
+  "version": "0.3.0",
+  "license": "MIT",
+  "repository": "https://github.com/getfloo/floo-cli",
+  "homepage": "https://getfloo.com",
+  "description": "Deploy and operate apps on floo from your coding agent: create apps, deploy, read logs, promote and roll back.",
+  "author": {
+    "name": "floo",
+    "url": "https://getfloo.com"
+  },
+  "keywords": [
+    "floo",
+    "deploy",
+    "hosting",
+    "cloud",
+    "mcp"
+  ],
+  "skills": "skills/",
+  "mcpServers": "mcp.json",
+  "logo": "assets/logo.svg",
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "floo",
+        "shortDescription": "Deploy apps from your agent",
+        "longDescription": "floo is a platform for deploying and operating web apps. The tools list organizations, apps and deploys, create an app, deploy, read logs, promote, roll back and check spend.",
+        "developerName": "floo",
+        "category": "Developer tools",
+        "websiteURL": "https://getfloo.com",
+        "supportURL": "https://github.com/getfloo/floo-cli/issues",
+        "privacyPolicyURL": "https://getfloo.com/legal/privacy",
+        "termsOfServiceURL": "https://getfloo.com/legal/terms",
+        "logo": "assets/logo.svg",
+        "composerIcon": "assets/logo.svg"
+      }
+    }
+  }
+}
