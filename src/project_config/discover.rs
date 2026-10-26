@@ -753,10 +753,12 @@ ingress = "public"
             postgres: Some(ManagedServiceSection {
                 tier: None,
                 enabled: None,
+                keep_warm: None,
             }),
             redis: Some(ManagedServiceSection {
                 tier: None,
                 enabled: None,
+                keep_warm: None,
             }),
             storage: None,
             managed: HashMap::new(),
@@ -1034,6 +1036,7 @@ ingress = "public"
             postgres: Some(ManagedServiceSection {
                 tier: None,
                 enabled: None,
+                keep_warm: None,
             }),
             redis: None,
             storage: None,
@@ -2031,10 +2034,12 @@ ingress = "internal"
             postgres: Some(ManagedServiceSection {
                 tier: Some("hobby".to_string()),
                 enabled: None,
+                keep_warm: None,
             }),
             redis: Some(ManagedServiceSection {
                 tier: None,
                 enabled: None,
+                keep_warm: None,
             }),
             storage: None,
             managed: HashMap::new(),

@@ -93,6 +93,9 @@ pub struct ManagedServiceSection {
     pub tier: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+    /// Postgres only: stay awake for floo's keep-warm window. Validated by the server.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keep_warm: Option<bool>,
 }
 
 /// A `[managed.<name>]` block: a named instance of a managed service type.
@@ -105,6 +108,9 @@ pub struct ManagedServiceBlock {
     pub tier: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+    /// Postgres only: stay awake for floo's keep-warm window. Validated by the server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_warm: Option<bool>,
 }
 
 const VALID_MANAGED_SERVICE_TYPES: &[&str] = &["postgres", "redis", "storage"];

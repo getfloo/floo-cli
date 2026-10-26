@@ -29,6 +29,7 @@ service = "web"
 [postgres]
 tier = "basic"
 enabled = true
+keep_warm = true
 [redis]
 tier = "basic"
 enabled = false
@@ -39,6 +40,9 @@ enabled = true
 type = "redis"
 tier = "basic"
 enabled = true
+[managed.db]
+type = "postgres"
+keep_warm = false
 [domains."app.example.com"]
 service = "web"
 [edge]
