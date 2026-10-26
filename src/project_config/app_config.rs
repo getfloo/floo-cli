@@ -93,7 +93,7 @@ pub struct ManagedServiceSection {
     pub tier: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
-    /// Postgres only: `true` (keep-warm window) or `"always"`. Validated by the server.
+    /// Postgres only: `true` (awake 1 h after last use) or `"always"`. Validated by the server.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keep_warm: Option<toml::Value>,
 }
@@ -108,7 +108,7 @@ pub struct ManagedServiceBlock {
     pub tier: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
-    /// Postgres only: `true` (keep-warm window) or `"always"`. Validated by the server.
+    /// Postgres only: `true` (awake 1 h after last use) or `"always"`. Validated by the server.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keep_warm: Option<toml::Value>,
 }
