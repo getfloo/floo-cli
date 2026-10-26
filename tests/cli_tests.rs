@@ -3304,6 +3304,7 @@ command = "npm start"
     assert_eq!(
         payload["data"]["managed_services"],
         serde_json::json!([
+            {"name": "postgres:db", "tier": "basic"},
             {"name": "postgres", "tier": "basic"},
             {"name": "redis:cache", "tier": "basic"},
             {"name": "storage", "tier": "basic"}
