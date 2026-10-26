@@ -42,7 +42,7 @@ tier = "basic"
 enabled = true
 [managed.db]
 type = "postgres"
-keep_warm = false
+keep_warm = "always"
 [domains."app.example.com"]
 service = "web"
 [edge]
