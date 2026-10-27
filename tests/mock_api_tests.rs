@@ -3492,6 +3492,52 @@ fn test_logs_human_cron_rows_show_cron_prefix_even_when_filtered() {
 }
 
 #[test]
+fn test_cron_commands_target_the_requested_env() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+
+    let _m_list = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/cron").as_str())
+        .match_query(Matcher::UrlEncoded("env".into(), "prod".into()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"cron_jobs":[]}"#)
+        .create();
+    let m_run = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/cron/nightly/run").as_str(),
+        )
+        .match_query(Matcher::UrlEncoded("env".into(), "prod".into()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"name":"nightly","triggered":true,"message":"Cron job triggered."}"#)
+        .create();
+
+    floo()
+        .args(["cron", "list", "--app", TEST_APP_NAME, "--env", "prod"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("No cron jobs configured in prod."));
+    floo()
+        .args([
+            "cron",
+            "run",
+            "nightly",
+            "--app",
+            TEST_APP_NAME,
+            "--env",
+            "prod",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success();
+    m_run.assert();
+}
+
+#[test]
 fn test_logs_from_config_file() {
     let mut server = Server::new();
     let home = setup_config(&server);
