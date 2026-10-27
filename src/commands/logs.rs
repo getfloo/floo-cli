@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process;
 use std::thread;
@@ -13,6 +14,9 @@ use crate::resolve::resolve_app;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_TRANSIENT_RETRIES: u32 = 3;
+/// Pages one live poll may follow. The server ingests in bursts (at most every
+/// 30 s per app), so a burst can exceed one `--tail` page.
+const MAX_POLL_PAGES: u32 = 20;
 /// Server-side cap on `limit` for both /logs and /requests (FastAPI `le=500`).
 /// Clamp client-side so `--tail 9999` shows the most recent 500 with a clear
 /// note instead of leaking a raw Pydantic validation error (#1155 finding #5).
@@ -180,11 +184,7 @@ fn fetch_logs(
             };
             all_logs.extend(result.logs);
         }
-        all_logs.sort_by(|a, b| {
-            let ts_a = a.timestamp.as_deref().unwrap_or("");
-            let ts_b = b.timestamp.as_deref().unwrap_or("");
-            ts_a.cmp(ts_b)
-        });
+        sort_oldest_first(&mut all_logs);
         LogsResponse {
             total: Some(all_logs.len() as i32),
             app_name: None,
@@ -196,50 +196,92 @@ fn fetch_logs(
     }
 }
 
+/// Fetch every entry matching `filter` (following pages, up to `MAX_POLL_PAGES`
+/// per service), oldest first.
 fn try_fetch_logs(
     client: &crate::api_client::FlooClient,
     app_id: &str,
     tail: u32,
     filter: &LogsFilter,
 ) -> Result<Vec<LogEntry>, crate::errors::FlooApiError> {
-    if filter.services.len() <= 1 {
-        let service = filter.services.first().map(|s| s.as_str());
-        let result = client.get_logs(
-            app_id,
-            tail,
-            filter.since,
-            filter.severity,
-            service,
-            filter.cron,
-            filter.search,
-            filter.deployment,
-            filter.environment,
-            filter.cursor,
-        )?;
-        Ok(result.logs)
+    let services: Vec<Option<&str>> = if filter.services.is_empty() {
+        vec![None]
     } else {
-        let mut all_logs = Vec::new();
-        for svc in filter.services {
-            let result = client.get_logs(
+        filter.services.iter().map(|s| Some(s.as_str())).collect()
+    };
+    let mut all_logs = Vec::new();
+    for service in services {
+        let mut cursor: Option<String> = None;
+        for _ in 0..MAX_POLL_PAGES {
+            let page = client.get_logs(
                 app_id,
                 tail,
                 filter.since,
                 filter.severity,
-                Some(svc),
-                None,
+                service,
+                filter.cron,
                 filter.search,
                 filter.deployment,
                 filter.environment,
-                filter.cursor,
+                cursor.as_deref(),
             )?;
-            all_logs.extend(result.logs);
+            all_logs.extend(page.logs);
+            match page.next_cursor {
+                Some(next) if page.has_more => cursor = Some(next),
+                _ => break,
+            }
         }
-        all_logs.sort_by(|a, b| {
-            let ts_a = a.timestamp.as_deref().unwrap_or("");
-            let ts_b = b.timestamp.as_deref().unwrap_or("");
-            ts_a.cmp(ts_b)
-        });
-        Ok(all_logs)
+    }
+    sort_oldest_first(&mut all_logs);
+    Ok(all_logs)
+}
+
+fn sort_oldest_first(entries: &mut [LogEntry]) {
+    entries.sort_by(|a, b| {
+        let ts_a = a.timestamp.as_deref().unwrap_or("");
+        let ts_b = b.timestamp.as_deref().unwrap_or("");
+        ts_a.cmp(ts_b)
+    });
+}
+
+/// Tracks what a live tail has printed. Polls ask for `since=<last timestamp>`
+/// inclusive, so a record at that timestamp comes back on the next poll too.
+/// Each distinct record is printed as many times as it occurs in one response,
+/// once, however many polls return it.
+#[derive(Default)]
+struct LiveCursor {
+    last_ts: Option<String>,
+    printed_at_last_ts: HashMap<String, usize>,
+}
+
+impl LiveCursor {
+    /// The entries of one oldest-first response not printed yet.
+    fn admit<'a>(&mut self, batch: &'a [LogEntry]) -> Vec<&'a LogEntry> {
+        let mut in_batch: HashMap<String, usize> = HashMap::new();
+        let mut admitted = Vec::new();
+        for entry in batch {
+            let Some(ts) = entry.timestamp.as_deref() else {
+                continue;
+            };
+            match self.last_ts.as_deref() {
+                Some(last) if ts < last => continue,
+                Some(last) if ts == last => {}
+                _ => {
+                    self.last_ts = Some(ts.to_string());
+                    self.printed_at_last_ts.clear();
+                    in_batch.clear();
+                }
+            }
+            let key = serde_json::to_string(entry).unwrap_or_default();
+            let seen = in_batch.entry(key.clone()).or_default();
+            *seen += 1;
+            let printed = self.printed_at_last_ts.entry(key).or_default();
+            if *seen > *printed {
+                *printed = *seen;
+                admitted.push(entry);
+            }
+        }
+        admitted
     }
 }
 
@@ -288,18 +330,6 @@ fn source_label(source: &AppSource, config_dir: &Path) -> String {
                 project_config::APP_CONFIG_FILE,
                 config_dir.display()
             )
-        }
-    }
-}
-
-fn update_last_timestamp(last: &mut Option<String>, entry: &LogEntry) {
-    if let Some(ts) = entry.timestamp.as_deref() {
-        let is_newer = match last.as_deref() {
-            Some(prev) => ts > prev,
-            None => true,
-        };
-        if is_newer {
-            *last = Some(ts.to_string());
         }
     }
 }
@@ -434,7 +464,9 @@ fn batch_logs(
         return;
     }
 
-    for entry in &response.logs {
+    let mut entries = response.logs;
+    sort_oldest_first(&mut entries);
+    for entry in &entries {
         output::dim_line(&format_log_line(entry, show_service_prefix));
     }
 }
@@ -453,8 +485,9 @@ fn write_logs_to_file(path: &Path, response: &LogsResponse, show_service_prefix:
             }
         }
     } else {
-        response
-            .logs
+        let mut entries = response.logs.clone();
+        sort_oldest_first(&mut entries);
+        entries
             .iter()
             .map(|entry| format_log_line_plain(entry, show_service_prefix))
             .collect::<Vec<_>>()
@@ -487,25 +520,28 @@ fn write_logs_to_file(path: &Path, response: &LogsResponse, show_service_prefix:
 fn live_logs(client: &crate::api_client::FlooClient, app_id: &str, tail: u32, filter: &LogsFilter) {
     let is_json = output::is_json_mode();
 
-    let logs_response = fetch_logs(client, app_id, tail, filter);
+    let mut initial = fetch_logs(client, app_id, tail, filter).logs;
+    sort_oldest_first(&mut initial);
 
     // Decide the prefix once from the initial page so the stream stays
     // visually stable: a single-service app never sprouts a prefix mid-stream,
     // a multi-service/service+cron mix keeps it for every line.
-    let show_service_prefix = should_show_prefix(&logs_response.logs);
+    let show_service_prefix = should_show_prefix(&initial);
 
-    let mut last_timestamp: Option<String> = None;
-
-    for entry in &logs_response.logs {
+    let mut cursor = LiveCursor::default();
+    let print = |entry: &LogEntry| {
         if is_json {
             output::print_json(&output::to_value(entry));
         } else {
             output::dim_line(&format_log_line(entry, show_service_prefix));
         }
-        update_last_timestamp(&mut last_timestamp, entry);
+    };
+
+    for entry in cursor.admit(&initial) {
+        print(entry);
     }
 
-    if !is_json && logs_response.logs.is_empty() {
+    if !is_json && initial.is_empty() {
         output::info("Waiting for new logs...", None);
     }
 
@@ -514,10 +550,8 @@ fn live_logs(client: &crate::api_client::FlooClient, app_id: &str, tail: u32, fi
     loop {
         thread::sleep(POLL_INTERVAL);
 
-        let since_filter = last_timestamp.as_deref().or(filter.since);
-
         let poll_filter = LogsFilter {
-            since: since_filter,
+            since: cursor.last_ts.as_deref().or(filter.since),
             severity: filter.severity,
             services: filter.services,
             cron: filter.cron,
@@ -527,8 +561,7 @@ fn live_logs(client: &crate::api_client::FlooClient, app_id: &str, tail: u32, fi
             cursor: None,
         };
 
-        let poll_result = try_fetch_logs(client, app_id, tail, &poll_filter);
-        let new_logs = match poll_result {
+        let new_logs = match try_fetch_logs(client, app_id, tail, &poll_filter) {
             Ok(logs) => {
                 consecutive_errors = 0;
                 logs
@@ -559,27 +592,8 @@ fn live_logs(client: &crate::api_client::FlooClient, app_id: &str, tail: u32, fi
             }
         };
 
-        let new_entries: Vec<_> = match &last_timestamp {
-            None => new_logs,
-            Some(last_ts) => new_logs
-                .into_iter()
-                .filter(|entry| {
-                    entry
-                        .timestamp
-                        .as_deref()
-                        .map(|ts| ts > last_ts.as_str())
-                        .unwrap_or(false)
-                })
-                .collect(),
-        };
-
-        for entry in &new_entries {
-            if is_json {
-                output::print_json(&output::to_value(entry));
-            } else {
-                output::dim_line(&format_log_line(entry, show_service_prefix));
-            }
-            update_last_timestamp(&mut last_timestamp, entry);
+        for entry in cursor.admit(&new_logs) {
+            print(entry);
         }
     }
 }
@@ -970,6 +984,113 @@ mod tests {
         assert_eq!(clamp_tail(MAX_LOG_LINES), MAX_LOG_LINES);
         assert_eq!(clamp_tail(100), 100);
         assert_eq!(clamp_tail(1), 1);
+    }
+
+    #[test]
+    fn live_cursor_admits_late_entries_at_the_last_timestamp_once() {
+        output::set_json_mode(false);
+        output::set_dry_run_mode(false);
+        let log = |ts: &str, sev: &str, msg: &str| make_log_with_service(ts, sev, msg, "web");
+        let a = log("2024-01-01T00:00:01Z", "INFO", "a");
+        let a_error = log("2024-01-01T00:00:01Z", "ERROR", "a");
+        let b = log("2024-01-01T00:00:01Z", "INFO", "b");
+        let older = log("2024-01-01T00:00:00Z", "INFO", "c");
+        let newer = log("2024-01-01T00:00:02Z", "INFO", "a");
+        let mut cursor = LiveCursor::default();
+        let messages = |admitted: Vec<&LogEntry>| -> Vec<String> {
+            admitted
+                .iter()
+                .map(|e| {
+                    format!(
+                        "{}:{}",
+                        e.severity.as_deref().unwrap_or(""),
+                        e.message.as_deref().unwrap_or("")
+                    )
+                })
+                .collect()
+        };
+
+        // Two identical records in one response both print; same message at ERROR is distinct.
+        assert_eq!(
+            messages(cursor.admit(&[a.clone(), a.clone(), a_error.clone()])),
+            ["INFO:a", "INFO:a", "ERROR:a"]
+        );
+        // The next poll (since=00:00:01 inclusive) returns them again plus a late `b`.
+        assert_eq!(
+            messages(cursor.admit(&[older, a.clone(), a.clone(), a_error, b])),
+            ["INFO:b"]
+        );
+        assert_eq!(messages(cursor.admit(&[newer])), ["INFO:a"]);
+    }
+
+    #[test]
+    fn live_poll_follows_every_page_and_returns_oldest_first() {
+        output::set_json_mode(false);
+        output::set_dry_run_mode(false);
+        let mut server = mockito::Server::new();
+        let page = |logs: &str, cursor: Option<&str>| {
+            let next = cursor.map_or("null".to_string(), |c| format!("\"{c}\""));
+            format!(
+                r#"{{"logs":[{logs}],"next_cursor":{next},"has_more":{}}}"#,
+                cursor.is_some()
+            )
+        };
+        let line = |ts: &str, msg: &str| format!(r#"{{"timestamp":"{ts}","message":"{msg}"}}"#);
+        let first = server
+            .mock("GET", "/v1/apps/app-1/logs")
+            .match_query(mockito::Matcher::Regex("^limit=2$".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(page(
+                &format!(
+                    "{},{}",
+                    line("2024-01-01T00:00:04Z", "d"),
+                    line("2024-01-01T00:00:03Z", "c")
+                ),
+                Some("page-2"),
+            ))
+            .create();
+        let second = server
+            .mock("GET", "/v1/apps/app-1/logs")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "cursor".into(),
+                "page-2".into(),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(page(
+                &format!(
+                    "{},{}",
+                    line("2024-01-01T00:00:02Z", "b"),
+                    line("2024-01-01T00:00:01Z", "a")
+                ),
+                None,
+            ))
+            .create();
+
+        let client = crate::api_client::FlooClient::new(Some(crate::config::FlooConfig {
+            api_key: Some("floo_test123".to_string()),
+            api_url: server.url(),
+            ..Default::default()
+        }))
+        .unwrap();
+        let filter = LogsFilter {
+            since: None,
+            severity: None,
+            services: &[],
+            cron: None,
+            search: None,
+            deployment: None,
+            environment: None,
+            cursor: None,
+        };
+
+        let logs = try_fetch_logs(&client, "app-1", 2, &filter).unwrap();
+
+        let messages: Vec<_> = logs.iter().filter_map(|e| e.message.as_deref()).collect();
+        assert_eq!(messages, ["a", "b", "c", "d"]);
+        first.assert();
+        second.assert();
     }
 
     fn make_request_entry(ts: &str) -> RequestLogEntry {
