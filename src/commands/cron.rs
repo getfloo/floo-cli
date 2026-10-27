@@ -67,12 +67,12 @@ fn validate_dry_run_target(cwd: &Path, name: &str) -> Result<(), FlooError> {
     ))
 }
 
-pub fn list(app_flag: Option<&str>) {
+pub fn list(app_flag: Option<&str>, env: &str) {
     super::require_auth();
     let client = super::init_client(None);
     let (app_id, _app_name) = super::resolve_app_from_config(&client, app_flag);
 
-    let result = match client.list_cron_jobs(&app_id) {
+    let result = match client.list_cron_jobs(&app_id, env) {
         Ok(r) => r,
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
@@ -86,7 +86,7 @@ pub fn list(app_flag: Option<&str>) {
     }
 
     if result.cron_jobs.is_empty() {
-        output::info("No cron jobs configured.", None);
+        output::info(&format!("No cron jobs configured in {env}."), None);
         return;
     }
 
@@ -122,12 +122,12 @@ pub fn list(app_flag: Option<&str>) {
     );
 }
 
-pub fn show(app_flag: Option<&str>, name: &str) {
+pub fn show(app_flag: Option<&str>, name: &str, env: &str) {
     super::require_auth();
     let client = super::init_client(None);
     let (app_id, _app_name) = super::resolve_app_from_config(&client, app_flag);
 
-    let result = match client.get_cron_job(&app_id, name) {
+    let result = match client.get_cron_job(&app_id, name, env) {
         Ok(r) => r,
         Err(e) => {
             output::error(
@@ -163,7 +163,7 @@ pub fn show(app_flag: Option<&str>, name: &str) {
     );
 }
 
-pub fn run(app_flag: Option<&str>, name: &str) {
+pub fn run(app_flag: Option<&str>, name: &str, env: &str) {
     // Dry-run stays offline: like every other --dry-run handler in the CLI
     // (apps.rs, domains.rs, env.rs, rollbacks.rs, deploy.rs) it runs BEFORE
     // require_auth() / the API call, so previewing never needs a live API key.
@@ -185,12 +185,13 @@ pub fn run(app_flag: Option<&str>, name: &str) {
         }
 
         let target = app_flag.unwrap_or("(reads from config)");
-        let preview = format!("Would trigger cron job '{name}' on {target}.");
+        let preview = format!("Would trigger cron job '{name}' on {target} ({env}).");
         output::dry_run_preview(
             &preview,
             serde_json::json!({
                 "action": "run_cron_job",
                 "app": app_flag,
+                "env": env,
                 "name": name,
             }),
         );
@@ -201,8 +202,8 @@ pub fn run(app_flag: Option<&str>, name: &str) {
     let client = super::init_client(None);
     let (app_id, _app_name) = super::resolve_app_from_config(&client, app_flag);
 
-    let spinner = output::Spinner::new(&format!("Running cron job '{name}'..."));
-    let result = match client.run_cron_job(&app_id, name) {
+    let spinner = output::Spinner::new(&format!("Queueing cron job '{name}' in {env}..."));
+    let result = match client.run_cron_job(&app_id, name, env) {
         Ok(r) => {
             spinner.finish();
             r
@@ -219,12 +220,16 @@ pub fn run(app_flag: Option<&str>, name: &str) {
     };
 
     if output::is_json_mode() {
-        output::success("Cron job run complete.", Some(output::to_value(&result)));
+        output::success("Cron job queued.", Some(output::to_value(&result)));
         return;
     }
 
-    let msg = result.message.as_deref().unwrap_or("Cron job completed.");
+    let msg = result.message.as_deref().unwrap_or("Cron job queued.");
     output::success(msg, None);
+    output::info(
+        &format!("Check the result with `floo cron show {name} --env {env}`."),
+        None,
+    );
 }
 
 #[cfg(test)]

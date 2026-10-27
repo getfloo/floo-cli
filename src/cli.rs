@@ -1914,6 +1914,10 @@ pub enum CronCommands {
         /// App name or ID (reads from config if omitted).
         #[arg(short, long)]
         app: Option<String>,
+
+        /// Environment the cron job runs in.
+        #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
+        env: String,
     },
 
     /// Show details for a single cron job (schedule, status, last run).
@@ -1931,6 +1935,10 @@ pub enum CronCommands {
         /// Cron job name. Mutually exclusive with the positional form.
         #[arg(long = "name", conflicts_with = "name")]
         name_flag: Option<String>,
+
+        /// Environment the cron job runs in.
+        #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
+        env: String,
     },
 
     /// Manually trigger a cron job by name.
@@ -1949,6 +1957,10 @@ pub enum CronCommands {
         /// Cron job name. Mutually exclusive with the positional form.
         #[arg(long = "name", conflicts_with = "name")]
         name_flag: Option<String>,
+
+        /// Environment the cron job runs in.
+        #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
+        env: String,
 
         #[command(flatten)]
         preflight: PreflightArgs,
@@ -2659,11 +2671,12 @@ pub fn run() {
         },
 
         Commands::Cron(sub) => match sub {
-            CronCommands::List { app } => commands::cron::list(app.as_deref()),
+            CronCommands::List { app, env } => commands::cron::list(app.as_deref(), &env),
             CronCommands::Show {
                 name,
                 app,
                 name_flag,
+                env,
             } => {
                 let resolved = name.or(name_flag).unwrap_or_else(|| {
                     output::error(
@@ -2673,12 +2686,13 @@ pub fn run() {
                     );
                     std::process::exit(1);
                 });
-                commands::cron::show(app.as_deref(), &resolved)
+                commands::cron::show(app.as_deref(), &resolved, &env)
             }
             CronCommands::Run {
                 name,
                 app,
                 name_flag,
+                env,
                 preflight: _,
             } => {
                 let resolved = name.or(name_flag).unwrap_or_else(|| {
@@ -2689,7 +2703,7 @@ pub fn run() {
                     );
                     std::process::exit(1);
                 });
-                commands::cron::run(app.as_deref(), &resolved)
+                commands::cron::run(app.as_deref(), &resolved, &env)
             }
         },
 
