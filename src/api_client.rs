@@ -645,13 +645,22 @@ impl FlooClient {
 
     // --- Cron Jobs ---
 
-    pub fn list_cron_jobs(&self, app_id: &str) -> Result<CronJobListResponse, FlooApiError> {
-        let resp = self.get(&format!("/v1/apps/{app_id}/cron"))?;
+    pub fn list_cron_jobs(
+        &self,
+        app_id: &str,
+        env: &str,
+    ) -> Result<CronJobListResponse, FlooApiError> {
+        let resp = self.get(&format!("/v1/apps/{app_id}/cron?env={env}"))?;
         self.handle_response(resp)
     }
 
-    pub fn get_cron_job(&self, app_id: &str, name: &str) -> Result<CronJobResponse, FlooApiError> {
-        let resp = self.get(&format!("/v1/apps/{app_id}/cron/{name}"))?;
+    pub fn get_cron_job(
+        &self,
+        app_id: &str,
+        name: &str,
+        env: &str,
+    ) -> Result<CronJobResponse, FlooApiError> {
+        let resp = self.get(&format!("/v1/apps/{app_id}/cron/{name}?env={env}"))?;
         self.handle_response(resp)
     }
 
@@ -659,9 +668,10 @@ impl FlooClient {
         &self,
         app_id: &str,
         name: &str,
+        env: &str,
     ) -> Result<CronJobRunResponse, FlooApiError> {
         let resp = self.post_json(
-            &format!("/v1/apps/{app_id}/cron/{name}/run"),
+            &format!("/v1/apps/{app_id}/cron/{name}/run?env={env}"),
             &serde_json::json!({}),
         )?;
         self.handle_response(resp)
