@@ -533,6 +533,11 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn list_envs(&self, app_id: &str) -> Result<EnvironmentListResponse, FlooApiError> {
+        let resp = self.get(&format!("/v1/apps/{app_id}/envs"))?;
+        self.handle_response(resp)
+    }
+
     pub fn list_edge_routes(
         &self,
         app_id: &str,

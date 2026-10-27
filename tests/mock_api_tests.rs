@@ -116,6 +116,20 @@ fn mock_resolve_app(server: &mut Server) -> Vec<Mock> {
     vec![m]
 }
 
+const TEST_NONPROD_SA: &str = "floo-test-np@tenant.iam.gserviceaccount.com";
+
+/// Mock GET /v1/apps/{id}/envs: dev has a dedicated identity, prod does not.
+fn mock_list_envs(server: &mut Server) -> Mock {
+    server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/envs").as_str())
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"envs":[{{"name":"dev","url":"https://test-dev.floo.app","runtime_service_account":"{TEST_NONPROD_SA}"}},{{"name":"prod","url":"https://test.floo.app","runtime_service_account":null}}],"total":2}}"#
+        ))
+        .create()
+}
+
 /// Mock a single user-managed service (web).
 fn mock_services_single(server: &mut Server) -> Mock {
     mock_services_single_for_env(server, None)
@@ -1085,6 +1099,7 @@ fn test_apps_show_json() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
+    let _envs = mock_list_envs(&mut server);
 
     floo()
         .args(["--json", "apps", "show", TEST_APP_NAME])
@@ -1103,6 +1118,7 @@ fn test_apps_show_with_app_flag() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
+    let _envs = mock_list_envs(&mut server);
 
     floo()
         .args(["--json", "apps", "show", "--app", TEST_APP_NAME])
@@ -1131,6 +1147,7 @@ fn test_apps_show_json_surfaces_runtime_url() {
             r#"{{"apps":[{{"id":"{TEST_APP_ID}","name":"{TEST_APP_NAME}","org_id":"{TEST_ORG_ID}","status":"live","url":"https://test.floo.app","runtime":"rails","runtime_url":"{runtime_url}","created_at":"2024-01-01T00:00:00Z"}}]}}"#
         ))
         .create();
+    let _envs = mock_list_envs(&mut server);
 
     floo()
         .args(["--json", "apps", "show", TEST_APP_NAME])
@@ -1159,6 +1176,7 @@ fn test_apps_show_human_includes_runtime_url() {
             r#"{{"apps":[{{"id":"{TEST_APP_ID}","name":"{TEST_APP_NAME}","org_id":"{TEST_ORG_ID}","status":"live","url":"https://test.floo.app","runtime":"rails","runtime_url":"{runtime_url}","created_at":"2024-01-01T00:00:00Z"}}]}}"#
         ))
         .create();
+    let _envs = mock_list_envs(&mut server);
     let _m_org = mock_org_me(&mut server);
 
     floo()
@@ -1169,6 +1187,68 @@ fn test_apps_show_human_includes_runtime_url() {
         .stderr(predicate::str::contains("Runtime URL:"))
         .stderr(predicate::str::contains(runtime_url))
         .stderr(predicate::str::contains("debug only"));
+}
+
+#[test]
+fn test_apps_show_json_reports_runtime_service_account_per_env() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _envs = mock_list_envs(&mut server);
+
+    let out = floo()
+        .args(["--json", "apps", "show", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let envs = body["data"]["envs"].as_array().unwrap();
+    assert_eq!(envs[0]["name"], "dev");
+    assert_eq!(envs[0]["runtime_service_account"], TEST_NONPROD_SA);
+    assert_eq!(envs[1]["name"], "prod");
+    assert!(envs[1]["runtime_service_account"].is_null());
+}
+
+#[test]
+fn test_apps_show_human_lists_identity_per_env() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _envs = mock_list_envs(&mut server);
+    let _m_org = mock_org_me(&mut server);
+
+    floo()
+        .args(["apps", "show", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(format!(
+            "Identity: dev  {TEST_NONPROD_SA}"
+        )))
+        .stderr(predicate::str::contains(
+            "prod  \u{2014} (no dedicated identity)",
+        ));
+}
+
+#[test]
+fn test_apps_show_fails_when_env_read_fails() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _envs = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/envs").as_str())
+        .with_status(500)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":{"code":"INTERNAL_ERROR","message":"boom"}}"#)
+        .create();
+
+    floo()
+        .args(["--json", "apps", "show", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""success":false"#));
 }
 
 #[test]

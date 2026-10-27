@@ -102,7 +102,15 @@ pub fn status(app_flag: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);
     let (_, app_name) = super::resolve_app_from_config(&client, app_flag);
-    let app = super::resolve_app_or_exit(&client, &app_name);
+    let mut app = super::resolve_app_or_exit(&client, &app_name);
+    // The app read has no runtime identity; the environment read does.
+    app.envs = match client.list_envs(&app.id) {
+        Ok(resp) => resp.envs,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
 
     if output::is_json_mode() {
         output::success(&format!("App {}", app.name), Some(output::to_value(&app)));
@@ -141,6 +149,18 @@ pub fn status(app_flag: Option<&str>) {
             output::info(&format!("  Envs:     {}", env_lines[0]), None);
             for line in &env_lines[1..] {
                 output::info(&format!("            {line}"), None);
+            }
+            for (i, e) in app.envs.iter().enumerate() {
+                let label = if i == 0 {
+                    "  Identity: "
+                } else {
+                    "            "
+                };
+                let account = e
+                    .runtime_service_account
+                    .as_deref()
+                    .unwrap_or("\u{2014} (no dedicated identity)");
+                output::info(&format!("{label}{}  {account}", e.name), None);
             }
         }
     }
