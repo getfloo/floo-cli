@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process;
 use std::thread;
@@ -245,34 +245,43 @@ fn sort_oldest_first(entries: &mut [LogEntry]) {
 }
 
 /// Tracks what a live tail has printed. Polls ask for `since=<last timestamp>`
-/// inclusive, so entries sharing that timestamp are admitted once each, even
-/// when the server ingests them in a later batch.
+/// inclusive, so a record at that timestamp comes back on the next poll too.
+/// Each distinct record is printed as many times as it occurs in one response,
+/// once, however many polls return it.
 #[derive(Default)]
 struct LiveCursor {
     last_ts: Option<String>,
-    printed_at_last_ts: HashSet<String>,
+    printed_at_last_ts: HashMap<String, usize>,
 }
 
 impl LiveCursor {
-    fn admit(&mut self, entry: &LogEntry) -> bool {
-        let Some(ts) = entry.timestamp.as_deref() else {
-            return false;
-        };
-        let key = format!(
-            "{}|{}|{}",
-            entry.service_name.as_deref().unwrap_or(""),
-            entry.cron_job_name.as_deref().unwrap_or(""),
-            entry.message.as_deref().unwrap_or("")
-        );
-        match self.last_ts.as_deref() {
-            Some(last) if ts < last => false,
-            Some(last) if ts == last => self.printed_at_last_ts.insert(key),
-            _ => {
-                self.last_ts = Some(ts.to_string());
-                self.printed_at_last_ts = HashSet::from([key]);
-                true
+    /// The entries of one oldest-first response not printed yet.
+    fn admit<'a>(&mut self, batch: &'a [LogEntry]) -> Vec<&'a LogEntry> {
+        let mut in_batch: HashMap<String, usize> = HashMap::new();
+        let mut admitted = Vec::new();
+        for entry in batch {
+            let Some(ts) = entry.timestamp.as_deref() else {
+                continue;
+            };
+            match self.last_ts.as_deref() {
+                Some(last) if ts < last => continue,
+                Some(last) if ts == last => {}
+                _ => {
+                    self.last_ts = Some(ts.to_string());
+                    self.printed_at_last_ts.clear();
+                    in_batch.clear();
+                }
+            }
+            let key = serde_json::to_string(entry).unwrap_or_default();
+            let seen = in_batch.entry(key.clone()).or_default();
+            *seen += 1;
+            let printed = self.printed_at_last_ts.entry(key).or_default();
+            if *seen > *printed {
+                *printed = *seen;
+                admitted.push(entry);
             }
         }
+        admitted
     }
 }
 
@@ -528,10 +537,8 @@ fn live_logs(client: &crate::api_client::FlooClient, app_id: &str, tail: u32, fi
         }
     };
 
-    for entry in &initial {
-        if cursor.admit(entry) {
-            print(entry);
-        }
+    for entry in cursor.admit(&initial) {
+        print(entry);
     }
 
     if !is_json && initial.is_empty() {
@@ -585,10 +592,8 @@ fn live_logs(client: &crate::api_client::FlooClient, app_id: &str, tail: u32, fi
             }
         };
 
-        for entry in &new_logs {
-            if cursor.admit(entry) {
-                print(entry);
-            }
+        for entry in cursor.admit(&new_logs) {
+            print(entry);
         }
     }
 }
@@ -983,26 +988,45 @@ mod tests {
 
     #[test]
     fn live_cursor_admits_late_entries_at_the_last_timestamp_once() {
+        output::set_json_mode(false);
+        output::set_dry_run_mode(false);
+        let log = |ts: &str, sev: &str, msg: &str| make_log_with_service(ts, sev, msg, "web");
+        let a = log("2024-01-01T00:00:01Z", "INFO", "a");
+        let a_error = log("2024-01-01T00:00:01Z", "ERROR", "a");
+        let b = log("2024-01-01T00:00:01Z", "INFO", "b");
+        let older = log("2024-01-01T00:00:00Z", "INFO", "c");
+        let newer = log("2024-01-01T00:00:02Z", "INFO", "a");
         let mut cursor = LiveCursor::default();
-        let first = make_log_with_service("2024-01-01T00:00:01Z", "INFO", "a", "web");
-        let same_ts_later_batch = make_log_with_service("2024-01-01T00:00:01Z", "INFO", "b", "web");
-        let older = make_log_with_service("2024-01-01T00:00:00Z", "INFO", "c", "web");
+        let messages = |admitted: Vec<&LogEntry>| -> Vec<String> {
+            admitted
+                .iter()
+                .map(|e| {
+                    format!(
+                        "{}:{}",
+                        e.severity.as_deref().unwrap_or(""),
+                        e.message.as_deref().unwrap_or("")
+                    )
+                })
+                .collect()
+        };
 
-        assert!(cursor.admit(&first));
-        // The next poll asks since=00:00:01 inclusive: it returns `a` again plus `b`.
-        assert!(!cursor.admit(&first));
-        assert!(cursor.admit(&same_ts_later_batch));
-        assert!(!cursor.admit(&older));
-        assert!(cursor.admit(&make_log_with_service(
-            "2024-01-01T00:00:02Z",
-            "INFO",
-            "a",
-            "web"
-        )));
+        // Two identical records in one response both print; same message at ERROR is distinct.
+        assert_eq!(
+            messages(cursor.admit(&[a.clone(), a.clone(), a_error.clone()])),
+            ["INFO:a", "INFO:a", "ERROR:a"]
+        );
+        // The next poll (since=00:00:01 inclusive) returns them again plus a late `b`.
+        assert_eq!(
+            messages(cursor.admit(&[older, a.clone(), a.clone(), a_error, b])),
+            ["INFO:b"]
+        );
+        assert_eq!(messages(cursor.admit(&[newer])), ["INFO:a"]);
     }
 
     #[test]
     fn live_poll_follows_every_page_and_returns_oldest_first() {
+        output::set_json_mode(false);
+        output::set_dry_run_mode(false);
         let mut server = mockito::Server::new();
         let page = |logs: &str, cursor: Option<&str>| {
             let next = cursor.map_or("null".to_string(), |c| format!("\"{c}\""));
