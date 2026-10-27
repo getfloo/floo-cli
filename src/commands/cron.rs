@@ -202,7 +202,7 @@ pub fn run(app_flag: Option<&str>, name: &str, env: &str) {
     let client = super::init_client(None);
     let (app_id, _app_name) = super::resolve_app_from_config(&client, app_flag);
 
-    let spinner = output::Spinner::new(&format!("Running cron job '{name}' in {env}..."));
+    let spinner = output::Spinner::new(&format!("Queueing cron job '{name}' in {env}..."));
     let result = match client.run_cron_job(&app_id, name, env) {
         Ok(r) => {
             spinner.finish();
@@ -220,12 +220,16 @@ pub fn run(app_flag: Option<&str>, name: &str, env: &str) {
     };
 
     if output::is_json_mode() {
-        output::success("Cron job run complete.", Some(output::to_value(&result)));
+        output::success("Cron job queued.", Some(output::to_value(&result)));
         return;
     }
 
-    let msg = result.message.as_deref().unwrap_or("Cron job completed.");
+    let msg = result.message.as_deref().unwrap_or("Cron job queued.");
     output::success(msg, None);
+    output::info(
+        &format!("Check the result with `floo cron show {name} --env {env}`."),
+        None,
+    );
 }
 
 #[cfg(test)]
