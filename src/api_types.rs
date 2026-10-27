@@ -441,6 +441,16 @@ pub struct OrganizationSsoBrowserHandoff {
 pub struct EnvironmentSummary {
     pub name: String,
     pub url: Option<String>,
+    /// GCP service account this environment runs as, for customers to grant
+    /// access to private Google APIs. Only `GET /v1/apps/{id}/envs` carries
+    /// it; null when the environment has no dedicated identity.
+    #[serde(default)]
+    pub runtime_service_account: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvironmentListResponse {
+    pub envs: Vec<EnvironmentSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
