@@ -57,6 +57,55 @@ pub fn accounts(app_flag: Option<&str>) {
     }
 }
 
+/// Explain why the last push did or did not deploy. Exits non-zero when it needs action.
+pub fn push(app_flag: Option<&str>) {
+    super::require_auth();
+    let client = super::init_client(None);
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
+
+    let connection = match client.github_status(&app_id) {
+        Ok(connection) => connection,
+        Err(error) => {
+            output::error(&error.message, &ErrorCode::from_api(&error.code), None);
+            process::exit(1);
+        }
+    };
+    let needs_action = connection
+        .last_push
+        .as_ref()
+        .is_some_and(|push| push.needs_action);
+
+    if output::is_json_mode() {
+        output::success(
+            "Push doctor diagnosis.",
+            Some(serde_json::json!({
+                "app_id": app_id,
+                "app_name": app_name,
+                "last_push": connection.last_push,
+            })),
+        );
+    } else {
+        match &connection.last_push {
+            Some(push) => {
+                output::info(&push.summary, None);
+                eprintln!("  Next step: {}", push.next_step);
+            }
+            None => output::info(
+                &format!(
+                    "floo has no push recorded for {app_name}. A push to the connected branch \
+                     shows here within seconds; if one does not, run `floo apps github status` \
+                     to check the connected repo."
+                ),
+                None,
+            ),
+        }
+    }
+
+    if needs_action {
+        process::exit(1);
+    }
+}
+
 pub fn managed_services(app_flag: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);

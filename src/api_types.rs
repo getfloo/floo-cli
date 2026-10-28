@@ -1233,6 +1233,20 @@ pub struct GitHubStatusResponse {
     pub default_branch: Option<String>,
     pub installation_id: Option<i64>,
     pub services: Vec<ServiceGitHubInfo>,
+    /// The last push webhook for this app and what floo did with it.
+    #[serde(default)]
+    pub last_push: Option<GitHubLastPush>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitHubLastPush {
+    pub at: String,
+    pub branch: String,
+    pub commit_sha: String,
+    pub outcome: String,
+    pub needs_action: bool,
+    pub summary: String,
+    pub next_step: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -9812,3 +9812,60 @@ mod app_api_keys {
         create.assert();
     }
 }
+
+fn mock_github_connection_with_last_push(server: &mut Server, last_push: &str) -> Mock {
+    server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/github/connection").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"id":"c1","app_id":"{TEST_APP_ID}","connected":true,"skip_env_var_check":false,"preview_enabled":false,"preview_ttl_hours":null,"connected_at":"2026-10-27T22:00:00Z","repo_full_name":"myorg/myrepo","default_branch":"main","installation_id":1,"services":[],"last_push":{last_push}}}"#
+        ))
+        .create()
+}
+
+#[test]
+fn test_doctor_push_skipped_push_exits_nonzero_with_next_step() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let connection = mock_github_connection_with_last_push(
+        &mut server,
+        r#"{"at":"2026-10-27T22:12:00Z","branch":"feature-x","commit_sha":"abc1234def","outcome":"not_default_branch","needs_action":true,"summary":"The last push to feature-x (abc1234) was skipped because floo only deploys pushes to main.","next_step":"Merge or push the commit to main."}"#,
+    );
+
+    floo()
+        .args(["--json", "doctor", "push", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            r#""outcome":"not_default_branch""#,
+        ))
+        .stdout(predicate::str::contains(
+            "Merge or push the commit to main.",
+        ));
+
+    connection.assert();
+}
+
+#[test]
+fn test_doctor_push_started_deploy_exits_zero() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _connection = mock_github_connection_with_last_push(
+        &mut server,
+        r#"{"at":"2026-10-27T22:12:00Z","branch":"main","commit_sha":"abc1234def","outcome":"deploying","needs_action":false,"summary":"The last push to main (abc1234) started a dev deploy.","next_step":"Follow it with `floo deploys watch --commit abc1234`."}"#,
+    );
+
+    floo()
+        .args(["doctor", "push", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("started a dev deploy"));
+}
