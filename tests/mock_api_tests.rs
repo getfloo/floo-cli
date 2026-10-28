@@ -9834,7 +9834,7 @@ fn test_doctor_push_skipped_push_exits_nonzero_with_next_step() {
     let _resolve = mock_resolve_app(&mut server);
     let connection = mock_github_connection_with_last_push(
         &mut server,
-        r#"{"at":"2026-10-27T22:12:00Z","branch":"feature-x","commit_sha":"abc1234def","outcome":"not_default_branch","needs_action":true,"summary":"The last push to feature-x (abc1234) was skipped because floo only deploys pushes to main.","next_step":"Merge or push the commit to main."}"#,
+        r#"{"at":"2026-10-27T22:12:00Z","branch":"main","commit_sha":"abc1234def","outcome":"deploy_on_push_off","needs_action":true,"summary":"The last push to main (abc1234) was skipped because deploy_on_push is false in floo.app.toml.","next_step":"Set deploy_on_push = true under [github] in floo.app.toml and push again."}"#,
     );
 
     floo()
