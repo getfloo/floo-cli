@@ -53,6 +53,10 @@ pub struct AppFileConfig {
     /// Route tables pass through unchanged; the server owns their validation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub routes: Vec<toml::Table>,
+    /// `[network.tailscale]` passes through unchanged; the server owns its validation
+    /// (getfloo/floo#4059).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<toml::Table>,
     /// Preview data and deprecated aliases are validated by the server.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preview: Option<toml::Table>,
@@ -791,6 +795,32 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
+    fn test_network_section_passes_through_to_the_server() {
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
+        let config = parse_app_config(
+            r#"[app]
+name = "my-app"
+[services.web]
+type = "web"
+path = "."
+port = 8080
+[network.tailscale]
+auth_key_secret = "TAILSCALE_AUTHKEY"
+forward = ["db.corp.internal:5432"]
+"#,
+        )
+        .unwrap();
+        let serialized = toml::to_string(&config).unwrap();
+        let reloaded: AppFileConfig = toml::from_str(&serialized).unwrap();
+        assert_eq!(reloaded.network, config.network);
+        assert_eq!(
+            config.network.unwrap()["tailscale"]["forward"][0].as_str(),
+            Some("db.corp.internal:5432")
+        );
+    }
+
+    #[test]
     fn test_max_request_body_mb_app_manifest_round_trip_and_omission() {
         crate::output::set_json_mode(false);
         crate::output::set_dry_run_mode(false);
@@ -1219,6 +1249,7 @@ type = "mysql"
             auth: None,
             github: None,
             routes: Vec::new(),
+            network: None,
             preview: None,
             postgres: None,
             redis: None,
