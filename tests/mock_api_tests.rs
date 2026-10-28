@@ -9857,7 +9857,7 @@ fn test_doctor_push_started_deploy_exits_zero() {
     let _resolve = mock_resolve_app(&mut server);
     let _connection = mock_github_connection_with_last_push(
         &mut server,
-        r#"{"at":"2026-10-27T22:12:00Z","branch":"main","commit_sha":"abc1234def","outcome":"deploying","needs_action":false,"summary":"The last push to main (abc1234) started a dev deploy.","next_step":"Follow it with `floo deploys watch --commit abc1234`."}"#,
+        r#"{"at":"2026-10-27T22:12:00Z","branch":"main","commit_sha":"abc1234def","outcome":"deploying","needs_action":false,"summary":"The last push to main (abc1234) created a dev deploy.","next_step":"Follow it with `floo deploys watch --commit abc1234`."}"#,
     );
 
     floo()
@@ -9865,5 +9865,5 @@ fn test_doctor_push_started_deploy_exits_zero() {
         .env("HOME", home.path())
         .assert()
         .success()
-        .stderr(predicate::str::contains("started a dev deploy"));
+        .stderr(predicate::str::contains("created a dev deploy"));
 }
