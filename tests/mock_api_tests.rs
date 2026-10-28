@@ -9843,11 +9843,9 @@ fn test_doctor_push_skipped_push_exits_nonzero_with_next_step() {
         .assert()
         .failure()
         .stdout(predicate::str::contains(
-            r#""outcome":"not_default_branch""#,
+            r#""outcome":"deploy_on_push_off""#,
         ))
-        .stdout(predicate::str::contains(
-            "Merge or push the commit to main.",
-        ));
+        .stdout(predicate::str::contains("Set deploy_on_push = true"));
 
     connection.assert();
 }
