@@ -1877,6 +1877,20 @@ pub enum EventsCommands {
 
 #[derive(Subcommand)]
 pub enum DoctorCommands {
+    /// Explain why the last git push did or did not deploy.
+    #[command(after_help = "\
+Examples:
+  floo doctor push                Use the app from floo.app.toml
+  floo doctor push --app foo      Diagnose a specific app
+  floo doctor push --json         Machine-readable output for agents
+
+Exit code is non-zero when the last push was skipped and needs action.")]
+    Push {
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+
     /// Check managed-service data-plane health.
     #[command(after_help = "\
 Examples:
@@ -2715,6 +2729,7 @@ pub fn run() {
 
         Commands::Doctor(sub) => match sub {
             DoctorCommands::Accounts { app } => commands::doctor::accounts(app.as_deref()),
+            DoctorCommands::Push { app } => commands::doctor::push(app.as_deref()),
             DoctorCommands::ManagedServices { app } => {
                 commands::doctor::managed_services(app.as_deref())
             }

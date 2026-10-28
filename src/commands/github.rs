@@ -673,6 +673,10 @@ pub fn status(app: Option<&str>) {
                 output::info(&format!("  Repo:      {repo}"), None);
                 output::info(&format!("  Branch:    {branch}"), None);
                 output::info(&format!("  Connected: {}", conn.connected_at), None);
+                if let Some(push) = &conn.last_push {
+                    output::info(&format!("  Last push: {}", push.summary), None);
+                    output::info(&format!("  Next:      {}", push.next_step), None);
+                }
             }
         }
         Err(e) if e.code == "GITHUB_NOT_CONNECTED" => {
