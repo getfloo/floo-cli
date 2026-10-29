@@ -235,6 +235,24 @@ pub struct AppEnvironmentOverrides {
     /// Per-env edge policy override: `[environments.<env>.edge]` (#1358).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edge: Option<EdgeSection>,
+    /// Per-env sizing override: `[environments.<env>.resources]`. Wins over every
+    /// service's own sizing in that environment; the server validates values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resources: Option<EnvironmentResources>,
+}
+
+/// The keys `[environments.<env>.resources]` accepts.
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentResources {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_instances: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_instances: Option<u32>,
 }
 
 /// The `[edge]` IP/CIDR firewall section (#1358). Mirrors the API's
@@ -1376,6 +1394,33 @@ access_mode = "floo_accounts"
         assert!(err
             .message
             .contains("access_mode='sso' is no longer supported. Valid values: public, accounts."));
+    }
+
+    #[test]
+    fn test_environment_resources_parse() {
+        let _guard = crate::output::GLOBAL_MODE_LOCK.lock().unwrap();
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
+        let config = parse_app_config(
+            "[app]\nname = 'my-app'\n[resources]\nmin_instances = 1\n\
+             [environments.dev.resources]\nmin_instances = 0\ncpu = '1'",
+        )
+        .unwrap();
+        let dev = config.environments["dev"].resources.as_ref().unwrap();
+        assert_eq!(dev.min_instances, Some(0));
+        assert_eq!(dev.cpu.as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn test_environment_resources_reject_unknown_keys() {
+        let _guard = crate::output::GLOBAL_MODE_LOCK.lock().unwrap();
+        crate::output::set_json_mode(false);
+        crate::output::set_dry_run_mode(false);
+        let err = parse_app_config(
+            "[app]\nname = 'my-app'\n[environments.dev.resources]\nmax_request_body_mb = 10",
+        )
+        .unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidProjectConfig);
     }
 
     #[test]

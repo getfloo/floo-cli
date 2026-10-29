@@ -74,7 +74,8 @@ pub use app_config::{
     AppFileAppSection, AppFileConfig, AppServiceEntry, ManagedBlock,
 };
 pub use discover::{
-    discover_managed_services, discover_services, filter_services, ManagedServiceDeclaration,
+    apply_environment_resources, discover_managed_services, discover_services, filter_services,
+    ManagedServiceDeclaration,
 };
 pub use resolve::{resolve_app_context, resolve_app_manifest_context, AppSource, ResolvedApp};
 pub use service_config::{

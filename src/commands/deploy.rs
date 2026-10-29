@@ -549,7 +549,7 @@ fn run_preflight(
 
     // 3. Discover + filter services
     let all_services = match project_config::discover_services(&resolved) {
-        Ok(svcs) => svcs,
+        Ok(svcs) => project_config::apply_environment_resources(svcs, &resolved, &environment),
         Err(e) => {
             output::error(&e.message, &e.code, e.suggestion.as_deref());
             process::exit(1);
