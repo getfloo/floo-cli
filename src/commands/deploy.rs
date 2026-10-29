@@ -549,7 +549,7 @@ fn run_preflight(
 
     // 3. Discover + filter services
     let all_services = match project_config::discover_services(&resolved) {
-        Ok(svcs) => svcs,
+        Ok(svcs) => project_config::apply_environment_resources(svcs, &resolved, &environment),
         Err(e) => {
             output::error(&e.message, &e.code, e.suggestion.as_deref());
             process::exit(1);
@@ -3041,13 +3041,6 @@ fn fetch_remote_preflight(
     let client = FlooClient::new(Some(config))?;
     let app = resolve_app(&client, app_name)?;
 
-    // `[environments.<env>.resources]` wins in its environment, as on the server.
-    let env_resources = resolved
-        .app_config
-        .as_ref()
-        .and_then(|config| config.environments.get(environment))
-        .and_then(|overrides| overrides.resources.clone())
-        .unwrap_or_default();
     let declared = DeclaredState {
         managed_services: managed.to_vec(),
         environment: environment.to_string(),
@@ -3058,17 +3051,10 @@ fn fetch_remote_preflight(
                 service_type: service.service_type.to_string(),
                 env_managed: env_contract_for_service(resolved, service)
                     .and_then(|contract| contract.managed),
-                cpu: env_resources.cpu.clone().or_else(|| service.cpu.clone()),
-                memory: env_resources
-                    .memory
-                    .clone()
-                    .or_else(|| service.memory.clone()),
-                min_instances: if service.service_type == ServiceType::Worker {
-                    service.min_instances
-                } else {
-                    env_resources.min_instances.or(service.min_instances)
-                },
-                max_instances: env_resources.max_instances.or(service.max_instances),
+                cpu: service.cpu.clone(),
+                memory: service.memory.clone(),
+                min_instances: service.min_instances,
+                max_instances: service.max_instances,
                 instances: service.instances,
             })
             .collect(),

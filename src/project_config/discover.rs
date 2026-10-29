@@ -316,6 +316,35 @@ impl ManagedServiceDeclaration {
 }
 
 /// Extract enabled modern and legacy declarations in stable (type, name) order.
+/// Apply `[environments.<env>.resources]` the way the server does: each field it
+/// sets wins over every service's own value in that environment.
+pub fn apply_environment_resources(
+    services: Vec<ServiceConfig>,
+    resolved: &ResolvedApp,
+    environment: &str,
+) -> Vec<ServiceConfig> {
+    let Some(overrides) = resolved
+        .app_config
+        .as_ref()
+        .and_then(|config| config.environments.get(environment))
+        .and_then(|env| env.resources.as_ref())
+    else {
+        return services;
+    };
+    services
+        .into_iter()
+        .map(|mut service| {
+            service.cpu = overrides.cpu.clone().or(service.cpu);
+            service.memory = overrides.memory.clone().or(service.memory);
+            service.max_instances = overrides.max_instances.or(service.max_instances);
+            if service.service_type != ServiceType::Worker {
+                service.min_instances = overrides.min_instances.or(service.min_instances);
+            }
+            service
+        })
+        .collect()
+}
+
 pub fn discover_managed_services(resolved: &ResolvedApp) -> Vec<ManagedServiceDeclaration> {
     let Some(ref app_cfg) = resolved.app_config else {
         return Vec::new();
@@ -1597,6 +1626,50 @@ ingress = "internal"
         assert_eq!(web.path, "frontend");
         assert_eq!(web.port, Some(3000));
         assert!(web.cpu.is_none());
+    }
+
+    #[test]
+    fn test_environment_resources_override_services_in_their_environment() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("floo.app.toml"),
+            r#"
+[app]
+name = "my-app"
+
+[resources]
+min_instances = 1
+
+[environments.dev.resources]
+min_instances = 0
+cpu = "2"
+
+[services.web]
+type = "web"
+path = "."
+port = 3000
+
+[services.jobs]
+type = "worker"
+path = "."
+command = "node worker.js"
+"#,
+        )
+        .unwrap();
+        let resolved = crate::project_config::resolve_app_context(dir.path(), None).unwrap();
+        let services = discover_services(&resolved).unwrap();
+
+        let dev = apply_environment_resources(services.clone(), &resolved, "dev");
+        let web = dev.iter().find(|s| s.name == "web").unwrap();
+        assert_eq!(web.min_instances, Some(0));
+        assert_eq!(web.cpu.as_deref(), Some("2"));
+        let jobs = dev.iter().find(|s| s.name == "jobs").unwrap();
+        assert_eq!(jobs.min_instances, None);
+        assert_eq!(jobs.cpu.as_deref(), Some("2"));
+
+        let prod = apply_environment_resources(services, &resolved, "prod");
+        let web = prod.iter().find(|s| s.name == "web").unwrap();
+        assert_eq!(web.min_instances, Some(1));
     }
 
     #[test]
