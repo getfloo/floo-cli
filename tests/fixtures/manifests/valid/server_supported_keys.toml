@@ -95,6 +95,11 @@ access_mode = "accounts"
 rules = [{ action = "deny", cidr = "192.0.2.0/24" }]
 default_action = "allow"
 enabled = false
+[environments.preview.resources]
+cpu = "1"
+memory = "512Mi"
+max_instances = 2
+min_instances = 0
 [cron.cleanup]
 schedule = "0 9 * * *"
 command = "./cleanup.sh"
