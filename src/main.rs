@@ -8,7 +8,6 @@ mod constants;
 mod deploy_status;
 mod detection;
 mod dev_proxy;
-mod dockerfile;
 mod errors;
 mod names;
 mod output;
