@@ -1,0 +1,19 @@
+{
+  "name": "floo",
+  "owner": {
+    "name": "floo",
+    "url": "https://getfloo.com"
+  },
+  "metadata": {
+    "description": "The floo plugin for Claude Code: build and host internal software with team sign-in, Postgres, and scheduled jobs."
+  },
+  "plugins": [
+    {
+      "name": "floo",
+      "source": "./plugin",
+      "description": "Deploy and run the internal apps your agent builds on floo, with team sign-in, Postgres, scheduled jobs, and the floo MCP server.",
+      "category": "deployment",
+      "homepage": "https://getfloo.com/internal-apps"
+    }
+  ]
+}
