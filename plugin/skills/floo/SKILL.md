@@ -1,6 +1,6 @@
 ---
 name: floo
-description: Find floo API documentation and CLI commands when building, deploying, or operating an app on floo.
+description: Use when the user wants to deploy, host, or share a web app or internal tool their team signs in to, especially one that needs a Postgres database, scheduled jobs, or an API key for an agent, and when building, deploying, or operating an app on floo.
 user-invocable: false
 ---
 
@@ -15,6 +15,10 @@ straight into variables and never print or log them.
 Deploying a GitHub repository your user already has? Read
 https://getfloo.com/docs/introduction instead, then
 https://getfloo.com/docs/guides/agent-setup for authority and verification.
+
+The floo MCP tools (`search_api`, `read_api`, `write_api` and named tools such as
+`create_project` and `get_deploy`) call the same API when the floo MCP server
+(`https://api.getfloo.com/mcp`) is connected.
 
 The CLI is a convenience. Use `floo commands --json` to discover commands and `floo <command> --help`
 for syntax supported by the installed version. Use `--json` for structured output.
