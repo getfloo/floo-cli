@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use std::process;
 
 use crate::detection::{detect, DetectionResult};
-use crate::dockerfile;
 use crate::errors::ErrorCode;
 use crate::names::generate_name;
 use crate::output;
@@ -100,18 +99,7 @@ fn init_dry_run(project_path: &std::path::Path, name: Option<String>, detection:
     let agents_md_exists = project_path.join("AGENTS.md").exists();
     let dockerfile_exists = project_path.join("Dockerfile").exists();
 
-    // Mirror generate_dockerfile_if_needed's auto-generate gate exactly:
-    // high/medium confidence only. Low confidence prompts in interactive
-    // mode and skips otherwise. Dry-run is non-interactive, so it skips.
-    let dockerfile_will_generate = !dockerfile_exists
-        && detection.runtime != "docker"
-        && (detection.confidence == "high" || detection.confidence == "medium")
-        && dockerfile::generate_dockerfile(detection, project_path).is_some();
-
     let mut planned_files: Vec<&str> = vec![project_config::APP_CONFIG_FILE];
-    if dockerfile_will_generate {
-        planned_files.push("Dockerfile");
-    }
     if !agents_md_exists {
         planned_files.push("AGENTS.md");
     }
@@ -130,12 +118,10 @@ fn init_dry_run(project_path: &std::path::Path, name: Option<String>, detection:
         if agents_md_exists {
             lines.push("  skip AGENTS.md (already exists)".to_string());
         }
-        if dockerfile_exists {
-            lines.push("  skip Dockerfile (already exists)".to_string());
-        } else if !dockerfile_will_generate && detection.runtime != "docker" {
-            lines.push(
-                "  skip Dockerfile (no runtime detected with sufficient confidence)".to_string(),
-            );
+        if !dockerfile_exists {
+            lines.push(format!(
+                "  no Dockerfile: write one before deploying ({DOCKERFILES_GUIDE})"
+            ));
         }
         lines.join("\n")
     };
@@ -149,7 +135,6 @@ fn init_dry_run(project_path: &std::path::Path, name: Option<String>, detection:
             "files_to_create": planned_files,
             "agents_md_exists": agents_md_exists,
             "dockerfile_exists": dockerfile_exists,
-            "dockerfile_will_generate": dockerfile_will_generate,
             "detection": detection.to_value(),
             "service": {
                 "name": default_type,
@@ -162,6 +147,8 @@ fn init_dry_run(project_path: &std::path::Path, name: Option<String>, detection:
 }
 
 /// Point new projects to canonical guidance; never embed a second operating manual.
+const DOCKERFILES_GUIDE: &str = "https://getfloo.com/docs/guides/dockerfiles";
+
 const AGENTS_MD_TEMPLATE: &str = r#"# floo documentation
 
 Read https://getfloo.com/docs/guides/agent-setup before working on this app.
@@ -187,77 +174,6 @@ fn write_agents_md(project_path: &std::path::Path) -> bool {
         );
         process::exit(1);
     }
-    true
-}
-
-/// Attempt to generate a Dockerfile based on detection results.
-/// Returns true if a Dockerfile was written.
-fn generate_dockerfile_if_needed(
-    project_path: &std::path::Path,
-    detection: &DetectionResult,
-) -> bool {
-    // Skip if Dockerfile already exists (detection returns "docker" runtime)
-    if detection.runtime == "docker" {
-        return false;
-    }
-
-    let should_auto_generate = detection.confidence == "high" || detection.confidence == "medium";
-
-    if !should_auto_generate {
-        // Low confidence: prompt in interactive mode, skip in non-interactive
-        if output::is_interactive() {
-            if !output::confirm("No Dockerfile found. Generate one?") {
-                return false;
-            }
-        } else {
-            return false;
-        }
-    }
-
-    // Say why, rather than silently skipping. A workspace repo that gets no
-    // Dockerfile and no explanation looks like init half-finished.
-    if dockerfile::is_workspace_root(project_path) {
-        output::warn(
-            "Skipped the Dockerfile: this is a workspace repository, and a generated \
-one would copy only the root manifest and fail to install shared packages. Write \
-one per service and point at it with `dockerfile` in floo.app.toml. See \
-https://getfloo.com/docs/reference/container-contract",
-        );
-        return false;
-    }
-
-    let content = match dockerfile::generate_dockerfile(detection, project_path) {
-        Some(c) => c,
-        None => return false,
-    };
-
-    let dockerfile_path = project_path.join("Dockerfile");
-    if let Err(e) = std::fs::write(&dockerfile_path, &content) {
-        output::error(
-            &format!("Failed to write Dockerfile: {e}"),
-            &ErrorCode::FileError,
-            None,
-        );
-        process::exit(1);
-    }
-
-    let framework_label = detection.framework.as_deref().unwrap_or(&detection.runtime);
-    let version_label = detection
-        .version
-        .as_deref()
-        .map(|v| format!(" {v}"))
-        .unwrap_or_default();
-
-    if !output::is_json_mode() {
-        output::info(
-            &format!(
-                "Created Dockerfile for {framework_label} ({}{version_label})",
-                detection.runtime
-            ),
-            None,
-        );
-    }
-
     true
 }
 
@@ -328,12 +244,6 @@ fn init_non_interactive(
     }
     files_written.push(project_config::APP_CONFIG_FILE);
 
-    let dockerfile_generated = generate_dockerfile_if_needed(project_path, detection);
-
-    if dockerfile_generated {
-        files_written.push("Dockerfile");
-    }
-
     let agents_md_written = write_agents_md(project_path);
     if agents_md_written {
         files_written.push("AGENTS.md");
@@ -348,17 +258,15 @@ fn init_non_interactive(
             "type": service_type.to_string(),
             "port": port,
         },
-        "dockerfile_generated": dockerfile_generated,
         "agents_md_written": agents_md_written,
         "hint": "Edit floo.app.toml to configure your services — run 'floo docs config' for the schema",
         "next_step": "Run 'floo preflight --json', commit and push the generated files, then connect GitHub with 'floo apps github connect <owner/repo>'.",
     });
 
-    // Add suggestion when Dockerfile was not generated due to low confidence
-    if !dockerfile_generated && detection.runtime != "docker" {
-        json_data["suggestion"] = serde_json::json!(
-            "No runtime detected with sufficient confidence. Add a Dockerfile manually."
-        );
+    if !project_path.join("Dockerfile").exists() {
+        json_data["suggestion"] = serde_json::json!(format!(
+            "No Dockerfile. Write one before deploying: {DOCKERFILES_GUIDE}"
+        ));
     }
 
     if !output::is_json_mode() {
@@ -530,7 +438,12 @@ fn init_interactive(
         process::exit(1);
     }
     output::info(&format!("Wrote {}", project_config::APP_CONFIG_FILE), None);
-    generate_dockerfile_if_needed(project_path, detection);
+    if !project_path.join("Dockerfile").exists() {
+        output::info(
+            &format!("No Dockerfile. Write one before deploying: {DOCKERFILES_GUIDE}"),
+            None,
+        );
+    }
 
     if write_agents_md(project_path) {
         output::info("Wrote AGENTS.md (agent operating notes)", None);
