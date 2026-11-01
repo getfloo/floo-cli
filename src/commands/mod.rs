@@ -36,6 +36,7 @@ pub mod rollbacks;
 pub mod run;
 
 pub mod services;
+pub mod ship;
 pub mod skills;
 pub mod storage;
 pub mod update;

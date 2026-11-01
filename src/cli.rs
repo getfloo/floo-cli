@@ -182,6 +182,26 @@ Examples:
         preflight: PreflightArgs,
     },
 
+    /// Push this repository to its floo-hosted project and wait for the dev deploy.
+    #[command(after_help = "\
+Examples:
+  floo deploy                              Deploy the repository in the current directory
+  floo deploy ./my-app                     Deploy ./my-app
+  floo deploy --preflight --json           Show what would happen without pushing
+
+The first run creates a floo-hosted project named after [app] name in
+floo.app.toml (hosted, invite-only login, postgres), adds a git remote named
+'floo', and pushes the current commit. Later runs push to that remote. Commit
+your changes first. Deploys go to dev; production is a GitHub release.")]
+    Deploy {
+        /// Repository root holding floo.app.toml.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        #[command(flatten)]
+        preflight: PreflightArgs,
+    },
+
     /// Force a redeploy (after env var changes, config updates, or to rebuild).
     #[command(after_help = "\
 Examples:
@@ -2247,6 +2267,8 @@ pub fn run() {
             preflight: _,
         } => commands::deploy::preflight(path, app, services, env),
 
+        Commands::Deploy { path, preflight: _ } => commands::ship::deploy(path),
+
         Commands::Redeploy {
             path,
             app,
@@ -2854,7 +2876,6 @@ mod tests {
             vec!["floo", "db", "branches", "list", "feat-db-abcde"],
             vec!["floo", "db", "branches", "show", "feat-db-abcde"],
             vec!["floo", "db", "branches", "reset", "feat-db-abcde"],
-            vec!["floo", "deploy", "list"],
             vec!["floo", "preview", "list"],
             vec!["floo", "services", "add", "postgres", "--tier", "basic"],
         ] {

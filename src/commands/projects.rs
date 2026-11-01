@@ -99,7 +99,7 @@ pub fn list() {
 
 // Git runs ! helpers through a POSIX shell, including Git for Windows. Quote
 // the executable as one shell word: workspace paths may contain spaces or '.
-fn shell_quote(value: &str) -> String {
+pub(crate) fn shell_quote(value: &str) -> String {
     if !value.is_empty()
         && value
             .bytes()
@@ -188,7 +188,7 @@ pub fn clone(name_or_id: &str, dir: Option<&Path>) {
     );
 }
 
-fn managed_app_id(path: &str) -> Option<String> {
+pub(crate) fn managed_app_id(path: &str) -> Option<String> {
     let (org, repo) = path.split_once('/')?;
     if org.is_empty()
         || !org

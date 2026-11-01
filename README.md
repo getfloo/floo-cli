@@ -53,9 +53,20 @@ both the release checksum and signature.
 
 ## Quick start
 
-Follow the [web quickstart](https://getfloo.com/docs/introduction) to connect your
-GitHub repository and deploy your first app. For a floo-hosted repository without
-a GitHub account, follow the [managed-project guide](https://getfloo.com/agents.md).
+From a local git repository with a `floo.app.toml` (create one with `floo init <app-name>`):
+
+```bash
+floo deploy
+```
+
+The first run creates a floo-hosted project named after `[app] name`, with
+hosted invite-only login and Postgres, adds a git remote named `floo`, pushes
+the current commit, and waits until the dev URL is live. Later runs push the
+new commit to the same project. Commit your changes first.
+
+To deploy from your own GitHub repository instead, follow the
+[web quickstart](https://getfloo.com/docs/introduction). For the HTTP-only
+path, read the [agent guide](https://getfloo.com/agents.md).
 
 ## Find commands and documentation
 
