@@ -1,13 +1,24 @@
 {
   "name": "floo",
-  "version": "0.2.1",
-  "description": "CLI guidance for the floo deployment platform, including managed services and security patterns for agents",
+  "version": "0.3.0",
+  "description": "Deploy and run the internal apps your agent builds on floo: team sign-in, Postgres, scheduled jobs, and the floo MCP server.",
   "author": {
     "name": "floo",
     "url": "https://github.com/getfloo"
   },
   "repository": "https://github.com/getfloo/floo-cli",
   "license": "MIT",
-  "keywords": ["floo", "deploy", "cloud", "security", "postgres", "redis"],
-  "skills": "./skills/"
+  "keywords": [
+    "floo",
+    "deploy",
+    "hosting",
+    "internal-tools",
+    "internal-apps",
+    "postgres",
+    "cron",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "homepage": "https://getfloo.com/internal-apps",
+  "privacyPolicyUrl": "https://getfloo.com/legal/privacy"
 }

@@ -73,6 +73,25 @@ the installed binary.
 For agent setup and the JSON output contract, read the
 [agent guide](https://getfloo.com/docs/guides/agent-setup).
 
+## Claude Code plugin
+
+The floo plugin gives Claude Code the floo skill and the floo MCP server
+(`https://api.getfloo.com/mcp`, signed in with OAuth) in one install. Run this
+in Claude Code:
+
+```
+/plugin install floo --marketplace getfloo/floo-cli
+```
+
+On Claude Code older than 2.1.275, add the marketplace first:
+
+```
+/plugin marketplace add getfloo/floo-cli
+/plugin install floo@floo
+```
+
+The plugin lives in [`plugin/`](plugin). [Privacy policy](https://getfloo.com/legal/privacy).
+
 ## Building from source
 
 Use the current stable [Rust toolchain](https://rustup.rs/), matching CI.
