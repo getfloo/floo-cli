@@ -1,10 +1,9 @@
-use std::path::Path;
+use std::collections::HashSet;
 use std::process;
 use std::time::{Duration, Instant};
 
-use crate::api_types::{GitHubInstallationCandidate, GitHubSetupStatus};
+use crate::api_types::{Deploy, GitHubInstallationCandidate, GitHubSetupStatus};
 use crate::deploy_status::{self, Terminal};
-use crate::detection::detect;
 use crate::errors::{ErrorCode, FlooApiError};
 use crate::output;
 use crate::project_config;
@@ -13,6 +12,9 @@ const GITHUB_WAIT_TIMEOUT: Duration = Duration::from_secs(900);
 const INSTALLATION_POLL_INTERVAL: Duration = Duration::from_secs(3);
 const REPO_ACCESS_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const APPROVAL_HINT_AFTER: Duration = Duration::from_secs(60);
+// The connect API queues the first build at once; the minute dev-head check is its backstop.
+const FIRST_DEPLOY_WAIT: Duration = Duration::from_secs(120);
+const FIRST_DEPLOY_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const DEFAULT_INSTALL_URL: &str = "https://github.com/apps/getfloo/installations/new";
 
 /// An app **this invocation created**, eligible to be undone if connect never
@@ -299,6 +301,17 @@ pub fn connect(
         }
     }
 
+    // The deploys that exist now, so the CLI follows only the one this connect starts.
+    // Unreadable, the CLI reports the connect without following a deploy.
+    let earlier_deploys: Option<HashSet<String>> = if no_deploy {
+        None
+    } else {
+        client
+            .list_deploys(&app_id)
+            .ok()
+            .map(|list| list.deploys.into_iter().map(|deploy| deploy.id).collect())
+    };
+
     // Phase 2: Connect to GitHub (handles installation + repo access)
     let result = match client.github_connect(&app_id, repo, branch, skip_env_check) {
         Ok(r) => r,
@@ -475,12 +488,12 @@ pub fn connect(
     };
     let connected_branch = result.default_branch.as_deref().unwrap_or("(unknown)");
 
-    // Phase 4: Deploy and wait (unless --no-deploy)
-    if no_deploy {
+    // Phase 4: Follow the first deploy floo started (unless --no-deploy)
+    let Some(earlier_deploys) = earlier_deploys else {
         output::success(
             &format!(
-                "Connected {name} to {repo} (branch: {connected_branch}). \
-                 Push a commit to `{connected_branch}` to run the first deploy."
+                "Connected {name} to {repo} (branch: {connected_branch}). floo is deploying \
+                 `{connected_branch}` now; follow it with `floo deploys watch --app {name}`."
             ),
             Some(serde_json::json!({
                 "connected": true,
@@ -491,9 +504,9 @@ pub fn connect(
             })),
         );
         return;
-    }
+    };
 
-    let deploy_result = run_initial_deploy(&client, &app_id, &cwd);
+    let deploy_result = follow_first_deploy(&client, &app_id, &earlier_deploys);
 
     // Phase 5: One success/failure message
     match deploy_result {
@@ -540,6 +553,23 @@ pub fn connect(
                     "deployed": false,
                     "deploy_status": "cancelled",
                     "deploy": deploy,
+                })),
+            );
+        }
+        DeployOutcome::NotStarted => {
+            output::success(
+                &format!(
+                    "Connected {name} to {repo}. No new deploy started within two minutes, \
+                     which happens when dev already runs the latest `{connected_branch}` \
+                     commit. Follow any deploy with `floo deploys watch --app {name}`."
+                ),
+                Some(serde_json::json!({
+                    "connected": true,
+                    "app": name,
+                    "repo": repo,
+                    "branch": connected_branch,
+                    "deployed": false,
+                    "deploy_status": "not_started",
                 })),
             );
         }
@@ -1134,35 +1164,57 @@ enum DeployOutcome {
     Failed {
         deploy: serde_json::Value,
     },
+    /// No new dev deploy appeared within the wait.
+    NotStarted,
 }
 
-fn run_initial_deploy(
+/// The connect API starts the first dev deploy itself (getfloo/floo#4080), as it
+/// does for MCP and dashboard connects. Follow that deploy; never start a second.
+fn follow_first_deploy(
     client: &crate::api_client::FlooClient,
     app_id: &str,
-    project_path: &Path,
+    earlier_deploys: &HashSet<String>,
 ) -> DeployOutcome {
-    let detection = detect(project_path);
-
-    let spinner = output::Spinner::new("Deploying...");
-    let mut deploy_data = match client.create_deploy(
-        app_id,
-        detection.framework.as_deref(),
-        &[],
-        false, // skip_migrations — initial deploy from `floo apps github connect` always runs migrations
-        false, // rebuild — a first deploy has no image to reuse
-    ) {
-        Ok(d) => {
-            spinner.finish();
-            d
+    let spinner = output::Spinner::new("Waiting for the first deploy...");
+    let start = Instant::now();
+    let found = loop {
+        match client.list_deploys(app_id) {
+            Ok(list) => {
+                if let Some(deploy) = newest_new_dev_deploy(list.deploys, earlier_deploys) {
+                    break Some(deploy);
+                }
+            }
+            Err(e) => {
+                spinner.finish();
+                return DeployOutcome::Failed {
+                    deploy: serde_json::json!({"error": e.message}),
+                };
+            }
         }
-        Err(e) => {
-            spinner.finish();
-            return DeployOutcome::Failed {
-                deploy: serde_json::json!({"error": e.message}),
-            };
+        if start.elapsed() >= FIRST_DEPLOY_WAIT {
+            break None;
         }
+        std::thread::sleep(FIRST_DEPLOY_POLL_INTERVAL);
     };
+    spinner.finish();
+    match found {
+        Some(deploy) => follow_deploy(client, app_id, deploy),
+        None => DeployOutcome::NotStarted,
+    }
+}
 
+/// The newest dev deploy that did not exist before connecting (deploys list newest first).
+fn newest_new_dev_deploy(deploys: Vec<Deploy>, earlier: &HashSet<String>) -> Option<Deploy> {
+    deploys
+        .into_iter()
+        .find(|deploy| deploy.env.as_deref() == Some("dev") && !earlier.contains(&deploy.id))
+}
+
+fn follow_deploy(
+    client: &crate::api_client::FlooClient,
+    app_id: &str,
+    mut deploy_data: Deploy,
+) -> DeployOutcome {
     let initial_status = deploy_data.status.as_deref().unwrap_or("");
 
     if !deploy_status::is_terminal(initial_status) {
@@ -1232,11 +1284,39 @@ fn run_initial_deploy(
 mod tests {
     use super::{
         connect_rerun_command, grant_access_instructions, installation_settings_url,
-        missing_owner_installation_instructions, repo_access_timeout_suggestion,
-        setup_session_lost_suggestion, setup_spinner_message, setup_timeout_suggestion,
-        GrantAccessPage,
+        missing_owner_installation_instructions, newest_new_dev_deploy,
+        repo_access_timeout_suggestion, setup_session_lost_suggestion, setup_spinner_message,
+        setup_timeout_suggestion, GrantAccessPage,
     };
+    use crate::api_types::Deploy;
     use crate::api_types::{GitHubSetupPollResponse, GitHubSetupStatus};
+    use std::collections::HashSet;
+
+    fn deploy(id: &str, env: &str) -> Deploy {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "env": env, "status": "building", "url": null, "build_logs": null,
+            "created_at": null, "triggered_by": "github_push", "commit_sha": null,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn test_connect_follows_the_newest_dev_deploy_it_started() {
+        let earlier = HashSet::from(["dev-before".to_string()]);
+        let deploys = vec![
+            deploy("prod-new", "prod"),
+            deploy("dev-new", "dev"),
+            deploy("dev-before", "dev"),
+        ];
+        let found = newest_new_dev_deploy(deploys, &earlier);
+        assert_eq!(found.map(|d| d.id), Some("dev-new".to_string()));
+    }
+
+    #[test]
+    fn test_connect_never_reports_a_deploy_from_before_the_connection() {
+        let earlier = HashSet::from(["dev-before".to_string()]);
+        assert!(newest_new_dev_deploy(vec![deploy("dev-before", "dev")], &earlier).is_none());
+    }
 
     #[test]
     fn test_setup_spinner_message_for_org_approval() {
