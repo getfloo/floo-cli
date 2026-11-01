@@ -304,9 +304,104 @@ fn first_run_creates_the_project_adds_the_remote_force_pushes_and_watches() {
             "credential.useHttpPath=true",
             "push",
             "--force",
-            "floo",
+            project()["clone_url"].as_str().unwrap(),
             "HEAD:refs/heads/main"
         ]
+    );
+    assert!(git_config(env.repo.path(), "floo.pendingFirstPush").is_none());
+}
+
+fn git_config(repo: &Path, key: &str) -> Option<String> {
+    let output = std::process::Command::new(real_git())
+        .arg("-C")
+        .arg(repo)
+        .args(["config", "--local", "--get", key])
+        .output()
+        .unwrap();
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8(output.stdout).unwrap().trim().to_string())
+}
+
+#[test]
+fn a_retry_after_a_failed_first_push_still_replaces_the_starter() {
+    let mut server = Server::new();
+    let env = setup(&server);
+    let sha = committed_repo(&env);
+    let create = server
+        .mock("POST", "/v1/projects")
+        .with_status(201)
+        .with_header("content-type", "application/json")
+        .with_body(project().to_string())
+        .expect(1)
+        .create();
+    let _missing = server
+        .mock("GET", "/v1/projects")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(json!({"projects": []}).to_string())
+        .expect(1)
+        .create();
+
+    let out = floo(&env)
+        .arg("--json")
+        .env("PUSH_EXIT", "1")
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(error(&out)["code"], "GIT_PUSH_FAILED");
+    assert_eq!(
+        git_config(env.repo.path(), "floo.pendingFirstPush").as_deref(),
+        project()["clone_url"].as_str()
+    );
+
+    // The rerun finds the remote it added and force-pushes again.
+    let _found = server
+        .mock("GET", "/v1/projects")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(json!({"projects": [project()]}).to_string())
+        .create();
+    let _watch = mock_watch(&mut server, &sha);
+    floo(&env).arg("--json").assert().success();
+    let push = std::fs::read_to_string(env.home.path().join("push-args")).unwrap();
+    assert!(push.contains("push\n--force\n"), "{push}");
+    assert!(git_config(env.repo.path(), "floo.pendingFirstPush").is_none());
+    create.assert();
+}
+
+#[test]
+fn pushes_to_the_project_url_even_when_the_remote_has_a_separate_push_url() {
+    let mut server = Server::new();
+    let env = setup(&server);
+    let sha = committed_repo(&env);
+    let clone_url = project()["clone_url"].as_str().unwrap().to_string();
+    git(env.repo.path(), &["remote", "add", "floo", &clone_url]);
+    git(
+        env.repo.path(),
+        &[
+            "remote",
+            "set-url",
+            "--push",
+            "floo",
+            "https://github.com/owner/other.git",
+        ],
+    );
+    let _list = server
+        .mock("GET", "/v1/projects")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(json!({"projects": [project()]}).to_string())
+        .create();
+    let _watch = mock_watch(&mut server, &sha);
+    floo(&env).arg("--json").assert().success();
+    let push = std::fs::read_to_string(env.home.path().join("push-args")).unwrap();
+    assert!(
+        push.ends_with(&format!("push\n{clone_url}\nHEAD:refs/heads/main\n")),
+        "{push}"
     );
 }
 
@@ -336,7 +431,10 @@ fn linked_repo_pushes_without_force_and_reports_a_rejected_push() {
 
     floo(&env).arg("--json").assert().success();
     let push = std::fs::read_to_string(env.home.path().join("push-args")).unwrap();
-    assert!(push.ends_with("push\nfloo\nHEAD:refs/heads/main\n"));
+    assert!(push.ends_with(&format!(
+        "push\n{}\nHEAD:refs/heads/main\n",
+        project()["clone_url"].as_str().unwrap()
+    )));
 
     let out = floo(&env)
         .arg("--json")

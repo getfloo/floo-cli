@@ -15,8 +15,13 @@ use crate::project_config;
 
 use super::projects::{managed_app_id, shell_quote};
 
-/// The git remote `floo deploy` adds and pushes to.
+/// The git remote `floo deploy` adds for the project.
 pub(crate) const REMOTE: &str = "floo";
+
+/// Local git config key holding the clone URL of a project this folder created
+/// whose starter commit has not been replaced yet. A retry after a failed first
+/// push reads it to force-push again instead of hitting unrelated histories.
+const PENDING_FIRST_PUSH: &str = "floo.pendingFirstPush";
 
 fn stop(message: &str, code: &str, next: &str) -> ! {
     output::error(message, &ErrorCode::from_api(code), Some(next));
@@ -170,6 +175,12 @@ pub fn deploy(path: PathBuf) {
         },
     };
 
+    let pending = git_read(&path, &["config", "--local", "--get", PENDING_FIRST_PUSH]);
+    let replaces_starter = |clone_url: &str| {
+        pending
+            .as_deref()
+            .is_some_and(|pending| same_repo(pending, clone_url))
+    };
     let (clone_url, branch, force) = match target {
         Target::Linked { clone_url } => {
             let project = client.get_project(&app_name).unwrap_or_else(|error| {
@@ -179,10 +190,7 @@ pub fn deploy(path: PathBuf) {
                     "Check [app] name in floo.app.toml matches the project, or run floo projects list.",
                 )
             });
-            if !clone_url
-                .trim_end_matches(".git")
-                .eq_ignore_ascii_case(project.clone_url.trim_end_matches(".git"))
-            {
+            if !same_repo(&clone_url, &project.clone_url) {
                 stop(
                     &format!(
                         "The '{REMOTE}' remote belongs to a different project than app '{app_name}' in floo.app.toml."
@@ -191,11 +199,13 @@ pub fn deploy(path: PathBuf) {
                     &format!("git -C {quoted} remote remove {REMOTE} && floo deploy {quoted}"),
                 );
             }
-            (project.clone_url, project.default_branch, false)
+            let force = replaces_starter(&project.clone_url);
+            (project.clone_url, project.default_branch, force)
         }
         Target::Existing(project) => {
             add_remote(&path, &project.clone_url);
-            (project.clone_url, project.default_branch, false)
+            let force = replaces_starter(&project.clone_url);
+            (project.clone_url, project.default_branch, force)
         }
         Target::New => {
             if !output::is_json_mode() {
@@ -215,13 +225,35 @@ pub fn deploy(path: PathBuf) {
                     });
                 stop(&error.message, &error.code, &hint)
             });
+            // Recorded before the remote and the push, so a failure at either
+            // step leaves a retry that still replaces the starter.
+            if git_read(
+                &path,
+                &["config", "--local", PENDING_FIRST_PUSH, &project.clone_url],
+            )
+            .is_none()
+            {
+                stop(
+                    "Failed to write local git config.",
+                    "GIT_FAILED",
+                    &format!("floo deploy {quoted}"),
+                );
+            }
             add_remote(&path, &project.clone_url);
             (project.clone_url, project.default_branch, true)
         }
     };
 
     push(&path, &clone_url, &branch, force, &quoted);
+    if force {
+        let _ = git_read(&path, &["config", "--local", "--unset", PENDING_FIRST_PUSH]);
+    }
     super::deploys::watch(Some(&app_name), Some(&sha));
+}
+
+fn same_repo(a: &str, b: &str) -> bool {
+    a.trim_end_matches(".git")
+        .eq_ignore_ascii_case(b.trim_end_matches(".git"))
 }
 
 fn add_remote(path: &Path, clone_url: &str) {
@@ -275,8 +307,10 @@ fn push(path: &Path, clone_url: &str, branch: &str, force: bool, quoted: &str) {
     if force {
         command.arg("--force");
     }
+    // Push to the validated URL, not the remote name: a remote can carry a
+    // separate pushurl that the fetch-URL checks above never saw.
     let status = command
-        .args([REMOTE, &refspec])
+        .args([clone_url, refspec.as_str()])
         // Keep stdout for floo's JSON.
         .stdout(Stdio::from(io::stderr()))
         .status();
