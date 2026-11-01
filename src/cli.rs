@@ -1022,7 +1022,7 @@ pub enum GitHubCommands {
         #[arg(long)]
         skip_env_check: bool,
 
-        /// Connect without deploying. The first deploy runs on the next push to the connected branch; `floo redeploy` cannot start it.
+        /// Don't wait for the first deploy. floo starts it from the connected branch either way; follow it with `floo deploys watch`.
         #[arg(long)]
         no_deploy: bool,
 

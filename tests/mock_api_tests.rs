@@ -8608,6 +8608,68 @@ fn test_connect_unauthorized_installation_names_the_setup_command() {
     connect.assert();
 }
 
+/// The connect API starts the first dev deploy itself (getfloo/floo#4080), so the
+/// CLI follows that deploy and never creates a second one (getfloo/floo#4148 race).
+#[test]
+fn test_connect_follows_the_deploy_floo_started_instead_of_creating_one() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let connect = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{TEST_APP_ID}/github/connection").as_str(),
+        )
+        .with_status(201)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"default_branch":"main"}"#)
+        .create();
+    // An earlier dev deploy exists before connecting; the new one appears after.
+    let earlier = r#"{"id":"dep-earlier","env":"dev","status":"live","url":null,"build_logs":null,"created_at":null,"triggered_by":"cli","commit_sha":"old"}"#;
+    let started = r#"{"id":"dep-first","env":"dev","status":"live","url":"https://my-app-dev.getfloo.app","build_logs":null,"created_at":null,"triggered_by":"github_push","commit_sha":"abc"}"#;
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let deploys = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
+        .match_query(Matcher::Any)
+        .expect(2)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body_from_request(move |_| {
+            let listed = if calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                earlier.to_string()
+            } else {
+                format!("{started},{earlier}")
+            };
+            format!(r#"{{"deploys":[{listed}],"has_more":false}}"#).into_bytes()
+        })
+        .create();
+    let second_deploy = server
+        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
+        .expect(0)
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "apps",
+            "github",
+            "connect",
+            "myorg/myrepo",
+            "--app",
+            TEST_APP_NAME,
+            "--no-browser",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""deployed":true"#))
+        .stdout(predicate::str::contains(r#""id":"dep-first""#));
+
+    connect.assert();
+    deploys.assert();
+    second_deploy.assert();
+}
+
 // --- #252: a failed connect must not strand the app it created ------------
 //
 // `apps github connect` creates the floo app and then links it, as two API
