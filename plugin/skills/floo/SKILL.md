@@ -24,6 +24,11 @@ From a local git repository with a `floo.app.toml`, `floo deploy` creates a
 floo-hosted project on the first run, pushes the current commit, and waits for
 the dev deploy.
 
+Every push or merged pull request on the deploy branch starts a deploy. Until
+that commit's deploy is `live`, the app URL keeps serving the previous deploy,
+so check `floo deploys status --json` (or the API with `?wait=`) until it is
+`live` before testing new behavior.
+
 The CLI is a convenience. Use `floo commands --json` to discover commands and `floo <command> --help`
 for syntax supported by the installed version. Use `--json` for structured output.
 Use `floo docs --json` to find topic URLs and `floo docs <topic> --json` to
