@@ -21,11 +21,8 @@ The floo MCP tools (`search_api`, `read_api`, `write_api` and named tools such a
 (`https://api.getfloo.com/mcp`) is connected.
 
 No shell, or one that cannot reach api.getfloo.com (Cowork, claude.ai)? Use
-the MCP tools alone: `create_project`, then `list_files`, `read_file` and
-`write_files` to change the code (one commit, full file text, `base_sha` from
-the read), then `list_deploys` with the `commit_sha` and `get_deploy` to wait.
-On a failed deploy, read `failure_message` and `diagnostics[].fix`, then
-`get_logs`. Never run git, curl or the CLI in that sandbox.
+only the floo MCP tools, never git, curl or the CLI, and follow
+https://getfloo.com/docs/guides/build-in-chat.
 
 From a local git repository with a `floo.app.toml`, `floo deploy` creates a
 floo-hosted project on the first run, pushes the current commit, and waits for
