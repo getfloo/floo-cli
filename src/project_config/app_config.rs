@@ -115,6 +115,10 @@ pub struct ManagedServiceBlock {
     /// Postgres only: `true` (awake 1 h after last use) or `"always"`. Validated by the server.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keep_warm: Option<toml::Value>,
+    /// Postgres only: a `[managed.<name>.users]` table turns on User accounts, sign-in for
+    /// an external app's own users. Validated by the server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub users: Option<toml::Value>,
 }
 
 const VALID_MANAGED_SERVICE_TYPES: &[&str] = &["postgres", "redis", "storage"];

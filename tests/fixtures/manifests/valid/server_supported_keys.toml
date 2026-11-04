@@ -43,6 +43,7 @@ enabled = true
 [managed.db]
 type = "postgres"
 keep_warm = "always"
+[managed.db.users]
 [domains."app.example.com"]
 service = "web"
 [edge]
