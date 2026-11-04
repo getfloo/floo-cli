@@ -289,7 +289,28 @@ pub fn invites(app_flag: Option<&str>, cursor: Option<&str>) {
     let client = super::init_client(None);
     let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
     match client.list_app_invites(&app_id, cursor) {
-        Ok(result) => output::success(&format!("Invitations for '{app_name}'."), Some(result)),
+        Ok(result) => print_people(
+            &result,
+            "invites",
+            &[
+                "INVITE ID",
+                "EMAIL",
+                "ROLE",
+                "STATUS",
+                "DELIVERY",
+                "EXPIRES",
+            ],
+            &[
+                "id",
+                "email",
+                "role",
+                "status",
+                "delivery_status",
+                "expires_at",
+            ],
+            &format!("No invitations for '{app_name}'."),
+            &format!("floo apps invites --app {app_name}"),
+        ),
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
@@ -334,7 +355,14 @@ pub fn members(app_flag: Option<&str>, cursor: Option<&str>) {
     let client = super::init_client(None);
     let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
     match client.list_app_members(&app_id, cursor) {
-        Ok(result) => output::success(&format!("Members for '{app_name}'."), Some(result)),
+        Ok(result) => print_people(
+            &result,
+            "members",
+            &["MEMBERSHIP ID", "EMAIL", "NAME", "ROLE", "STATUS"],
+            &["id", "email", "name", "role", "status"],
+            &format!("No members for '{app_name}'."),
+            &format!("floo apps members --app {app_name}"),
+        ),
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
@@ -543,4 +571,39 @@ pub fn revoke_key(key_id: &str, app_flag: Option<&str>) {
         "App API key revoked.",
         Some(json!({"key_id": key_id, "app_id": app_id})),
     );
+}
+
+/// Print an app members or invites page as a table (JSON mode keeps the raw response).
+fn print_people(
+    result: &Value,
+    list_key: &str,
+    headers: &[&str],
+    fields: &[&str],
+    empty_message: &str,
+    command: &str,
+) {
+    let items = result[list_key].as_array().cloned().unwrap_or_default();
+    if items.is_empty() {
+        output::info(empty_message, Some(result.clone()));
+        return;
+    }
+    let rows: Vec<Vec<String>> = items
+        .iter()
+        .map(|item| {
+            fields
+                .iter()
+                .map(|field| match &item[*field] {
+                    Value::String(text) => text.clone(),
+                    Value::Null => "-".to_string(),
+                    other => other.to_string(),
+                })
+                .collect()
+        })
+        .collect();
+    output::table(headers, &rows, Some(result.clone()));
+    if let Some(next_cursor) = result["next_cursor"].as_str() {
+        output::dim_line(&format!(
+            "More available. Next: {command} --cursor {next_cursor}"
+        ));
+    }
 }
