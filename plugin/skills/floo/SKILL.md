@@ -20,6 +20,10 @@ The floo MCP tools (`search_api`, `read_api`, `write_api` and named tools such a
 `create_project` and `get_deploy`) call the same API when the floo MCP server
 (`https://api.getfloo.com/mcp`) is connected.
 
+No shell, or one that cannot reach api.getfloo.com (Cowork, claude.ai)? Use
+only the floo MCP tools, never git, curl or the CLI, and follow
+https://getfloo.com/docs/guides/build-in-chat.
+
 From a local git repository with a `floo.app.toml`, `floo deploy` creates a
 floo-hosted project on the first run, pushes the current commit, and waits for
 the dev deploy.
