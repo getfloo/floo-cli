@@ -192,8 +192,7 @@ Examples:
 The first run creates a floo-hosted project named after [app] name in
 floo.app.toml (hosted, invite-only login, postgres), adds a git remote named
 'floo', and pushes the current commit. Later runs push to that remote. Commit
-your changes first. Deploys go to dev; run `floo releases promote` to publish
-to production.")]
+your changes first.")]
     Deploy {
         /// Repository root holding floo.app.toml.
         #[arg(default_value = ".")]

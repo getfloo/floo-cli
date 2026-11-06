@@ -2487,7 +2487,6 @@ fn print_preflight_ready(findings: &[PreflightFinding]) {
     // contract here means they don't have to leave for the docs.
     eprintln!();
     eprintln!("  Deploys: dev auto-deploys on every `git push` to your default branch.");
-    eprintln!("           Cut a GitHub release to promote the same build to production.");
     eprintln!("           See https://getfloo.com/docs/guides/golden-path.md for the full flow.");
 
     let warn_count = findings

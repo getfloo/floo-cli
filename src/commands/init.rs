@@ -18,8 +18,7 @@ const APP_TOML_HEADER: &str = r#"# floo.app.toml — see https://getfloo.com/doc
 # Commit and push this file before `floo apps github connect`. Connect creates
 # the floo app and triggers the first deploy from the pushed GitHub source.
 # After that, every push to your default branch builds and deploys to the dev
-# environment automatically (no manual deploy command needed). Cutting a
-# GitHub release promotes that build to production. See
+# environment automatically (no manual deploy command needed). See
 # https://getfloo.com/docs/introduction.
 #
 # Run `floo docs config` for the configuration reference."#;
