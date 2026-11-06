@@ -107,7 +107,7 @@ On Claude Code older than 2.1.275, add the marketplace first:
 
 ```bash
 droid plugin marketplace add getfloo/floo-cli
-droid plugin install floo@floo
+droid plugin install floo@floo-cli
 ```
 
 Then run `/mcp` in Droid and sign in to `floo`.
