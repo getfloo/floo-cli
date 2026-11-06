@@ -1065,6 +1065,8 @@ mod tests {
 
     #[test]
     fn commit_wait_counts_only_time_nothing_holds_the_push_back() {
+        output::set_json_mode(false);
+        output::set_dry_run_mode(false);
         let minute = Duration::from_secs(60);
         // Nothing running: the old 120 s limit.
         assert!(!commit_wait_expired(minute, minute));
@@ -1079,6 +1081,8 @@ mod tests {
 
     #[test]
     fn only_running_dev_deploys_hold_a_push_back() {
+        output::set_json_mode(false);
+        output::set_dry_run_mode(false);
         assert!(holds_back_push(&deploy_with("building", Some("dev"), None)));
         assert!(holds_back_push(&deploy_with("pending", None, None)));
         assert!(!holds_back_push(&deploy_with("live", Some("dev"), None)));
