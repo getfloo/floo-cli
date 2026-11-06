@@ -1,6 +1,6 @@
 # floo CLI
 
-The command-line interface for [floo](https://getfloo.com) - manage and observe web apps. Deploys are git-driven: push to `main` for dev. For prod, cut a GitHub release on your own repository, or run `floo releases promote` for a floo-hosted project. This CLI handles everything else.
+The command-line interface for [floo](https://getfloo.com) - manage and observe web apps. Deploys are git-driven: push to `main` and floo builds and deploys it. This CLI handles everything else.
 
 ## Install
 
