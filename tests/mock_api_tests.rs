@@ -9098,6 +9098,54 @@ fn test_redeploy_preflight_propagates_remote_validation_failure() {
     assert_remote_preflight_failure(&["--json", "redeploy", "--preflight"], 422);
 }
 
+/// Before the first deploy the app doesn't exist, and the Quickstart says to run
+/// preflight first: the local checks must still pass instead of APP_NOT_FOUND.
+#[test]
+fn test_preflight_before_first_deploy_runs_local_checks() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let lookup = server
+        .mock("GET", "/v1/apps")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"apps":[]}"#)
+        .create();
+    let planner = server
+        .mock("POST", Matcher::Regex(r"^/v1/apps/.*/preflight$".into()))
+        .expect(0)
+        .create();
+    let project = TempDir::new().unwrap();
+    write_service_config(&project, TEST_APP_NAME);
+
+    let output = floo()
+        .args(["--json", "preflight"])
+        .arg(project.path())
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let payload: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(payload["success"], true);
+    assert_eq!(payload["data"]["valid"], true);
+    assert!(payload["data"]["plan"].is_null());
+    assert_eq!(payload["data"]["plan_skipped_reason"], "APP_NOT_CREATED");
+    lookup.assert();
+    planner.assert();
+
+    floo()
+        .args(["preflight"])
+        .arg(project.path())
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "doesn't exist yet, so only the local checks ran",
+        ));
+}
+
 #[test]
 fn test_preflight_propagates_resolution_failure() {
     let mut server = Server::new();

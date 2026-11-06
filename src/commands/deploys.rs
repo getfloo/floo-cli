@@ -686,8 +686,30 @@ fn colored_status(status: &str) -> String {
 
 // --- deploy watch ---
 
+/// How long to wait for a pushed commit's deploy to appear once nothing else is
+/// deploying. A push that lands while another deploy runs (on a new floo-hosted
+/// project, the starter's first deploy) is queued, and the API starts it within a
+/// minute of that deploy finishing, so time spent behind a running deploy does not
+/// count against this.
 const COMMIT_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
+/// Upper bound on the whole wait, however long earlier deploys keep running.
+const COMMIT_WAIT_MAX: Duration = Duration::from_secs(20 * 60);
 const COMMIT_POLL_INTERVAL: Duration = Duration::from_secs(3);
+
+/// True when a pushed commit has waited too long for its deploy to appear.
+/// `idle` is the time since a deploy that holds the commit back was last seen.
+fn commit_wait_expired(waited: Duration, idle: Duration) -> bool {
+    idle >= COMMIT_WAIT_TIMEOUT || waited >= COMMIT_WAIT_MAX
+}
+
+/// A running dev deploy holds a newer push back until it finishes.
+fn holds_back_push(deploy: &Deploy) -> bool {
+    let running = deploy
+        .status
+        .as_deref()
+        .is_some_and(|status| !deploy_status::is_terminal(status));
+    running && deploy.env.as_deref() != Some("prod") && deploy.preview_slug.is_none()
+}
 
 pub fn watch(app: Option<&str>, commit: Option<&str>) {
     super::require_auth();
@@ -773,17 +795,19 @@ fn find_deploy_by_commit(
     sha_prefix: &str,
 ) -> Option<(Deploy, Option<CoalescedCommit>)> {
     let start = Instant::now();
-    let spinner = if !output::is_json_mode() {
-        Some(output::Spinner::new(&format!(
-            "Waiting for deploy with commit {sha_prefix}..."
-        )))
+    let waiting_message = format!("Waiting for deploy with commit {sha_prefix}...");
+    let mut spinner = if !output::is_json_mode() {
+        Some(output::Spinner::new(&waiting_message))
     } else {
         None
     };
+    let mut last_held_back: Option<Instant> = None;
+    let mut announced_blocker: Option<String> = None;
 
     loop {
         let mut cursor: Option<String> = None;
         let mut coalesced_match: Option<(Deploy, CoalescedCommit)> = None;
+        let mut blocker: Option<Deploy> = None;
 
         loop {
             let result = match client.list_deploys_paginated(app_id, 100, cursor.as_deref()) {
@@ -798,6 +822,9 @@ fn find_deploy_by_commit(
             };
 
             for deploy in result.deploys {
+                if blocker.is_none() && holds_back_push(&deploy) {
+                    blocker = Some(deploy.clone());
+                }
                 if deploy
                     .commit_sha
                     .as_deref()
@@ -836,22 +863,62 @@ fn find_deploy_by_commit(
             return Some((deploy, Some(lineage)));
         }
 
-        if start.elapsed() >= COMMIT_WAIT_TIMEOUT {
+        if let Some(running) = blocker {
+            last_held_back = Some(Instant::now());
+            if announced_blocker.as_deref() != Some(running.id.as_str()) {
+                if let Some(s) = spinner.take() {
+                    s.finish();
+                }
+                announce_held_back(&running, sha_prefix);
+                spinner = (!output::is_json_mode()).then(|| output::Spinner::new(&waiting_message));
+                announced_blocker = Some(running.id);
+            }
+        }
+
+        let idle = last_held_back.map_or_else(|| start.elapsed(), |seen| seen.elapsed());
+        if commit_wait_expired(start.elapsed(), idle) {
             if let Some(s) = spinner.as_ref() {
                 s.finish();
             }
             output::error(
                 &format!(
                     "Timed out waiting for deploy with commit {sha_prefix} (waited {}s).",
-                    COMMIT_WAIT_TIMEOUT.as_secs()
+                    start.elapsed().as_secs()
                 ),
                 &ErrorCode::DeployTimeout,
-                Some("The deploy may still be processing. Check `floo deploys list --app <name>` or try again."),
+                Some(&format!(
+                    "The push may still deploy. Run `floo deploys watch --commit {sha_prefix}` to keep waiting, or `floo doctor push` to see why it has not deployed."
+                )),
             );
             process::exit(1);
         }
 
         thread::sleep(COMMIT_POLL_INTERVAL);
+    }
+}
+
+fn announce_held_back(running: &Deploy, sha_prefix: &str) {
+    let running_commit = running
+        .commit_sha
+        .as_deref()
+        .map(super::short_sha)
+        .unwrap_or("\u{2014}");
+    if output::is_json_mode() {
+        output::print_json(&serde_json::json!({
+            "event": "queued_behind_deploy",
+            "deploy_id": running.id,
+            "deploy_commit": running_commit,
+            "requested_commit": sha_prefix,
+        }));
+    } else {
+        output::info(
+            &format!(
+                "Deploy {} ({running_commit}) is still running. Commit {} deploys as soon as it finishes.",
+                running.id,
+                super::short_sha(sha_prefix),
+            ),
+            None,
+        );
     }
 }
 
@@ -980,6 +1047,56 @@ fn print_final_status(deploy: &Deploy) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn deploy_with(status: &str, env: Option<&str>, preview_slug: Option<&str>) -> Deploy {
+        serde_json::from_value(serde_json::json!({
+            "id": "deploy-1",
+            "status": status,
+            "url": null,
+            "build_logs": null,
+            "created_at": null,
+            "triggered_by": null,
+            "commit_sha": "abc1234",
+            "env": env,
+            "preview_slug": preview_slug,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn commit_wait_counts_only_time_nothing_holds_the_push_back() {
+        output::set_json_mode(false);
+        output::set_dry_run_mode(false);
+        let minute = Duration::from_secs(60);
+        // Nothing running: the old 120 s limit.
+        assert!(!commit_wait_expired(minute, minute));
+        assert!(commit_wait_expired(2 * minute, 2 * minute));
+        // A starter deploy ran for 4 minutes and finished 30 s ago: keep waiting.
+        assert!(!commit_wait_expired(4 * minute + minute / 2, minute / 2));
+        // Two idle minutes after it finished: give up.
+        assert!(commit_wait_expired(6 * minute, 2 * minute));
+        // Never past the hard cap, even behind a deploy that keeps running.
+        assert!(commit_wait_expired(COMMIT_WAIT_MAX, Duration::ZERO));
+    }
+
+    #[test]
+    fn only_running_dev_deploys_hold_a_push_back() {
+        output::set_json_mode(false);
+        output::set_dry_run_mode(false);
+        assert!(holds_back_push(&deploy_with("building", Some("dev"), None)));
+        assert!(holds_back_push(&deploy_with("pending", None, None)));
+        assert!(!holds_back_push(&deploy_with("live", Some("dev"), None)));
+        assert!(!holds_back_push(&deploy_with(
+            "deploying",
+            Some("prod"),
+            None
+        )));
+        assert!(!holds_back_push(&deploy_with(
+            "building",
+            Some("preview"),
+            Some("feat-x")
+        )));
+    }
 
     #[test]
     fn test_relative_time_seconds_ago() {
