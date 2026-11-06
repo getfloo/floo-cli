@@ -5,7 +5,7 @@
     "url": "https://getfloo.com"
   },
   "metadata": {
-    "description": "The floo plugin for Claude Code: build and host internal software with team sign-in, Postgres, and scheduled jobs."
+    "description": "The floo plugin for Claude Code, Factory Droid, and Devin: build and host apps with team sign-in, Postgres, and scheduled jobs."
   },
   "plugins": [
     {
