@@ -1,0 +1,25 @@
+{
+  "name": "floo",
+  "displayName": "floo",
+  "version": "0.3.1",
+  "description": "Deploy and host the apps your agent builds: sign-in, Postgres, scheduled jobs, logs and deploys through the floo MCP server.",
+  "author": {
+    "name": "floo",
+    "email": "team@getfloo.com"
+  },
+  "homepage": "https://getfloo.com",
+  "repository": "https://github.com/getfloo/floo-cli",
+  "license": "MIT",
+  "logo": "assets/logo.svg",
+  "keywords": [
+    "floo",
+    "deploy",
+    "hosting",
+    "apps",
+    "postgres",
+    "cron",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
+}

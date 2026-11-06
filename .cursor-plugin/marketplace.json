@@ -1,0 +1,17 @@
+{
+  "name": "floo",
+  "owner": {
+    "name": "floo",
+    "email": "team@getfloo.com"
+  },
+  "metadata": {
+    "description": "The floo plugin for Cursor and Grok Bot: deploy and host the apps your agent builds."
+  },
+  "plugins": [
+    {
+      "name": "floo",
+      "source": "./plugin",
+      "category": "deployment"
+    }
+  ]
+}

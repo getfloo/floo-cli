@@ -103,6 +103,18 @@ On Claude Code older than 2.1.275, add the marketplace first:
 
 The plugin lives in [`plugin/`](plugin). [Privacy policy](https://getfloo.com/legal/privacy).
 
+## Cursor and Grok Bot plugin
+
+The same plugin works in Cursor and Grok Bot, which install plugins from the
+Cursor Marketplace. Install **floo** from the
+[Cursor Marketplace](https://cursor.com/marketplace), then connect the `floo`
+MCP server and approve the sign-in in your browser. In Grok Bot, open
+**Connect apps** in the sidebar.
+
+To try it from a local checkout, copy `plugin/` to
+`~/.cursor/plugins/local/floo` and run **Developer: Reload Window**. The
+Cursor manifest is [`plugin/.cursor-plugin/plugin.json`](plugin/.cursor-plugin/plugin.json).
+
 ## Building from source
 
 Use the current stable [Rust toolchain](https://rustup.rs/), matching CI.
