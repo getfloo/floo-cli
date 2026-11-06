@@ -597,7 +597,7 @@ fn run_preflight(
     all_findings.extend(security_findings.iter().cloned());
 
     // Inspection calls the planner; an actual deploy is validated by its write endpoint.
-    let remote_plan = if mode == PreflightMode::Inspect && valid {
+    let (remote_plan, app_not_created) = if mode == PreflightMode::Inspect && valid {
         match fetch_remote_preflight(
             &app_name,
             &managed_services,
@@ -605,7 +605,9 @@ fn run_preflight(
             &environment,
             &resolved,
         ) {
-            Ok(plan) => plan,
+            Ok(RemotePreflight::Plan(plan)) => (Some(*plan), false),
+            Ok(RemotePreflight::NotSignedIn) => (None, false),
+            Ok(RemotePreflight::AppNotCreated) => (None, true),
             Err(error) => {
                 output::error_with_details(
                     &error.message,
@@ -617,7 +619,7 @@ fn run_preflight(
             }
         }
     } else {
-        None
+        (None, false)
     };
 
     if output::is_json_mode() && valid && mode == PreflightMode::Deploy {
@@ -664,6 +666,7 @@ fn run_preflight(
             "cron": cron_json,
             "findings": all_findings,
             "plan": remote_plan.as_ref().map(crate::output::to_value),
+            "plan_skipped_reason": app_not_created.then_some("APP_NOT_CREATED"),
             "valid": valid,
         });
 
@@ -723,6 +726,10 @@ fn run_preflight(
 
     if let Some(ref plan) = remote_plan {
         render_plan_human(plan, &app_name);
+    }
+    if app_not_created {
+        eprintln!("  {}", app_not_created_note(&app_name));
+        eprintln!();
     }
 
     render_security_findings_human(&security_findings);
@@ -3025,21 +3032,43 @@ pub(crate) fn sync_env_vars_if_needed(
     Ok(())
 }
 
+/// What the server-side half of `floo preflight` could do.
+enum RemotePreflight {
+    Plan(Box<crate::api_types::PreflightPlan>),
+    /// No credentials: only the local checks run.
+    NotSignedIn,
+    /// The app doesn't exist yet (the usual state before a first deploy, when the
+    /// docs say to run preflight). The local checks still ran; only the server's
+    /// plan for an existing app is skipped.
+    AppNotCreated,
+}
+
+fn app_not_created_note(app_name: &str) -> String {
+    format!(
+        "App '{app_name}' doesn't exist yet, so only the local checks ran. \
+         `floo deploy` or `floo apps github connect` creates it."
+    )
+}
+
 fn fetch_remote_preflight(
     app_name: &str,
     managed: &[project_config::ManagedServiceDeclaration],
     services: &[ServiceConfig],
     environment: &str,
     resolved: &project_config::ResolvedApp,
-) -> Result<Option<crate::api_types::PreflightPlan>, FlooApiError> {
+) -> Result<RemotePreflight, FlooApiError> {
     use crate::api_types::{DeclaredRuntimeService, DeclaredState};
 
     let config = load_config();
     if config.api_key.is_none() {
-        return Ok(None);
+        return Ok(RemotePreflight::NotSignedIn);
     }
     let client = FlooClient::new(Some(config))?;
-    let app = resolve_app(&client, app_name)?;
+    let app = match resolve_app(&client, app_name) {
+        Ok(app) => app,
+        Err(error) if error.code == "APP_NOT_FOUND" => return Ok(RemotePreflight::AppNotCreated),
+        Err(error) => return Err(error),
+    };
 
     let declared = DeclaredState {
         managed_services: managed.to_vec(),
@@ -3060,7 +3089,9 @@ fn fetch_remote_preflight(
             .collect(),
     };
 
-    client.preflight(&app.id, &declared).map(Some)
+    client
+        .preflight(&app.id, &declared)
+        .map(|plan| RemotePreflight::Plan(Box::new(plan)))
 }
 
 fn render_plan_human(plan: &crate::api_types::PreflightPlan, app_name: &str) {
