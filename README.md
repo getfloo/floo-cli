@@ -84,11 +84,13 @@ the installed binary.
 For agent setup and the JSON output contract, read the
 [agent guide](https://getfloo.com/docs/guides/agent-setup).
 
-## Claude Code plugin
+## Agent plugin
 
-The floo plugin gives Claude Code the floo skill and the floo MCP server
-(`https://api.getfloo.com/mcp`, signed in with OAuth) in one install. Run this
-in Claude Code:
+The floo plugin gives your coding agent the floo skill and the floo MCP server
+(`https://api.getfloo.com/mcp`, signed in with OAuth) in one install. The same
+plugin works in Claude Code, Factory Droid, and Devin.
+
+### Claude Code
 
 ```
 /plugin install floo --marketplace getfloo/floo-cli
@@ -100,6 +102,24 @@ On Claude Code older than 2.1.275, add the marketplace first:
 /plugin marketplace add getfloo/floo-cli
 /plugin install floo@floo
 ```
+
+### Factory Droid
+
+```bash
+droid plugin marketplace add getfloo/floo-cli
+droid plugin install floo@floo
+```
+
+Then run `/mcp` in Droid and sign in to `floo`.
+
+### Devin
+
+```bash
+devin plugins install getfloo/floo-cli#plugin
+```
+
+In Devin's web app, go to **Customize → Plugins → Add plugin → From
+repository**, enter `getfloo/floo-cli`, and set the subdirectory to `plugin`.
 
 The plugin lives in [`plugin/`](plugin). [Privacy policy](https://getfloo.com/legal/privacy).
 
