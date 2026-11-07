@@ -5180,6 +5180,39 @@ fn test_status_wait_follows_the_dev_deploy_not_prod_or_a_preview() {
 }
 
 #[test]
+fn test_status_wait_pages_past_prod_deploys_to_the_newest_dev_deploy() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _status = mock_status_after_wait(&mut server);
+    let deploys_path = format!("/v1/apps/{TEST_APP_ID}/deploys");
+    let _second_page = server
+        .mock("GET", deploys_path.as_str())
+        .match_query(Matcher::UrlEncoded("cursor".into(), "page-2".into()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"deploys":[{"id":"deploy-dev","status":"live","env":"dev"}],"has_more":false}"#,
+        )
+        .create();
+    let _first_page = server
+        .mock("GET", deploys_path.as_str())
+        .match_query(Matcher::Regex("^include_build_logs=false&limit=100$".into()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"deploys":[{"id":"deploy-prod","status":"failed","env":"prod"}],"has_more":true,"next_cursor":"page-2"}"#)
+        .create();
+
+    floo()
+        .args(["--json", "status", "--wait", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("deploy-dev"))
+        .stdout(predicate::str::contains("deploy-prod").not());
+}
+
+#[test]
 fn test_status_wait_prefers_exact_commit_on_later_page_over_coalesced_match() {
     let mut server = Server::new();
     let home = setup_config(&server);

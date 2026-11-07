@@ -624,15 +624,25 @@ pub fn follow(client: &FlooClient, app_id: &str, app_name: &str, commit: Option<
     print_final_status(&final_deploy);
 }
 
+/// The newest dev deploy, paging past prod and preview deploys.
 fn find_latest_deploy(client: &FlooClient, app_id: &str) -> Option<Deploy> {
-    let result = match client.list_deploys(app_id) {
-        Ok(r) => r,
-        Err(e) => {
-            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-            process::exit(1);
+    let mut cursor: Option<String> = None;
+    loop {
+        let result = match client.list_deploys_paginated(app_id, 100, cursor.as_deref()) {
+            Ok(r) => r,
+            Err(e) => {
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                process::exit(1);
+            }
+        };
+        if let Some(deploy) = result.deploys.into_iter().find(is_dev) {
+            return Some(deploy);
         }
-    };
-    result.deploys.into_iter().find(is_dev)
+        if !result.has_more {
+            return None;
+        }
+        cursor = Some(result.next_cursor?);
+    }
 }
 
 fn find_deploy_by_commit(
