@@ -9977,3 +9977,74 @@ fn test_doctor_push_started_deploy_exits_zero() {
         .success()
         .stderr(predicate::str::contains("created a dev deploy"));
 }
+
+const STATUS_SHA: &str = "cccccccccccccccccccccccccccccccccccccccc";
+
+fn mock_app_status(server: &mut Server, live: bool) -> Mock {
+    let (summary, next) = if live {
+        (
+            "The dev deploy of ccccccc is live at https://my-app.getfloo.app.",
+            "null",
+        )
+    } else {
+        (
+            "The dev deploy of ccccccc failed: npm ci exited 1.",
+            r#""Fix it, commit, and run `floo deploy` again.""#,
+        )
+    };
+    server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/status").as_str())
+        .match_query(Matcher::UrlEncoded("commit".into(), STATUS_SHA.into()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"app":"{TEST_APP_NAME}","source":null,"commit":"{STATUS_SHA}","live":{live},"summary":"{summary}","next_step":{next},"deploy":null,"serving":{{"deploy_id":"d-1","commit_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","url":"https://my-app.getfloo.app"}},"last_push":null}}"#
+        ))
+        .create()
+}
+
+#[test]
+fn status_says_whether_the_commit_is_live_and_what_to_do() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _apps = mock_resolve_app(&mut server);
+    let _status = mock_app_status(&mut server, false);
+
+    floo()
+        .args(["status", "--app", TEST_APP_NAME, "--commit", STATUS_SHA])
+        .current_dir(home.path())
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "The dev deploy of ccccccc failed: npm ci exited 1.",
+        ))
+        .stderr(predicate::str::contains(
+            "Next: Fix it, commit, and run `floo deploy` again.",
+        ))
+        .stderr(predicate::str::contains("Dev serves bbbbbbb"));
+}
+
+#[test]
+fn status_json_passes_the_api_answer_through() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _apps = mock_resolve_app(&mut server);
+    let _status = mock_app_status(&mut server, true);
+
+    floo()
+        .args([
+            "--json",
+            "status",
+            "--app",
+            TEST_APP_NAME,
+            "--commit",
+            STATUS_SHA,
+        ])
+        .current_dir(home.path())
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""live":true"#))
+        .stdout(predicate::str::contains(r#""next_step":null"#));
+}

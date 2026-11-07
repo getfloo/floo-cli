@@ -218,6 +218,22 @@ your changes first.")]
         preflight: PreflightArgs,
     },
 
+    /// Show whether this folder's commit is live on dev, and if not, why and what to do.
+    #[command(after_help = "\
+Examples:
+  floo status                      This folder's HEAD
+  floo status --commit 4f2a9c1     Another commit
+  floo status --app my-app         The newest dev deploy of an app")]
+    Status {
+        /// App ID or name. Defaults to the app in floo.app.toml and the folder's HEAD.
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Commit to ask about (a short SHA works inside the repository).
+        #[arg(long)]
+        commit: Option<String>,
+    },
+
     /// Force a redeploy (after env var changes, config updates, or to rebuild).
     #[command(after_help = "\
 Examples:
@@ -2295,6 +2311,10 @@ pub fn run() {
             hosted,
             name,
         }),
+
+        Commands::Status { app, commit } => {
+            commands::status::status(app.as_deref(), commit.as_deref())
+        }
 
         Commands::Redeploy {
             path,
