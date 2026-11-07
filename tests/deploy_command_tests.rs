@@ -364,6 +364,46 @@ fn a_commit_already_on_github_is_not_pushed_again() {
 }
 
 #[test]
+fn a_push_deploy_does_not_need_the_local_env_file() {
+    let mut server = Server::new();
+    let env = setup(&server);
+    git(env.repo.path(), &["init", "-q", "-b", "main"]);
+    write_config(env.repo.path());
+    let config = env.repo.path().join("floo.app.toml");
+    let declared = std::fs::read_to_string(&config).unwrap() + "env_file = \".env\"\n";
+    std::fs::write(&config, declared).unwrap();
+    git(env.repo.path(), &["add", "-A"]);
+    git(env.repo.path(), &["commit", "-q", "-m", "init"]);
+    let sha = git(env.repo.path(), &["rev-parse", "HEAD"]);
+    git(
+        env.repo.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:acme/client-portal.git",
+        ],
+    );
+    let source = json!({"kind": "github", "repo": "acme/client-portal", "branch": "main"});
+    let planned = server
+        .mock("POST", "/v1/deploy/plan")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(plan(
+            json!({"ok": true, "decision": "push", "source": source}),
+        ))
+        .create();
+    let _watch = mock_watch(&mut server, "client-portal", &sha);
+
+    floo(&env)
+        .arg("--json")
+        .env("LS_REMOTE", format!("{sha}\trefs/heads/main\n"))
+        .assert()
+        .success();
+    planned.assert();
+}
+
+#[test]
 fn a_stop_carries_the_plan_and_creates_nothing() {
     let mut server = Server::new();
     let env = setup(&server);

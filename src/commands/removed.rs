@@ -41,19 +41,19 @@ const REMOVED: &[(&[&str], &str, &str)] = &[
     (&["releases", "promote"], "floo promote", ""),
 ];
 
-/// The leading command words of argv: global flags (none of which take a
-/// value) are skipped, and parsing stops at the first flag after a word.
+/// Flags clap accepts anywhere in a command path. None of them takes a value.
+const GLOBAL_FLAGS: &[&str] = &["--json", "--reveal-secrets"];
+
+/// The leading command words of argv. Global flags are skipped wherever they
+/// sit, and the words end at any other flag.
 fn command_words(args: &[OsString]) -> Vec<&str> {
     let mut words = Vec::new();
     for arg in args.iter().skip(1) {
         let Some(arg) = arg.to_str() else { break };
-        if arg == "--" {
-            break;
+        if GLOBAL_FLAGS.contains(&arg) {
+            continue;
         }
         if arg.starts_with('-') {
-            if words.is_empty() {
-                continue;
-            }
             break;
         }
         words.push(arg);
@@ -108,6 +108,25 @@ mod tests {
         assert_eq!(
             replacement(&argv(&["releases", "promote", "--app", "shop"])).map(|(_, i, _)| i),
             Some("floo promote")
+        );
+    }
+
+    #[test]
+    fn global_flags_between_command_words_are_skipped() {
+        assert_eq!(
+            replacement(&argv(&["deploys", "--json", "status"])).map(|(_, i, _)| i),
+            Some("floo status")
+        );
+        assert_eq!(
+            replacement(&argv(&[
+                "apps",
+                "--reveal-secrets",
+                "github",
+                "--json",
+                "setup"
+            ]))
+            .map(|(old, _, _)| old),
+            Some("floo apps github setup".to_string())
         );
     }
 

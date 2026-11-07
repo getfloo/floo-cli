@@ -495,14 +495,17 @@ pub(crate) fn validate(path: &std::path::Path) {
         None,
         Vec::new(),
         "dev".to_string(),
-        PreflightMode::Deploy,
+        PreflightMode::Push,
     );
 }
 
 #[derive(PartialEq)]
 enum PreflightMode {
     Inspect,
+    /// A deploy that uploads this folder and imports its env files.
     Deploy,
+    /// A deploy that pushes git: env files stay local, so a missing one is fine.
+    Push,
 }
 
 /// Validate once; actual deploys reuse the resolved project without emitting JSON success.
@@ -594,6 +597,7 @@ fn run_preflight(
         &resolved,
         &managed_services,
         &env_injection_plan,
+        mode != PreflightMode::Push,
     );
     let security_findings = generate_security_findings(&services, &resolved, &env_injection_plan);
     let runtime_plan = build_runtime_plan(&services, &environment);
@@ -633,7 +637,7 @@ fn run_preflight(
         (None, false)
     };
 
-    if output::is_json_mode() && valid && mode == PreflightMode::Deploy {
+    if output::is_json_mode() && valid && mode != PreflightMode::Inspect {
         return (resolved, services, primary_detection);
     }
 
@@ -1490,6 +1494,7 @@ fn validate_preflight(
     resolved: &project_config::ResolvedApp,
     managed_services: &[project_config::ManagedServiceDeclaration],
     env_plan: &EnvInjectionPlan,
+    imports_env_files: bool,
 ) -> Vec<PreflightFinding> {
     let mut findings: Vec<PreflightFinding> = Vec::new();
     let mut seen_names: Vec<String> = Vec::new();
@@ -1510,7 +1515,13 @@ fn validate_preflight(
     // unconditionally and regardless of `--services`. So a single invalid
     // imported env_file is a guaranteed deploy rejection — a hard error here,
     // even when validating a `--services` subset that excludes that service.
-    for (svc_name, env_file, base) in &imported_env_file_list {
+    // A git-push deploy never imports them, so it doesn't need them on disk.
+    let checked_env_files = if imports_env_files {
+        imported_env_file_list.as_slice()
+    } else {
+        &[]
+    };
+    for (svc_name, env_file, base) in checked_env_files {
         if let Err(msg) = super::env::validate_env_file_path(env_file, base) {
             findings.push(
                 PreflightFinding::error(
