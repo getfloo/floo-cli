@@ -331,13 +331,23 @@ fn validate_path_and_options(invocation: &str) -> Result<(), String> {
     let mut path = Vec::new();
     let mut options = HashSet::new();
     let mut aliases = HashMap::new();
+    // Options whose next token is their value, not a subcommand.
+    let mut valued = HashSet::new();
 
     let record_options = |command: &clap::Command,
                           options: &mut HashSet<String>,
-                          aliases: &mut HashMap<String, String>| {
+                          aliases: &mut HashMap<String, String>,
+                          valued: &mut HashSet<String>| {
         for argument in command.get_arguments() {
             if let Some(long) = argument.get_long() {
                 options.insert(long.to_string());
+                if argument.get_action().takes_values()
+                    && argument
+                        .get_num_args()
+                        .is_none_or(|range| range.min_values() > 0)
+                {
+                    valued.insert(long.to_string());
+                }
                 if let Some(argument_aliases) = argument.get_all_aliases() {
                     aliases.extend(
                         argument_aliases
@@ -348,14 +358,16 @@ fn validate_path_and_options(invocation: &str) -> Result<(), String> {
             }
         }
     };
-    record_options(&command, &mut options, &mut aliases);
+    record_options(&command, &mut options, &mut aliases, &mut valued);
     options.extend(["help".to_string(), "version".to_string()]);
 
-    for token in argv.iter().skip(1) {
+    let mut tokens = argv.iter().skip(1);
+    while let Some(token) = tokens.next() {
         if token == "--" {
             break;
         }
         if let Some(option) = token.strip_prefix("--") {
+            let inline_value = option.contains('=');
             let option = option
                 .split('=')
                 .next()
@@ -369,6 +381,9 @@ fn validate_path_and_options(invocation: &str) -> Result<(), String> {
             if !options.contains(option) {
                 return Err(format!("unknown option `--{option}`"));
             }
+            if !inline_value && valued.contains(option) {
+                tokens.next();
+            }
             continue;
         }
         let exact_subcommand = {
@@ -380,7 +395,7 @@ fn validate_path_and_options(invocation: &str) -> Result<(), String> {
         if let Some(subcommand) = exact_subcommand {
             path.push(token.clone());
             command = subcommand;
-            record_options(&command, &mut options, &mut aliases);
+            record_options(&command, &mut options, &mut aliases, &mut valued);
             continue;
         }
         if let Some(canonical) = command.get_subcommands().find_map(|candidate| {
@@ -504,6 +519,11 @@ fn guidance_validator_rejects_stale_syntax() {
     assert!(validate_path_and_options(&invocation("redeploy --dry-run")).is_err());
     assert!(validate_path_and_options(&invocation("apps show my-app --not-real")).is_err());
     assert!(Cli::try_parse_from(normalized_argv(&invocation("apps show --app")).unwrap()).is_err());
+
+    // An option's value is not a subcommand, so a command group can take one
+    // before its subcommand, and a stale subcommand after it is still caught.
+    assert!(validate_path_and_options(&invocation("logs --preview feat-x --app my-app")).is_ok());
+    assert!(validate_path_and_options(&invocation("previews --app my-app logs feat-x")).is_err());
 
     let mut prose = Vec::new();
     push_occurrences(

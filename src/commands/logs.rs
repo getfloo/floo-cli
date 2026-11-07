@@ -52,6 +52,8 @@ pub struct LogsArgs {
     pub live: bool,
     pub output_path: Option<PathBuf>,
     pub env: Option<String>,
+    /// Logs of this preview's latest deploy, in place of `deployment` and `env`.
+    pub preview: Option<String>,
 }
 
 struct LogsFilter<'a> {
@@ -393,6 +395,13 @@ pub fn logs(args: LogsArgs) {
     let app_name = &app_data.name;
     let app_id = &app_data.id;
     let tail = clamp_tail(args.tail);
+    let preview_deploy = args.preview.as_deref().map(|preview| {
+        crate::commands::previews::latest_deploy_id(&client, app_id, app_name, preview)
+    });
+    let (deployment, environment) = match preview_deploy.as_deref() {
+        Some(deploy_id) => (Some(deploy_id), Some("preview")),
+        None => (args.deployment.as_deref(), args.env.as_deref()),
+    };
 
     let filter = LogsFilter {
         since: args.since.as_deref(),
@@ -400,8 +409,8 @@ pub fn logs(args: LogsArgs) {
         services: &args.services,
         cron: args.cron.as_deref(),
         search: args.search.as_deref(),
-        deployment: args.deployment.as_deref(),
-        environment: args.env.as_deref(),
+        deployment,
+        environment,
         cursor: args.cursor.as_deref(),
     };
 

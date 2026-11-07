@@ -344,7 +344,7 @@ mod tests {
     #[test]
     fn generated_password_redacted() {
         // Regression: `Deploy.generated_password` was leaking via
-        // `floo deploys logs --json` and `floo deploy --rebuild --json`.
+        // `floo logs build --json` and `floo deploy --rebuild --json`.
         let (out, found) = redact(json!({"deploy": {"generated_password": "AbCdEf12!"}}));
         assert!(found);
         assert_eq!(out["deploy"]["generated_password"], REDACTED_PLACEHOLDER);
@@ -783,7 +783,7 @@ mod snapshots {
         assert_eq!(out["contains_secrets"], true);
     }
 
-    /// `floo deploys logs --json` — `Deploy.generated_password` was
+    /// `floo logs build --json` — `Deploy.generated_password` was
     /// being serialized verbatim.
     #[test]
     fn floo_deploys_logs_generated_password_redacted() {

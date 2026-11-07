@@ -36,6 +36,16 @@ const REMOVED: &[(&[&str], &str, &str)] = &[
         " Run it on the branch: any branch but the default one gets a preview URL.",
     ),
     (&["deploys", "status"], "floo status", ""),
+    (
+        &["deploys", "logs"],
+        "floo logs build",
+        " It takes a deploy ID, --app and --follow as before.",
+    ),
+    (
+        &["previews", "logs"],
+        "floo logs --preview <branch>",
+        " `floo logs build --preview <branch>` shows its build logs.",
+    ),
     (&["deploys", "rollback"], "floo rollback", ""),
     (
         &["deploys", "watch"],
@@ -123,6 +133,10 @@ mod tests {
         assert_eq!(
             replacement(&argv(&["releases", "promote", "--app", "shop"])).map(|(_, i, _)| i),
             Some("floo promote")
+        );
+        assert_eq!(
+            replacement(&argv(&["previews", "logs", "feat-x", "--follow"])).map(|(_, i, _)| i),
+            Some("floo logs --preview <branch>")
         );
     }
 

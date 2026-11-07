@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use crate::api_client::FlooClient;
 use crate::api_types::{
-    CreatePreviewDeployRequest, Deploy, LogEntry, PreviewEnvironment, PreviewManagedResourceBranch,
+    CreatePreviewDeployRequest, Deploy, PreviewEnvironment, PreviewManagedResourceBranch,
 };
 use crate::deploy_status;
 use crate::errors::ErrorCode;
@@ -184,7 +184,10 @@ pub fn status(app_flag: Option<&str>, preview_identifier: &str) {
     output::info(&format!("Preview {} for {app_name}", preview.slug), None);
     render_preview(&preview);
     output::info(
-        &format!("Next: floo previews logs {} --app {app_name}", preview.slug),
+        &format!(
+            "Next: floo logs --preview {} --app {app_name}",
+            preview.slug
+        ),
         None,
     );
 }
@@ -454,76 +457,25 @@ pub fn resources_reset(
     render_resource_detail(&branch);
 }
 
-pub fn logs(app_flag: Option<&str>, preview_identifier: &str, follow: bool, tail: u32) {
-    super::require_auth();
-    let client = super::init_client(None);
-    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
-    let preview = resolve_preview(&client, &app_id, &app_name, preview_identifier);
-    let Some(deploy_id) = preview.latest_deploy_id.as_deref() else {
-        output::error(
-            &format!("Preview '{}' has no deploy yet.", preview.slug),
-            &ErrorCode::DeployNotFound,
-            Some("Run `floo previews status` to inspect the preview lifecycle."),
-        );
-        process::exit(1);
-    };
-
-    if follow {
-        let streamed = if output::is_json_mode() {
-            crate::commands::deploy::stream_deploy_json(&client, &app_id, deploy_id)
-        } else {
-            crate::commands::deploy::stream_deploy(&client, &app_id, deploy_id).map(|s| s.deploy)
-        };
-        match streamed {
-            Ok(_) => return,
-            Err(e) if e.code == "NOT_FOUND" || e.code == "STREAM_ERROR" => {}
-            Err(e) => {
-                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-                process::exit(1);
-            }
-        }
-    }
-
-    let response = match client.get_logs(
-        &app_id,
-        tail,
-        None,
-        None,
-        None,
-        None,
-        None,
-        Some(deploy_id),
-        Some("preview"),
-        None,
-    ) {
-        Ok(response) => response,
-        Err(e) => {
-            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+/// The latest deploy of a preview, for `floo logs --preview` and
+/// `floo logs build --preview`. Exits when the preview has not deployed yet.
+pub(crate) fn latest_deploy_id(
+    client: &FlooClient,
+    app_id: &str,
+    app_name: &str,
+    preview_identifier: &str,
+) -> String {
+    let preview = resolve_preview(client, app_id, app_name, preview_identifier);
+    match preview.latest_deploy_id {
+        Some(deploy_id) => deploy_id,
+        None => {
+            output::error(
+                &format!("Preview '{}' has no deploy yet.", preview.slug),
+                &ErrorCode::DeployNotFound,
+                Some("Run `floo previews status` to inspect the preview lifecycle."),
+            );
             process::exit(1);
         }
-    };
-
-    if output::is_json_mode() {
-        output::success(
-            "Preview logs retrieved.",
-            Some(serde_json::json!({
-                "app": app_json(&app_id, &app_name),
-                "preview": preview_json(&preview),
-                "deploy_id": deploy_id,
-                "logs": output::to_value(&response.logs),
-                "total": response.total,
-                "dev_prod_untouched": true,
-            })),
-        );
-        return;
-    }
-
-    if response.logs.is_empty() {
-        output::info("No logs found for this preview deploy.", None);
-        return;
-    }
-    for entry in response.logs {
-        output::info(&format_log_line(&entry), None);
     }
 }
 
@@ -739,18 +691,6 @@ fn render_preview(preview: &PreviewEnvironment) {
         ),
         None,
     );
-}
-
-fn format_log_line(entry: &LogEntry) -> String {
-    let ts = entry.timestamp.as_deref().unwrap_or("");
-    let sev = entry.severity.as_deref().unwrap_or("DEFAULT");
-    let msg = entry.message.as_deref().unwrap_or("");
-    let service = entry
-        .service_name
-        .as_deref()
-        .map(|name| format!(" [{name}]"))
-        .unwrap_or_default();
-    format!("{ts}{service} [{sev}] {msg}")
 }
 
 fn render_resource_table(branches: &[PreviewManagedResourceBranch]) {
