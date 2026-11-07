@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::process;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -6,7 +7,7 @@ use chrono::Utc;
 use colored::Colorize;
 
 use crate::api_client::FlooClient;
-use crate::api_types::{CoalescedCommit, Deploy};
+use crate::api_types::{CoalescedCommit, Deploy, Release};
 use crate::commands::deploy::{
     poll_deploy, render_diagnostics, settle_to_terminal, stream_deploy, stream_deploy_json,
 };
@@ -14,12 +15,15 @@ use crate::deploy_status;
 use crate::errors::ErrorCode;
 use crate::output;
 
-fn deploy_list_payload(result: &crate::api_types::ListDeploysResponse) -> serde_json::Value {
+fn deploy_list_payload(
+    result: &crate::api_types::ListDeploysResponse,
+    releases: &HashMap<&str, &Release>,
+) -> serde_json::Value {
     let deploys: Vec<serde_json::Value> = result
         .deploys
         .iter()
         .map(|d| {
-            serde_json::json!({
+            let mut row = serde_json::json!({
                 "id": &d.id,
                 "status": &d.status,
                 "url": &d.url,
@@ -32,7 +36,11 @@ fn deploy_list_payload(result: &crate::api_types::ListDeploysResponse) -> serde_
                 "triggered_by": &d.triggered_by,
                 "commit_sha": &d.commit_sha,
                 "env": &d.env,
-            })
+            });
+            if let Some(release) = releases.get(d.id.as_str()) {
+                row["release"] = output::to_value(release);
+            }
+            row
         })
         .collect();
     serde_json::json!({
@@ -46,29 +54,86 @@ fn deploy_list_payload(result: &crate::api_types::ListDeploysResponse) -> serde_
     })
 }
 
-pub fn list(app: Option<&str>, limit: u32, cursor: Option<&str>) {
+/// Releases read per request when joining them to prod deploys.
+const RELEASE_PAGE_SIZE: u32 = 100;
+/// The most release pages one page of deploy history reads.
+const MAX_RELEASE_PAGES: u32 = 20;
+
+/// The releases of an app, for the prod deploys on this page. Only an app
+/// with a prod deploy on the page pays for the call. Pages are read, newest
+/// first, until every prod deploy here has its release or the releases run
+/// out, so older history keeps its tags. A failure costs the release column,
+/// not the history.
+fn page_releases(client: &FlooClient, app_id: &str, deploys: &[Deploy]) -> Vec<Release> {
+    let mut unmatched: HashSet<&str> = deploys
+        .iter()
+        .filter(|d| d.env.as_deref() == Some("prod"))
+        .map(|d| d.id.as_str())
+        .collect();
+    let mut releases = Vec::new();
+    for page in 1..=MAX_RELEASE_PAGES {
+        if unmatched.is_empty() {
+            break;
+        }
+        let response = match client.list_releases(app_id, page, RELEASE_PAGE_SIZE) {
+            Ok(response) => response,
+            Err(e) => {
+                output::warn(&format!("Release tags unavailable: {}", e.message));
+                break;
+            }
+        };
+        let count = response.releases.len();
+        for release in response.releases {
+            if let Some(deploy_id) = release.deploy_id.as_deref() {
+                unmatched.remove(deploy_id);
+            }
+            releases.push(release);
+        }
+        let read = u64::from(page * RELEASE_PAGE_SIZE);
+        if count < RELEASE_PAGE_SIZE as usize || response.total.is_some_and(|total| read >= total) {
+            break;
+        }
+    }
+    releases
+}
+
+/// `floo deploys`: deploy history, newest first. A prod deploy shows the
+/// release it shipped.
+pub fn list(app: Option<&str>, env: Option<&str>, limit: u32, cursor: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);
 
     let (app_id, _app_name) = super::resolve_app_from_config(&client, app);
 
-    let result = match client.list_deploys_paginated(&app_id, limit, cursor) {
+    let result = match client.list_deploys_paginated(&app_id, limit, cursor, env) {
         Ok(r) => r,
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
         }
     };
+    let release_list = page_releases(&client, &app_id, &result.deploys);
+    let releases: HashMap<&str, &Release> = release_list
+        .iter()
+        .filter_map(|r| r.deploy_id.as_deref().map(|id| (id, r)))
+        .collect();
 
     if result.deploys.is_empty() {
         if output::is_json_mode() {
-            output::success("No deploys found.", Some(deploy_list_payload(&result)));
+            output::success(
+                "No deploys found.",
+                Some(deploy_list_payload(&result, &releases)),
+            );
         } else {
             output::info("No deploys found.", None);
         }
         return;
     }
 
+    let show_releases = result
+        .deploys
+        .iter()
+        .any(|d| releases.contains_key(d.id.as_str()));
     let rows: Vec<Vec<String>> = result
         .deploys
         .iter()
@@ -89,7 +154,7 @@ pub fn list(app: Option<&str>, limit: u32, cursor: Option<&str>) {
                     truncate_text(&format!("{stage}: {reason}"), 64)
                 })
                 .unwrap_or_else(|| "\u{2014}".to_string());
-            vec![
+            let mut row = vec![
                 short_id,
                 colored_status(status),
                 env.to_string(),
@@ -98,28 +163,41 @@ pub fn list(app: Option<&str>, limit: u32, cursor: Option<&str>) {
                 duration,
                 relative_time(created),
                 failure,
-            ]
+            ];
+            if show_releases {
+                let tag = releases
+                    .get(d.id.as_str())
+                    .and_then(|r| r.tag.as_deref())
+                    .unwrap_or("\u{2014}");
+                row.insert(3, tag.to_string());
+            }
+            row
         })
         .collect();
 
+    let mut headers = vec![
+        "Deploy ID",
+        "Status",
+        "Env",
+        "Triggered By",
+        "Commit",
+        "Duration",
+        "Created",
+        "Failure",
+    ];
+    if show_releases {
+        headers.insert(3, "Release");
+    }
     output::table(
-        &[
-            "Deploy ID",
-            "Status",
-            "Env",
-            "Triggered By",
-            "Commit",
-            "Duration",
-            "Created",
-            "Failure",
-        ],
+        &headers,
         &rows,
-        Some(deploy_list_payload(&result)),
+        Some(deploy_list_payload(&result, &releases)),
     );
     if let Some(next_cursor) = result.next_cursor.as_deref() {
         let app_arg = app.map(|name| format!(" --app {name}")).unwrap_or_default();
+        let env_arg = env.map(|env| format!(" --env {env}")).unwrap_or_default();
         output::dim_line(&format!(
-            "More deploys available. Next: floo deploys list{app_arg} --limit {} --cursor {next_cursor}",
+            "More deploys available. Next: floo deploys{app_arg}{env_arg} --limit {} --cursor {next_cursor}",
             result.limit.unwrap_or(limit)
         ));
     }
@@ -260,7 +338,7 @@ pub fn logs(deploy_id: Option<&str>, app: Option<&str>, follow: bool, preview: O
         Ok(d) => d,
         Err(e) => {
             let suggestion = match e.code.as_str() {
-                "DEPLOY_NOT_FOUND" => Some("Check the deploy ID: floo deploys list --app <name>"),
+                "DEPLOY_NOT_FOUND" => Some("Check the deploy ID: floo deploys --app <name>"),
                 _ => None,
             };
             output::error(&e.message, &ErrorCode::from_api(&e.code), suggestion);
@@ -430,7 +508,7 @@ pub(crate) fn resolve_deploy_id(client: &FlooClient, app_id: &str, partial: &str
         output::error(
             "Empty deploy ID.",
             &ErrorCode::DeployNotFound,
-            Some("Pass a deploy ID. Run `floo deploys list --app <name>` to see them."),
+            Some("Pass a deploy ID. Run `floo deploys --app <name>` to see them."),
         );
         process::exit(1);
     }
@@ -464,7 +542,7 @@ pub(crate) fn resolve_deploy_id(client: &FlooClient, app_id: &str, partial: &str
             output::error(
                 &format!("No deploy found matching '{partial}'."),
                 &ErrorCode::DeployNotFound,
-                Some("Run `floo deploys list --app <name>` to see full deploy IDs."),
+                Some("Run `floo deploys --app <name>` to see full deploy IDs."),
             );
             process::exit(1);
         }
@@ -478,7 +556,7 @@ pub(crate) fn resolve_deploy_id(client: &FlooClient, app_id: &str, partial: &str
                     if many.len() > 3 { ", ..." } else { "" },
                 ),
                 &ErrorCode::DeployNotFound,
-                Some("Use more characters of the deploy ID, or run `floo deploys list --app <name>`."),
+                Some("Use more characters of the deploy ID, or run `floo deploys --app <name>`."),
             );
             process::exit(1);
         }
@@ -641,7 +719,7 @@ pub fn follow(client: &FlooClient, app_id: &str, app_name: &str, commit: Option<
 fn find_latest_deploy(client: &FlooClient, app_id: &str) -> Option<Deploy> {
     let mut cursor: Option<String> = None;
     loop {
-        let result = match client.list_deploys_paginated(app_id, 100, cursor.as_deref()) {
+        let result = match client.list_deploys_paginated(app_id, 100, cursor.as_deref(), None) {
             Ok(r) => r,
             Err(e) => {
                 output::error(&e.message, &ErrorCode::from_api(&e.code), None);
@@ -679,7 +757,7 @@ fn find_deploy_by_commit(
         let mut blocker: Option<Deploy> = None;
 
         loop {
-            let result = match client.list_deploys_paginated(app_id, 100, cursor.as_deref()) {
+            let result = match client.list_deploys_paginated(app_id, 100, cursor.as_deref(), None) {
                 Ok(r) => r,
                 Err(e) => {
                     if let Some(s) = spinner.as_ref() {
@@ -906,7 +984,7 @@ fn print_final_status(deploy: &Deploy) {
             output::error(
                 &format!("Deploy ended in unexpected state: {status}"),
                 &ErrorCode::DeployFailed,
-                Some("Check deploy status with `floo deploys list --app <name>`."),
+                Some("Check deploy status with `floo deploys --app <name>`."),
             );
             process::exit(1);
         }

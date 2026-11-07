@@ -972,7 +972,7 @@ fn deploy_restart(
             output::error_with_data(
                 "Restart returned an unexpected response shape.",
                 &ErrorCode::RestartFailed,
-                Some("Run `floo deploys list --app <name>` to check deploy status."),
+                Some("Run `floo deploys --app <name>` to check deploy status."),
                 Some(serde_json::json!({
                     "app": output::to_value(app_data),
                     "deploy": raw_deploy,

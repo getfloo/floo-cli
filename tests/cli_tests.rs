@@ -464,7 +464,7 @@ fn test_deploy_help() {
         .args(["deploys", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("View and manage deploy history"));
+        .stdout(predicate::str::contains("Deploy history for an app"));
 }
 
 #[test]
@@ -669,10 +669,11 @@ fn test_env_set_invalid_format_json() {
 #[test]
 fn test_deploy_list_help() {
     floo()
-        .args(["deploys", "list", "--help"])
+        .args(["deploys", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("List compact deploy history"))
+        .stdout(predicate::str::contains("Deploy history for an app"))
+        .stdout(predicate::str::contains("--env"))
         .stdout(predicate::str::contains("--limit"))
         .stdout(predicate::str::contains("--cursor"));
 }
@@ -680,7 +681,7 @@ fn test_deploy_list_help() {
 #[test]
 fn test_deploy_list_not_authenticated() {
     floo()
-        .args(["deploys", "list", "--app", "my-app"])
+        .args(["deploys", "--app", "my-app"])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
@@ -690,7 +691,7 @@ fn test_deploy_list_not_authenticated() {
 #[test]
 fn test_deploy_list_json_not_authenticated() {
     floo()
-        .args(["--json", "deploys", "list", "--app", "my-app"])
+        .args(["--json", "deploys", "--app", "my-app"])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()

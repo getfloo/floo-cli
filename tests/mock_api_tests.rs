@@ -3158,7 +3158,7 @@ fn test_deploy_list_json() {
         .create();
 
     floo()
-        .args(["--json", "deploys", "list", "--app", TEST_APP_NAME])
+        .args(["--json", "deploys", "--app", TEST_APP_NAME])
         .env("HOME", home.path())
         .assert()
         .success()
@@ -3199,7 +3199,6 @@ fn test_deploy_list_json_sends_cursor_and_limit() {
         .args([
             "--json",
             "deploys",
-            "list",
             "--app",
             TEST_APP_NAME,
             "--limit",
@@ -3790,7 +3789,7 @@ fn test_services_list_json_returns_both_app_and_managed_services() {
 }
 
 #[test]
-fn test_preview_resources_list_json_returns_all_managed_resource_branches() {
+fn test_status_preview_json_returns_all_managed_resource_branches() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
@@ -3818,9 +3817,8 @@ fn test_preview_resources_list_json_returns_all_managed_resource_branches() {
     floo()
         .args([
             "--json",
-            "previews",
-            "resources",
-            "list",
+            "status",
+            "--preview",
             "feat-db-abcde",
             "--app",
             TEST_APP_NAME,
@@ -3841,7 +3839,7 @@ fn test_preview_resources_list_json_returns_all_managed_resource_branches() {
 }
 
 #[test]
-fn test_preview_resources_reset_dry_run_and_yes_use_generic_endpoint() {
+fn test_previews_reset_dry_run_and_yes_use_generic_endpoint() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
@@ -3851,7 +3849,6 @@ fn test_preview_resources_reset_dry_run_and_yes_use_generic_endpoint() {
             "--json",
             "--dry-run",
             "previews",
-            "resources",
             "reset",
             "feat-db-abcde",
             "--app",
@@ -3894,7 +3891,6 @@ fn test_preview_resources_reset_dry_run_and_yes_use_generic_endpoint() {
         .args([
             "--json",
             "previews",
-            "resources",
             "reset",
             "feat-db-abcde",
             "--app",
@@ -3913,7 +3909,7 @@ fn test_preview_resources_reset_dry_run_and_yes_use_generic_endpoint() {
 }
 
 #[test]
-fn test_previews_status_resolves_preview_url_identifier() {
+fn test_status_preview_resolves_preview_url_identifier() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
@@ -3930,8 +3926,8 @@ fn test_previews_status_resolves_preview_url_identifier() {
     floo()
         .args([
             "--json",
-            "previews",
             "status",
+            "--preview",
             "https://my-app-preview-feat-db-abcde.on.getfloo.com",
             "--app",
             TEST_APP_NAME,
@@ -5117,35 +5113,133 @@ fn test_services_show_surfaces_api_errors() {
 }
 
 #[test]
-fn test_releases_list_from_config() {
+fn test_deploys_prod_shows_the_release_each_deploy_shipped() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
-    let project = TempDir::new().unwrap();
-    write_service_config(&project, TEST_APP_NAME);
-
-    let _m_releases = server
+    let deploys = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("include_build_logs".into(), "false".into()),
+            Matcher::UrlEncoded("env".into(), "prod".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"deploys":[{"id":"deploy-prod-2","status":"live","env":"prod","created_at":"2024-01-02T00:00:00Z"},{"id":"deploy-prod-1","status":"superseded","env":"prod","created_at":"2024-01-01T00:00:00Z"}]}"#)
+        .create();
+    let releases = server
         .mock(
             "GET",
             format!("/v1/apps/{TEST_APP_ID}/releases").as_str(),
         )
         .match_query(Matcher::AllOf(vec![
             Matcher::UrlEncoded("page".into(), "1".into()),
-            Matcher::UrlEncoded("per_page".into(), "20".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
         ]))
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"releases":[{"release_number":1,"tag":"v0.1.0","commit_sha":"abc1234","promoted_by":"user@example.com","created_at":"2024-01-01T00:00:00Z"}]}"#)
+        .with_body(r#"{"releases":[{"release_number":1,"tag":"v0.1.0","commit_sha":"abc1234","promoted_by":"user@example.com","created_at":"2024-01-01T00:00:00Z","deploy_id":"deploy-prod-1"}]}"#)
         .create();
 
     floo()
-        .args(["--json", "releases", "list"])
-        .current_dir(project.path())
+        .args(["--json", "deploys", "--env", "prod", "--app", TEST_APP_NAME])
         .env("HOME", home.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains(r#""success":true"#))
-        .stdout(predicate::str::contains("v0.1.0"));
+        .stdout(predicate::str::contains(r#""tag":"v0.1.0""#))
+        .stdout(predicate::str::contains(
+            r#""promoted_by":"user@example.com""#,
+        ));
+    deploys.assert();
+    releases.assert();
+}
+
+#[test]
+fn test_deploys_reads_release_pages_until_an_older_prod_deploy_matches() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _deploys = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
+        .match_query(Matcher::UrlEncoded(
+            "include_build_logs".into(),
+            "false".into(),
+        ))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"deploys":[{"id":"deploy-prod-old","status":"superseded","env":"prod","created_at":"2024-01-01T00:00:00Z"}]}"#)
+        .create();
+    let newer: Vec<serde_json::Value> = (0..100)
+        .map(|n| {
+            serde_json::json!({
+                "release_number": 200 - n,
+                "tag": format!("v2.{n}.0"),
+                "deploy_id": format!("deploy-prod-new-{n}"),
+            })
+        })
+        .collect();
+    let first = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/releases").as_str())
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(serde_json::json!({ "releases": newer, "total": 101 }).to_string())
+        .create();
+    let second = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/releases").as_str())
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "2".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"releases":[{"release_number":1,"tag":"v0.1.0","deploy_id":"deploy-prod-old"}],"total":101}"#)
+        .create();
+
+    floo()
+        .args(["--json", "deploys", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""tag":"v0.1.0""#));
+    first.assert();
+    second.assert();
+}
+
+#[test]
+fn test_deploys_without_a_prod_deploy_skips_releases() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _deploys = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
+        .match_query(Matcher::UrlEncoded(
+            "include_build_logs".into(),
+            "false".into(),
+        ))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"deploys":[{"id":"deploy-dev-1","status":"live","env":"dev","created_at":"2024-01-01T00:00:00Z"}]}"#)
+        .create();
+    let releases = server
+        .mock(
+            "GET",
+            Matcher::Regex(format!("^/v1/apps/{TEST_APP_ID}/releases")),
+        )
+        .expect(0)
+        .create();
+
+    floo()
+        .args(["--json", "deploys", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("deploy-dev-1"))
+        .stdout(predicate::str::contains("release").not());
+    releases.assert();
 }
 
 #[test]
@@ -5171,7 +5265,7 @@ fn test_deploy_list_from_config() {
         .create();
 
     floo()
-        .args(["--json", "deploys", "list"])
+        .args(["--json", "deploys"])
         .current_dir(project.path())
         .env("HOME", home.path())
         .assert()

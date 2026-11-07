@@ -1247,6 +1247,9 @@ pub struct Release {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListReleasesResponse {
     pub releases: Vec<Release>,
+    /// Every release the app has, across pages.
+    #[serde(default)]
+    pub total: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
