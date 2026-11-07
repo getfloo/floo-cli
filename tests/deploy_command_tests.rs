@@ -482,6 +482,14 @@ fn an_accepted_name_is_written_and_committed_before_the_push() {
     let mut server = Server::new();
     let env = setup(&server);
     committed_repo(&env);
+    // A root service manifest names the app too, and must keep matching.
+    std::fs::write(
+        env.repo.path().join("floo.service.toml"),
+        "[app]\nname = \"client-portal\"\n\n[service]\nname = \"web\"\ntype = \"web\"\nport = 3000\ningress = \"public\"\n",
+    )
+    .unwrap();
+    git(env.repo.path(), &["add", "-A"]);
+    git(env.repo.path(), &["commit", "-q", "-m", "service"]);
     let _plan = server
         .mock("POST", "/v1/deploy/plan")
         .match_body(Matcher::PartialJson(json!({"app": "shop-2"})))
@@ -509,6 +517,9 @@ fn an_accepted_name_is_written_and_committed_before_the_push() {
     assert_eq!(err["code"], "GIT_PUSH_FAILED");
     let config = std::fs::read_to_string(env.repo.path().join("floo.app.toml")).unwrap();
     assert!(config.contains("name = \"shop-2\""), "{config}");
+    let service = std::fs::read_to_string(env.repo.path().join("floo.service.toml")).unwrap();
+    assert!(service.contains("[app]\nname = \"shop-2\""), "{service}");
+    assert!(service.contains("name = \"web\""), "{service}");
     assert_eq!(
         git(env.repo.path(), &["log", "-1", "--format=%s"]),
         "Name the floo app shop-2"

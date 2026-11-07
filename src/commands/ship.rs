@@ -284,38 +284,83 @@ pub(crate) fn changed_files(status: &str) -> Vec<&str> {
     files
 }
 
-/// Write `name` into floo.app.toml's [app] table and commit just that file. Runs
-/// only after the plan accepted the name, so a refused name changes nothing.
-fn rename_app(path: &Path, name: &str, quoted: &str) -> String {
-    let file = path.join("floo.app.toml");
-    let content = std::fs::read_to_string(&file).unwrap_or_else(|error| {
-        stop(
-            &format!("Could not read floo.app.toml: {error}"),
-            "CONFIG_ERROR",
-            "Check the file, then floo deploy again.",
-        )
-    });
-    let Some(updated) = project_config::set_app_name(&content, name) else {
-        stop(
-            "floo.app.toml has no name = \"...\" line under [app].",
-            "CONFIG_INVALID",
-            &format!("Add name = \"{name}\" under [app] in floo.app.toml, commit it, then floo deploy {quoted}"),
+/// The manifests that name the app, relative to the root: floo.app.toml, plus the
+/// root and delegated floo.service.toml files whose [app].name is the current name,
+/// which local commands require to match.
+fn app_manifests(path: &Path, config: &project_config::AppFileConfig) -> Vec<String> {
+    let mut files = vec![project_config::APP_CONFIG_FILE.to_string()];
+    let dirs = std::iter::once("").chain(
+        config
+            .services
+            .values()
+            .filter_map(|entry| entry.path.as_deref())
+            .map(|dir| dir.trim_start_matches("./").trim_end_matches('/')),
+    );
+    for dir in dirs {
+        let file = match dir {
+            "" | "." => project_config::SERVICE_CONFIG_FILE.to_string(),
+            dir => format!("{dir}/{}", project_config::SERVICE_CONFIG_FILE),
+        };
+        let names_app = matches!(
+            project_config::load_service_config(&path.join(dir)),
+            Ok(Some(service)) if service.app.name == config.app.name
         );
-    };
+        if names_app && !files.contains(&file) {
+            files.push(file);
+        }
+    }
+    files
+}
+
+/// Write `name` into the [app] table of every manifest that names the app and commit
+/// just those files. Runs only after the plan accepted the name, so a refused name
+/// changes nothing.
+fn rename_app(
+    path: &Path,
+    config: &project_config::AppFileConfig,
+    name: &str,
+    quoted: &str,
+) -> String {
+    let files = app_manifests(path, config);
+    let mut renamed = Vec::new();
+    for file in &files {
+        let content = std::fs::read_to_string(path.join(file)).unwrap_or_else(|error| {
+            stop(
+                &format!("Could not read {file}: {error}"),
+                "CONFIG_ERROR",
+                "Check the file, then floo deploy again.",
+            )
+        });
+        let Some(updated) = project_config::set_app_name(&content, name) else {
+            stop(
+                &format!("{file} has no name = \"...\" line under [app]."),
+                "CONFIG_INVALID",
+                &format!(
+                    "Set name = \"{name}\" under [app] in {}, commit, then floo deploy {quoted}",
+                    files.join(" and ")
+                ),
+            );
+        };
+        renamed.push((file.as_str(), content, updated));
+    }
     let message = format!("Name the floo app {name}");
-    let committed = std::fs::write(&file, updated).is_ok()
-        && git_read(
-            path,
-            &["commit", "-q", "-m", &message, "--", "floo.app.toml"],
-        )
-        .is_some();
-    if !committed {
-        // Put the old name back so a failed rename leaves the folder as it was.
-        let _ = std::fs::write(&file, &content);
+    let written = renamed
+        .iter()
+        .all(|(file, _, updated)| std::fs::write(path.join(file), updated).is_ok());
+    let mut commit = vec!["commit", "-q", "-m", &message, "--"];
+    commit.extend(files.iter().map(String::as_str));
+    if !(written && git_read(path, &commit).is_some()) {
+        // Put the old names back so a failed rename leaves the folder as it was.
+        for (file, content, _) in &renamed {
+            let _ = std::fs::write(path.join(file), content);
+        }
         stop(
-            "Could not commit the new name in floo.app.toml (check git config user.name and user.email).",
+            "Could not commit the new app name (check git config user.name and user.email).",
             "CONFIG_WRITE_ERROR",
-            &format!("Set name = \"{name}\" under [app], commit it, then floo deploy {quoted}"),
+            &format!(
+                "Set name = \"{name}\" under [app] in {}, commit, then floo deploy {quoted}",
+                files.join(" and ")
+            ),
         );
     }
     git_read(path, &["rev-parse", "HEAD"]).unwrap_or_default()
@@ -326,8 +371,8 @@ pub fn deploy(args: DeployArgs) {
     let display = path.display().to_string();
     let quoted = shell_quote(&display);
 
-    let configured = match project_config::load_app_config(path) {
-        Ok(Some(config)) => config.app.name,
+    let config = match project_config::load_app_config(path) {
+        Ok(Some(config)) => config,
         Ok(None) => stop(
             &format!("No floo.app.toml in {display}."),
             "NO_CONFIG_FOUND",
@@ -365,6 +410,7 @@ pub fn deploy(args: DeployArgs) {
         )
     }
     require_clean_tree(path, &quoted);
+    let configured = config.app.name.clone();
     let app_name = args.name.clone().unwrap_or_else(|| configured.clone());
     let head = git_read(path, &["rev-parse", "HEAD"]).unwrap_or_default();
     let mut folder = Folder::read(path, head);
@@ -411,7 +457,7 @@ pub fn deploy(args: DeployArgs) {
         stop_with_plan(&plan, &quoted);
     }
     if app_name != configured {
-        folder.head = rename_app(path, &app_name, &quoted);
+        folder.head = rename_app(path, &config, &app_name, &quoted);
     }
     emit_plan(&plan);
 
@@ -802,6 +848,43 @@ fn push_hosted(path: &Path, clone_url: &str, branch: &str, quoted: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rename_covers_every_manifest_that_names_the_app() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = |app: &str, name: &str| {
+            format!("[app]\nname = \"{app}\"\n\n[service]\nname = \"{name}\"\ntype = \"web\"\nport = 3000\ningress = \"public\"\n")
+        };
+        std::fs::write(
+            dir.path().join("floo.app.toml"),
+            "[app]\nname = \"shop\"\n\n[services.api]\ntype = \"web\"\npath = \"./api/\"\n\n[services.admin]\ntype = \"web\"\npath = \"admin\"\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("floo.service.toml"), service("shop", "web")).unwrap();
+        for (sub, app) in [("api", "shop"), ("admin", "other")] {
+            std::fs::create_dir(dir.path().join(sub)).unwrap();
+            std::fs::write(
+                dir.path().join(sub).join("floo.service.toml"),
+                service(app, sub),
+            )
+            .unwrap();
+        }
+        let config = project_config::load_app_config(dir.path())
+            .unwrap()
+            .unwrap();
+
+        let mut files = app_manifests(dir.path(), &config);
+        files.sort();
+        // A manifest that already names another app is left for its own error.
+        assert_eq!(
+            files,
+            [
+                "api/floo.service.toml",
+                "floo.app.toml",
+                "floo.service.toml"
+            ]
+        );
+    }
 
     #[test]
     fn credentials_never_leave_the_machine() {
