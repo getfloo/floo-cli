@@ -38,6 +38,7 @@ pub mod run;
 pub mod services;
 pub mod ship;
 pub mod skills;
+pub mod status;
 pub mod storage;
 pub mod update;
 

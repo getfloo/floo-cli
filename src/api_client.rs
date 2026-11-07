@@ -543,6 +543,17 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    /// Whether `commit` (or the newest dev deploy) is live on dev, and if not, why.
+    pub fn get_app_status(
+        &self,
+        app_id: &str,
+        commit: Option<&str>,
+    ) -> Result<serde_json::Value, FlooApiError> {
+        let query = commit.map_or(String::new(), |sha| format!("?commit={sha}"));
+        let resp = self.get(&format!("/v1/apps/{app_id}/status{query}"))?;
+        self.handle_response(resp)
+    }
+
     pub fn get_app(&self, app_id: &str) -> Result<App, FlooApiError> {
         let resp = self.get(&format!("/v1/apps/{app_id}"))?;
         self.handle_response(resp)
