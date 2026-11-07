@@ -150,38 +150,6 @@ Examples:
         command: Vec<String>,
     },
 
-    /// Validate project config, detect runtimes, and check readiness.
-    #[command(after_help = "\
-Examples:
-  floo preflight                           Validate current directory
-  floo preflight ./app --json              Validate ./app with JSON output
-  floo preflight --env prod                Resolve the production runtime plan")]
-    Preflight {
-        /// Project directory to validate.
-        #[arg(default_value = ".")]
-        path: PathBuf,
-
-        /// Existing app name to validate against.
-        #[arg(short, long)]
-        app: Option<String>,
-
-        /// Validate only these services (repeatable, or comma-separated).
-        #[arg(
-            short,
-            long = "service",
-            visible_alias = "services",
-            value_delimiter = ','
-        )]
-        services: Vec<String>,
-
-        /// Environment whose server-side runtime defaults should be resolved.
-        #[arg(long, default_value = "dev", value_parser = ["dev", "prod", "preview"])]
-        env: String,
-
-        #[command(flatten)]
-        preflight: PreflightArgs,
-    },
-
     /// Deploy this repository to dev: from its GitHub repo, or a copy floo hosts.
     #[command(after_help = "\
 Examples:
@@ -190,7 +158,7 @@ Examples:
   floo deploy --github                     No remote yet: create a private GitHub repo with gh
   floo deploy --hosted                     Let floo host a copy of the code instead
   floo deploy --name shop-2                Use another app name (written to floo.app.toml)
-  floo deploy --preflight --json           Show the plan without creating or pushing
+  floo deploy --preflight --json           Check the config and show the plan; nothing is created or pushed
 
 floo asks the API where the code deploys from, then creates, connects or pushes.
 A folder that pushes to github.com deploys from that repo; floo hosts a copy only
@@ -213,6 +181,10 @@ your changes first.")]
         /// App name to deploy as; written to floo.app.toml and committed once accepted.
         #[arg(long)]
         name: Option<String>,
+
+        /// With --preflight: the environment whose runtime values to resolve.
+        #[arg(long, default_value = "dev", value_parser = ["dev", "prod", "preview"], requires = "dry_run")]
+        env: String,
 
         #[command(flatten)]
         preflight: PreflightArgs,
@@ -2192,25 +2164,19 @@ pub fn run() {
             command,
         } => commands::run::run(&service, app, command),
 
-        Commands::Preflight {
-            path,
-            app,
-            services,
-            env,
-            preflight: _,
-        } => commands::deploy::preflight(path, app, services, env),
-
         Commands::Deploy {
             path,
             github,
             hosted,
             name,
+            env,
             preflight: _,
         } => commands::ship::deploy(commands::ship::DeployArgs {
             path,
             github,
             hosted,
             name,
+            env,
         }),
 
         Commands::Connect { repo, app, branch } => {
@@ -2925,7 +2891,6 @@ mod tests {
         let invocations: &[(&str, &[&str])] = &[
             ("init", &["floo", "init", "--preflight"]),
             ("redeploy", &["floo", "redeploy", "--preflight"]),
-            ("preflight", &["floo", "preflight", "--preflight"]),
             ("deploy", &["floo", "deploy", "--preflight"]),
             ("dev", &["floo", "dev", "--preflight"]),
             ("update", &["floo", "update", "--preflight"]),

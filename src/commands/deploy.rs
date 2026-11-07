@@ -472,18 +472,29 @@ fn status_label(status: &str) -> &str {
     }
 }
 
-pub fn preflight(
-    path: PathBuf,
+/// What `floo deploy` would do after the checks, for `floo deploy --preflight`.
+pub(crate) struct PlanPreview {
+    /// `deploy_plan` in the JSON report.
+    pub data: serde_json::Value,
+    /// The lines a person reads after the checks.
+    pub summary: String,
+}
+
+/// `floo deploy --preflight`: the full report for a git-push deploy, ending with
+/// what the deploy would do. `deploy_plan` runs only when the config is valid,
+/// since the deploy stops at the first error before planning anything.
+pub(crate) fn check(
+    path: &std::path::Path,
     app: Option<String>,
-    services_filter: Vec<String>,
-    environment: String,
+    environment: &str,
+    deploy_plan: impl FnOnce() -> PlanPreview,
 ) {
     run_preflight(
-        path,
+        path.to_path_buf(),
         app,
-        services_filter,
-        environment,
-        PreflightMode::Inspect,
+        Vec::new(),
+        environment.to_string(),
+        PreflightMode::Check(Box::new(deploy_plan)),
     );
 }
 
@@ -499,13 +510,27 @@ pub(crate) fn validate(path: &std::path::Path) {
     );
 }
 
-#[derive(PartialEq)]
-enum PreflightMode {
+enum PreflightMode<'a> {
+    /// `floo redeploy --preflight` on a folder: the report for an upload deploy.
     Inspect,
+    /// `floo deploy --preflight`: the report for a git-push deploy, then the plan.
+    Check(Box<dyn FnOnce() -> PlanPreview + 'a>),
     /// A deploy that uploads this folder and imports its env files.
     Deploy,
     /// A deploy that pushes git: env files stay local, so a missing one is fine.
     Push,
+}
+
+impl PreflightMode<'_> {
+    /// Prints the whole report, and asks the server for its runtime plan.
+    fn reports(&self) -> bool {
+        matches!(self, Self::Inspect | Self::Check(_))
+    }
+
+    /// The deploy uploads env files, so each one must exist and parse.
+    fn imports_env_files(&self) -> bool {
+        matches!(self, Self::Inspect | Self::Deploy)
+    }
 }
 
 /// Validate once; actual deploys reuse the resolved project without emitting JSON success.
@@ -520,6 +545,12 @@ fn run_preflight(
     Vec<ServiceConfig>,
     DetectionResult,
 ) {
+    let reports = mode.reports();
+    let imports_env_files = mode.imports_env_files();
+    let deploy_plan = match mode {
+        PreflightMode::Check(plan) => Some(plan),
+        _ => None,
+    };
     // 1. Canonicalize path
     let project_path = match path.canonicalize() {
         Ok(p) => p,
@@ -597,7 +628,7 @@ fn run_preflight(
         &resolved,
         &managed_services,
         &env_injection_plan,
-        mode != PreflightMode::Push,
+        imports_env_files,
     );
     let security_findings = generate_security_findings(&services, &resolved, &env_injection_plan);
     let runtime_plan = build_runtime_plan(&services, &environment);
@@ -612,7 +643,7 @@ fn run_preflight(
     all_findings.extend(security_findings.iter().cloned());
 
     // Inspection calls the planner; an actual deploy is validated by its write endpoint.
-    let (remote_plan, app_not_created) = if mode == PreflightMode::Inspect && valid {
+    let (remote_plan, app_not_created) = if reports && valid {
         match fetch_remote_preflight(
             &app_name,
             &managed_services,
@@ -637,9 +668,10 @@ fn run_preflight(
         (None, false)
     };
 
-    if output::is_json_mode() && valid && mode != PreflightMode::Inspect {
+    if output::is_json_mode() && valid && !reports {
         return (resolved, services, primary_detection);
     }
+    let deploy_plan = deploy_plan.filter(|_| valid).map(|plan| plan());
 
     // 8. Display
     if output::is_json_mode() {
@@ -684,6 +716,10 @@ fn run_preflight(
             "plan_skipped_reason": app_not_created.then_some("APP_NOT_CREATED"),
             "valid": valid,
         });
+        let mut data = data;
+        if let Some(preview) = &deploy_plan {
+            data["deploy_plan"] = preview.data.clone();
+        }
 
         // One JSON object, always. On an invalid config the payload is
         // error-shaped (`success:false` + `error`) but still carries the full
@@ -698,7 +734,7 @@ fn run_preflight(
                 "error": {
                     "code": ErrorCode::ConfigInvalid.as_str(),
                     "message": format!("{count} preflight error(s) found."),
-                    "suggestion": "Fix the errors above and run `floo preflight` to re-validate.",
+                    "suggestion": "Fix the errors above and run `floo deploy --preflight` to re-validate.",
                 },
                 "data": data,
             })
@@ -757,12 +793,32 @@ fn run_preflight(
         output::error(
             &format!("{count} preflight error(s) found."),
             &ErrorCode::ConfigInvalid,
-            Some("Fix the errors above and run `floo preflight` to re-validate."),
+            Some("Fix the errors above and run `floo deploy --preflight` to re-validate."),
         );
         process::exit(1);
     }
 
-    print_preflight_ready(&all_findings);
+    match &deploy_plan {
+        Some(preview) => {
+            let warn_count = all_findings
+                .iter()
+                .filter(|f| f.severity == Severity::Warning)
+                .count();
+            eprintln!();
+            if warn_count > 0 {
+                output::success(
+                    &format!("Config valid with {warn_count} warning(s); review them above."),
+                    None,
+                );
+            } else {
+                output::success("Config valid.", None);
+            }
+            for line in preview.summary.lines() {
+                eprintln!("  {line}");
+            }
+        }
+        None => print_preflight_ready(&all_findings),
+    }
     (resolved, services, primary_detection)
 }
 

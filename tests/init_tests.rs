@@ -66,7 +66,7 @@ fn init_json_manifest_round_trips_through_preflight() {
         .clone();
     let init: serde_json::Value = serde_json::from_slice(&init).unwrap();
     let preflight = floo(project.path())
-        .args(["preflight", "--json"])
+        .args(["deploy", "--preflight", "--json"])
         .assert()
         .success()
         .get_output()
@@ -124,7 +124,7 @@ fn shared_path_worker_prompts_for_and_persists_production_command() {
         Some("python -m worker")
     );
     floo(project.path())
-        .args(["preflight", "--json"])
+        .args(["deploy", "--preflight", "--json"])
         .assert()
         .success();
 }
@@ -142,7 +142,7 @@ fn worker_entered_before_web_still_prompts_for_command() {
         "Production command for worker 'queue'",
     ));
     floo(project.path())
-        .args(["preflight", "--json"])
+        .args(["deploy", "--preflight", "--json"])
         .assert()
         .success();
 }
@@ -201,7 +201,7 @@ fn worker_with_its_own_build_does_not_prompt_for_command() {
     .success()
     .stderr(predicate::str::contains("Production command").not());
     floo(project.path())
-        .args(["preflight", "--json"])
+        .args(["deploy", "--preflight", "--json"])
         .assert()
         .success();
 }

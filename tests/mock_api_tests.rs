@@ -83,6 +83,16 @@ fn update_success_signature() -> Vec<u8> {
 }
 
 /// Write a floo.service.toml to the project dir (required for --json deploy).
+/// floo.app.toml naming the app, plus a root floo.service.toml: what `floo deploy` reads.
+fn write_app_and_service_config(project: &TempDir, app_name: &str) {
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        format!("[app]\nname = \"{app_name}\"\n"),
+    )
+    .unwrap();
+    write_service_config(project, app_name);
+}
+
 fn write_service_config(project: &TempDir, app_name: &str) {
     std::fs::write(
         project.path().join("floo.service.toml"),
@@ -6617,7 +6627,12 @@ managed = ["redis:cache", "redis:queue"]
     .unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", home.path())
         .assert()
         .success()
@@ -6692,7 +6707,8 @@ managed = []
     let output = floo()
         .args(flags)
         .args([
-            "preflight",
+            "deploy",
+            "--preflight",
             project.path().to_str().unwrap(),
             "--env",
             "prod",
@@ -6791,7 +6807,12 @@ ingress = "public"
     .unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent-preflight")
         .assert()
         .success()
@@ -8676,7 +8697,7 @@ fn assert_remote_preflight_failure(args: &[&str], status: usize) {
         .with_body(r#"{"detail":{"code":"REMOTE_FAILURE","message":"Remote preflight failed","findings":[{"code":"PLAN_LIMIT","message":"Too many instances"}]}}"#)
         .create();
     let project = TempDir::new().unwrap();
-    write_service_config(&project, TEST_APP_NAME);
+    write_app_and_service_config(&project, TEST_APP_NAME);
     let output = floo()
         .args(args)
         .arg(project.path())
@@ -8695,7 +8716,7 @@ fn assert_remote_preflight_failure(args: &[&str], status: usize) {
 
 #[test]
 fn test_preflight_propagates_remote_validation_failure() {
-    assert_remote_preflight_failure(&["--json", "preflight"], 422);
+    assert_remote_preflight_failure(&["--json", "deploy", "--preflight"], 422);
 }
 
 #[test]
@@ -8721,10 +8742,10 @@ fn test_preflight_before_first_deploy_runs_local_checks() {
         .expect(0)
         .create();
     let project = TempDir::new().unwrap();
-    write_service_config(&project, TEST_APP_NAME);
+    write_app_and_service_config(&project, TEST_APP_NAME);
 
     let output = floo()
-        .args(["--json", "preflight"])
+        .args(["--json", "deploy", "--preflight"])
         .arg(project.path())
         .env("HOME", home.path())
         .assert()
@@ -8741,7 +8762,7 @@ fn test_preflight_before_first_deploy_runs_local_checks() {
     planner.assert();
 
     floo()
-        .args(["preflight"])
+        .args(["deploy", "--preflight"])
         .arg(project.path())
         .env("HOME", home.path())
         .assert()
@@ -8762,9 +8783,9 @@ fn test_preflight_propagates_resolution_failure() {
         .with_body(r#"{"detail":{"code":"NOT_AUTHENTICATED","message":"Expired credentials"}}"#)
         .create();
     let project = TempDir::new().unwrap();
-    write_service_config(&project, TEST_APP_NAME);
+    write_app_and_service_config(&project, TEST_APP_NAME);
     floo()
-        .args(["--json", "preflight"])
+        .args(["--json", "deploy", "--preflight"])
         .arg(project.path())
         .env("HOME", home.path())
         .assert()
@@ -8782,7 +8803,7 @@ fn test_redeploy_validation_findings_match_standalone_preflight() {
     std::fs::write(project.path().join("floo.app.toml"),
         "[app]\nname = \"my-app\"\n[services.web]\npath = \"missing\"\ntype = \"web\"\nport = 3000\ningress = \"public\"\n").unwrap();
     let standalone = floo()
-        .args(["--json", "preflight"])
+        .args(["--json", "deploy", "--preflight"])
         .arg(project.path())
         .env("HOME", home.path())
         .assert()

@@ -20,7 +20,6 @@ use serde::Serialize;
 /// clap. `auth_exempt_paths_all_exist` fails if any entry stops matching a
 /// real command, so a rename or removal can't leave a stale entry behind.
 const AUTH_EXEMPT_PATHS: &[&[&str]] = &[
-    &["preflight"],
     &["auth"],
     &["auth", "login"],
     &["auth", "logout"],
@@ -290,7 +289,6 @@ mod tests {
         // Pre-auth commands.
         assert!(!requires_auth(&["auth", "login"]));
         assert!(!requires_auth(&["docs"]));
-        assert!(!requires_auth(&["preflight"]));
         // Authenticated commands, including auth subcommands that need a session.
         assert!(requires_auth(&["auth", "whoami"]));
         assert!(requires_auth(&["apps", "show"]));
