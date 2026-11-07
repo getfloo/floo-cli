@@ -248,15 +248,21 @@ the repo.")]
 Examples:
   floo status                      This folder's HEAD
   floo status --commit 4f2a9c1     Another commit
-  floo status --app my-app         The newest dev deploy of an app")]
+  floo status --app my-app         The newest dev deploy of an app
+  floo status --wait               Follow the deploy until it finishes")]
     Status {
         /// App ID or name. Defaults to the app in floo.app.toml and the folder's HEAD.
         #[arg(short, long)]
         app: Option<String>,
 
         /// Commit to ask about (a short SHA works inside the repository).
-        #[arg(long)]
+        #[arg(short, long)]
         commit: Option<String>,
+
+        /// Follow the deploy (waiting up to 120s for it to appear) until it
+        /// finishes, then report. Exits 1 when it fails.
+        #[arg(long)]
+        wait: bool,
     },
 
     /// Release the version live on dev to prod. Only apps that use a prod environment need this.
@@ -381,7 +387,7 @@ Note: Deploys are triggered by `git push`. Use `floo redeploy` to apply env var 
 Examples:
   floo deploys list --app my-app            Show deploy history
   floo deploys logs <id> --follow           Stream build logs in real-time
-  floo deploys watch --app my-app           Stream deploy progress
+  floo status --wait --app my-app           Follow a deploy until it finishes
 
 Note: Push to the connected GitHub branch to deploy. `floo redeploy` restarts an app that already has a dev deploy; it cannot run the first one."
     )]
@@ -1636,17 +1642,6 @@ pub enum DeploysSubcommands {
         #[arg(short, long)]
         follow: bool,
     },
-
-    /// Stream deploy progress in real-time.
-    Watch {
-        /// App name or ID (uses config file if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-
-        /// Match a deploy by commit SHA prefix (waits up to 120s for it to appear).
-        #[arg(short, long)]
-        commit: Option<String>,
-    },
 }
 
 #[derive(Subcommand)]
@@ -2222,8 +2217,8 @@ pub fn run() {
             commands::connect::connect(commands::connect::ConnectArgs { repo, app, branch })
         }
 
-        Commands::Status { app, commit } => {
-            commands::status::status(app.as_deref(), commit.as_deref())
+        Commands::Status { app, commit, wait } => {
+            commands::status::status(app.as_deref(), commit.as_deref(), wait)
         }
 
         Commands::Promote { app, tag } => {
@@ -2260,9 +2255,6 @@ pub fn run() {
                 app,
                 follow,
             } => commands::deploys::logs(deploy_id.as_deref(), app.as_deref(), follow),
-            DeploysSubcommands::Watch { app, commit } => {
-                commands::deploys::watch(app.as_deref(), commit.as_deref())
-            }
         },
         Commands::Previews(sub) => match sub {
             PreviewsSubcommands::List { app } => commands::previews::list(app.as_deref()),

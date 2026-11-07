@@ -865,7 +865,7 @@ pub fn set(
 
         // A 202 response confirms the restart attempt started, not that it has
         // already reached LIVE. Keep this command to one JSON document and let
-        // `floo deploys watch` own completion streaming.
+        // `floo status --wait` own completion streaming.
         let restart_msg = match final_status {
             "cancelled" => {
                 "Restart cancelled: its target environment was removed before it ran.".to_string()

@@ -5069,10 +5069,11 @@ fn test_deploy_list_from_config() {
 }
 
 #[test]
-fn test_deploy_watch_follows_coalesced_descendant_and_emits_structured_lineage() {
+fn test_status_wait_follows_coalesced_descendant_and_emits_structured_lineage() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
+    let _status = mock_status_after_wait(&mut server);
     let requested = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     let effective = "cccccccccccccccccccccccccccccccccccccccc";
     let _deploys = server
@@ -5105,8 +5106,8 @@ fn test_deploy_watch_follows_coalesced_descendant_and_emits_structured_lineage()
     floo()
         .args([
             "--json",
-            "deploys",
-            "watch",
+            "status",
+            "--wait",
             "--app",
             TEST_APP_NAME,
             "--commit",
@@ -5131,10 +5132,11 @@ fn test_deploy_watch_follows_coalesced_descendant_and_emits_structured_lineage()
 }
 
 #[test]
-fn test_deploy_watch_prefers_exact_commit_on_later_page_over_coalesced_match() {
+fn test_status_wait_prefers_exact_commit_on_later_page_over_coalesced_match() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
+    let _status = mock_status_after_wait(&mut server);
     let requested = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     let _first_page = server
         .mock("GET", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
@@ -5186,8 +5188,8 @@ fn test_deploy_watch_prefers_exact_commit_on_later_page_over_coalesced_match() {
     floo()
         .args([
             "--json",
-            "deploys",
-            "watch",
+            "status",
+            "--wait",
             "--app",
             TEST_APP_NAME,
             "--commit",
@@ -5201,10 +5203,11 @@ fn test_deploy_watch_prefers_exact_commit_on_later_page_over_coalesced_match() {
 }
 
 #[test]
-fn test_deploy_watch_coalesced_failed_descendant_keeps_failure_exit() {
+fn test_status_wait_coalesced_failed_descendant_keeps_failure_exit() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
+    let _status = mock_status_after_wait(&mut server);
     let _deploys = server
         .mock("GET", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
         .match_query(Matcher::AllOf(vec![
@@ -5234,8 +5237,8 @@ fn test_deploy_watch_coalesced_failed_descendant_keeps_failure_exit() {
     floo()
         .args([
             "--json",
-            "deploys",
-            "watch",
+            "status",
+            "--wait",
             "--app",
             TEST_APP_NAME,
             "--commit",
@@ -5249,10 +5252,11 @@ fn test_deploy_watch_coalesced_failed_descendant_keeps_failure_exit() {
 }
 
 #[test]
-fn test_deploy_watch_coalesced_superseded_descendant_is_non_failure_terminal() {
+fn test_status_wait_coalesced_superseded_descendant_is_non_failure_terminal() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
+    let _status = mock_status_after_wait(&mut server);
     let _deploys = server
         .mock("GET", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
         .match_query(Matcher::AllOf(vec![
@@ -5282,8 +5286,8 @@ fn test_deploy_watch_coalesced_superseded_descendant_is_non_failure_terminal() {
     floo()
         .args([
             "--json",
-            "deploys",
-            "watch",
+            "status",
+            "--wait",
             "--app",
             TEST_APP_NAME,
             "--commit",
@@ -8508,10 +8512,24 @@ fn diagnostic_fixture() -> serde_json::Value {
 
 const RENDERED_DIAGNOSTICS: &str = "Domain failed\n  Certificate rejected\n  Check CAA\n\nDomain pending\n  DNS is not ready\n  Wait for propagation\n\nPublish DNS\n  Traffic record\n  ACME record\n  Publish both CNAMEs\n";
 
+/// The status read `floo status --wait` makes once the deploy it follows finishes.
+fn mock_status_after_wait(server: &mut Server) -> Mock {
+    server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/status").as_str())
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"app":"{TEST_APP_NAME}","source":null,"commit":null,"live":true,"summary":"Live on dev.","next_step":null,"deploy":null,"serving":null,"last_push":null}}"#
+        ))
+        .create()
+}
+
 fn run_deploy_read(args: &[&str], deploy: serde_json::Value) -> std::process::Output {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
+    let _status = mock_status_after_wait(&mut server);
     let _app = server
         .mock("GET", format!("/v1/apps/{TEST_APP_ID}").as_str())
         .with_status(200)
@@ -8534,9 +8552,9 @@ fn run_deploy_read(args: &[&str], deploy: serde_json::Value) -> std::process::Ou
 }
 
 #[test]
-fn failed_deploy_watch_renders_diagnostics_before_exiting() {
+fn failed_status_wait_renders_diagnostics_before_exiting() {
     let result = run_deploy_read(
-        &["deploys", "watch"],
+        &["status", "--wait"],
         serde_json::json!({
             "id":"deploy-1", "status":"failed", "diagnostics": diagnostic_fixture()
         }),
@@ -8548,17 +8566,23 @@ fn failed_deploy_watch_renders_diagnostics_before_exiting() {
 }
 
 #[test]
-fn deploy_watch_json_done_includes_diagnostics() {
+fn status_wait_json_done_includes_diagnostics() {
     let result = run_deploy_read(
-        &["--json", "deploys", "watch"],
+        &["--json", "status", "--wait"],
         serde_json::json!({
             "id":"deploy-1", "status":"live", "diagnostics": diagnostic_fixture()
         }),
     );
     assert!(result.status.success());
     let stdout = String::from_utf8(result.stdout).unwrap();
-    let done: serde_json::Value = serde_json::from_str(stdout.lines().last().unwrap()).unwrap();
-    assert_eq!(done["event"], "done");
+    let done: serde_json::Value = stdout
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .find(|line| line["event"] == "done")
+        .unwrap();
+    // Then the status read, last, so an agent can read the answer from the final line.
+    let last: serde_json::Value = serde_json::from_str(stdout.lines().last().unwrap()).unwrap();
+    assert_eq!(last["data"]["summary"], "Live on dev.");
     assert_eq!(done["diagnostics"][0], diagnostic_fixture()[0]);
 }
 
@@ -9390,7 +9414,7 @@ fn status_json_passes_the_api_answer_through() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _apps = mock_resolve_app(&mut server);
-    let _status = mock_app_status(&mut server, true);
+    let _status = mock_status_after_wait(&mut server);
 
     floo()
         .args([

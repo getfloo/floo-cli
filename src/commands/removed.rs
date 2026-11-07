@@ -37,6 +37,11 @@ const REMOVED: &[(&[&str], &str, &str)] = &[
     ),
     (&["deploys", "status"], "floo status", ""),
     (&["deploys", "rollback"], "floo rollback", ""),
+    (
+        &["deploys", "watch"],
+        "floo status --wait",
+        " It takes --app and --commit as before.",
+    ),
     (&["doctor", "push"], "floo status", ""),
     (&["releases", "promote"], "floo promote", ""),
 ];

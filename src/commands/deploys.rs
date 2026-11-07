@@ -724,7 +724,7 @@ fn find_deploy_by_commit(
                 ),
                 &ErrorCode::DeployTimeout,
                 Some(&format!(
-                    "The push may still deploy. Run `floo deploys watch --commit {sha_prefix}` to keep waiting, or `floo status --commit {sha_prefix}` to see why it has not deployed."
+                    "The push may still deploy. Run `floo status --wait --commit {sha_prefix}` to keep waiting, or `floo status --commit {sha_prefix}` to see why it has not deployed."
                 )),
             );
             process::exit(1);
