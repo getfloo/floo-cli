@@ -340,6 +340,10 @@ fn validate_path_and_options(invocation: &str) -> Result<(), String> {
                           valued: &mut HashSet<String>| {
         for argument in command.get_arguments() {
             if let Some(long) = argument.get_long() {
+                // A subcommand's own option wins over a parent's option or
+                // alias of the same name: `logs build --follow` is not the
+                // `--follow` alias of `logs --live`.
+                aliases.remove(long);
                 options.insert(long.to_string());
                 if argument.get_action().takes_values()
                     && argument
@@ -347,6 +351,8 @@ fn validate_path_and_options(invocation: &str) -> Result<(), String> {
                         .is_none_or(|range| range.min_values() > 0)
                 {
                     valued.insert(long.to_string());
+                } else {
+                    valued.remove(long);
                 }
                 if let Some(argument_aliases) = argument.get_all_aliases() {
                     aliases.extend(
@@ -524,6 +530,10 @@ fn guidance_validator_rejects_stale_syntax() {
     // before its subcommand, and a stale subcommand after it is still caught.
     assert!(validate_path_and_options(&invocation("logs --preview feat-x --app my-app")).is_ok());
     assert!(validate_path_and_options(&invocation("previews --app my-app logs feat-x")).is_err());
+
+    // `--follow` is an alias of `logs --live`, but `logs build` owns it.
+    assert!(validate_path_and_options(&invocation("logs --app my-app --follow")).is_err());
+    assert!(validate_path_and_options(&invocation("logs build abc123 --follow")).is_ok());
 
     let mut prose = Vec::new();
     push_occurrences(
