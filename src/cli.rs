@@ -2662,7 +2662,8 @@ pub fn run() {
                 deploy_id.as_deref(),
                 app.or(options.app).as_deref(),
                 follow,
-                preview.as_deref(),
+                // `floo logs --preview x build` names the preview before `build`.
+                preview.or(options.preview).as_deref(),
             ),
             Some(LogsSubcommands::Query { options }) => runtime_logs(options),
             Some(LogsSubcommands::Tail { options }) => {

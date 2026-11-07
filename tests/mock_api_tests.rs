@@ -4074,6 +4074,57 @@ fn test_logs_build_preview_shows_the_preview_deploy_build_logs() {
 }
 
 #[test]
+fn test_logs_build_keeps_a_preview_named_before_build() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _preview = mock_preview_detail(&mut server);
+    let deploy = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/deploys/deploy-preview-1").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"id":"deploy-preview-1","status":"live","build_logs":"preview build","created_at":"2026-06-24T10:00:00Z"}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "logs",
+            "--preview",
+            "feat-db-abcde",
+            "build",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("preview build"));
+    deploy.assert();
+
+    floo()
+        .args([
+            "--json",
+            "logs",
+            "--preview",
+            "feat-db-abcde",
+            "build",
+            "deploy-123",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("INVALID_ARGUMENTS"));
+}
+
+#[test]
 fn test_logs_build_reads_the_named_deploy() {
     let mut server = Server::new();
     let home = setup_config(&server);

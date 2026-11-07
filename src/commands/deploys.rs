@@ -222,7 +222,15 @@ pub fn logs(deploy_id: Option<&str>, app: Option<&str>, follow: bool, preview: O
     let (app_id, app_name) = super::resolve_app_from_config(&client, app);
 
     let resolved_deploy_id: String = match (deploy_id, preview) {
-        (_, Some(preview)) => {
+        (Some(_), Some(_)) => {
+            output::error(
+                "A deploy ID and --preview name two deploys.",
+                &ErrorCode::InvalidArguments,
+                Some("Pass the deploy ID, or --preview for the preview's latest deploy."),
+            );
+            process::exit(2);
+        }
+        (None, Some(preview)) => {
             crate::commands::previews::latest_deploy_id(&client, &app_id, &app_name, preview)
         }
         (Some(id), None) => resolve_deploy_id(&client, &app_id, id),
