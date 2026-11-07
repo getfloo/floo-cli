@@ -5155,6 +5155,61 @@ fn test_deploys_prod_shows_the_release_each_deploy_shipped() {
 }
 
 #[test]
+fn test_deploys_reads_release_pages_until_an_older_prod_deploy_matches() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _deploys = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
+        .match_query(Matcher::UrlEncoded(
+            "include_build_logs".into(),
+            "false".into(),
+        ))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"deploys":[{"id":"deploy-prod-old","status":"superseded","env":"prod","created_at":"2024-01-01T00:00:00Z"}]}"#)
+        .create();
+    let newer: Vec<serde_json::Value> = (0..100)
+        .map(|n| {
+            serde_json::json!({
+                "release_number": 200 - n,
+                "tag": format!("v2.{n}.0"),
+                "deploy_id": format!("deploy-prod-new-{n}"),
+            })
+        })
+        .collect();
+    let first = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/releases").as_str())
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "1".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(serde_json::json!({ "releases": newer, "total": 101 }).to_string())
+        .create();
+    let second = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/releases").as_str())
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("page".into(), "2".into()),
+            Matcher::UrlEncoded("per_page".into(), "100".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"releases":[{"release_number":1,"tag":"v0.1.0","deploy_id":"deploy-prod-old"}],"total":101}"#)
+        .create();
+
+    floo()
+        .args(["--json", "deploys", "--app", TEST_APP_NAME])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""tag":"v0.1.0""#));
+    first.assert();
+    second.assert();
+}
+
+#[test]
 fn test_deploys_without_a_prod_deploy_skips_releases() {
     let mut server = Server::new();
     let home = setup_config(&server);

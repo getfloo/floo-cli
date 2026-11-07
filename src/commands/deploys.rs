@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::process;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -54,20 +54,47 @@ fn deploy_list_payload(
     })
 }
 
+/// Releases read per request when joining them to prod deploys.
+const RELEASE_PAGE_SIZE: u32 = 100;
+/// The most release pages one page of deploy history reads.
+const MAX_RELEASE_PAGES: u32 = 20;
+
 /// The releases of an app, for the prod deploys on this page. Only an app
-/// with a prod deploy on the page pays for the call; a failure costs the
-/// release column, not the history.
+/// with a prod deploy on the page pays for the call. Pages are read, newest
+/// first, until every prod deploy here has its release or the releases run
+/// out, so older history keeps its tags. A failure costs the release column,
+/// not the history.
 fn page_releases(client: &FlooClient, app_id: &str, deploys: &[Deploy]) -> Vec<Release> {
-    if !deploys.iter().any(|d| d.env.as_deref() == Some("prod")) {
-        return Vec::new();
-    }
-    match client.list_releases(app_id, 1, 100) {
-        Ok(response) => response.releases,
-        Err(e) => {
-            output::warn(&format!("Release tags unavailable: {}", e.message));
-            Vec::new()
+    let mut unmatched: HashSet<&str> = deploys
+        .iter()
+        .filter(|d| d.env.as_deref() == Some("prod"))
+        .map(|d| d.id.as_str())
+        .collect();
+    let mut releases = Vec::new();
+    for page in 1..=MAX_RELEASE_PAGES {
+        if unmatched.is_empty() {
+            break;
+        }
+        let response = match client.list_releases(app_id, page, RELEASE_PAGE_SIZE) {
+            Ok(response) => response,
+            Err(e) => {
+                output::warn(&format!("Release tags unavailable: {}", e.message));
+                break;
+            }
+        };
+        let count = response.releases.len();
+        for release in response.releases {
+            if let Some(deploy_id) = release.deploy_id.as_deref() {
+                unmatched.remove(deploy_id);
+            }
+            releases.push(release);
+        }
+        let read = u64::from(page * RELEASE_PAGE_SIZE);
+        if count < RELEASE_PAGE_SIZE as usize || response.total.is_some_and(|total| read >= total) {
+            break;
         }
     }
+    releases
 }
 
 /// `floo deploys`: deploy history, newest first. A prod deploy shows the
