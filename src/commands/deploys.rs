@@ -540,23 +540,32 @@ fn commit_wait_expired(waited: Duration, idle: Duration) -> bool {
 }
 
 /// A running dev deploy holds a newer push back until it finishes.
+/// A dev deploy: not prod, not a preview. Only these are followed or held back.
+fn is_dev(deploy: &Deploy) -> bool {
+    deploy.env.as_deref() != Some("prod") && deploy.preview_slug.is_none()
+}
+
 fn holds_back_push(deploy: &Deploy) -> bool {
     let running = deploy
         .status
         .as_deref()
         .is_some_and(|status| !deploy_status::is_terminal(status));
-    running && deploy.env.as_deref() != Some("prod") && deploy.preview_slug.is_none()
+    running && is_dev(deploy)
 }
 
 pub fn watch(app: Option<&str>, commit: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);
-
     let (app_id, app_name) = super::resolve_app_from_config(&client, app);
+    follow(&client, &app_id, &app_name, commit);
+}
 
+/// Follow the app's dev deploy of `commit` (the newest dev deploy without one)
+/// until it finishes. Exits 1 after reporting a failed deploy.
+pub fn follow(client: &FlooClient, app_id: &str, app_name: &str, commit: Option<&str>) {
     let matched = match commit {
-        Some(sha) => find_deploy_by_commit(&client, &app_id, sha),
-        None => find_latest_deploy(&client, &app_id).map(|deploy| (deploy, None)),
+        Some(sha) => find_deploy_by_commit(client, app_id, sha),
+        None => find_latest_deploy(client, app_id).map(|deploy| (deploy, None)),
     };
 
     let (deploy, coalesced_commit) = match matched {
@@ -574,7 +583,7 @@ pub fn watch(app: Option<&str>, commit: Option<&str>) {
     if let Some(lineage) = coalesced_commit.as_ref() {
         emit_commit_coalesced(lineage, &deploy);
     }
-    emit_deploy_found(&deploy, &app_name);
+    emit_deploy_found(&deploy, app_name);
 
     let status = deploy.status.as_deref().unwrap_or("");
     if deploy_status::is_terminal(status) {
@@ -586,20 +595,20 @@ pub fn watch(app: Option<&str>, commit: Option<&str>) {
     // Stream the active deploy
     let deploy_id = deploy.id.clone();
     let final_deploy = if !output::is_json_mode() {
-        match stream_deploy(&client, &app_id, &deploy_id) {
+        match stream_deploy(client, app_id, &deploy_id) {
             // settle_to_terminal owns the stream-ends-non-terminal race for
             // EVERY stream consumer now — this inline fallback moved there.
-            Ok(d) => settle_to_terminal(&client, &app_id, d),
+            Ok(d) => settle_to_terminal(client, app_id, d),
             Err(e) => {
                 eprintln!(
                     "Stream unavailable ({}), falling back to polling...",
                     e.code
                 );
-                poll_deploy(&client, &app_id, &deploy)
+                poll_deploy(client, app_id, &deploy)
             }
         }
     } else {
-        match stream_deploy_json(&client, &app_id, &deploy_id) {
+        match stream_deploy_json(client, app_id, &deploy_id) {
             Ok(d) => {
                 // stream_deploy_json already emitted the "done" NDJSON event
                 let status = d.status.as_deref().unwrap_or("unknown");
@@ -608,22 +617,32 @@ pub fn watch(app: Option<&str>, commit: Option<&str>) {
                 }
                 return;
             }
-            Err(_) => poll_deploy(&client, &app_id, &deploy),
+            Err(_) => poll_deploy(client, app_id, &deploy),
         }
     };
 
     print_final_status(&final_deploy);
 }
 
+/// The newest dev deploy, paging past prod and preview deploys.
 fn find_latest_deploy(client: &FlooClient, app_id: &str) -> Option<Deploy> {
-    let result = match client.list_deploys(app_id) {
-        Ok(r) => r,
-        Err(e) => {
-            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-            process::exit(1);
+    let mut cursor: Option<String> = None;
+    loop {
+        let result = match client.list_deploys_paginated(app_id, 100, cursor.as_deref()) {
+            Ok(r) => r,
+            Err(e) => {
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+                process::exit(1);
+            }
+        };
+        if let Some(deploy) = result.deploys.into_iter().find(is_dev) {
+            return Some(deploy);
         }
-    };
-    result.deploys.into_iter().next()
+        if !result.has_more {
+            return None;
+        }
+        cursor = Some(result.next_cursor?);
+    }
 }
 
 fn find_deploy_by_commit(
@@ -658,7 +677,7 @@ fn find_deploy_by_commit(
                 }
             };
 
-            for deploy in result.deploys {
+            for deploy in result.deploys.into_iter().filter(is_dev) {
                 if blocker.is_none() && holds_back_push(&deploy) {
                     blocker = Some(deploy.clone());
                 }
@@ -724,7 +743,7 @@ fn find_deploy_by_commit(
                 ),
                 &ErrorCode::DeployTimeout,
                 Some(&format!(
-                    "The push may still deploy. Run `floo deploys watch --commit {sha_prefix}` to keep waiting, or `floo status --commit {sha_prefix}` to see why it has not deployed."
+                    "The push may still deploy. Run `floo status --wait --commit {sha_prefix}` to keep waiting, or `floo status --commit {sha_prefix}` to see why it has not deployed."
                 )),
             );
             process::exit(1);

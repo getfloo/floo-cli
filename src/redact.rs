@@ -17,7 +17,7 @@
 //! 3. **Value content** — strings whose body matches a known credential
 //!    pattern (URI userinfo, floo API key, AWS access key, bearer
 //!    token, JWT). Last-resort net for surprise leaks from API
-//!    passthroughs like `floo deploys watch` audit payloads.
+//!    passthroughs like `floo status --wait` audit payloads.
 //!
 //! When ANY of these fire, the top-level payload also gets a
 //! `"contains_secrets": true` marker so agent harnesses can detect-and-

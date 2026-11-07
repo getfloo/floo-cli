@@ -316,7 +316,6 @@ const RECOMMENDED_PERMISSIONS: &[Permission] = &[
     permission!(ReadOnly, ["status"]),
     permission!(ReadOnly, ["deploys", "list"]),
     permission!(ReadOnly, ["deploys", "logs"]),
-    permission!(ReadOnly, ["deploys", "watch"]),
     permission!(ReadOnly, ["previews", "list"]),
     permission!(ReadOnly, ["previews", "status"]),
     permission!(ReadOnly, ["previews", "logs"]),

@@ -700,12 +700,13 @@ fn test_deploy_list_json_not_authenticated() {
 }
 
 #[test]
-fn test_deploy_watch_help() {
+fn test_status_wait_help() {
     floo()
-        .args(["deploys", "watch", "--help"])
+        .args(["status", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Stream deploy progress"));
+        .stdout(predicate::str::contains("--wait"))
+        .stdout(predicate::str::contains("Follow the deploy"));
 }
 
 #[test]

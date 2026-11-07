@@ -1,7 +1,8 @@
 //! `floo status`: is this folder's commit live on dev, and if not, why
 //! (`GET /v1/apps/{app_id}/status`). One read answers what `deploys status`,
-//! `doctor push` and `apps github status` each answer in part, and the API
+//! `doctor push` and `apps github status` each answered in part, and the API
 //! writes the summary and the next step so every surface says the same thing.
+//! `--wait` first follows the deploy the way `floo deploy` does.
 
 use std::process::{self, Command, Stdio};
 
@@ -10,16 +11,20 @@ use serde_json::Value;
 use crate::errors::ErrorCode;
 use crate::output;
 
-pub fn status(app: Option<&str>, commit: Option<&str>) {
+pub fn status(app: Option<&str>, commit: Option<&str>, wait: bool) {
     super::require_auth();
     let client = super::init_client(None);
-    let (app_id, _) = super::resolve_app_from_config(&client, app);
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app);
     // With no --app, the folder is the app's, so its HEAD is the commit to ask about.
     let commit = match commit {
         Some(commit) => Some(full_sha(commit)),
         None if app.is_none() => git(&["rev-parse", "--verify", "HEAD"]),
         None => None,
     };
+    if wait {
+        // Exits 1 after reporting a failed deploy, as `floo deploy` does.
+        super::deploys::follow(&client, &app_id, &app_name, commit.as_deref());
+    }
 
     let status = client
         .get_app_status(&app_id, commit.as_deref())
