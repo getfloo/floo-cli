@@ -333,7 +333,7 @@ fn rename_app(
         });
         let Some(updated) = project_config::set_app_name(&content, name) else {
             stop(
-                &format!("{file} has no name = \"...\" line under [app]."),
+                &format!("{file} has no string app name to change."),
                 "CONFIG_INVALID",
                 &format!(
                     "Set name = \"{name}\" under [app] in {}, commit, then floo deploy {quoted}",

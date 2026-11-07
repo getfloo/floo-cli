@@ -89,20 +89,19 @@ pub fn load_service_env_contract(
     Ok(load_service_config(dir)?.and_then(|cfg| cfg.env))
 }
 
-/// Replace `name = "..."` (or `'...'`) in the `[app]` table of floo.app.toml text,
-/// keeping its quotes, comments and every other line. None when the table has no
-/// such line.
+/// Set the app's `name` in floo.app.toml or floo.service.toml text, however the
+/// `app` table is written (`[app]`, `app.name = ...` or `app = { name = ... }`),
+/// keeping comments and every other line. None when the text has no string
+/// `app.name`.
 pub fn set_app_name(content: &str, name: &str) -> Option<String> {
-    let table =
-        regex::Regex::new(r"(?ms)^[ \t]*\[app\][ \t]*(?:#[^\r\n]*)?\r?\n(.*?)(?:^[ \t]*\[|\z)")
-            .ok()?;
-    let body = table.captures(content)?.get(1)?;
-    let line =
-        regex::Regex::new(r#"(?m)^[ \t]*name[ \t]*=[ \t]*(?:"([^"\r\n]*)"|'([^'\r\n]*)')"#).ok()?;
-    let captures = line.captures(body.as_str())?;
-    let value = captures.get(1).or_else(|| captures.get(2))?;
-    let (start, end) = (body.start() + value.start(), body.start() + value.end());
-    Some(format!("{}{name}{}", &content[..start], &content[end..]))
+    let mut doc: toml_edit::DocumentMut = content.parse().ok()?;
+    let slot = doc.get_mut("app")?.get_mut("name")?;
+    let old = slot.as_value()?;
+    old.as_str()?;
+    let mut new = toml_edit::Value::from(name);
+    *new.decor_mut() = old.decor().clone();
+    *slot = toml_edit::Item::Value(new);
+    Some(doc.to_string())
 }
 
 /// Validate a service name for DNS-label compatibility.
@@ -156,11 +155,20 @@ mod tests {
             super::set_app_name("[app]\n[services.web]\nname = \"web\"\n", "x"),
             None
         );
-        // A TOML literal string keeps its single quotes.
-        assert_eq!(
-            super::set_app_name("[app]\nname = 'old'\n", "new-name").as_deref(),
-            Some("[app]\nname = 'new-name'\n")
-        );
+        // Literal strings, dotted keys and inline tables all name the app.
+        for (before, after) in [
+            ("[app]\nname = 'old'\n", "[app]\nname = \"new-name\"\n"),
+            ("app.name = \"old\"\n", "app.name = \"new-name\"\n"),
+            (
+                "app = { name = \"old\", access_mode = \"accounts\" }\n",
+                "app = { name = \"new-name\", access_mode = \"accounts\" }\n",
+            ),
+        ] {
+            assert_eq!(
+                super::set_app_name(before, "new-name").as_deref(),
+                Some(after)
+            );
+        }
     }
 
     use super::*;
