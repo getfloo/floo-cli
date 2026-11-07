@@ -255,6 +255,70 @@ fn a_rerun_after_part_of_the_history_landed_pushes_the_rest() {
 }
 
 #[test]
+fn a_rerun_after_the_switch_landed_still_repoints_the_folder() {
+    let mut server = Server::new();
+    let env = setup(&server);
+    let _apps = mock_apps(
+        &mut server,
+        json!([app_with(
+            json!({"kind": "github", "repo": TARGET, "branch": "main"})
+        )]),
+    );
+    let _access = mock_access(&mut server, json!({"accessible": true}));
+    let unchanged = server
+        .mock("PUT", &*format!("/v1/apps/{APP_ID}/source"))
+        .match_body(Matcher::Json(json!({"kind": "github", "repo": TARGET})))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            json!({
+                "app": "storefront",
+                "source": {"kind": "github", "repo": TARGET, "branch": "main"},
+                "previous": {"kind": "github", "repo": TARGET, "branch": "main"},
+                "archived_repo": null,
+                "message": "storefront already deploys dev from acme/storefront@main.",
+            })
+            .to_string(),
+        )
+        .create();
+
+    let output = floo(&env, &[TARGET])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    unchanged.assert();
+    let reply: Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(reply["data"]["remotes_repointed"], json!(["origin"]));
+    assert_eq!(
+        git(env.folder.path(), &["remote", "get-url", "origin"]),
+        format!("https://github.com/{TARGET}.git")
+    );
+}
+
+#[test]
+fn a_broken_manifest_stops_before_any_app_is_chosen() {
+    let mut server = Server::new();
+    let env = setup(&server);
+    std::fs::write(env.folder.path().join("floo.app.toml"), "[app\nname = ").unwrap();
+    let apps = mock_apps(&mut server, json!([])).expect(0);
+
+    let output = floo(&env, &[TARGET])
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+
+    apps.assert();
+    let reply: Value = serde_json::from_slice(&output).unwrap();
+    assert_ne!(reply["error"]["code"], "NO_CONFIG_FOUND");
+    assert!(reply["error"]["code"].is_string());
+}
+
+#[test]
 fn a_repo_with_other_commits_is_refused_and_nothing_moves() {
     let mut server = Server::new();
     let env = setup(&server);

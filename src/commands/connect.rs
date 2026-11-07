@@ -16,7 +16,7 @@ use crate::api_types::AppSource;
 use crate::errors::{ErrorCode, FlooApiError};
 use crate::output;
 
-use super::projects::shell_quote;
+use super::projects::{managed_app_id, shell_quote};
 use super::ship::{git, git_read, github_repo, hosted_git, stop};
 
 pub struct ConnectArgs {
@@ -35,11 +35,20 @@ pub fn connect(args: ConnectArgs) {
         );
     }
     let cwd = super::read_cwd_or_exit();
-    let name = args.app.clone().unwrap_or_else(|| {
-        crate::project_config::resolve_app_context(&cwd, None)
-            .map(|resolved| resolved.app_name)
-            .unwrap_or_else(|_| repo.rsplit('/').next().unwrap_or(&repo).to_string())
-    });
+    let name = match args.app.clone() {
+        Some(name) => name,
+        None => match crate::project_config::resolve_app_context(&cwd, None) {
+            Ok(resolved) => resolved.app_name,
+            Err(error) if error.code == ErrorCode::NoConfigFound => {
+                repo.rsplit('/').next().unwrap_or(&repo).to_string()
+            }
+            // A broken floo.app.toml must not pick some other app to move.
+            Err(error) => {
+                output::error(&error.message, &error.code, error.suggestion.as_deref());
+                process::exit(1);
+            }
+        },
+    };
     super::require_auth();
     let client = super::init_client(None);
     let app = match crate::resolve::resolve_app(&client, &name) {
@@ -69,7 +78,8 @@ pub fn connect(args: ConnectArgs) {
     let mut change = client
         .set_app_source(&app.id, &source)
         .unwrap_or_else(|error| fail(&error, &rerun));
-    let remotes = hosted.map_or_else(Remotes::default, |hosted| repoint(&cwd, hosted, &repo));
+    // Also on a rerun after the switch landed, when the source is already the repo.
+    let remotes = repoint(&cwd, &app.id, &repo);
     change["remotes_repointed"] = json!(remotes.repointed);
     change["remotes_removed"] = json!(remotes.removed);
 
@@ -294,13 +304,14 @@ struct Remotes {
     removed: Vec<String>,
 }
 
-/// Point this folder's remotes for the hosted repo at the GitHub repo, so `floo
-/// deploy` pushes there: fetch and push URLs both, each keeping its protocol. When
-/// a remote already fetches from the GitHub repo, a remote that fetches from the
-/// hosted one is removed instead. URLs are read as configured, before any
-/// `insteadOf` rewrite, and compared as GitHub repos, so SSH and HTTPS match.
-fn repoint(cwd: &Path, hosted: &AppSource, repo: &str) -> Remotes {
-    let hosted_repo = hosted.repo.as_deref().unwrap_or_default();
+/// Point this folder's remotes for the app's hosted repo at the GitHub repo, so
+/// `floo deploy` pushes there: fetch and push URLs both, each keeping its
+/// protocol. When a remote already fetches from the GitHub repo, a remote that
+/// fetches from the hosted one is removed instead. URLs are read as configured,
+/// before any `insteadOf` rewrite, and compared as GitHub repos, so SSH and HTTPS
+/// match. The hosted repo is found by the app id in its name, so a rerun after
+/// the switch still finds it.
+fn repoint(cwd: &Path, app_id: &str, repo: &str) -> Remotes {
     let configured = git_read(
         cwd,
         &["config", "--get-regexp", r"^remote\..*\.(url|pushurl)$"],
@@ -315,21 +326,23 @@ fn repoint(cwd: &Path, hosted: &AppSource, repo: &str) -> Remotes {
             Some((name, field, url, github_repo(url)?))
         })
         .collect();
-    let fetches_from = |name: &str, from: &str| {
-        found.iter().any(|(remote, field, _, found)| {
-            *remote == name && *field == "url" && found.eq_ignore_ascii_case(from)
-        })
-    };
-    let has_target = found.iter().any(|(name, _, _, _)| fetches_from(name, repo));
+    let hosted =
+        |found: &str| managed_app_id(found).is_some_and(|id| id.eq_ignore_ascii_case(app_id));
+    let has_target = found
+        .iter()
+        .any(|(_, field, _, found)| *field == "url" && found.eq_ignore_ascii_case(repo));
     let mut names: Vec<&str> = Vec::new();
     for (name, _, _, found) in &found {
-        if found.eq_ignore_ascii_case(hosted_repo) && !names.contains(name) {
+        if hosted(found) && !names.contains(name) {
             names.push(name);
         }
     }
     let mut done = Remotes::default();
     for name in names {
-        if has_target && fetches_from(name, hosted_repo) {
+        let fetches_hosted = found
+            .iter()
+            .any(|(remote, field, _, found)| *remote == name && *field == "url" && hosted(found));
+        if has_target && fetches_hosted {
             if git_read(cwd, &["remote", "remove", name]).is_some() {
                 done.removed.push(name.to_string());
             } else {
@@ -340,11 +353,12 @@ fn repoint(cwd: &Path, hosted: &AppSource, repo: &str) -> Remotes {
             continue;
         }
         let mut repointed = true;
-        for (_, field, url, _) in found.iter().filter(|(remote, _, _, found)| {
-            *remote == name && found.eq_ignore_ascii_case(hosted_repo)
-        }) {
+        for (_, field, url, found) in found
+            .iter()
+            .filter(|(remote, _, _, found)| *remote == name && hosted(found))
+        {
             let key = format!("remote.{name}.{field}");
-            let moved = swap_repo(url, hosted_repo, repo);
+            let moved = swap_repo(url, found, repo);
             let args = [
                 "config",
                 "--fixed-value",
