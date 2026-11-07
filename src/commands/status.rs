@@ -23,7 +23,7 @@ pub fn status(app: Option<&str>, commit: Option<&str>, wait: bool) {
     };
     if wait {
         // Exits 1 after reporting a failed deploy, as `floo deploy` does.
-        super::deploys::watch(Some(&app_name), commit.as_deref());
+        super::deploys::follow(&client, &app_id, &app_name, commit.as_deref());
     }
 
     let status = client

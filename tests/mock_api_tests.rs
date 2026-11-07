@@ -5132,6 +5132,54 @@ fn test_status_wait_follows_coalesced_descendant_and_emits_structured_lineage() 
 }
 
 #[test]
+fn test_status_wait_follows_the_dev_deploy_not_prod_or_a_preview() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _status = mock_status_after_wait(&mut server);
+    let sha = "dddddddddddddddddddddddddddddddddddddddd";
+    let deploys = format!(
+        r#"{{
+            "deploys":[
+                {{"id":"deploy-prod","status":"failed","env":"prod","commit_sha":"{sha}"}},
+                {{"id":"deploy-preview","status":"failed","env":"dev","preview_slug":"feat-x","commit_sha":"{sha}"}},
+                {{"id":"deploy-dev","status":"live","env":"dev","commit_sha":"{sha}"}}
+            ],
+            "has_more":false
+        }}"#
+    );
+    let _deploys = server
+        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(deploys)
+        .create();
+
+    for args in [
+        vec![
+            "--json",
+            "status",
+            "--wait",
+            "--app",
+            TEST_APP_NAME,
+            "--commit",
+            "dddddddd",
+        ],
+        vec!["--json", "status", "--wait", "--app", TEST_APP_NAME],
+    ] {
+        floo()
+            .args(&args)
+            .env("HOME", home.path())
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("deploy-dev"))
+            .stdout(predicate::str::contains("deploy-prod").not())
+            .stdout(predicate::str::contains("deploy-preview").not());
+    }
+}
+
+#[test]
 fn test_status_wait_prefers_exact_commit_on_later_page_over_coalesced_match() {
     let mut server = Server::new();
     let home = setup_config(&server);
