@@ -496,12 +496,10 @@ pub fn deploy(args: DeployArgs) {
     ship(path, &folder, &app_name, &source, &quoted);
 }
 
-/// Branch names the API accepts for a source.
+/// Branch names the API accepts for a source: git already refused the rest of
+/// what the API refuses, and floo can't put `#` or `%` in a GitHub API path.
 fn api_branch_name(branch: &str) -> bool {
-    branch.len() <= 255
-        && branch
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"._/-".contains(&byte))
+    branch.len() <= 255 && !branch.contains(['#', '%'])
 }
 
 fn ask_plan(client: &FlooClient, folder: &Folder, app: &str, source: Option<&str>) -> DeployPlan {
@@ -848,6 +846,14 @@ fn push_hosted(path: &Path, clone_url: &str, branch: &str, quoted: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hosted_repo_takes_any_branch_the_api_accepts() {
+        assert!(api_branch_name("master"));
+        assert!(api_branch_name("release+stable"));
+        assert!(!api_branch_name("feat#1"));
+        assert!(!api_branch_name(&"a".repeat(256)));
+    }
 
     #[test]
     fn a_rename_covers_every_manifest_that_names_the_app() {
