@@ -299,7 +299,7 @@ prod when you cut a GitHub release; floo prints the `gh release create` command.
     /// requires `--yes` to confirm.
     #[command(after_help = "\
 Examples:
-  floo rollback my-app abc123      Serve deploy abc123 again (find IDs with floo deploys list)")]
+  floo rollback my-app abc123      Serve deploy abc123 again (find IDs with floo deploys)")]
     Rollback {
         /// App name or ID.
         app: String,
@@ -339,19 +339,36 @@ cached. An app on your own GitHub repo clones from GitHub as usual.")]
         operation: String,
     },
 
-    /// View and manage deploy history.
+    /// Deploy history for an app, newest first (no build logs).
     #[command(
         name = "deploys",
-        subcommand,
         after_help = "\
 Examples:
-  floo deploys list --app my-app            Show deploy history
+  floo deploys --app my-app                 Show deploy history
+  floo deploys --app my-app --env dev --json
   floo logs build <id> --follow             Stream a deploy's build logs
   floo status --wait --app my-app           Follow a deploy until it finishes
 
-Note: Push to the connected GitHub branch to deploy. `floo deploy --rebuild` builds the current commit again once the app has a dev deploy."
+A prod deploy shows the release it shipped. Push to the connected GitHub
+branch to deploy; `floo deploy --rebuild` builds the current commit again."
     )]
-    Deploys(DeploysSubcommands),
+    Deploys {
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Only deploys of this environment.
+        #[arg(long, value_parser = ["dev", "prod", "preview"])]
+        env: Option<String>,
+
+        /// Maximum deploy rows to return.
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
+
+        /// Continue from a previous next_cursor value.
+        #[arg(long)]
+        cursor: Option<String>,
+    },
 
     /// List and manage preview sandboxes. `floo deploy` on a branch other than the default one creates its preview.
     #[command(
@@ -453,10 +470,6 @@ Examples:
   floo edge routes list --app my-app --env prod --json"
     )]
     Edge(EdgeCommands),
-
-    /// List prod releases. `floo promote` makes a new one.
-    #[command(subcommand)]
-    Releases(ReleasesCommands),
 
     /// View runtime logs and build logs for an app.
     #[command(after_help = "\
@@ -1609,44 +1622,6 @@ pub enum DomainsCommands {
 }
 
 #[derive(Subcommand)]
-pub enum ReleasesCommands {
-    /// List releases for an app.
-    List {
-        /// App name or ID (uses config file if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-    },
-
-    /// Show details for a release.
-    Show {
-        /// Release ID.
-        release_id: String,
-
-        /// App name or ID (uses config file if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum DeploysSubcommands {
-    /// List compact deploy history for an app (no build logs).
-    List {
-        /// App name or ID (uses config file if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-
-        /// Maximum deploy rows to return.
-        #[arg(long, default_value_t = 20)]
-        limit: u32,
-
-        /// Continue from a previous next_cursor value.
-        #[arg(long)]
-        cursor: Option<String>,
-    },
-}
-
-#[derive(Subcommand)]
 pub enum PreviewsSubcommands {
     /// List active preview sandboxes for an app.
     List {
@@ -2270,11 +2245,12 @@ pub fn run() {
 
         Commands::GitCredential { operation } => commands::projects::git_credential(&operation),
 
-        Commands::Deploys(sub) => match sub {
-            DeploysSubcommands::List { app, limit, cursor } => {
-                commands::deploys::list(app.as_deref(), limit, cursor.as_deref())
-            }
-        },
+        Commands::Deploys {
+            app,
+            env,
+            limit,
+            cursor,
+        } => commands::deploys::list(app.as_deref(), env.as_deref(), limit, cursor.as_deref()),
         Commands::Previews(sub) => match sub {
             PreviewsSubcommands::List { app } => commands::previews::list(app.as_deref()),
             PreviewsSubcommands::Status { preview, app } => {
@@ -2608,13 +2584,6 @@ pub fn run() {
                 app,
                 timeout,
             } => commands::domains::watch(&hostname, app.as_deref(), timeout),
-        },
-
-        Commands::Releases(sub) => match sub {
-            ReleasesCommands::List { app } => commands::releases::list(app.as_deref()),
-            ReleasesCommands::Show { release_id, app } => {
-                commands::releases::show(&release_id, app.as_deref())
-            }
         },
 
         Commands::Skills(sub) => match sub {

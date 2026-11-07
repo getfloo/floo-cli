@@ -791,7 +791,7 @@ pub fn set(
                                 results.len(),
                                 e.message
                             ),
-                            Some("Check `floo deploys list` before retrying."),
+                            Some("Check `floo deploys` before retrying."),
                         ),
                         "RESTART_PIPELINE_FAILED" => (
                             RestartState::Failed,
@@ -808,7 +808,7 @@ pub fn set(
                                 "Saved {key} on {} target(s). Restart started, but its response could not be read.",
                                 results.len()
                             ),
-                            Some("Check `floo deploys list` before retrying."),
+                            Some("Check `floo deploys` before retrying."),
                         ),
                         _ => (
                             RestartState::Unknown,
@@ -817,7 +817,7 @@ pub fn set(
                                 results.len(),
                                 e.message
                             ),
-                            Some("Check `floo deploys list` before retrying."),
+                            Some("Check `floo deploys` before retrying."),
                         ),
                     };
                 output::error_with_data(

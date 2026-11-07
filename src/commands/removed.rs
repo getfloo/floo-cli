@@ -55,6 +55,17 @@ const REMOVED: &[(&[&str], &str, &str)] = &[
     (&["doctor", "push"], "floo status", ""),
     (&["releases", "promote"], "floo promote", ""),
     (
+        &["releases", "list"],
+        "floo deploys --env prod",
+        " Each prod deploy shows the release it shipped.",
+    ),
+    (
+        &["releases", "show"],
+        "floo deploys --env prod --json",
+        " Each prod deploy carries its release: tag, number, who promoted it and the image.",
+    ),
+    (&["deploys", "list"], "floo deploys", " It takes --app, --limit and --cursor as before."),
+    (
         &["redeploy"],
         "floo deploy --rebuild",
         " Add --app <name> outside the folder. `floo deploy --restart` applies env var changes without a build.",
@@ -162,10 +173,7 @@ mod tests {
     #[test]
     fn commands_that_stay_are_not_matched() {
         assert_eq!(replacement(&argv(&["apps", "list"])), None);
-        assert_eq!(
-            replacement(&argv(&["deploys", "list", "--app", "status"])),
-            None
-        );
+        assert_eq!(replacement(&argv(&["deploys", "--app", "status"])), None);
         assert_eq!(replacement(&argv(&["logs", "--app", "status"])), None);
         assert_eq!(
             replacement(&argv(&["deploy", "--preflight", "./app"])),

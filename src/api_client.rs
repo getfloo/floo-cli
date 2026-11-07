@@ -639,6 +639,7 @@ impl FlooClient {
         app_id: &str,
         limit: u32,
         cursor: Option<&str>,
+        env: Option<&str>,
     ) -> Result<ListDeploysResponse, FlooApiError> {
         let limit_value = limit.to_string();
         let mut owned_query: Vec<(&str, String)> = vec![
@@ -647,6 +648,9 @@ impl FlooClient {
         ];
         if let Some(cursor) = cursor {
             owned_query.push(("cursor", cursor.to_string()));
+        }
+        if let Some(env) = env {
+            owned_query.push(("env", env.to_string()));
         }
         let query: Vec<(&str, &str)> = owned_query
             .iter()
@@ -1280,11 +1284,6 @@ impl FlooClient {
         let resp = self.get(&format!(
             "/v1/apps/{app_id}/releases?page={page}&per_page={per_page}"
         ))?;
-        self.handle_response(resp)
-    }
-
-    pub fn get_release(&self, app_id: &str, release_id: &str) -> Result<Release, FlooApiError> {
-        let resp = self.get(&format!("/v1/apps/{app_id}/releases/{release_id}"))?;
         self.handle_response(resp)
     }
 
