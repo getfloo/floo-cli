@@ -89,15 +89,18 @@ pub fn load_service_env_contract(
     Ok(load_service_config(dir)?.and_then(|cfg| cfg.env))
 }
 
-/// Replace `name = "..."` in the `[app]` table of floo.app.toml text, keeping
-/// comments and every other line. None when the table has no such line.
+/// Replace `name = "..."` (or `'...'`) in the `[app]` table of floo.app.toml text,
+/// keeping its quotes, comments and every other line. None when the table has no
+/// such line.
 pub fn set_app_name(content: &str, name: &str) -> Option<String> {
     let table =
         regex::Regex::new(r"(?ms)^[ \t]*\[app\][ \t]*(?:#[^\r\n]*)?\r?\n(.*?)(?:^[ \t]*\[|\z)")
             .ok()?;
     let body = table.captures(content)?.get(1)?;
-    let line = regex::Regex::new(r#"(?m)^[ \t]*name[ \t]*=[ \t]*"([^"\r\n]*)""#).ok()?;
-    let value = line.captures(body.as_str())?.get(1)?;
+    let line =
+        regex::Regex::new(r#"(?m)^[ \t]*name[ \t]*=[ \t]*(?:"([^"\r\n]*)"|'([^'\r\n]*)')"#).ok()?;
+    let captures = line.captures(body.as_str())?;
+    let value = captures.get(1).or_else(|| captures.get(2))?;
     let (start, end) = (body.start() + value.start(), body.start() + value.end());
     Some(format!("{}{name}{}", &content[..start], &content[end..]))
 }
@@ -152,6 +155,11 @@ mod tests {
         assert_eq!(
             super::set_app_name("[app]\n[services.web]\nname = \"web\"\n", "x"),
             None
+        );
+        // A TOML literal string keeps its single quotes.
+        assert_eq!(
+            super::set_app_name("[app]\nname = 'old'\n", "new-name").as_deref(),
+            Some("[app]\nname = 'new-name'\n")
         );
     }
 
