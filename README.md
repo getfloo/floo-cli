@@ -65,7 +65,8 @@ live. A folder whose remote is on github.com deploys from that repository.
 With no remote, pick `--github` (a private repo in your account, made with
 `gh`) or `--hosted` (floo keeps a copy). Any branch other than the default
 gets a preview URL. Every stop creates nothing and prints the fix. Commit your
-changes first; `floo deploy --preflight` shows the plan.
+changes first; `floo deploy --preflight` shows the plan. A hosted app moves to
+your own GitHub repo, history included, with `floo connect owner/repo`.
 
 For the HTTP-only path, read the [agent guide](https://getfloo.com/agents.md).
 

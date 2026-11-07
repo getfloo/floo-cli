@@ -218,6 +218,31 @@ your changes first.")]
         preflight: PreflightArgs,
     },
 
+    /// Deploy an app from your GitHub repo; an app floo hosts moves there with its history.
+    #[command(after_help = "\
+Examples:
+  floo connect acme/storefront                 The app in floo.app.toml deploys from acme/storefront
+  floo connect acme/storefront --app shop      Another app
+  floo connect acme/storefront --branch trunk  Deploy dev from trunk
+
+For an app floo hosts, create an empty repo first (gh repo create acme/storefront
+--private). floo pushes every branch and tag into it with your git credentials,
+switches the app, archives the hosted repo and repoints this folder's remote.
+URLs, env vars and databases stay. An app that doesn't exist yet is created on
+the repo.")]
+    Connect {
+        /// GitHub repository, as owner/name.
+        repo: String,
+
+        /// App ID or name. Defaults to the app in floo.app.toml, then the repo's name.
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Branch that deploys dev. Defaults to the app's current branch, then main.
+        #[arg(long)]
+        branch: Option<String>,
+    },
+
     /// Show whether this folder's commit is live on dev, and if not, why and what to do.
     #[command(after_help = "\
 Examples:
@@ -2311,6 +2336,10 @@ pub fn run() {
             hosted,
             name,
         }),
+
+        Commands::Connect { repo, app, branch } => {
+            commands::connect::connect(commands::connect::ConnectArgs { repo, app, branch })
+        }
 
         Commands::Status { app, commit } => {
             commands::status::status(app.as_deref(), commit.as_deref())
