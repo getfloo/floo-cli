@@ -543,12 +543,6 @@ impl FlooClient {
 
     // --- Apps ---
 
-    pub fn create_app(&self, name: &str) -> Result<App, FlooApiError> {
-        let body = serde_json::json!({"name": name});
-        let resp = self.post_json("/v1/apps", &body)?;
-        self.handle_response(resp)
-    }
-
     pub fn list_apps(&self, page: u32, per_page: u32) -> Result<ListAppsResponse, FlooApiError> {
         let resp = self.get(&format!("/v1/apps?page={page}&per_page={per_page}"))?;
         self.handle_response(resp)

@@ -517,21 +517,19 @@ fn test_update_help() {
 fn test_deploy_not_authenticated() {
     let project = tempfile::TempDir::new().unwrap();
     floo()
-        .arg("redeploy")
+        .arg("deploy")
         .current_dir(project.path())
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
-        .stderr(predicate::str::contains(
-            "No floo.app.toml or floo.service.toml found.",
-        ));
+        .stderr(predicate::str::contains("No floo.app.toml in"));
 }
 
 #[test]
 fn test_deploy_json_not_authenticated() {
     let project = tempfile::TempDir::new().unwrap();
     floo()
-        .args(["--json", "redeploy"])
+        .args(["--json", "deploy"])
         .current_dir(project.path())
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
@@ -824,7 +822,7 @@ ingress = "public"
     .unwrap();
 
     floo()
-        .args(["redeploy", project.path().to_str().unwrap()])
+        .args(["deploy", project.path().to_str().unwrap()])
         .env("HOME", home.path().to_str().unwrap())
         .assert()
         .failure()
@@ -861,7 +859,7 @@ ingress = "public"
     .unwrap();
 
     floo()
-        .args(["--json", "redeploy", project.path().to_str().unwrap()])
+        .args(["--json", "deploy", project.path().to_str().unwrap()])
         .env("HOME", home.path().to_str().unwrap())
         .assert()
         .failure()
@@ -883,6 +881,11 @@ fn test_deploy_invalid_service_config() {
     let project = tempfile::TempDir::new().unwrap();
     std::fs::write(project.path().join("package.json"), r#"{"name":"test"}"#).unwrap();
     std::fs::write(
+        project.path().join("floo.app.toml"),
+        "[app]\nname = \"my-app\"\n",
+    )
+    .unwrap();
+    std::fs::write(
         project.path().join("floo.service.toml"),
         r#"[app]
 name = "my-app"
@@ -897,7 +900,7 @@ ingress = "public"
     .unwrap();
 
     floo()
-        .args(["redeploy", project.path().to_str().unwrap()])
+        .args(["deploy", "--preflight", project.path().to_str().unwrap()])
         .env("HOME", home.path().to_str().unwrap())
         .assert()
         .failure()
@@ -919,6 +922,11 @@ fn test_deploy_invalid_service_config_json() {
     let project = tempfile::TempDir::new().unwrap();
     std::fs::write(project.path().join("package.json"), r#"{"name":"test"}"#).unwrap();
     std::fs::write(
+        project.path().join("floo.app.toml"),
+        "[app]\nname = \"my-app\"\n",
+    )
+    .unwrap();
+    std::fs::write(
         project.path().join("floo.service.toml"),
         r#"[app]
 name = "my-app"
@@ -933,7 +941,12 @@ ingress = "public"
     .unwrap();
 
     floo()
-        .args(["--json", "redeploy", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", home.path().to_str().unwrap())
         .assert()
         .failure()
@@ -990,7 +1003,7 @@ fn test_deploy_no_config_piped_errors() {
 
     // assert_cmd pipes stdin (no TTY), so this should error with NO_CONFIG_FOUND
     floo()
-        .args(["redeploy", project.path().to_str().unwrap()])
+        .args(["deploy", project.path().to_str().unwrap()])
         .env("HOME", home.path().to_str().unwrap())
         .assert()
         .failure()
@@ -1014,7 +1027,7 @@ fn test_deploy_no_config_piped_json_errors() {
     std::fs::write(project.path().join("package.json"), r#"{"name":"test"}"#).unwrap();
 
     floo()
-        .args(["--json", "redeploy", project.path().to_str().unwrap()])
+        .args(["--json", "deploy", project.path().to_str().unwrap()])
         .env("HOME", home.path().to_str().unwrap())
         .assert()
         .failure()
@@ -1560,6 +1573,11 @@ required = ["STRIPE_SECRET_KEY"]
 fn test_preflight_required_env_satisfied_by_configured_env_file() {
     let project = tempfile::TempDir::new().unwrap();
     std::fs::write(
+        project.path().join("floo.app.toml"),
+        "[app]\nname = \"myapp\"\n",
+    )
+    .unwrap();
+    std::fs::write(
         project.path().join("floo.service.toml"),
         r#"[app]
 name = "myapp"
@@ -1585,7 +1603,7 @@ required = ["STRIPE_SECRET_KEY"]
     floo()
         .args([
             "--json",
-            "redeploy",
+            "deploy",
             "--preflight",
             project.path().to_str().unwrap(),
         ])
@@ -1837,99 +1855,16 @@ migrate_command = "alembic upgrade head"
         .stdout(predicate::str::contains("MIGRATE_COMMAND_NO_DATABASE").not());
 }
 
-/// An IMPORTED env_file (declared in floo.service.toml) that doesn't exist is a
-/// hard ERROR — the deploy's own `validate_env_file_path` exits on it, so
-/// preflight must not greenlight a config `floo deploy` always rejects.
-#[test]
-fn test_preflight_errors_on_missing_imported_env_file() {
-    let project = tempfile::TempDir::new().unwrap();
-    std::fs::write(
-        project.path().join("floo.service.toml"),
-        r#"[app]
-name = "myapp"
-
-[service]
-name = "api"
-type = "api"
-port = 8000
-ingress = "public"
-env_file = "missing.env"
-"#,
-    )
-    .unwrap();
-    // missing.env intentionally absent.
-
-    floo()
-        .args([
-            "--json",
-            "redeploy",
-            "--preflight",
-            project.path().to_str().unwrap(),
-        ])
-        .env("HOME", "/tmp/floo-test-nonexistent")
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains(r#""valid":false"#))
-        .stdout(predicate::str::contains(r#""code":"ENV_FILE_INVALID""#));
-}
-
-/// An invalid imported env_file in ANOTHER service must fail preflight even when
-/// `--services` filters to a different service: `floo deploy` validates the full
-/// (unfiltered) imported set and exits on any failure, so a `--services`-filtered
-/// preflight must not greenlight a config the deploy rejects.
-#[test]
-fn test_preflight_services_filter_does_not_hide_other_invalid_env_file() {
-    let project = tempfile::TempDir::new().unwrap();
-    std::fs::write(
-        project.path().join("floo.app.toml"),
-        r#"[app]
-name = "myapp"
-
-[services.web]
-type = "web"
-path = "./web"
-
-[services.api]
-type = "api"
-path = "./api"
-"#,
-    )
-    .unwrap();
-    std::fs::create_dir(project.path().join("web")).unwrap();
-    std::fs::write(
-        project.path().join("web").join("floo.service.toml"),
-        "[app]\nname = \"myapp\"\n\n[service]\nname = \"web\"\ntype = \"web\"\nport = 3000\ningress = \"public\"\n",
-    )
-    .unwrap();
-    std::fs::create_dir(project.path().join("api")).unwrap();
-    std::fs::write(
-        project.path().join("api").join("floo.service.toml"),
-        "[app]\nname = \"myapp\"\n\n[service]\nname = \"api\"\ntype = \"api\"\nport = 8000\ningress = \"internal\"\nenv_file = \"missing.env\"\n",
-    )
-    .unwrap();
-    // api/missing.env intentionally absent — deploy-sync would exit on it.
-
-    floo()
-        .args([
-            "--json",
-            "redeploy",
-            "--preflight",
-            project.path().to_str().unwrap(),
-            "--services",
-            "web",
-        ])
-        .env("HOME", "/tmp/floo-test-nonexistent")
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains(r#""valid":false"#))
-        .stdout(predicate::str::contains(r#""code":"ENV_FILE_INVALID""#));
-}
-
 /// A required env var present but EMPTY (`FOO=`) in the CONFIGURED env_file is
 /// NOT satisfied — the deploy treats empty as missing, so preflight must warn.
 #[test]
 fn test_preflight_required_env_empty_value_still_warns() {
     let project = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        project.path().join("floo.app.toml"),
+        "[app]\nname = \"myapp\"\n",
+    )
+    .unwrap();
     std::fs::write(
         project.path().join("floo.service.toml"),
         r#"[app]
@@ -1952,7 +1887,7 @@ required = ["STRIPE_SECRET_KEY"]
     floo()
         .args([
             "--json",
-            "redeploy",
+            "deploy",
             "--preflight",
             project.path().to_str().unwrap(),
         ])
@@ -2899,9 +2834,16 @@ fn test_dry_run_rollback_human_has_preview() {
 }
 
 #[test]
-fn test_dry_run_redeploy_restart() {
+fn test_dry_run_deploy_restart() {
     floo()
-        .args(["--json", "--dry-run", "redeploy", "--app", "test-app"])
+        .args([
+            "--json",
+            "--dry-run",
+            "deploy",
+            "--restart",
+            "--app",
+            "test-app",
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -2909,9 +2851,9 @@ fn test_dry_run_redeploy_restart() {
 }
 
 #[test]
-fn test_dry_run_redeploy_restart_human_has_preview() {
+fn test_dry_run_deploy_restart_human_has_preview() {
     floo()
-        .args(["--dry-run", "redeploy", "--app", "test-app"])
+        .args(["--dry-run", "deploy", "--restart", "--app", "test-app"])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -2919,15 +2861,15 @@ fn test_dry_run_redeploy_restart_human_has_preview() {
 }
 
 #[test]
-fn test_dry_run_redeploy_rebuild() {
+fn test_dry_run_deploy_rebuild() {
     floo()
         .args([
             "--json",
             "--dry-run",
-            "redeploy",
+            "deploy",
+            "--rebuild",
             "--app",
             "test-app",
-            "--rebuild",
         ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
@@ -2936,13 +2878,37 @@ fn test_dry_run_redeploy_rebuild() {
 }
 
 #[test]
-fn test_dry_run_redeploy_rebuild_human_has_preview() {
+fn test_dry_run_deploy_rebuild_human_has_preview() {
     floo()
-        .args(["--dry-run", "redeploy", "--app", "test-app", "--rebuild"])
+        .args(["--dry-run", "deploy", "--rebuild", "--app", "test-app"])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
         .stderr(predicate::str::contains("Would rebuild app 'test-app'"));
+}
+
+/// Outside the folder, --rebuild and --restart need --app, and say so.
+#[test]
+fn test_deploy_rebuild_without_config_names_the_app_flag() {
+    let project = tempfile::TempDir::new().unwrap();
+    for flag in ["--rebuild", "--restart"] {
+        floo()
+            .args(["--json", "deploy", flag, project.path().to_str().unwrap()])
+            .env("HOME", "/tmp/floo-test-nonexistent")
+            .assert()
+            .failure()
+            .stdout(predicate::str::contains(r#""code":"NO_CONFIG_FOUND""#))
+            .stdout(predicate::str::contains(format!(
+                "floo deploy {flag} --app <name>"
+            )));
+    }
+    floo()
+        .args(["--json", "redeploy", "--app", "shop"])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains(
+            r#""replacement":"floo deploy --rebuild""#,
+        ));
 }
 
 #[test]
@@ -3244,17 +3210,6 @@ fn test_version_no_warning_when_release_assets_not_yet_uploaded() {
         .stderr(predicate::str::contains("No binary asset").not());
 }
 
-// --- Deploy --sync-env ---
-
-#[test]
-fn test_deploy_sync_env_help() {
-    floo()
-        .args(["redeploy", "--help"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("--sync-env"));
-}
-
 // --- Init env file detection ---
 
 #[test]
@@ -3496,14 +3451,6 @@ command = "npm start"
             {"name": "storage", "tier": "basic"}
         ])
     );
-    floo()
-        .args(["--json", "redeploy", "--preflight"])
-        .current_dir(project.path())
-        .env("FLOO_CONFIG_DIR", project.path().join(".test-config"))
-        .env("FLOO_NO_UPDATE_CHECK", "1")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""valid":true"#));
 }
 
 #[test]

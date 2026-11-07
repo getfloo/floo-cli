@@ -45,6 +45,11 @@ const REMOVED: &[(&[&str], &str, &str)] = &[
     (&["doctor", "push"], "floo status", ""),
     (&["releases", "promote"], "floo promote", ""),
     (
+        &["redeploy"],
+        "floo deploy --rebuild",
+        " Add --app <name> outside the folder. `floo deploy --restart` applies env var changes without a build.",
+    ),
+    (
         &["preflight"],
         "floo deploy --preflight",
         " It runs the same checks, then shows what the deploy would do; nothing is created or pushed.",

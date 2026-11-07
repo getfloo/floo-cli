@@ -24,7 +24,7 @@ pub fn promote(app: Option<&str>, tag: Option<&str>) {
                 .and_then(|hint| hint.as_str());
             let suggestion = api_hint.or(match e.code.as_str() {
                 "NO_DEV_DEPLOY" => {
-                    Some("Deploy to dev first: push to GitHub or run floo redeploy --app <name>")
+                    Some("Deploy to dev first: run floo deploy, or push to the connected branch")
                 }
                 "RELEASE_TAG_EXISTS" => Some("Use a different tag with --tag <tag>"),
                 _ => None,

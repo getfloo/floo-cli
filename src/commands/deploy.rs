@@ -511,29 +511,13 @@ pub(crate) fn validate(path: &std::path::Path) {
 }
 
 enum PreflightMode<'a> {
-    /// `floo redeploy --preflight` on a folder: the report for an upload deploy.
-    Inspect,
-    /// `floo deploy --preflight`: the report for a git-push deploy, then the plan.
+    /// `floo deploy --preflight`: the whole report, then the plan.
     Check(Box<dyn FnOnce() -> PlanPreview + 'a>),
-    /// A deploy that uploads this folder and imports its env files.
-    Deploy,
-    /// A deploy that pushes git: env files stay local, so a missing one is fine.
+    /// `floo deploy`: the checks before the push; JSON stays quiet when they pass.
     Push,
 }
 
-impl PreflightMode<'_> {
-    /// Prints the whole report, and asks the server for its runtime plan.
-    fn reports(&self) -> bool {
-        matches!(self, Self::Inspect | Self::Check(_))
-    }
-
-    /// The deploy uploads env files, so each one must exist and parse.
-    fn imports_env_files(&self) -> bool {
-        matches!(self, Self::Inspect | Self::Deploy)
-    }
-}
-
-/// Validate once; actual deploys reuse the resolved project without emitting JSON success.
+/// Validate once; `floo deploy` reuses the resolved project without emitting JSON success.
 fn run_preflight(
     path: PathBuf,
     app: Option<String>,
@@ -545,11 +529,9 @@ fn run_preflight(
     Vec<ServiceConfig>,
     DetectionResult,
 ) {
-    let reports = mode.reports();
-    let imports_env_files = mode.imports_env_files();
-    let deploy_plan = match mode {
-        PreflightMode::Check(plan) => Some(plan),
-        _ => None,
+    let (reports, deploy_plan) = match mode {
+        PreflightMode::Check(plan) => (true, Some(plan)),
+        PreflightMode::Push => (false, None),
     };
     // 1. Canonicalize path
     let project_path = match path.canonicalize() {
@@ -628,7 +610,6 @@ fn run_preflight(
         &resolved,
         &managed_services,
         &env_injection_plan,
-        imports_env_files,
     );
     let security_findings = generate_security_findings(&services, &resolved, &env_injection_plan);
     let runtime_plan = build_runtime_plan(&services, &environment);
@@ -845,116 +826,63 @@ fn cron_json(resolved: &project_config::ResolvedApp) -> Vec<serde_json::Value> {
         .collect()
 }
 
-pub fn deploy(
-    path: PathBuf,
+/// `floo deploy --rebuild` and `floo deploy --restart`: act on an app that
+/// already has a dev deploy, pushing nothing. The app is `--app`, or the one
+/// floo.app.toml in `path` names.
+pub(crate) fn redeploy(
+    path: &std::path::Path,
     app: Option<String>,
     services_filter: Vec<String>,
     rebuild: bool,
-    sync_env: bool,
     skip_migrations: bool,
 ) {
-    if sync_env && !services_filter.is_empty() {
-        output::error(
-            "--sync-env cannot be combined with --service (or --services).",
-            &ErrorCode::InvalidArguments,
-            Some("Run --sync-env from the project directory without --app or --service."),
-        );
-        process::exit(1);
-    }
-
-    // Restart path reuses the existing image and never runs migrations,
-    // so `--skip-migrations` only makes sense on a rebuild path. Reject
-    // the combination loudly rather than silently dropping the flag.
-    if skip_migrations && app.is_some() && !rebuild {
-        output::error(
-            "--skip-migrations requires --rebuild.",
-            &ErrorCode::ConfigInvalid,
-            Some(
-                "Restart paths reuse the existing image and don't run migrations,\
-                 so --skip-migrations has no effect there. Add --rebuild or drop the flag.",
-            ),
-        );
-        process::exit(1);
-    }
-
-    // --- Path 1 & 2: --app flag provided — no local directory needed ---
-    if let Some(ref app_name) = app {
-        // Dry-run exits early — no auth or API calls needed
-        if output::is_dry_run_mode() {
-            let action = if rebuild { "rebuild" } else { "restart" };
-            let service_names: Vec<&str> = services_filter.iter().map(|s| s.as_str()).collect();
-            let svc_clause = if service_names.is_empty() {
-                String::new()
-            } else {
-                format!(" (services: {})", service_names.join(", "))
-            };
-            let mig_clause = if skip_migrations {
-                " (skip migrations)"
-            } else {
-                ""
-            };
-            let preview = format!("Would {action} app '{app_name}'{svc_clause}{mig_clause}.");
-            output::dry_run_preview(
-                &preview,
-                serde_json::json!({
-                    "action": action,
-                    "app": app_name,
-                    "services": service_names,
-                    "skip_migrations": skip_migrations,
-                }),
-            );
-            return;
-        }
-
-        let config = load_config();
-        if config.api_key.is_none() {
-            output::error(
-                "Not logged in.",
-                &ErrorCode::NotAuthenticated,
-                Some("Run 'floo auth login' to authenticate."),
-            );
-            process::exit(1);
-        }
-
-        let client = super::init_client(Some(config));
-        let app_data = match resolve_app(&client, app_name) {
-            Ok(a) => a,
-            Err(e) => {
-                // 404 from resolving the app == app not found; gate on status,
-                // not a code string that can drift (see is_not_found).
-                if e.is_not_found() {
-                    output::error(
-                        &format!("App '{app_name}' not found."),
-                        &ErrorCode::AppNotFound,
-                        Some("Check the app name or ID and try again."),
-                    );
-                } else {
-                    output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-                }
+    let flag = if rebuild { "--rebuild" } else { "--restart" };
+    let app_name = match app {
+        Some(app) => app,
+        None => match project_config::load_app_config(path) {
+            Ok(Some(config)) => config.app.name,
+            Ok(None) => {
+                output::error(
+                    &format!("No floo.app.toml in {}.", path.display()),
+                    &ErrorCode::NoConfigFound,
+                    Some(&format!("floo deploy {flag} --app <name>")),
+                );
                 process::exit(1);
             }
-        };
-
-        if rebuild {
-            deploy_rebuild(&client, &app_data, &services_filter, skip_migrations);
-        } else {
-            deploy_restart(&client, &app_data, &services_filter);
-        }
-        return;
-    }
-
-    let mode = if output::is_dry_run_mode() {
-        PreflightMode::Inspect
-    } else {
-        PreflightMode::Deploy
+            Err(e) => {
+                output::error(&e.message, &e.code, e.suggestion.as_deref());
+                process::exit(1);
+            }
+        },
     };
-    let (resolved, services, detection) =
-        run_preflight(path, app, services_filter.clone(), "dev".to_string(), mode);
+
+    // A preview needs no sign-in and makes no API call.
     if output::is_dry_run_mode() {
+        let action = if rebuild { "rebuild" } else { "restart" };
+        let service_names: Vec<&str> = services_filter.iter().map(|s| s.as_str()).collect();
+        let svc_clause = if service_names.is_empty() {
+            String::new()
+        } else {
+            format!(" (services: {})", service_names.join(", "))
+        };
+        let mig_clause = if skip_migrations {
+            " (skip migrations)"
+        } else {
+            ""
+        };
+        let preview = format!("Would {action} app '{app_name}'{svc_clause}{mig_clause}.");
+        output::dry_run_preview(
+            &preview,
+            serde_json::json!({
+                "action": action,
+                "app": app_name,
+                "services": service_names,
+                "skip_migrations": skip_migrations,
+            }),
+        );
         return;
     }
 
-    // 8. Auth check — only needed for actual deploy
     let config = load_config();
     if config.api_key.is_none() {
         output::error(
@@ -966,214 +894,40 @@ pub fn deploy(
     }
 
     let client = super::init_client(Some(config));
-
-    // Resolve or create app via API.
-    //
-    // Path 3 only runs without --app — the early Some(app) block (Path 1 & 2)
-    // always returns first — so the app is resolved from local config here:
-    // look it up by name and create it if the API reports it doesn't exist yet.
-    let spinner = output::Spinner::new(&format!("Looking up app {}...", resolved.app_name));
-    let app_data = match resolve_app(&client, &resolved.app_name) {
-        Ok(app_data) => {
-            spinner.finish();
-            app_data
-        }
-        // 404 == app doesn't exist yet → create it (gate on status, not a
-        // drift-prone code string; see is_not_found). resolve_app hits
-        // GET /v1/apps/{id} for UUID-shaped names, so the server's own code
-        // flows through verbatim and a code-string match would miss a 404
-        // carrying anything other than APP_NOT_FOUND.
-        Err(error) if error.is_not_found() => {
-            spinner.finish();
-            let spinner = output::Spinner::new(&format!("Creating app {}...", resolved.app_name));
-            match client.create_app(&resolved.app_name) {
-                Ok(a) => {
-                    spinner.finish();
-                    a
-                }
-                Err(e) => {
-                    spinner.finish();
-                    output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-                    process::exit(1);
-                }
-            }
-        }
-        Err(error) => {
-            spinner.finish();
-            output::error(&error.message, &ErrorCode::from_api(&error.code), None);
-            process::exit(1);
-        }
-    };
-    let app_id = app_data.id.clone();
-
-    // Auto-import env vars on first deploy (or force with --sync-env)
-    if let Err(msg) = sync_env_vars_if_needed(&client, &app_id, &resolved, sync_env) {
-        output::error(&msg, &ErrorCode::InvalidPath, None);
-        process::exit(1);
-    }
-
-    let spinner = output::Spinner::new("Deploying...");
-    let mut deploy_data = match client.create_deploy(
-        &app_id,
-        detection.framework.as_deref(),
-        &services_filter,
-        skip_migrations,
-        false,
-    ) {
-        Ok(d) => {
-            spinner.finish();
-            d
-        }
+    let app_data = match resolve_app(&client, &app_name) {
+        Ok(a) => a,
         Err(e) => {
-            spinner.finish();
-            let suggestion = match e.code.as_str() {
-                "PLAN_FEATURE_ACCOUNTS" | "PLAN_FEATURE_SSO" => {
-                    Some("Upgrade your plan at https://app.getfloo.com/settings/billing")
-                }
-                _ => None,
-            };
-            output::error(&e.message, &ErrorCode::from_api(&e.code), suggestion);
+            // 404 from resolving the app == app not found; gate on status,
+            // not a code string that can drift (see is_not_found).
+            if e.is_not_found() {
+                output::error(
+                    &format!("App '{app_name}' not found."),
+                    &ErrorCode::AppNotFound,
+                    Some(&format!(
+                        "Check the app name, or run floo deploy first: {flag} needs an app with a dev deploy."
+                    )),
+                );
+            } else {
+                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            }
             process::exit(1);
         }
     };
 
-    // Wait for deploy to complete via SSE streaming or polling
-    let initial_status = deploy_data.status.as_deref().unwrap_or("");
-
-    if deploy_status::is_terminal(initial_status) {
-        // Phase 1: deploy already complete synchronously, skip streaming/polling
-    } else if !output::is_json_mode() {
-        // Phase 2 human mode: try SSE streaming, fall back to polling
-        let deploy_id = deploy_data.id.clone();
-        match stream_deploy(&client, &app_id, &deploy_id) {
-            Ok(final_data) => deploy_data = settle_to_terminal(&client, &app_id, final_data),
-            Err(e) => {
-                // SSE failed — fall back to polling
-                eprintln!(
-                    "Stream unavailable ({}), falling back to polling...",
-                    e.code
-                );
-                deploy_data = poll_deploy(&client, &app_id, &deploy_data);
-            }
-        }
+    if rebuild {
+        deploy_rebuild(&client, &app_data, &services_filter, skip_migrations);
     } else {
-        // Phase 2 JSON mode: stream structured NDJSON events via SSE
-        let deploy_id = deploy_data.id.clone();
-        match stream_deploy_json(&client, &app_id, &deploy_id) {
-            Ok(final_data) => deploy_data = final_data,
-            Err(_) => deploy_data = poll_deploy(&client, &app_id, &deploy_data),
-        }
+        deploy_restart(&client, &app_data, &services_filter);
     }
-
-    render_diagnostics(&deploy_data.diagnostics);
-    let final_status = deploy_data.status.as_deref().unwrap_or("");
-
-    if deploy_status::is_failure(final_status) {
-        let build_logs = deploy_data.build_logs.as_deref().unwrap_or("");
-        if !output::is_json_mode() && !build_logs.is_empty() && build_logs != "[no message content]"
-        {
-            output::bold_line("Build Logs");
-            for line in build_logs.lines() {
-                output::dim_line(line);
-            }
-        }
-        output::error_with_data(
-            "Deploy failed.",
-            &ErrorCode::DeployFailed,
-            Some("Check build output above, or run `floo logs` for details."),
-            Some(serde_json::json!({
-                "app": output::to_value(&app_data),
-                "deploy": output::to_value(&deploy_data),
-                "build_logs": build_logs,
-            })),
-        );
-        process::exit(1);
-    }
-
-    if final_status == "superseded" {
-        output::success(
-            "Deploy superseded by a newer deploy.",
-            Some(serde_json::json!({
-                "app": output::to_value(&app_data),
-                "deploy": output::to_value(&deploy_data),
-                "detection": detection.to_value(),
-            })),
-        );
-        return;
-    }
-
-    if final_status == "cancelled" {
-        output::success(
-            "Deploy cancelled: its target environment was removed before it ran.",
-            Some(serde_json::json!({
-                "app": output::to_value(&app_data),
-                "deploy": output::to_value(&deploy_data),
-                "detection": detection.to_value(),
-            })),
-        );
-        return;
-    }
-
-    let url = deploy_data.url.as_deref().unwrap_or("");
-
-    if !output::is_json_mode() {
-        // Closes feedback c9b70eb5 — surface the auto-deploy contract the
-        // moment a manual `floo redeploy` finishes, so the user knows the
-        // next change ships via `git push` (no need to remember `floo redeploy`).
-        // The hint only renders for human terminals; JSON consumers infer
-        // from the connected service in the response.
-        let app_url = format!("https://app.getfloo.com/{}", app_data.name);
-        output::info(
-            &format!("  Next deploys: push to your default branch. Manage at {app_url}"),
-            None,
-        );
-    }
-
-    let service_names: Vec<&str> = services.iter().map(|s| s.name.as_str()).collect();
-
-    let env_display = deploy_data
-        .env
-        .as_deref()
-        .map(|e| format!("{e} \u{2192} "))
-        .unwrap_or_default();
-    output::success(
-        &format!("Deployed to {env_display}{url}"),
-        Some(serde_json::json!({
-            "app": output::to_value(&app_data),
-            "deploy": output::to_value(&deploy_data),
-            "detection": detection.to_value(),
-            "services": service_names,
-        })),
-    );
 }
 
-/// Redeploy existing images with fresh env vars (no build). Used when `--app` is
-/// provided without `--rebuild`.
+/// `floo deploy --restart`: start the running images again with fresh env vars (no build).
 fn deploy_restart(
     client: &FlooClient,
     app_data: &crate::api_types::App,
     services_filter: &[String],
 ) {
     let app_id = &app_data.id;
-
-    if output::is_dry_run_mode() {
-        let service_names: Vec<&str> = services_filter.iter().map(|s| s.as_str()).collect();
-        let svc_clause = if service_names.is_empty() {
-            String::new()
-        } else {
-            format!(" (services: {})", service_names.join(", "))
-        };
-        let preview = format!("Would restart app '{}'{svc_clause}.", app_data.name);
-        output::dry_run_preview(
-            &preview,
-            serde_json::json!({
-                "action": "restart",
-                "app": app_data.name,
-                "services": service_names,
-            }),
-        );
-        return;
-    }
 
     let svcs: Option<&[String]> = if services_filter.is_empty() {
         None
@@ -1207,7 +961,7 @@ fn deploy_restart(
     // The restart endpoint returns 202 with a DeployResponse — the pipeline
     // runs out-of-band, so the status is typically "pending" at this point.
     // Match the main deploy path and wait for a terminal status before
-    // reporting back. Otherwise `floo redeploy --json` returns while the
+    // reporting back. Otherwise `floo deploy --restart --json` returns while the
     // deploy is still in progress and agents have to poll manually. See
     // feedback 966b2a4a.
     let mut deploy_data: Deploy = match serde_json::from_value(raw_deploy.clone()) {
@@ -1303,8 +1057,7 @@ fn deploy_restart(
     );
 }
 
-/// Force a full rebuild from the latest commit. Used when `--app --rebuild` is
-/// provided — no local project directory needed.
+/// `floo deploy --rebuild`: build the connected branch's current commit again.
 fn deploy_rebuild(
     client: &FlooClient,
     app_data: &crate::api_types::App,
@@ -1312,34 +1065,6 @@ fn deploy_rebuild(
     skip_migrations: bool,
 ) {
     let app_id = &app_data.id;
-
-    if output::is_dry_run_mode() {
-        let service_names: Vec<&str> = services_filter.iter().map(|s| s.as_str()).collect();
-        let svc_clause = if service_names.is_empty() {
-            String::new()
-        } else {
-            format!(" (services: {})", service_names.join(", "))
-        };
-        let mig_clause = if skip_migrations {
-            " (skip migrations)"
-        } else {
-            ""
-        };
-        let preview = format!(
-            "Would rebuild app '{}'{svc_clause}{mig_clause}.",
-            app_data.name
-        );
-        output::dry_run_preview(
-            &preview,
-            serde_json::json!({
-                "action": "rebuild",
-                "app": app_data.name,
-                "services": service_names,
-                "skip_migrations": skip_migrations,
-            }),
-        );
-        return;
-    }
 
     let spinner = output::Spinner::new("Rebuilding...");
     let result = client.create_deploy(app_id, None, services_filter, skip_migrations, true);
@@ -1486,12 +1211,11 @@ fn env_files_for_service(
 
 /// Parse one env-file line into its raw `(key, value)`, or `None` for a blank
 /// or comment line. THE single definition of how floo reads an env-file line:
-/// both the preflight inspection paths and the deploy-sync import path
-/// (`parse_env_file_soft`) call this, so they agree byte-for-byte on what a line
-/// declares. Trims, skips `#` comments, strips a leading `export ` (plus any
+/// every preflight inspection path calls this, so they agree byte-for-byte on
+/// what a line declares. Trims, skips `#` comments, strips a leading `export ` (plus any
 /// extra whitespace), splits on the first `=`, and strips ONE matching pair of
 /// surrounding quotes from the value. Keys are returned verbatim — callers that
-/// need the deployed form uppercase them, since deploy-sync uppercases on import.
+/// need the imported form uppercase them, since `floo env import` uppercases keys.
 fn parse_env_line(line: &str) -> Option<(&str, &str)> {
     let trimmed = line.trim();
     if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -1550,7 +1274,6 @@ fn validate_preflight(
     resolved: &project_config::ResolvedApp,
     managed_services: &[project_config::ManagedServiceDeclaration],
     env_plan: &EnvInjectionPlan,
-    imports_env_files: bool,
 ) -> Vec<PreflightFinding> {
     let mut findings: Vec<PreflightFinding> = Vec::new();
     let mut seen_names: Vec<String> = Vec::new();
@@ -1558,38 +1281,12 @@ fn validate_preflight(
         .iter()
         .any(|ms| ms.service_type == "postgres");
 
-    // The single canonical set of env files the deploy imports — shared with
-    // `sync_env_vars_if_needed`; external-repo services are excluded.
+    // The env files `floo env import` reads; external-repo services are
+    // excluded. A git-push deploy never reads them, so a missing one is fine.
     let imported_env_file_list = match deploy_imported_env_files(resolved) {
         Ok(files) => files,
         Err(message) => return vec![PreflightFinding::error("ENV_FILE_INVALID", message)],
     };
-
-    // Validate every imported env_file with the deploy's OWN validator over the
-    // FULL (unfiltered) set: `sync_env_vars_if_needed` runs `validate_env_file_path`
-    // across this exact set and `process::exit(1)`s on the first failure,
-    // unconditionally and regardless of `--services`. So a single invalid
-    // imported env_file is a guaranteed deploy rejection — a hard error here,
-    // even when validating a `--services` subset that excludes that service.
-    // A git-push deploy never imports them, so it doesn't need them on disk.
-    let checked_env_files = if imports_env_files {
-        imported_env_file_list.as_slice()
-    } else {
-        &[]
-    };
-    for (svc_name, env_file, base) in checked_env_files {
-        if let Err(msg) = super::env::validate_env_file_path(env_file, base) {
-            findings.push(
-                PreflightFinding::error(
-                    "ENV_FILE_INVALID",
-                    format!("Service '{svc_name}' env_file is invalid: {msg}"),
-                )
-                .with_hint(
-                    "env_file must be a relative path inside the service that exists on disk.",
-                ),
-            );
-        }
-    }
 
     // Keyed by service name for the per-service required-env/migrate satisfaction
     // lookups below.
@@ -2034,8 +1731,8 @@ fn managed_keys_for_service(
 /// Every env var with a NON-EMPTY value the deploy will actually import for a
 /// service, normalized to the UPPERCASE form deploy-sync imports them under.
 ///
-/// Scans ONLY the service's configured `env_file` — the single source
-/// `sync_env_vars_if_needed` imports. The conventional `.env*` files are
+/// Scans ONLY the service's configured `env_file`, the file `floo env import`
+/// imports. The conventional `.env*` files are
 /// deliberately NOT scanned here: the deploy does not import them unless they
 /// are the configured `env_file`, so counting a var found only in an
 /// unconfigured `.env` would let preflight greenlight a `required` var the
@@ -2929,39 +2626,12 @@ fn poll_deploy_resuming(
     deploy_data
 }
 
-/// Non-fatal .env parser for the deploy path. Returns None on errors instead of exiting.
-/// Separate from env.rs::parse_env_file because the deploy path is best-effort.
-fn parse_env_file_soft(path: &Path) -> Option<Vec<(String, String)>> {
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(_) => return None,
-    };
-
-    // Same line parser as preflight (`parse_env_line`); deploy-sync additionally
-    // uppercases keys because that's the form it imports the vars under.
-    let vars: Vec<(String, String)> = content
-        .lines()
-        .filter_map(parse_env_line)
-        .map(|(key, value)| (key.to_uppercase(), value.to_string()))
-        .collect();
-
-    if vars.is_empty() {
-        return None;
-    }
-
-    Some(vars)
-}
-
-/// Auto-import env vars from configured env_file on first deploy (server has 0 vars),
-/// or when --sync-env is passed. Reads env_file from service configs (source of truth).
 /// Every env_file the deploy will import, as `(service_name, env_file relative
 /// path, base_dir)`. THE single source of "what env files get imported": the
 /// root service's `floo.service.toml` `env_file`, plus each sub-service's
 /// `floo.service.toml` `env_file`, with inline `floo.app.toml` env_file taking
-/// precedence. Shared by explicit imports and
-/// `sync_env_vars_if_needed` (which imports these) and the preflight
-/// required-var satisfaction check (which verifies against these), so the set
-/// preflight treats as imported is, by construction, exactly what deploy imports.
+/// precedence. Shared by `floo env import` (which imports these) and the
+/// preflight required-var satisfaction check (which verifies against these).
 pub(crate) fn deploy_imported_env_files(
     resolved: &project_config::ResolvedApp,
 ) -> Result<Vec<(String, String, PathBuf)>, String> {
@@ -2998,115 +2668,6 @@ pub(crate) fn deploy_imported_env_files(
     }
 
     Ok(entries)
-}
-
-/// Import env files declared in `floo.app.toml`.
-///
-/// Returns the validation message instead of exiting so a caller that created
-/// state on the way here can undo it
-/// before the error is reported.
-pub(crate) fn sync_env_vars_if_needed(
-    client: &FlooClient,
-    app_id: &str,
-    resolved: &project_config::ResolvedApp,
-    force_sync: bool,
-) -> Result<(), String> {
-    // Resolve+validate each imported env_file to an absolute path (the shared
-    // helper decides WHICH files are imported; this loop validates them).
-    let mut env_file_entries: Vec<(String, PathBuf)> = Vec::new();
-    for (svc_name, env_file, base_dir) in deploy_imported_env_files(resolved)? {
-        let path = super::env::validate_env_file_path(&env_file, &base_dir)?;
-        env_file_entries.push((svc_name, path));
-    }
-
-    if env_file_entries.is_empty() {
-        return Ok(());
-    }
-
-    // Automatic first-deploy sync remains best-effort; explicit sync must complete.
-    let server_services = match client.list_services(app_id, None) {
-        Ok(r) => r.services,
-        Err(e) if force_sync => return Err(e.message),
-        Err(_) => return Ok(()),
-    };
-
-    for (svc_name, env_file_path) in &env_file_entries {
-        let server_svc = server_services.iter().find(|s| s.name == *svc_name);
-
-        let Some(svc) = server_svc else {
-            if force_sync {
-                return Err(format!("Service '{svc_name}' not found on server."));
-            }
-            continue;
-        };
-        let svc_id = &svc.id;
-
-        // Check env var count on server
-        let env_count = match client.list_env_vars(app_id, Some(svc_id), "dev") {
-            Ok(r) => r.env_vars.len(),
-            Err(e) if force_sync => return Err(e.message),
-            Err(_) => continue,
-        };
-
-        // Skip if already has vars and not force-syncing
-        if !force_sync && env_count > 0 {
-            continue;
-        }
-
-        if !env_file_path.exists() {
-            let file_name = env_file_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("env file");
-            if force_sync {
-                return Err(format!(
-                    "Service '{svc_name}' env file {file_name} not found."
-                ));
-            }
-            output::warn(&format!(
-                "Service '{svc_name}' has env_file configured but {file_name} not found on disk."
-            ));
-            continue;
-        }
-
-        let vars = if force_sync {
-            super::env::read_env_file(env_file_path).map_err(|e| e.message)?
-        } else {
-            match parse_env_file_soft(env_file_path) {
-                Some(vars) => vars,
-                None => continue,
-            }
-        };
-
-        let count = vars.len();
-        let file_name = env_file_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("env file");
-
-        if !output::is_json_mode() {
-            output::info(
-                &format!(
-                    "Importing {count} env var(s) for service '{svc_name}' from {file_name}..."
-                ),
-                None,
-            );
-        }
-
-        // No is_secret: the API applies its default to new keys and keeps
-        // existing keys' types (getfloo/floo#3134).
-        if let Err(e) = client.import_env_vars(app_id, &vars, Some(svc_id), "dev", None) {
-            if force_sync {
-                return Err(e.message);
-            }
-            output::warn(&format!(
-                "Failed to import env vars for service '{svc_name}': {}",
-                e.message
-            ));
-        }
-    }
-
-    Ok(())
 }
 
 /// What the server-side half of a preflight could do.
@@ -3594,51 +3155,6 @@ port = 8000
         m.assert();
     }
 
-    #[test]
-    fn test_parse_env_file_soft_basic() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join(".floo.env");
-        fs::write(&path, "KEY=value\nOTHER=123\n").unwrap();
-        let vars = parse_env_file_soft(&path).unwrap();
-        assert_eq!(
-            vars,
-            vec![
-                ("KEY".to_string(), "value".to_string()),
-                ("OTHER".to_string(), "123".to_string()),
-            ]
-        );
-    }
-
-    #[test]
-    fn test_parse_env_file_soft_missing_file() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("nonexistent.env");
-        assert!(parse_env_file_soft(&path).is_none());
-    }
-
-    #[test]
-    fn test_parse_env_file_soft_empty_file() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join(".env");
-        fs::write(&path, "").unwrap();
-        assert!(parse_env_file_soft(&path).is_none());
-    }
-
-    #[test]
-    fn test_parse_env_file_soft_skips_malformed() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join(".env");
-        fs::write(&path, "GOOD=value\nBADLINE\n# comment\nALSO_GOOD=123\n").unwrap();
-        let vars = parse_env_file_soft(&path).unwrap();
-        assert_eq!(
-            vars,
-            vec![
-                ("GOOD".to_string(), "value".to_string()),
-                ("ALSO_GOOD".to_string(), "123".to_string()),
-            ]
-        );
-    }
-
     // --- Cron schedule validation ---
 
     #[test]
@@ -3762,20 +3278,5 @@ port = 8000
         // One matching quote pair only; a lone quote doesn't panic.
         assert_eq!(parse_env_line("FOO='x'"), Some(("FOO", "x")));
         assert_eq!(parse_env_line("FOO=\""), Some(("FOO", "\"")));
-    }
-
-    #[test]
-    fn test_parse_env_line_and_soft_agree_on_export_spacing() {
-        // The inspection parser and the deploy-sync import parser must read the
-        // SAME key from `export  FOO=bar` (multiple spaces). parse_env_file_soft
-        // additionally uppercases the key (its import normalization).
-        assert_eq!(parse_env_line("export  FOO=bar"), Some(("FOO", "bar")));
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join(".env");
-        fs::write(&path, "export  FOO=bar\n").unwrap();
-        assert_eq!(
-            parse_env_file_soft(&path),
-            Some(vec![("FOO".to_string(), "bar".to_string())])
-        );
     }
 }
