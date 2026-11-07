@@ -89,6 +89,19 @@ pub fn load_service_env_contract(
     Ok(load_service_config(dir)?.and_then(|cfg| cfg.env))
 }
 
+/// Replace `name = "..."` in the `[app]` table of floo.app.toml text, keeping
+/// comments and every other line. None when the table has no such line.
+pub fn set_app_name(content: &str, name: &str) -> Option<String> {
+    let table =
+        regex::Regex::new(r"(?ms)^[ \t]*\[app\][ \t]*(?:#[^\r\n]*)?\r?\n(.*?)(?:^[ \t]*\[|\z)")
+            .ok()?;
+    let body = table.captures(content)?.get(1)?;
+    let line = regex::Regex::new(r#"(?m)^[ \t]*name[ \t]*=[ \t]*"([^"\r\n]*)""#).ok()?;
+    let value = line.captures(body.as_str())?.get(1)?;
+    let (start, end) = (body.start() + value.start(), body.start() + value.end());
+    Some(format!("{}{name}{}", &content[..start], &content[end..]))
+}
+
 /// Validate a service name for DNS-label compatibility.
 ///
 /// Rules: lowercase ASCII, digits, hyphens; must start with a letter,
@@ -129,6 +142,19 @@ pub fn validate_service_name(name: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn set_app_name_changes_only_the_app_table_name() {
+        let toml = "# top\n[services.web]\nname = \"web\"\n[app] # app\naccess_mode = \"accounts\"\nname = \"old\" # keep\n";
+        assert_eq!(
+            super::set_app_name(toml, "new-name").as_deref(),
+            Some("# top\n[services.web]\nname = \"web\"\n[app] # app\naccess_mode = \"accounts\"\nname = \"new-name\" # keep\n")
+        );
+        assert_eq!(
+            super::set_app_name("[app]\n[services.web]\nname = \"web\"\n", "x"),
+            None
+        );
+    }
+
     use super::*;
 
     #[test]

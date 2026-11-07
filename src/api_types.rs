@@ -2,6 +2,53 @@ use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
 
+// --- Deploy plan (POST /v1/deploy/plan) ---
+
+/// Where an app's code lives: `github` (the customer's repo) or `floo` (hosted).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AppSource {
+    pub kind: String,
+    #[serde(default)]
+    pub repo: Option<String>,
+    #[serde(default)]
+    pub branch: Option<String>,
+}
+
+/// One way forward, spelled for each surface. `open` is a page a person visits.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct NextStep {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cli: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open: Option<String>,
+}
+
+/// The API's answer to "where does this deploy's code come from?". `ok` false is
+/// a stop: nothing was created and `next` holds the fix.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeployPlan {
+    pub ok: bool,
+    pub app: String,
+    pub org: String,
+    #[serde(default)]
+    pub decision: Option<String>,
+    #[serde(default)]
+    pub code: Option<String>,
+    pub message: String,
+    #[serde(default)]
+    pub source: Option<AppSource>,
+    #[serde(default)]
+    pub next: Vec<NextStep>,
+    #[serde(default)]
+    pub suggested_names: Vec<String>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
 // --- Managed projects ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -469,6 +516,9 @@ pub struct App {
     pub created_at: Option<String>,
     #[serde(default)]
     pub envs: Vec<EnvironmentSummary>,
+    /// The connected repo pushes deploy from; absent before one is connected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<AppSource>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

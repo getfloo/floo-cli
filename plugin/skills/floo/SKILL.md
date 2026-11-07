@@ -24,9 +24,11 @@ No shell, or one that cannot reach api.getfloo.com (Cowork, claude.ai)? Use
 only the floo MCP tools, never git, curl or the CLI, and follow
 https://getfloo.com/docs/guides/build-in-chat.
 
-From a local git repository with a `floo.app.toml`, `floo deploy` creates a
-floo-hosted project on the first run, pushes the current commit, and waits for
-the dev deploy.
+From a local git repository with a `floo.app.toml`, `floo deploy` deploys from
+the folder's GitHub repo when it has one, and otherwise stops to ask: pass
+`--github` (a private repo in the user's account) or `--hosted` (floo keeps a
+copy). It pushes the current commit and waits for the dev deploy. A stop's JSON
+`error.next` lists the fixes; ask the user when it offers more than one.
 
 The CLI is a convenience. Use `floo commands --json` to discover commands and `floo <command> --help`
 for syntax supported by the installed version. Use `--json` for structured output.

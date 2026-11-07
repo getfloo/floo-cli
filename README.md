@@ -59,14 +59,15 @@ From a local git repository with a `floo.app.toml` (create one with `floo init <
 floo deploy
 ```
 
-The first run creates a floo-hosted project named after `[app] name`, with
-hosted invite-only login and Postgres, adds a git remote named `floo`, pushes
-the current commit, and waits until the dev URL is live. Later runs push the
-new commit to the same project. Commit your changes first.
+floo asks the API where the code deploys from, then creates the app named
+after `[app] name`, pushes the current commit, and waits until the dev URL is
+live. A folder whose remote is on github.com deploys from that repository.
+With no remote, pick `--github` (a private repo in your account, made with
+`gh`) or `--hosted` (floo keeps a copy). Any branch other than the default
+gets a preview URL. Every stop creates nothing and prints the fix. Commit your
+changes first; `floo deploy --preflight` shows the plan.
 
-To deploy from your own GitHub repository instead, follow the
-[web quickstart](https://getfloo.com/docs/introduction). For the HTTP-only
-path, read the [agent guide](https://getfloo.com/agents.md).
+For the HTTP-only path, read the [agent guide](https://getfloo.com/agents.md).
 
 ## Find commands and documentation
 
