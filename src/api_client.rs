@@ -246,11 +246,6 @@ impl FlooClient {
 
     // --- Managed projects ---
 
-    pub fn create_project(&self, name: &str) -> Result<ProjectResponse, FlooApiError> {
-        let response = self.post_json("/v1/projects", &serde_json::json!({ "name": name }))?;
-        self.handle_response(response)
-    }
-
     pub fn list_projects(&self) -> Result<ListProjectsResponse, FlooApiError> {
         self.handle_response(self.get("/v1/projects")?)
     }
@@ -1222,69 +1217,16 @@ impl FlooClient {
 
     // --- GitHub ---
 
+    /// Start GitHub setup: the returned link authorizes the person on GitHub,
+    /// installs the floo App where they choose, and links it to this org.
     pub fn github_setup_begin(&self) -> Result<Value, FlooApiError> {
         let resp = self.post_json("/v1/github/setup/begin", &serde_json::json!({}))?;
-        self.handle_response(resp)
-    }
-
-    pub fn github_setup_poll(&self) -> Result<GitHubSetupPollResponse, FlooApiError> {
-        let resp = self.get("/v1/github/setup/poll")?;
-        self.handle_response(resp)
-    }
-
-    /// Bind one installation from the candidate list the poll returned.
-    ///
-    /// The API refuses an installation absent from that list, so the caller
-    /// must select a candidate rather than construct an ID.
-    pub fn github_setup_select(
-        &self,
-        installation_id: i64,
-    ) -> Result<GitHubSetupPollResponse, FlooApiError> {
-        let resp = self.post_json(
-            "/v1/github/setup/select",
-            &serde_json::json!({ "installation_id": installation_id }),
-        )?;
         self.handle_response(resp)
     }
 
     pub fn github_check_repo_access(&self, repo: &str) -> Result<Value, FlooApiError> {
         let encoded = repo.replace('/', "%2F");
         let resp = self.get(&format!("/v1/github/check-repo-access?repo={encoded}"))?;
-        self.handle_response(resp)
-    }
-
-    pub fn github_connect(
-        &self,
-        app_id: &str,
-        repo_full_name: &str,
-        branch: Option<&str>,
-        skip_env_var_check: bool,
-    ) -> Result<GitHubConnectResponse, FlooApiError> {
-        let mut body = serde_json::json!({
-            "repo_full_name": repo_full_name,
-        });
-        if let Some(b) = branch {
-            body.as_object_mut()
-                .unwrap()
-                .insert("default_branch".to_string(), Value::String(b.to_string()));
-        }
-        if skip_env_var_check {
-            body.as_object_mut()
-                .unwrap()
-                .insert("skip_env_var_check".to_string(), Value::Bool(true));
-        }
-        let resp = self.post_json(&format!("/v1/apps/{app_id}/github/connection"), &body)?;
-        self.handle_response(resp)
-    }
-
-    pub fn github_disconnect(&self, app_id: &str) -> Result<(), FlooApiError> {
-        let resp = self.delete(&format!("/v1/apps/{app_id}/github/connection"))?;
-        self.handle_response_value(resp)?;
-        Ok(())
-    }
-
-    pub fn github_status(&self, app_id: &str) -> Result<GitHubStatusResponse, FlooApiError> {
-        let resp = self.get(&format!("/v1/apps/{app_id}/github/connection"))?;
         self.handle_response(resp)
     }
 

@@ -162,6 +162,7 @@ fn require_access(client: &FlooClient, repo: &str, rerun: &str) {
         return;
     }
     let page = |field: &str| access[field].as_str().filter(|url| !url.is_empty());
+    let owner = repo.split('/').next().unwrap_or(repo);
     let (message, next) = match access["reason"].as_str() {
         Some("REPO_NOT_IN_INSTALLATION") => (
             format!("floo's GitHub App is installed for your account but can't see {repo}."),
@@ -176,7 +177,10 @@ fn require_access(client: &FlooClient, repo: &str, rerun: &str) {
         ),
         _ => (
             format!("floo's GitHub App isn't installed where it can reach {repo}."),
-            format!("floo apps github setup && {rerun}"),
+            match super::ship::github_setup_link(client) {
+                Some(link) => format!("Open {link}, install the App on {owner}, then {rerun}"),
+                None => format!("Install the floo GitHub App on {owner}, then {rerun}"),
+            },
         ),
     };
     stop(&message, "GITHUB_REPO_NOT_ACCESSIBLE", &next);

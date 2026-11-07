@@ -1,5 +1,5 @@
 use assert_cmd::Command;
-use mockito::{Matcher, Server};
+use mockito::Server;
 use predicates::prelude::*;
 use serde_json::{json, Value};
 use tempfile::TempDir;
@@ -81,110 +81,6 @@ fn token_mock(server: &mut Server, token: &str) -> mockito::Mock {
 }
 
 #[test]
-fn create_prints_project_block_and_followup_without_waiting() {
-    let mut server = Server::new();
-    let home = setup(&server);
-    let mut created = project();
-    created["first_deploy_id"] = json!("first-deploy-id");
-    let mock = server
-        .mock("POST", "/v1/projects")
-        .match_header("authorization", "Bearer floo_test123")
-        .match_header("x-floo-org-id", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-        .match_body(Matcher::Json(json!({"name": "client-portal"})))
-        .with_status(201)
-        .with_body(created.to_string())
-        .create();
-    floo(&home)
-        .args(["projects", "create", "client-portal"])
-        .assert()
-        .success()
-        .stdout("")
-        .stderr(predicate::str::contains("app: client-portal"))
-        .stderr(predicate::str::contains(
-            "url: https://client-portal.example.test",
-        ))
-        .stderr(predicate::str::contains("login: hosted, invite-only"))
-        .stderr(predicate::str::contains("database: postgres"))
-        .stderr(predicate::str::contains(format!(
-            "repo: https://github.com/{REPO}.git"
-        )))
-        .stderr(predicate::str::contains(
-            "floo deploys watch --app client-portal",
-        ))
-        .stderr(predicate::str::contains(
-            "next: floo projects clone client-portal",
-        ));
-    mock.assert();
-}
-
-#[test]
-fn create_json_is_one_object_and_watch_is_optional() {
-    for first_deploy in [None, Some("deploy-id")] {
-        let mut server = Server::new();
-        let home = setup(&server);
-        let mut created = project();
-        created["first_deploy_id"] = json!(first_deploy);
-        let mock = server
-            .mock("POST", "/v1/projects")
-            .with_status(201)
-            .with_body(created.to_string())
-            .create();
-        let result = floo(&home)
-            .args(["projects", "create", "client-portal", "--json"])
-            .assert()
-            .success()
-            .stderr("")
-            .get_output()
-            .stdout
-            .clone();
-        let result: Value = serde_json::from_slice(&result).unwrap();
-        assert_eq!(result["success"], true);
-        assert_eq!(result["data"]["app_id"], APP_ID);
-        assert_eq!(result["data"]["login"], "hosted, invite-only");
-        assert_eq!(result["data"]["database"], "postgres");
-        assert_eq!(result["data"]["next"], "floo projects clone client-portal");
-        assert_eq!(
-            result["data"].get("watch").is_some(),
-            first_deploy.is_some()
-        );
-        mock.assert();
-    }
-}
-
-#[test]
-fn list_renders_name_url_repo_and_empty_json_list() {
-    let mut server = Server::new();
-    let home = setup(&server);
-    let mock = list_mock(&mut server, vec![project()]);
-    floo(&home)
-        .args(["projects", "list"])
-        .assert()
-        .success()
-        .stdout("")
-        .stderr(predicate::str::contains("NAME"))
-        .stderr(predicate::str::contains("client-portal"))
-        .stderr(predicate::str::contains(
-            "https://client-portal.example.test",
-        ))
-        .stderr(predicate::str::contains(REPO));
-    mock.assert();
-    mock.remove();
-    let mock = list_mock(&mut server, vec![]);
-    let output = floo(&home)
-        .args(["projects", "list", "--json"])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    assert_eq!(
-        serde_json::from_slice::<Value>(&output).unwrap()["data"]["projects"],
-        json!([])
-    );
-    mock.assert();
-}
-
-#[test]
 fn credential_get_only_emits_password_protocol_and_fetches_each_time() {
     let mut server = Server::new();
     let home = setup(&server);
@@ -192,7 +88,7 @@ fn credential_get_only_emits_password_protocol_and_fetches_each_time() {
     for suffix in ["", ".git"] {
         let mock = token_mock(&mut server, TOKEN);
         floo(&home)
-            .args(["projects", "git-credential", "get", "--json"])
+            .args(["git-credential", "get", "--json"])
             .write_stdin(format!("protocol=https\nhost=github.com\npath={REPO}{suffix}\nusername=ignored\n\npath=ignored-after-blank\n"))
             .assert()
             .success()
@@ -206,6 +102,24 @@ fn credential_get_only_emits_password_protocol_and_fetches_each_time() {
         config_before
     );
     assert_eq!(std::fs::read_dir(home.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn clones_made_before_floo_clone_keep_their_credential_helper() {
+    // Their git config still runs `floo projects git-credential`.
+    let mut server = Server::new();
+    let home = setup(&server);
+    let mock = token_mock(&mut server, TOKEN);
+    floo(&home)
+        .args(["projects", "git-credential", "get"])
+        .write_stdin(format!(
+            "protocol=https\nhost=github.com\npath={REPO}.git\n\n"
+        ))
+        .assert()
+        .success()
+        .stdout(format!("username=x-access-token\npassword={TOKEN}\n\n"))
+        .stderr("");
+    mock.assert();
 }
 
 #[test]
@@ -233,7 +147,7 @@ fn credential_ignores_nonmatching_requests_without_authentication() {
     ];
     for request in requests {
         floo(&home)
-            .args(["projects", "git-credential", "get"])
+            .args(["git-credential", "get"])
             .write_stdin(request)
             .assert()
             .success()
@@ -247,7 +161,7 @@ fn credential_store_and_erase_are_noops() {
     let home = TempDir::new().unwrap();
     for operation in ["store", "erase"] {
         floo(&home)
-            .args(["projects", "git-credential", operation, "--json"])
+            .args(["git-credential", operation, "--json"])
             .write_stdin(format!(
                 "protocol=https\nhost=github.com\npath={REPO}.git\npassword={TOKEN}\n\n"
             ))
@@ -271,7 +185,7 @@ fn credential_rejects_protocol_injection_without_printing_token() {
         let home = setup(&server);
         let mock = token_mock(&mut server, token);
         floo(&home)
-            .args(["projects", "git-credential", "get"])
+            .args(["git-credential", "get"])
             .write_stdin(format!(
                 "protocol=https\r\nhost=github.com\r\npath={REPO}\r\n\r\n"
             ))
@@ -279,47 +193,7 @@ fn credential_rejects_protocol_injection_without_printing_token() {
             .failure()
             .stdout("")
             .stderr(predicate::str::contains("secret").not())
-            .stderr(predicate::str::contains("next: floo projects list"));
-        mock.assert();
-    }
-}
-
-#[test]
-fn project_api_errors_preserve_codes_messages_and_hints() {
-    for (status, code) in [
-        (503, "MANAGED_PROJECTS_DISABLED"),
-        (403, "MANAGED_REPO_NOT_OWNED"),
-        (404, "PROJECT_NOT_FOUND"),
-    ] {
-        let mut server = Server::new();
-        let home = setup(&server);
-        let mock = server.mock("POST", "/v1/projects")
-            .with_status(status)
-            .with_body(json!({"detail": {"code": code, "message": "Project unavailable.", "hint": "Contact your organization admin."}}).to_string())
-            .expect(2)
-            .create();
-        floo(&home)
-            .args(["projects", "create", "client-portal"])
-            .assert()
-            .failure()
-            .stdout("")
-            .stderr(predicate::str::contains("Project unavailable."))
-            .stderr(predicate::str::contains("Contact your organization admin."))
-            .stderr(predicate::str::contains("next: floo projects list\n"));
-        let output = floo(&home)
-            .args(["projects", "create", "client-portal", "--json"])
-            .assert()
-            .failure()
-            .get_output()
-            .stdout
-            .clone();
-        let output: Value = serde_json::from_slice(&output).unwrap();
-        assert_eq!(output["error"]["code"], code);
-        assert_eq!(output["error"]["hint"], "Contact your organization admin.");
-        assert!(output["error"]["suggestion"]
-            .as_str()
-            .unwrap()
-            .ends_with("next: floo projects list"));
+            .stderr(predicate::str::contains("next: floo apps list"));
         mock.assert();
     }
 }
@@ -333,14 +207,14 @@ fn credential_api_error_keeps_stdout_empty_even_in_json_mode() {
         .with_body(json!({"detail": {"code": "MANAGED_REPO_NOT_OWNED", "message": "Repository is not owned.", "hint": "Check your organization."}}).to_string())
         .create();
     floo(&home)
-        .args(["projects", "git-credential", "get", "--json"])
+        .args(["git-credential", "get", "--json"])
         .write_stdin(format!("protocol=https\nhost=github.com\npath={REPO}\n\n"))
         .assert()
         .failure()
         .stdout("")
         .stderr(predicate::str::contains("Repository is not owned."))
         .stderr(predicate::str::contains("Check your organization."))
-        .stderr(predicate::str::contains("next: floo projects list"));
+        .stderr(predicate::str::contains("next: floo apps list"));
     mock.assert();
 }
 
@@ -350,17 +224,17 @@ fn clone_missing_project_and_missing_git_have_next_commands() {
     let home = setup(&server);
     let mock = list_mock(&mut server, vec![]);
     floo(&home)
-        .args(["projects", "clone", "missing", "--json"])
+        .args(["clone", "missing", "--json"])
         .assert()
         .failure()
         .stdout(predicate::str::contains("PROJECT_NOT_FOUND"))
-        .stdout(predicate::str::contains("next: floo projects list"));
+        .stdout(predicate::str::contains("next: floo apps list"));
     mock.assert();
     mock.remove();
     let mock = list_mock(&mut server, vec![project()]);
     floo(&home)
         .env("PATH", home.path())
-        .args(["projects", "clone", APP_ID])
+        .args(["clone", APP_ID])
         .assert()
         .failure()
         .stdout("")
@@ -368,7 +242,7 @@ fn clone_missing_project_and_missing_git_have_next_commands() {
             "Git is not installed or is not on PATH",
         ))
         .stderr(predicate::str::contains(format!(
-            "next: floo projects clone {APP_ID}"
+            "next: floo clone {APP_ID}"
         )));
     mock.assert();
 }
@@ -410,7 +284,7 @@ mod git_tests {
             command
                 .env("PATH", &bin)
                 .env("GIT_ARGS", home.path().join("git-args"))
-                .args(["projects", "clone", name_or_id, "--json"]);
+                .args(["clone", name_or_id, "--json"]);
             if let Some(dir) = dir {
                 command.arg(dir);
             }
@@ -429,7 +303,7 @@ mod git_tests {
             assert_eq!(args[0..4], ["clone", "-c", "credential.helper=", "-c"]);
             assert_eq!(
                 shlex::split(args[4].strip_prefix("credential.helper=!").unwrap()).unwrap(),
-                [executable, "projects".into(), "git-credential".into()]
+                [executable, "git-credential".into()]
             );
             assert_eq!(args[5..8], ["-c", "credential.useHttpPath=true", "--"]);
             assert_eq!(args[8], project()["clone_url"]);
@@ -449,13 +323,13 @@ mod git_tests {
             .env("PATH", bin)
             .env("GIT_ARGS", home.path().join("git-args"))
             .env("GIT_EXIT", "128")
-            .args(["projects", "clone", "client-portal"])
+            .args(["clone", "client-portal"])
             .assert()
             .failure()
             .stdout("")
             .stderr(predicate::str::contains("git clone failed"))
             .stderr(predicate::str::contains(
-                "next: floo projects clone client-portal client-portal",
+                "next: floo clone client-portal client-portal",
             ));
         mock.assert();
     }
@@ -477,7 +351,7 @@ mod git_tests {
             floo(&home)
                 .env("PATH", bin)
                 .env("GIT_ARGS", home.path().join("git-args"))
-                .args(["projects", "clone", "client-portal"])
+                .args(["clone", "client-portal"])
                 .assert()
                 .failure()
                 .stdout("")
@@ -506,7 +380,7 @@ mod git_tests {
         command
             .env("PATH", bin)
             .env("GIT_ARGS", home.path().join("git-args"))
-            .args(["projects", "clone", "client-portal"])
+            .args(["clone", "client-portal"])
             .assert()
             .success()
             .stdout("")
