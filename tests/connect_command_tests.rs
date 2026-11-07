@@ -179,6 +179,11 @@ fn a_hosted_app_moves_with_every_branch_and_tag_and_origin_follows() {
     let _apps = hosted_app(&mut server);
     let _access = mock_access(&mut server, json!({"accessible": true}));
     let moved = mock_move(&mut server);
+    let ssh = format!("git@github.com:{HOSTED}.git");
+    git(
+        env.folder.path(),
+        &["remote", "set-url", "--push", "origin", &ssh],
+    );
 
     let output = floo(&env, &[TARGET])
         .assert()
@@ -199,10 +204,36 @@ fn a_hosted_app_moves_with_every_branch_and_tag_and_origin_follows() {
         git(env.folder.path(), &["remote", "get-url", "origin"]),
         format!("https://github.com/{TARGET}.git")
     );
+    assert_eq!(
+        git(env.folder.path(), &["config", "remote.origin.pushurl"]),
+        format!("git@github.com:{TARGET}.git")
+    );
 }
 
 #[test]
-fn a_rerun_after_the_history_landed_finishes_the_move() {
+fn the_hosted_remote_is_removed_when_another_already_fetches_from_the_repo() {
+    let mut server = Server::new();
+    let env = setup(&server);
+    let target_url = format!("https://github.com/{TARGET}.git");
+    git(env.folder.path(), &["remote", "add", "github", &target_url]);
+    let _apps = hosted_app(&mut server);
+    let _access = mock_access(&mut server, json!({"accessible": true}));
+    let _moved = mock_move(&mut server);
+
+    let output = floo(&env, &[TARGET])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let reply: Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(reply["data"]["remotes_removed"], json!(["origin"]));
+    assert_eq!(git(env.folder.path(), &["remote"]), "github");
+}
+
+#[test]
+fn a_rerun_after_part_of_the_history_landed_pushes_the_rest() {
     let mut server = Server::new();
     let env = setup(&server);
     let target = env.bare(TARGET);
@@ -217,6 +248,10 @@ fn a_rerun_after_the_history_landed_finishes_the_move() {
     floo(&env, &[TARGET]).assert().success();
 
     moved.assert();
+    assert_eq!(
+        refs(&target),
+        "refs/heads/feature\nrefs/heads/main\nrefs/tags/v1"
+    );
 }
 
 #[test]

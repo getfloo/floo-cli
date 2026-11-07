@@ -214,25 +214,26 @@ fn move_history(scratch: &Path, hosted: &AppSource, repo: &str, rerun: &str) -> 
             format!("gh repo create {repo} --private && {rerun}"),
         ));
     };
-    let branch = hosted.branch.as_deref().unwrap_or("main");
-    let head = git_read(
+    let hosted_refs = git_read(
         &mirror,
         &[
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            &format!("refs/heads/{branch}"),
+            "for-each-ref",
+            "--format=%(objectname)\t%(refname)",
+            "refs/heads",
+            "refs/tags",
         ],
-    );
-    if !target.is_empty() {
-        let landed = head.as_deref().is_some_and(|head| {
-            target
-                .lines()
-                .any(|line| line == format!("{head}\trefs/heads/{branch}"))
-        });
-        if landed {
-            return Ok(()); // A rerun: the history is already there.
-        }
+    )
+    .unwrap_or_default();
+    // A branch or tag the hosted repo doesn't have at the same commit is someone
+    // else's history. Refs that match are a move that already landed in part; the
+    // push below fills in the rest.
+    let theirs = target.lines().any(|line| {
+        let name = line.split_once('\t').map_or("", |(_, name)| name);
+        let compared = (name.starts_with("refs/heads/") || name.starts_with("refs/tags/"))
+            && !name.ends_with("^{}");
+        compared && !hosted_refs.lines().any(|hosted| hosted == line)
+    });
+    if theirs {
         return Err(Stop(
             format!(
                 "{repo} already has commits. floo moves the hosted history only into an empty repo, so nothing is overwritten."
@@ -241,7 +242,7 @@ fn move_history(scratch: &Path, hosted: &AppSource, repo: &str, rerun: &str) -> 
             "Create an empty repo (gh repo create <owner>/<new-repo> --private), then floo connect <owner>/<new-repo>".to_string(),
         ));
     }
-    if head.is_none() {
+    if hosted_refs.is_empty() {
         return Ok(()); // The hosted repo has no commits: nothing to move.
     }
     if !output::is_json_mode() {
@@ -294,44 +295,81 @@ struct Remotes {
 }
 
 /// Point this folder's remotes for the hosted repo at the GitHub repo, so `floo
-/// deploy` pushes there. When a remote for the GitHub repo is already present,
-/// the hosted one is removed instead. URLs are read as configured, before any
+/// deploy` pushes there: fetch and push URLs both, each keeping its protocol. When
+/// a remote already fetches from the GitHub repo, a remote that fetches from the
+/// hosted one is removed instead. URLs are read as configured, before any
 /// `insteadOf` rewrite, and compared as GitHub repos, so SSH and HTTPS match.
 fn repoint(cwd: &Path, hosted: &AppSource, repo: &str) -> Remotes {
     let hosted_repo = hosted.repo.as_deref().unwrap_or_default();
-    let target_url = format!("https://github.com/{repo}.git");
-    let configured =
-        git_read(cwd, &["config", "--get-regexp", r"^remote\..*\.url$"]).unwrap_or_default();
-    let found: Vec<(&str, String)> = configured
+    let configured = git_read(
+        cwd,
+        &["config", "--get-regexp", r"^remote\..*\.(url|pushurl)$"],
+    )
+    .unwrap_or_default();
+    // (remote, url or pushurl, the URL as configured, the GitHub repo it names)
+    let found: Vec<(&str, &str, &str, String)> = configured
         .lines()
         .filter_map(|line| {
             let (key, url) = line.split_once(' ')?;
-            let name = key.strip_prefix("remote.")?.strip_suffix(".url")?;
-            Some((name, github_repo(url)?))
+            let (name, field) = key.strip_prefix("remote.")?.rsplit_once('.')?;
+            Some((name, field, url, github_repo(url)?))
         })
         .collect();
-    let has_target = found
-        .iter()
-        .any(|(_, found)| found.eq_ignore_ascii_case(repo));
+    let fetches_from = |name: &str, from: &str| {
+        found.iter().any(|(remote, field, _, found)| {
+            *remote == name && *field == "url" && found.eq_ignore_ascii_case(from)
+        })
+    };
+    let has_target = found.iter().any(|(name, _, _, _)| fetches_from(name, repo));
+    let mut names: Vec<&str> = Vec::new();
+    for (name, _, _, found) in &found {
+        if found.eq_ignore_ascii_case(hosted_repo) && !names.contains(name) {
+            names.push(name);
+        }
+    }
     let mut done = Remotes::default();
-    for (name, _) in found
-        .iter()
-        .filter(|(_, found)| found.eq_ignore_ascii_case(hosted_repo))
-    {
-        let args = if has_target {
-            vec!["remote", "remove", name]
+    for name in names {
+        if has_target && fetches_from(name, hosted_repo) {
+            if git_read(cwd, &["remote", "remove", name]).is_some() {
+                done.removed.push(name.to_string());
+            } else {
+                output::warn(&format!(
+                    "Could not remove git remote {name}; run git remote remove {name}."
+                ));
+            }
+            continue;
+        }
+        let mut repointed = true;
+        for (_, field, url, _) in found.iter().filter(|(remote, _, _, found)| {
+            *remote == name && found.eq_ignore_ascii_case(hosted_repo)
+        }) {
+            let key = format!("remote.{name}.{field}");
+            let moved = swap_repo(url, hosted_repo, repo);
+            let args = [
+                "config",
+                "--fixed-value",
+                "--replace-all",
+                &key,
+                &moved,
+                url,
+            ];
+            repointed &= git_read(cwd, &args).is_some();
+        }
+        if repointed {
+            done.repointed.push(name.to_string());
         } else {
-            vec!["remote", "set-url", name, target_url.as_str()]
-        };
-        if git_read(cwd, &args).is_none() {
             output::warn(&format!(
-                "Could not repoint git remote {name}; run git remote set-url {name} {target_url}."
+                "Could not repoint git remote {name}; run git remote set-url {name} https://github.com/{repo}.git."
             ));
-        } else if has_target {
-            done.removed.push((*name).to_string());
-        } else {
-            done.repointed.push((*name).to_string());
         }
     }
     done
+}
+
+/// `url` with the GitHub repo `from` replaced by `to`, so SSH stays SSH.
+fn swap_repo(url: &str, from: &str, to: &str) -> String {
+    match url.to_ascii_lowercase().find(&from.to_ascii_lowercase()) {
+        Some(at) => format!("{}{to}{}", &url[..at], &url[at + from.len()..]),
+        None => format!("https://github.com/{to}.git"),
+    }
 }
