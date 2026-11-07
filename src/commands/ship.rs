@@ -45,10 +45,15 @@ fn git(path: &Path) -> Command {
 
 /// Runs a git command that only reads, returning trimmed stdout on success.
 fn git_read(path: &Path, args: &[&str]) -> Option<String> {
+    git_stdout(path, args).map(|stdout| stdout.trim().to_string())
+}
+
+/// Runs a git command that only reads, returning its stdout as git wrote it.
+fn git_stdout(path: &Path, args: &[&str]) -> Option<String> {
     let output = git(path).args(args).stderr(Stdio::null()).output();
     match output {
         Ok(output) if output.status.success() => {
-            Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+            Some(String::from_utf8_lossy(&output.stdout).into_owned())
         }
         Ok(_) => None,
         Err(error) if error.kind() == io::ErrorKind::NotFound => stop(
@@ -72,10 +77,24 @@ fn same_dir(a: &Path, b: &Path) -> bool {
 }
 
 /// A git remote as it may leave the machine: a name and a URL with no credentials.
+/// `push_urls` are where `git push` sends it, which a `pushurl` can make differ.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Remote {
     pub name: String,
     pub url: String,
+    pub push_urls: Vec<String>,
+}
+
+impl Remote {
+    fn points_at(url: &str, repo: &str) -> bool {
+        github_repo(url).is_some_and(|found| found.eq_ignore_ascii_case(repo))
+    }
+
+    /// Both fetching and pushing reach `repo`, so a push deploys what the plan saw.
+    fn reaches(&self, repo: &str) -> bool {
+        Self::points_at(&self.url, repo)
+            && self.push_urls.iter().all(|url| Self::points_at(url, repo))
+    }
 }
 
 /// Drops any `user:token@` from a remote URL, so a token in `origin` is never sent
@@ -139,9 +158,12 @@ impl Folder {
             .take(20) // the plan reads at most 20
             .filter_map(|name| {
                 let url = git_read(path, &["remote", "get-url", name])?;
+                let push_urls = git_read(path, &["remote", "get-url", "--push", "--all", name])
+                    .unwrap_or_default();
                 Some(Remote {
                     name: name.to_string(),
                     url: strip_credentials(&url),
+                    push_urls: push_urls.lines().map(strip_credentials).collect(),
                 })
             })
             .collect();
@@ -176,11 +198,9 @@ impl Folder {
         })
     }
 
-    /// The remote whose URL is `repo` on github.com, preferring the tracked one.
+    /// The remote that fetches from and pushes to `repo`, preferring the tracked one.
     fn remote_for(&self, repo: &str) -> Option<&Remote> {
-        let matches = |remote: &&Remote| {
-            github_repo(&remote.url).is_some_and(|found| found.eq_ignore_ascii_case(repo))
-        };
+        let matches = |remote: &&Remote| remote.reaches(repo);
         let tracked = self.tracked.as_deref();
         self.remotes
             .iter()
@@ -206,15 +226,16 @@ pub(crate) fn looks_secret(path: &str) -> bool {
 /// Stop on uncommitted work, naming secret-looking files first so the fix never
 /// tells the user to commit them.
 fn require_clean_tree(path: &Path, quoted: &str) {
-    let status =
-        git_read(path, &["status", "--porcelain", "--untracked-files=all"]).unwrap_or_default();
+    let status = git_stdout(
+        path,
+        &["status", "--porcelain", "-z", "--untracked-files=all"],
+    )
+    .unwrap_or_default();
     if status.is_empty() {
         return;
     }
-    let secrets: Vec<String> = status
-        .lines()
-        .filter_map(|line| line.get(3..))
-        .map(|file| file.rsplit(" -> ").next().unwrap_or(file).trim_matches('"'))
+    let secrets: Vec<String> = changed_files(&status)
+        .into_iter()
         .filter(|file| looks_secret(file))
         .map(str::to_string)
         .collect();
@@ -244,6 +265,23 @@ fn require_clean_tree(path: &Path, quoted: &str) {
         "UNCOMMITTED_CHANGES",
         &format!("git -C {quoted} add -A && git -C {quoted} commit -m \"<message>\" && floo deploy {quoted}"),
     );
+}
+
+/// The paths in `git status --porcelain -z` output. Each entry is `XY path`, and a
+/// rename or copy is followed by its old path as an entry of its own.
+pub(crate) fn changed_files(status: &str) -> Vec<&str> {
+    let mut files = Vec::new();
+    let mut entries = status.split('\0').filter(|entry| !entry.is_empty());
+    while let Some(entry) = entries.next() {
+        let code = entry.get(..2).unwrap_or_default();
+        if let Some(file) = entry.get(3..) {
+            files.push(file);
+        }
+        if code.contains('R') || code.contains('C') {
+            entries.next();
+        }
+    }
+    files
 }
 
 /// Write `name` into floo.app.toml's [app] table and commit just that file. Runs
@@ -380,7 +418,6 @@ pub fn deploy(args: DeployArgs) {
     let Some(mut source) = plan.source.clone() else {
         stop_with_plan(&plan, &quoted)
     };
-    let mut first_hosted = false;
     match plan.decision.as_deref() {
         Some("push") => {}
         Some("connect_github") => {
@@ -392,7 +429,13 @@ pub fn deploy(args: DeployArgs) {
             source = app.source.unwrap_or(source);
         }
         Some("create_hosted") => {
-            let app = create_app(&client, &app_name, json!({"kind": "floo"}));
+            // The hosted repo takes this folder's branch, so the branch that deploys
+            // dev now keeps deploying dev on every later run.
+            let mut hosted = json!({"kind": "floo"});
+            if let Some(branch) = folder.branch.as_deref().filter(|b| api_branch_name(b)) {
+                hosted["branch"] = json!(branch);
+            }
+            let app = create_app(&client, &app_name, hosted);
             let Some(hosted) = app.source else {
                 stop(
                     "floo created the app but did not return its hosted repository.",
@@ -401,11 +444,18 @@ pub fn deploy(args: DeployArgs) {
                 )
             };
             source = hosted;
-            first_hosted = true;
         }
         _ => stop_with_plan(&plan, &quoted),
     }
-    ship(path, &folder, &app_name, &source, first_hosted, &quoted);
+    ship(path, &folder, &app_name, &source, &quoted);
+}
+
+/// Branch names the API accepts for a source.
+fn api_branch_name(branch: &str) -> bool {
+    branch.len() <= 255
+        && branch
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._/-".contains(&byte))
 }
 
 fn ask_plan(client: &FlooClient, folder: &Folder, app: &str, source: Option<&str>) -> DeployPlan {
@@ -550,20 +600,13 @@ fn create_github_repo(path: &Path, app: &str, quoted: &str) {
 
 /// Push HEAD to the app's source and wait: the default branch deploys dev, any
 /// other branch gets a preview and leaves dev alone.
-fn ship(
-    path: &Path,
-    folder: &Folder,
-    app: &str,
-    source: &AppSource,
-    first_hosted: bool,
-    quoted: &str,
-) {
+fn ship(path: &Path, folder: &Folder, app: &str, source: &AppSource, quoted: &str) {
     let repo = source.repo.clone().unwrap_or_default();
     let default_branch = source.branch.clone().unwrap_or_else(|| "main".to_string());
-    let branch = match folder.branch.as_deref() {
-        Some(branch) if !first_hosted => branch.to_string(),
-        _ => default_branch.clone(),
-    };
+    let branch = folder
+        .branch
+        .clone()
+        .unwrap_or_else(|| default_branch.clone());
     let preview = branch != default_branch;
     if source.kind == "floo" {
         let clone_url = format!("https://github.com/{repo}.git");
@@ -571,6 +614,24 @@ fn ship(
         push_hosted(path, &clone_url, &branch, quoted);
     } else {
         let Some(remote) = folder.remote_for(&repo) else {
+            if let Some(remote) = folder
+                .remotes
+                .iter()
+                .find(|remote| Remote::points_at(&remote.url, &repo))
+            {
+                stop(
+                    &format!(
+                        "git would push {} to {}, not {repo}, which {app} deploys from.",
+                        remote.name,
+                        remote.push_urls.join(", ")
+                    ),
+                    "REPO_MISMATCH",
+                    &format!(
+                        "git -C {quoted} config --unset-all remote.{}.pushurl && floo deploy {quoted}",
+                        remote.name
+                    ),
+                )
+            }
             stop(
                 &format!("No git remote in this folder points at {repo}, which {app} deploys from."),
                 "REPO_MISMATCH",
@@ -779,6 +840,25 @@ mod tests {
         ] {
             assert_eq!(github_repo(url), None, "{url}");
         }
+    }
+
+    #[test]
+    fn status_paths_keep_their_first_character() {
+        // `git status` leads with a space for an unstaged change; trimming it once
+        // turned `.env` into `env` and hid the secret.
+        let status = " M .env\0?? api/.env.local\0R  new.key\0old.txt\0";
+        assert_eq!(changed_files(status), [".env", "api/.env.local", "new.key"]);
+    }
+
+    #[test]
+    fn a_push_url_elsewhere_is_not_the_planned_repo() {
+        let remote = |push: &str| Remote {
+            name: "origin".to_string(),
+            url: "https://github.com/acme/shop.git".to_string(),
+            push_urls: vec![push.to_string()],
+        };
+        assert!(remote("git@github.com:acme/shop.git").reaches("acme/shop"));
+        assert!(!remote("https://github.com/other/fork.git").reaches("acme/shop"));
     }
 
     #[test]

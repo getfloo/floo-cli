@@ -446,7 +446,7 @@ fn hosted_creates_an_empty_repo_adds_origin_and_pushes_without_force() {
     let created = server
         .mock("POST", "/v1/apps")
         .match_body(Matcher::Json(
-            json!({"name": "client-portal", "source": {"kind": "floo"}}),
+            json!({"name": "client-portal", "source": {"kind": "floo", "branch": "main"}}),
         ))
         .with_status(201)
         .with_header("content-type", "application/json")
