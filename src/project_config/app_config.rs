@@ -1754,7 +1754,7 @@ command = "bundle exec sidekiq"
     fn test_worker_collision_normalizes_equivalent_paths() {
         // web at "." and a command-less worker at "./" are the SAME build — the gate
         // must catch it (mirroring the API's path normalization), not be fooled by the
-        // spelling. Without normalization the API blocks this but `floo preflight` passes.
+        // spelling. Without normalization the API blocks this but the local check passes.
         let dir = TempDir::new().unwrap();
         fs::write(
             dir.path().join(super::super::APP_CONFIG_FILE),

@@ -259,6 +259,70 @@ Examples:
         commit: Option<String>,
     },
 
+    /// Release the version live on dev to prod. Only apps that use a prod environment need this.
+    #[command(after_help = "\
+Examples:
+  floo promote                     The app in floo.app.toml
+  floo promote --app my-app --tag v1.2.0
+
+An app floo hosts is promoted here. An app on your own GitHub repo ships to
+prod when you cut a GitHub release; floo prints the `gh release create` command.")]
+    Promote {
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Release tag (auto-generated if omitted).
+        #[arg(short, long)]
+        tag: Option<String>,
+    },
+
+    /// Roll an app back to a previous deploy.
+    ///
+    /// Tier-2 destructive: interactive prompts `y/N`; non-interactive
+    /// requires `--yes` to confirm.
+    #[command(after_help = "\
+Examples:
+  floo rollback my-app abc123      Serve deploy abc123 again (find IDs with floo deploys list)")]
+    Rollback {
+        /// App name or ID.
+        app: String,
+
+        /// Deploy ID to roll back to.
+        deploy_id: String,
+
+        /// Skip the y/N prompt. Required in non-interactive contexts.
+        #[arg(long, alias = "force")]
+        yes: bool,
+
+        #[command(flatten)]
+        preflight: PreflightArgs,
+    },
+
+    /// Clone the repository of an app floo hosts, with push access through floo.
+    #[command(after_help = "\
+Examples:
+  floo clone client-portal         Clone into ./client-portal, then read AGENTS.md
+  floo clone client-portal ./src   Clone into ./src
+
+The clone uses a repo-local credential helper at the current floo binary's
+absolute path. Git fetches one-hour push tokens through floo; tokens are never
+cached. An app on your own GitHub repo clones from GitHub as usual.")]
+    Clone {
+        /// App name or ID.
+        app: String,
+
+        /// Destination directory (defaults to the app name).
+        dir: Option<PathBuf>,
+    },
+
+    /// Credential helper used by git; stdout is the git protocol, even with --json.
+    #[command(hide = true)]
+    GitCredential {
+        #[arg(value_parser = ["get", "store", "erase"])]
+        operation: String,
+    },
+
     /// Force a redeploy (after env var changes, config updates, or to rebuild).
     #[command(after_help = "\
 Examples:
@@ -318,26 +382,24 @@ Examples:
   floo deploys list --app my-app            Show deploy history
   floo deploys logs <id> --follow           Stream build logs in real-time
   floo deploys watch --app my-app           Stream deploy progress
-  floo deploys rollback my-app abc123       Rollback to a previous deploy
 
 Note: Push to the connected GitHub branch to deploy. `floo redeploy` restarts an app that already has a dev deploy; it cannot run the first one."
     )]
     Deploys(DeploysSubcommands),
 
-    /// Create and manage preview sandboxes for remote GitHub branches.
+    /// List and manage preview sandboxes. `floo deploy` on a branch other than the default one creates its preview.
     #[command(
         name = "previews",
         subcommand,
         after_help = "\
 Examples:
-  floo previews up --app my-app --branch feat/foo --wait
   floo previews list --app my-app --json
   floo previews status --app my-app feat-foo-abcde
   floo previews logs --app my-app feat-foo-abcde --follow
   floo previews delete --app my-app feat-foo-abcde --yes
 
-Preview sandboxes deploy remote GitHub source only. Push your branch first;
-dirty local files are not uploaded."
+A preview deploys the branch's pushed commit; dirty local files are not
+uploaded."
     )]
     Previews(PreviewsSubcommands),
 
@@ -349,18 +411,9 @@ dirty local files are not uploaded."
     #[command(subcommand)]
     Orgs(OrgsCommands),
 
-    /// Create, list, and clone managed apps without a GitHub account.
-    #[command(
-        subcommand,
-        after_help = "\
-Examples:
-  floo projects create client-portal      Create an app with hosted login and postgres
-  floo projects list --json               Find managed projects
-  floo projects clone client-portal       Clone, then read AGENTS.md
-
-Clones use a repo-local credential helper at the current floo binary's absolute
-path. Git fetches one-hour push tokens through floo; tokens are never cached."
-    )]
+    /// Old path of the git credential helper. Clones made before `floo clone`
+    /// still name it in their git config.
+    #[command(subcommand, hide = true)]
     Projects(ProjectsCommands),
 
     /// Manage billing and spend caps.
@@ -435,7 +488,7 @@ Examples:
     )]
     Edge(EdgeCommands),
 
-    /// Manage releases and promote to prod.
+    /// List prod releases. `floo promote` makes a new one.
     #[command(subcommand)]
     Releases(ReleasesCommands),
 
@@ -751,20 +804,6 @@ pub enum AutoTopUpCommands {
 
 #[derive(Subcommand)]
 pub enum ProjectsCommands {
-    /// Create and deploy a managed app with hosted, invite-only login and postgres.
-    Create {
-        /// Project name.
-        name: String,
-    },
-    /// List managed projects in the current organization.
-    List,
-    /// Clone a managed project and configure credentials only in that repository.
-    Clone {
-        /// Project name or app ID.
-        name_or_id: String,
-        /// Destination directory (defaults to the project name).
-        dir: Option<PathBuf>,
-    },
     /// Credential helper used by git; stdout is the git protocol, even with --json.
     #[command(hide = true)]
     GitCredential {
@@ -924,14 +963,6 @@ pub enum AppsCommands {
         preflight: PreflightArgs,
     },
 
-    /// Manage GitHub integration.
-    ///
-    /// Granting the App access to a repository is a browser-only action a human
-    /// must perform. Full instructions, including which account to install on:
-    /// https://getfloo.com/docs/cli/github
-    #[command(subcommand)]
-    Github(GitHubCommands),
-
     /// Manage app API key consumers.
     #[command(subcommand)]
     Consumers(ConsumerCommands),
@@ -1072,71 +1103,6 @@ pub enum AppKeyCommands {
         /// App name or ID (uses config if omitted).
         #[arg(short, long)]
         app: Option<String>,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum GitHubCommands {
-    /// Connect a GitHub repo to an app for auto-deploy.
-    ///
-    /// Requires the floo GitHub App installed on the account that OWNS the repo,
-    /// with that repo selected. GitHub scopes an installation to one account, so
-    /// installing on an organization grants nothing for a personal-account repo.
-    /// https://getfloo.com/docs/cli/github#granting-the-floo-github-app-access-to-a-repository
-    Connect {
-        /// GitHub repo (owner/repo).
-        repo: String,
-
-        /// App name or ID (uses config file if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-
-        /// Default branch (defaults to "main").
-        #[arg(short, long)]
-        branch: Option<String>,
-
-        /// Skip env var check for webhook deploys.
-        #[arg(long)]
-        skip_env_check: bool,
-
-        /// Don't wait for the first deploy. floo starts it from the connected branch either way; follow it with `floo deploys watch`.
-        #[arg(long)]
-        no_deploy: bool,
-
-        /// Never open a browser (for agents/CI). If the floo GitHub App cannot
-        /// reach the repo, errors with the full grant instruction: which account
-        /// to install on, the URL, the repo to select, and the command to re-run.
-        #[arg(long)]
-        no_browser: bool,
-    },
-
-    /// Disconnect a GitHub repo from an app.
-    Disconnect {
-        /// App name or ID (uses config file if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-    },
-
-    /// Show GitHub connection status for an app.
-    Status {
-        /// App name or ID (uses config file if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-    },
-
-    /// Link the floo GitHub App to this org, whether or not it is installed.
-    ///
-    /// This BINDS an installation to your floo org. It does not install the App
-    /// and does not select repositories — do that on GitHub first, on the
-    /// account that owns the repo:
-    /// https://getfloo.com/docs/cli/github#granting-the-floo-github-app-access-to-a-repository
-    ///
-    /// Run this again for a fresh authorization link if setup expired or the
-    /// App was installed directly on GitHub. Select the intended floo org first.
-    Setup {
-        /// Never open a browser (for agents/CI). Prints the link instead.
-        #[arg(long)]
-        no_browser: bool,
     },
 }
 
@@ -1638,17 +1604,6 @@ pub enum ReleasesCommands {
         #[arg(short, long)]
         app: Option<String>,
     },
-
-    /// Promote a floo-managed project to prod. Apps on your own GitHub repo ship by cutting a GitHub release.
-    Promote {
-        /// App name or ID (uses config file if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-
-        /// Release tag (auto-generated if omitted).
-        #[arg(short, long)]
-        tag: Option<String>,
-    },
 }
 
 #[derive(Subcommand)]
@@ -1692,78 +1647,10 @@ pub enum DeploysSubcommands {
         #[arg(short, long)]
         commit: Option<String>,
     },
-
-    /// Print a compact, agent-safe deploy status summary.
-    ///
-    /// Emits the latest deploy's id, commit, derived phase booleans
-    /// (image_built / service_ready / host_bound), the gateway URL, and a
-    /// next recommended command, plus deploy diagnostics — without dumping build logs, runtime
-    /// audit payloads, or env-var values. Use this from agents and
-    /// scripts that need to know "what state is the deploy in?" without
-    /// risking secret exfiltration through verbose log output.
-    ///
-    /// image_built is true when the aggregate build step succeeded, false when
-    /// skipped (for example, an inherited-image restart), and null when evidence
-    /// is missing or inconclusive. A multi-service build may reuse some images.
-    /// duration_ms is the entire deploy attempt, including scheduling and rollout.
-    Status {
-        /// App name or ID (uses config file if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-
-        /// Deploy ID. Defaults to the latest deploy for the app.
-        #[arg(long)]
-        id: Option<String>,
-    },
-
-    /// Rollback to a previous deploy.
-    ///
-    /// Tier-2 destructive: interactive prompts `y/N`; non-interactive
-    /// requires `--yes` to confirm.
-    Rollback {
-        /// App name or ID.
-        app: String,
-
-        /// Deploy ID to rollback to.
-        deploy_id: String,
-
-        /// Skip the y/N prompt. Required in non-interactive contexts.
-        #[arg(long, alias = "force")]
-        yes: bool,
-
-        #[command(flatten)]
-        preflight: PreflightArgs,
-    },
 }
 
 #[derive(Subcommand)]
 pub enum PreviewsSubcommands {
-    /// Create or refresh a preview sandbox from a remote GitHub branch.
-    Up {
-        /// App name or ID (uses config file if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-
-        /// Remote GitHub branch to deploy into an isolated preview.
-        #[arg(long)]
-        branch: String,
-
-        /// Wait for the returned deploy ID to reach a terminal state.
-        #[arg(long)]
-        wait: bool,
-
-        /// Exact remote commit SHA to deploy.
-        #[arg(long)]
-        commit_sha: Option<String>,
-
-        /// Remote git ref to record on the deploy.
-        #[arg(long = "ref")]
-        ref_name: Option<String>,
-
-        #[command(flatten)]
-        preflight: PreflightArgs,
-    },
-
     /// List active preview sandboxes for an app.
     List {
         /// App name or ID (uses config file if omitted).
@@ -1954,20 +1841,6 @@ pub enum EventsCommands {
 
 #[derive(Subcommand)]
 pub enum DoctorCommands {
-    /// Explain why the last git push did or did not deploy.
-    #[command(after_help = "\
-Examples:
-  floo doctor push                Use the app from floo.app.toml
-  floo doctor push --app foo      Diagnose a specific app
-  floo doctor push --json         Machine-readable output for agents
-
-Exit code is non-zero when the last push was skipped and needs action.")]
-    Push {
-        /// App name or ID (reads from config if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-    },
-
     /// Check managed-service data-plane health.
     #[command(after_help = "\
 Examples:
@@ -2233,9 +2106,15 @@ pub fn run() {
     // just `doctor`.
     let json_requested = json_flag_in_argv(&args);
     let preflight_requested = preflight_flag_in_argv(&args);
-    let cli = match Cli::try_parse_from(args) {
+    let cli = match Cli::try_parse_from(&args) {
         Ok(cli) => cli,
         Err(err) => {
+            if err.use_stderr() {
+                if json_requested {
+                    output::set_json_mode(true);
+                }
+                commands::removed::exit_if_removed(&args);
+            }
             // `use_stderr()` is false only for `--help`/`--version` displays —
             // explicit requests for human text that we leave to clap even
             // under `--json`. Every real parse error becomes a JSON error so
@@ -2263,7 +2142,9 @@ pub fn run() {
 
     // Git's protocol must stay quiet and never stage/apply updates or emit JSON.
     // Fallthrough and store/erase also work without authentication.
-    if let Commands::Projects(ProjectsCommands::GitCredential { operation }) = &cli.command {
+    if let Commands::GitCredential { operation }
+    | Commands::Projects(ProjectsCommands::GitCredential { operation }) = &cli.command
+    {
         output::set_json_mode(false);
         commands::projects::git_credential(operation);
         return;
@@ -2345,6 +2226,21 @@ pub fn run() {
             commands::status::status(app.as_deref(), commit.as_deref())
         }
 
+        Commands::Promote { app, tag } => {
+            commands::releases::promote(app.as_deref(), tag.as_deref())
+        }
+
+        Commands::Rollback {
+            app,
+            deploy_id,
+            yes,
+            preflight: _,
+        } => commands::rollbacks::rollback(&app, &deploy_id, yes),
+
+        Commands::Clone { app, dir } => commands::projects::clone(&app, dir.as_deref()),
+
+        Commands::GitCredential { operation } => commands::projects::git_credential(&operation),
+
         Commands::Redeploy {
             path,
             app,
@@ -2367,31 +2263,8 @@ pub fn run() {
             DeploysSubcommands::Watch { app, commit } => {
                 commands::deploys::watch(app.as_deref(), commit.as_deref())
             }
-            DeploysSubcommands::Status { app, id } => {
-                commands::deploys::status(app.as_deref(), id.as_deref())
-            }
-            DeploysSubcommands::Rollback {
-                app,
-                deploy_id,
-                yes,
-                preflight: _,
-            } => commands::rollbacks::rollback(&app, &deploy_id, yes),
         },
         Commands::Previews(sub) => match sub {
-            PreviewsSubcommands::Up {
-                app,
-                branch,
-                wait,
-                commit_sha,
-                ref_name,
-                preflight: _,
-            } => commands::previews::up(
-                app.as_deref(),
-                &branch,
-                wait,
-                commit_sha.as_deref(),
-                ref_name.as_deref(),
-            ),
             PreviewsSubcommands::List { app } => commands::previews::list(app.as_deref()),
             PreviewsSubcommands::Status { preview, app } => {
                 commands::previews::status(app.as_deref(), &preview)
@@ -2458,11 +2331,6 @@ pub fn run() {
         },
 
         Commands::Projects(sub) => match sub {
-            ProjectsCommands::Create { name } => commands::projects::create(&name),
-            ProjectsCommands::List => commands::projects::list(),
-            ProjectsCommands::Clone { name_or_id, dir } => {
-                commands::projects::clone(&name_or_id, dir.as_deref())
-            }
             ProjectsCommands::GitCredential { operation } => {
                 commands::projects::git_credential(&operation)
             }
@@ -2540,26 +2408,6 @@ pub fn run() {
                 AppKeyCommands::Revoke { key_id, app } => {
                     commands::apps::revoke_key(&key_id, app.as_deref())
                 }
-            },
-            AppsCommands::Github(gh_sub) => match gh_sub {
-                GitHubCommands::Connect {
-                    repo,
-                    app,
-                    branch,
-                    skip_env_check,
-                    no_deploy,
-                    no_browser,
-                } => commands::github::connect(
-                    &repo,
-                    app.as_deref(),
-                    branch.as_deref(),
-                    skip_env_check,
-                    no_deploy,
-                    no_browser,
-                ),
-                GitHubCommands::Disconnect { app } => commands::github::disconnect(app.as_deref()),
-                GitHubCommands::Status { app } => commands::github::status(app.as_deref()),
-                GitHubCommands::Setup { no_browser } => commands::github::setup(no_browser),
             },
             AppsCommands::Invite { email, app, role } => {
                 commands::apps::invite(&email, &role, app.as_deref())
@@ -2762,9 +2610,6 @@ pub fn run() {
             ReleasesCommands::Show { release_id, app } => {
                 commands::releases::show(&release_id, app.as_deref())
             }
-            ReleasesCommands::Promote { app, tag } => {
-                commands::releases::promote(app.as_deref(), tag.as_deref())
-            }
         },
 
         Commands::Skills(sub) => match sub {
@@ -2827,7 +2672,6 @@ pub fn run() {
 
         Commands::Doctor(sub) => match sub {
             DoctorCommands::Accounts { app } => commands::doctor::accounts(app.as_deref()),
-            DoctorCommands::Push { app } => commands::doctor::push(app.as_deref()),
             DoctorCommands::ManagedServices { app } => {
                 commands::doctor::managed_services(app.as_deref())
             }
@@ -3090,6 +2934,7 @@ mod tests {
             ("init", &["floo", "init", "--preflight"]),
             ("redeploy", &["floo", "redeploy", "--preflight"]),
             ("preflight", &["floo", "preflight", "--preflight"]),
+            ("deploy", &["floo", "deploy", "--preflight"]),
             ("dev", &["floo", "dev", "--preflight"]),
             ("update", &["floo", "update", "--preflight"]),
             ("env set", &["floo", "env", "set", "K=V", "--preflight"]),
@@ -3104,8 +2949,8 @@ mod tests {
             ),
             ("cron run", &["floo", "cron", "run", "myjob", "--preflight"]),
             (
-                "deploys rollback",
-                &["floo", "deploys", "rollback", "myapp", "abc", "--preflight"],
+                "rollback",
+                &["floo", "rollback", "myapp", "abc", "--preflight"],
             ),
             (
                 "db query",
@@ -3116,17 +2961,6 @@ mod tests {
                     "SELECT 1",
                     "--app",
                     "myapp",
-                    "--preflight",
-                ],
-            ),
-            (
-                "previews up",
-                &[
-                    "floo",
-                    "previews",
-                    "up",
-                    "--branch",
-                    "feat/example",
                     "--preflight",
                 ],
             ),
@@ -3168,27 +3002,15 @@ mod tests {
         assert!(!feedback_help.contains("--preflight"));
 
         let mut root = Cli::command();
-        let apps = root.find_subcommand_mut("apps").expect("apps command");
-        let github = apps
-            .find_subcommand_mut("github")
-            .expect("apps github command");
-        let connect_help = github
+        let connect_help = root
             .find_subcommand_mut("connect")
-            .expect("apps github connect command")
+            .expect("connect command")
             .render_long_help()
             .to_string();
         assert!(!connect_help.contains("--preflight"));
 
         assert!(Cli::try_parse_from(["floo", "feedback", "message", "--preflight"]).is_err());
-        assert!(Cli::try_parse_from([
-            "floo",
-            "apps",
-            "github",
-            "connect",
-            "owner/repo",
-            "--preflight",
-        ])
-        .is_err());
+        assert!(Cli::try_parse_from(["floo", "connect", "owner/repo", "--preflight"]).is_err());
     }
 
     #[test]

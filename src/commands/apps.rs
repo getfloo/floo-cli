@@ -26,7 +26,7 @@ pub fn list(page: u32, per_page: u32) {
     if result.apps.is_empty() {
         if !output::is_json_mode() {
             output::info(
-                "No apps yet. Connect a repo: floo apps github connect <owner/repo>",
+                "No apps yet. Run floo deploy in a folder with floo.app.toml.",
                 None,
             );
         } else {

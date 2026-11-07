@@ -95,7 +95,8 @@ fn git(repo: &Path, args: &[&str]) -> String {
 fn write_config(repo: &Path) {
     std::fs::write(
         repo.join("floo.app.toml"),
-        "[app]\nname = \"client-portal\"\naccess_mode = \"accounts\"\n",
+        "[app]\nname = \"client-portal\"\naccess_mode = \"accounts\"\n\n\
+         [services.web]\ntype = \"web\"\npath = \".\"\nport = 3000\ningress = \"public\"\n",
     )
     .unwrap();
 }
@@ -387,6 +388,14 @@ fn a_stop_carries_the_plan_and_creates_nothing() {
             "next": [{"open": url, "cli": "floo apps github setup"}, {"cli": "floo deploy --hosted"}],
         })))
         .create();
+    // A bare install page wouldn't link the installation to floo; setup's link does.
+    let link = "https://api.getfloo.com/v1/github/setup/install?setup_token=t";
+    let setup = server
+        .mock("POST", "/v1/github/setup/begin")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(json!({ "install_url": link }).to_string())
+        .create();
     let create = server.mock("POST", "/v1/apps").expect(0).create();
 
     let err = fails(&env, &[]);
@@ -394,8 +403,15 @@ fn a_stop_carries_the_plan_and_creates_nothing() {
     assert!(err["suggestion"]
         .as_str()
         .unwrap()
-        .starts_with(&format!("Open {url}, then floo deploy ")));
+        .starts_with(&format!("Open {link}, then floo deploy ")));
+    assert_eq!(err["next"][0]["open"], link);
+    assert!(err["next"][0]["cli"]
+        .as_str()
+        .unwrap()
+        .starts_with("floo deploy "));
+    assert_ne!(url, link);
     assert_eq!(err["next"][1]["cli"], "floo deploy --hosted");
+    setup.assert();
     assert_eq!(err["decision"], "connect_github");
     create.assert();
     assert!(pushed(&env).is_none());
@@ -464,7 +480,7 @@ fn hosted_creates_an_empty_repo_adds_origin_and_pushes_without_force() {
     );
     let args = pushed(&env).unwrap();
     assert_eq!(args[2..4], ["-c", "credential.helper="]);
-    assert!(args[5].ends_with(" projects git-credential"));
+    assert!(args[5].ends_with(" git-credential") && !args[5].contains("projects"));
     assert_eq!(
         args[6..],
         [

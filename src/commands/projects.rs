@@ -11,7 +11,7 @@ fn fail(error: FlooApiError) -> ! {
     let next = if error.status_code == 401 || error.code == "NOT_AUTHENTICATED" {
         "next: floo auth login"
     } else {
-        "next: floo projects list"
+        "next: floo apps list"
     };
     let hint = error
         .extra
@@ -41,60 +41,6 @@ fn client() -> FlooClient {
         ));
     }
     FlooClient::new(Some(config)).unwrap_or_else(|error| fail(error))
-}
-
-pub fn create(name: &str) {
-    let project = client()
-        .create_project(name)
-        .unwrap_or_else(|error| fail(error));
-    let next = format!("floo projects clone {}", shell_quote(&project.name));
-    let watch = project
-        .first_deploy_id
-        .as_ref()
-        .map(|_| format!("floo deploys watch --app {}", shell_quote(&project.name)));
-    let mut data = output::to_value(&project);
-    data["login"] = serde_json::json!("hosted, invite-only");
-    data["database"] = serde_json::json!("postgres");
-    data["next"] = serde_json::json!(next);
-    if let Some(watch) = &watch {
-        data["watch"] = serde_json::json!(watch);
-    }
-    if output::is_json_mode() {
-        output::success("Project created.", Some(data));
-        return;
-    }
-    output::success("Project created.", None);
-    output::info(
-        &format!(
-            "app: {}\nurl: {}\nlogin: hosted, invite-only\ndatabase: postgres\nrepo: {}",
-            project.name, project.app_url, project.clone_url
-        ),
-        None,
-    );
-    if let Some(watch) = watch {
-        output::info(&format!("follow first deploy: {watch}"), None);
-    }
-    output::info(&format!("next: {next}"), None);
-}
-
-pub fn list() {
-    let result = client().list_projects().unwrap_or_else(|error| fail(error));
-    let rows = result
-        .projects
-        .iter()
-        .map(|project| {
-            vec![
-                project.name.clone(),
-                project.app_url.clone(),
-                project.clone_url.clone(),
-            ]
-        })
-        .collect::<Vec<_>>();
-    output::table(
-        &["NAME", "URL", "REPO"],
-        &rows,
-        Some(output::to_value(&result)),
-    );
 }
 
 // Git runs ! helpers through a POSIX shell, including Git for Windows. Quote
@@ -143,7 +89,7 @@ pub fn clone(name_or_id: &str, dir: Option<&Path>) {
     #[cfg(windows)]
     let executable = executable.replace('\\', "/");
     let helper = format!(
-        "credential.helper=!{} projects git-credential",
+        "credential.helper=!{} git-credential",
         shell_quote(&executable)
     );
     let dir = dir.unwrap_or_else(|| Path::new(&project.name));
@@ -174,7 +120,7 @@ pub fn clone(name_or_id: &str, dir: Option<&Path>) {
                 &message,
                 &ErrorCode::from_api("GIT_CLONE_FAILED"),
                 Some(&format!(
-                    "next: floo projects clone {} {}",
+                    "next: floo clone {} {}",
                     shell_quote(name_or_id),
                     shell_quote(&dir.to_string_lossy())
                 )),

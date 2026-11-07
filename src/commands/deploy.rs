@@ -472,13 +472,6 @@ fn status_label(status: &str) -> &str {
     }
 }
 
-#[derive(PartialEq)]
-enum PreflightMode {
-    Inspect,
-    Deploy,
-}
-
-/// Validate a local project and report its findings and remote plan.
 pub fn preflight(
     path: PathBuf,
     app: Option<String>,
@@ -492,6 +485,24 @@ pub fn preflight(
         environment,
         PreflightMode::Inspect,
     );
+}
+
+/// Check floo.app.toml and every service before `floo deploy` plans or creates
+/// anything. Errors print the findings and exit; nothing is sent to floo.
+pub(crate) fn validate(path: &std::path::Path) {
+    run_preflight(
+        path.to_path_buf(),
+        None,
+        Vec::new(),
+        "dev".to_string(),
+        PreflightMode::Deploy,
+    );
+}
+
+#[derive(PartialEq)]
+enum PreflightMode {
+    Inspect,
+    Deploy,
 }
 
 /// Validate once; actual deploys reuse the resolved project without emitting JSON success.
@@ -535,7 +546,7 @@ fn run_preflight(
             output::error(
                 "No floo.app.toml or floo.service.toml found.",
                 &ErrorCode::NoConfigFound,
-                Some("Run 'floo init' to create config files, then 'floo apps github connect <repo>' to connect to GitHub."),
+                Some("Run 'floo init' to create config files, then 'floo deploy'."),
             );
             process::exit(1);
         }
@@ -1470,7 +1481,7 @@ fn is_cloudsql_socket_database_url(value: &str) -> bool {
 ///
 /// Service-local paths resolve against `resolved.config_dir` (where the config
 /// lives), NOT a user-supplied path: `resolve_app_context` walks up from the
-/// invocation directory, so for `floo preflight ./sub` the service `path`s are
+/// invocation directory, so for `floo deploy ./sub` the service `path`s are
 /// relative to the config dir, which may be an ancestor. Using the invocation
 /// path would false-error `SERVICE_PATH_NOT_FOUND` on a valid monorepo service.
 fn validate_preflight(
@@ -2118,7 +2129,7 @@ fn generate_security_findings(
             continue;
         }
         // Resolve env files against the project's config dir, not the process
-        // CWD — `floo preflight <path>` runs from anywhere, and the prior
+        // CWD — `floo deploy <path>` runs from anywhere, and the prior
         // `Path::new(&svc.path)` made this scan silently no-op off-cwd.
         let svc_dir = resolved.config_dir.join(&svc.path);
         // Scan the service's configured `env_file` (the source the deploy
@@ -2925,7 +2936,7 @@ pub(crate) fn deploy_imported_env_files(
 /// Import env files declared in `floo.app.toml`.
 ///
 /// Returns the validation message instead of exiting so a caller that created
-/// state on the way here (`apps github connect` creates the app) can undo it
+/// state on the way here can undo it
 /// before the error is reported.
 pub(crate) fn sync_env_vars_if_needed(
     client: &FlooClient,
@@ -3031,13 +3042,13 @@ pub(crate) fn sync_env_vars_if_needed(
     Ok(())
 }
 
-/// What the server-side half of `floo preflight` could do.
+/// What the server-side half of a preflight could do.
 enum RemotePreflight {
     Plan(Box<crate::api_types::PreflightPlan>),
     /// No credentials: only the local checks run.
     NotSignedIn,
     /// The app doesn't exist yet (the usual state before a first deploy, when the
-    /// docs say to run preflight). The local checks still ran; only the server's
+    /// docs say to check the config). The local checks still ran; only the server's
     /// plan for an existing app is skipped.
     AppNotCreated,
 }
@@ -3045,7 +3056,7 @@ enum RemotePreflight {
 fn app_not_created_note(app_name: &str) -> String {
     format!(
         "App '{app_name}' doesn't exist yet, so only the local checks ran. \
-         `floo deploy` or `floo apps github connect` creates it."
+         `floo deploy` creates it."
     )
 }
 

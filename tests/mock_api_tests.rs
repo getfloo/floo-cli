@@ -263,25 +263,6 @@ fn preview_detail_json(branches: &str) -> String {
     )
 }
 
-fn preview_deploy_json(status: &str) -> String {
-    format!(
-        r#"{{
-            "id":"deploy-preview-1",
-            "app_id":"{TEST_APP_ID}",
-            "status":"{status}",
-            "url":"https://my-app-preview-feat-db-abcde.on.getfloo.com",
-            "build_logs":null,
-            "triggered_by":"manual",
-            "commit_sha":"abc123",
-            "env_id":"env-preview-1",
-            "env":"preview",
-            "preview_slug":"feat-db-abcde",
-            "source_branch":"feat/db-branch",
-            "created_at":"2026-06-24T10:00:00Z"
-        }}"#
-    )
-}
-
 // ───────────────────────── Apps ─────────────────────────
 
 #[test]
@@ -3280,14 +3261,7 @@ fn test_deploy_rollback_json() {
         .create();
 
     floo()
-        .args([
-            "--json",
-            "deploys",
-            "rollback",
-            TEST_APP_NAME,
-            "deploy-456",
-            "--yes",
-        ])
+        .args(["--json", "rollback", TEST_APP_NAME, "deploy-456", "--yes"])
         .env("HOME", home.path())
         .assert()
         .success()
@@ -3306,7 +3280,7 @@ fn test_deploy_rollback_refuses_without_yes_in_json_mode() {
     // No rollback mock — the command must refuse before reaching that endpoint.
 
     floo()
-        .args(["--json", "deploys", "rollback", TEST_APP_NAME, "deploy-456"])
+        .args(["--json", "rollback", TEST_APP_NAME, "deploy-456"])
         .env("HOME", home.path())
         .assert()
         .failure()
@@ -3967,67 +3941,6 @@ fn test_preview_resources_reset_dry_run_and_yes_use_generic_endpoint() {
 }
 
 #[test]
-fn test_previews_up_json_sends_preview_deploy_payload_and_returns_single_object() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let _resolve = mock_resolve_app(&mut server);
-    let _deploy = server
-        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
-        .match_body(Matcher::PartialJson(serde_json::json!({
-            "env": "preview",
-            "branch": "feat/db-branch",
-            "commit_sha": "abc123",
-            "ref": "refs/heads/feat/db-branch"
-        })))
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(preview_deploy_json("pending"))
-        .create();
-    let _preview = server
-        .mock(
-            "GET",
-            format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde").as_str(),
-        )
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(preview_detail_json(""))
-        .create();
-
-    let assert = floo()
-        .args([
-            "--json",
-            "previews",
-            "up",
-            "--app",
-            TEST_APP_NAME,
-            "--branch",
-            "feat/db-branch",
-            "--commit-sha",
-            "abc123",
-            "--ref",
-            "refs/heads/feat/db-branch",
-        ])
-        .env("HOME", home.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""success":true"#))
-        .stdout(predicate::str::contains(
-            r#""deploy_id":"deploy-preview-1""#,
-        ))
-        .stdout(predicate::str::contains(
-            r#""source_branch":"feat/db-branch""#,
-        ))
-        .stdout(predicate::str::contains(r#""dev_prod_untouched":true"#));
-
-    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    assert_eq!(
-        output.lines().count(),
-        1,
-        "non-streaming JSON must be one object"
-    );
-}
-
-#[test]
 fn test_previews_status_resolves_preview_url_identifier() {
     let mut server = Server::new();
     let home = setup_config(&server);
@@ -4147,44 +4060,6 @@ fn test_previews_logs_reads_latest_preview_deploy_logs() {
             r#""deploy_id":"deploy-preview-1""#,
         ))
         .stdout(predicate::str::contains("Preview booted"));
-}
-
-#[test]
-fn test_previews_up_surfaces_preview_isolation_failure() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let _resolve = mock_resolve_app(&mut server);
-    let _deploy = server
-        .mock(
-            "POST",
-            format!("/v1/apps/{TEST_APP_ID}/deploys").as_str(),
-        )
-        .with_status(422)
-        .with_header("content-type", "application/json")
-        .with_body(
-            r#"{"detail":{"code":"PREVIEW_MANAGED_SERVICE_ISOLATION_UNAVAILABLE","message":"Preview managed-service isolation is unavailable."}}"#,
-        )
-        .create();
-
-    floo()
-        .args([
-            "--json",
-            "previews",
-            "up",
-            "--app",
-            TEST_APP_NAME,
-            "--branch",
-            "feat/db-branch",
-        ])
-        .env("HOME", home.path())
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains(
-            "PREVIEW_MANAGED_SERVICE_ISOLATION_UNAVAILABLE",
-        ))
-        .stdout(predicate::str::contains(
-            "Preview managed-service isolation could not be provisioned",
-        ));
 }
 
 #[test]
@@ -8507,169 +8382,6 @@ fn test_org_analytics_renders_rejection_breakdown() {
 // GITHUB_INSTALLATION_NOT_AUTHORIZED and no surface re-minted the handshake.
 // The only exit anyone found was uninstalling the App from the GitHub org.
 
-#[test]
-fn test_github_setup_mints_a_link_regardless_of_install_state() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-
-    let begin = server
-        .mock("POST", "/v1/github/setup/begin")
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(
-            r#"{"install_url":"https://api.floo.dev/v1/github/setup/install?setup_token=tok-123"}"#,
-        )
-        .create();
-
-    floo()
-        .args(["--json", "apps", "github", "setup"])
-        .env("HOME", home.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("setup_token=tok-123"))
-        .stdout(predicate::str::contains(
-            r#""next":"floo apps github connect <owner>/<repo>""#,
-        ));
-
-    begin.assert();
-}
-
-#[test]
-fn test_github_setup_no_browser_prints_link_without_polling() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-
-    // expect(1): exactly one setup token per run. Minting a second and
-    // discarding it orphans the first in Redis.
-    let begin = server
-        .mock("POST", "/v1/github/setup/begin")
-        .expect(1)
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(
-            r#"{"install_url":"https://api.floo.dev/v1/github/setup/install?setup_token=tok-456"}"#,
-        )
-        .create();
-    // No /setup/poll mock: --no-browser must return the link and stop. If it
-    // polled, mockito would 501 the unmatched request and this would fail.
-    let poll = server
-        .mock("GET", "/v1/github/setup/poll")
-        .expect(0)
-        .create();
-
-    floo()
-        .args(["apps", "github", "setup", "--no-browser"])
-        .env("HOME", home.path())
-        .assert()
-        .success()
-        .stderr(predicate::str::contains("setup_token=tok-456"));
-
-    begin.assert();
-    poll.assert();
-}
-
-#[test]
-fn test_connect_unauthorized_installation_names_the_setup_command() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let _resolve = mock_resolve_app(&mut server);
-
-    let connect = server
-        .mock(
-            "POST",
-            format!("/v1/apps/{TEST_APP_ID}/github/connection").as_str(),
-        )
-        .with_status(403)
-        .with_header("content-type", "application/json")
-        .with_body(
-            r#"{"detail":{"code":"GITHUB_INSTALLATION_NOT_AUTHORIZED","message":"The floo GitHub App is installed on \"myorg\" but is not linked to floo org \"acme-1234\"."}}"#,
-        )
-        .create();
-
-    floo()
-        .args([
-            "--json",
-            "apps",
-            "github",
-            "connect",
-            "myorg/myrepo",
-            "--app",
-            TEST_APP_NAME,
-            "--no-browser",
-        ])
-        .env("HOME", home.path())
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains(
-            r#""code":"GITHUB_INSTALLATION_NOT_AUTHORIZED""#,
-        ))
-        .stdout(predicate::str::contains("floo apps github setup"));
-
-    connect.assert();
-}
-
-/// The connect API starts the first dev deploy itself (getfloo/floo#4080), so the
-/// CLI follows that deploy and never creates a second one (getfloo/floo#4148 race).
-#[test]
-fn test_connect_follows_the_deploy_floo_started_instead_of_creating_one() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let _resolve = mock_resolve_app(&mut server);
-    let connect = server
-        .mock(
-            "POST",
-            format!("/v1/apps/{TEST_APP_ID}/github/connection").as_str(),
-        )
-        .with_status(201)
-        .with_header("content-type", "application/json")
-        .with_body(r#"{"default_branch":"main"}"#)
-        .create();
-    // An earlier dev deploy exists before connecting; the new one appears after.
-    let earlier = r#"{"id":"dep-earlier","env":"dev","status":"live","url":null,"build_logs":null,"created_at":null,"triggered_by":"cli","commit_sha":"old"}"#;
-    let started = r#"{"id":"dep-first","env":"dev","status":"live","url":"https://my-app-dev.getfloo.app","build_logs":null,"created_at":null,"triggered_by":"github_push","commit_sha":"abc"}"#;
-    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let deploys = server
-        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
-        .match_query(Matcher::Any)
-        .expect(2)
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body_from_request(move |_| {
-            let listed = if calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
-                earlier.to_string()
-            } else {
-                format!("{started},{earlier}")
-            };
-            format!(r#"{{"deploys":[{listed}],"has_more":false}}"#).into_bytes()
-        })
-        .create();
-    let second_deploy = server
-        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
-        .expect(0)
-        .create();
-
-    floo()
-        .args([
-            "--json",
-            "apps",
-            "github",
-            "connect",
-            "myorg/myrepo",
-            "--app",
-            TEST_APP_NAME,
-            "--no-browser",
-        ])
-        .env("HOME", home.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""deployed":true"#))
-        .stdout(predicate::str::contains(r#""id":"dep-first""#));
-
-    connect.assert();
-    deploys.assert();
-    second_deploy.assert();
-}
-
 // --- #252: a failed connect must not strand the app it created ------------
 //
 // `apps github connect` creates the floo app and then links it, as two API
@@ -8678,174 +8390,6 @@ fn test_connect_follows_the_deploy_floo_started_instead_of_creating_one() {
 // by hand before every attempt. Reported against getfloo/floo#2232, where a
 // clean install produced GITHUB_INSTALLATION_NOT_AUTHORIZED and left `athena`
 // behind in status `created` with no services.
-
-/// Mock the name lookup `resolve_app` performs, returning no match so the
-/// command takes its create-the-app branch.
-fn mock_app_lookup_miss(server: &mut Server) -> Mock {
-    server
-        .mock("GET", "/v1/apps")
-        .match_query(Matcher::AllOf(vec![
-            Matcher::UrlEncoded("page".into(), "1".into()),
-            Matcher::UrlEncoded("per_page".into(), "100".into()),
-        ]))
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(r#"{"apps":[]}"#)
-        .create()
-}
-
-fn mock_connect_unauthorized(server: &mut Server) -> Mock {
-    server
-        .mock("POST", &format!("/v1/apps/{TEST_APP_ID}/github/connection")[..])
-        .with_status(403)
-        .with_header("content-type", "application/json")
-        .with_body(
-            r#"{"detail":{"code":"GITHUB_INSTALLATION_NOT_AUTHORIZED","message":"The floo GitHub App is installed on \"acme\" but is not linked to floo org \"acme-org\"."}}"#,
-        )
-        .create()
-}
-
-#[test]
-fn test_failed_connect_removes_the_app_it_created() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let org = server.mock("GET", "/v1/orgs/me").expect(0).create();
-
-    let lookup = mock_app_lookup_miss(&mut server);
-    let create = server
-        .mock("POST", "/v1/apps")
-        .expect(1)
-        .with_status(201)
-        .with_header("content-type", "application/json")
-        .with_body(app_json())
-        .create();
-    let connect = mock_connect_unauthorized(&mut server);
-    let delete = server
-        .mock("DELETE", &format!("/v1/apps/{TEST_APP_ID}")[..])
-        .expect(1)
-        .with_status(204)
-        .create();
-
-    floo()
-        .args([
-            "--json",
-            "apps",
-            "github",
-            "connect",
-            "acme/widgets",
-            "--app",
-            TEST_APP_NAME,
-            "--no-browser",
-        ])
-        .env("HOME", home.path())
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains(
-            "GITHUB_INSTALLATION_NOT_AUTHORIZED",
-        ));
-
-    lookup.assert();
-    create.assert();
-    connect.assert();
-    delete.assert();
-    org.assert();
-}
-
-#[test]
-fn test_failed_connect_keeps_an_app_it_did_not_create() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-
-    // The app already exists, so this run did not create it. It can hold
-    // services, env vars, and deploy history; a failed link is no licence to
-    // delete any of that.
-    let lookup = server
-        .mock("GET", "/v1/apps")
-        .match_query(Matcher::AllOf(vec![
-            Matcher::UrlEncoded("page".into(), "1".into()),
-            Matcher::UrlEncoded("per_page".into(), "100".into()),
-        ]))
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(format!(r#"{{"apps":[{app}]}}"#, app = app_json()))
-        .create();
-    let create = server.mock("POST", "/v1/apps").expect(0).create();
-    let connect = mock_connect_unauthorized(&mut server);
-    let delete = server
-        .mock("DELETE", &format!("/v1/apps/{TEST_APP_ID}")[..])
-        .expect(0)
-        .create();
-
-    floo()
-        .args([
-            "--json",
-            "apps",
-            "github",
-            "connect",
-            "acme/widgets",
-            "--app",
-            TEST_APP_NAME,
-            "--no-browser",
-        ])
-        .env("HOME", home.path())
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains(
-            "GITHUB_INSTALLATION_NOT_AUTHORIZED",
-        ));
-
-    lookup.assert();
-    create.assert();
-    connect.assert();
-    delete.assert();
-}
-
-#[test]
-fn test_failed_connect_reports_a_cleanup_it_could_not_perform() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-
-    let lookup = mock_app_lookup_miss(&mut server);
-    let create = server
-        .mock("POST", "/v1/apps")
-        .with_status(201)
-        .with_header("content-type", "application/json")
-        .with_body(app_json())
-        .create();
-    let connect = mock_connect_unauthorized(&mut server);
-    // Cleanup itself fails. Silence here would strand an app the operator does
-    // not know exists, so the delete command must reach them in the error.
-    let delete = server
-        .mock("DELETE", &format!("/v1/apps/{TEST_APP_ID}")[..])
-        .expect(1)
-        .with_status(500)
-        .with_header("content-type", "application/json")
-        .with_body(r#"{"detail":{"code":"INTERNAL","message":"boom"}}"#)
-        .create();
-
-    floo()
-        .args([
-            "--json",
-            "apps",
-            "github",
-            "connect",
-            "acme/widgets",
-            "--app",
-            TEST_APP_NAME,
-            "--no-browser",
-        ])
-        .env("HOME", home.path())
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains(
-            &format!("floo apps delete {TEST_APP_NAME}")[..],
-        ));
-
-    lookup.assert();
-    create.assert();
-    connect.assert();
-    delete.assert();
-}
 
 const DOMAIN_TRAFFIC_LINE: &str = "  CNAME  app.example.com -> edge.example.com  (traffic)";
 const DOMAIN_APEX_NOTE: &str =
@@ -8987,50 +8531,6 @@ fn run_deploy_read(args: &[&str], deploy: serde_json::Value) -> std::process::Ou
         .env("HOME", home.path())
         .output()
         .unwrap()
-}
-
-#[test]
-fn deploy_status_renders_all_diagnostics_in_severity_order() {
-    let result = run_deploy_read(
-        &["deploys", "status"],
-        serde_json::json!({
-            "id":"deploy-1", "status":"live", "diagnostics": diagnostic_fixture()
-        }),
-    );
-    assert!(result.status.success());
-    assert!(result.stdout.is_empty());
-    assert!(String::from_utf8(result.stderr)
-        .unwrap()
-        .contains(RENDERED_DIAGNOSTICS));
-}
-
-#[test]
-fn deploy_status_json_preserves_diagnostic_metadata_and_api_order() {
-    let result = run_deploy_read(
-        &["--json", "deploys", "status"],
-        serde_json::json!({
-            "id":"deploy-1", "status":"live", "diagnostics": diagnostic_fixture()
-        }),
-    );
-    assert!(result.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
-    assert_eq!(json["data"]["diagnostics"][0], diagnostic_fixture()[0]);
-    assert_eq!(json["data"]["diagnostics"].as_array().unwrap().len(), 3);
-    assert!(result.stderr.is_empty());
-}
-
-#[test]
-fn deploy_status_accepts_absent_diagnostics() {
-    let result = run_deploy_read(
-        &["--json", "deploys", "status"],
-        serde_json::json!({
-            "id":"deploy-1", "status":"live"
-        }),
-    );
-    assert!(result.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
-    assert_eq!(json["data"]["diagnostics"], serde_json::json!([]));
-    assert!(json["data"]["image_built"].is_null());
 }
 
 #[test]
@@ -9417,91 +8917,6 @@ mod local_env_contract {
         create.assert();
         delete.assert();
     }
-}
-
-#[test]
-fn deploy_status_restart_does_not_report_inherited_image_as_built() {
-    let result = run_deploy_read(
-        &["--json", "deploys", "status"],
-        serde_json::json!({
-            "id":"restart-12f6ddb1", "status":"superseded", "triggered_by":"restart",
-            "source_deploy_id":"source-089a33db", "duration_ms":464059,
-            "steps":[
-                {"name":"schedule_job", "status":"success", "duration_ms":134171},
-                {"name":"build_image", "status":"skipped"},
-                {"name":"push_image", "status":"skipped"},
-                {"name":"deploy_service", "status":"success", "duration_ms":329681}
-            ]
-        }),
-    );
-    assert!(result.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
-    assert_eq!(json["data"]["image_built"], false);
-    assert_eq!(json["data"]["duration_ms"], 464059);
-    assert_eq!(json["data"]["service_ready"], false);
-    assert!(result.stderr.is_empty());
-}
-
-#[test]
-fn deploy_status_preserves_successful_build_when_later_rollout_fails() {
-    let result = run_deploy_read(
-        &["--json", "deploys", "status"],
-        serde_json::json!({
-            "id":"deploy-1", "status":"failed",
-            "steps":[
-                {"name":"build_image", "status":"success"},
-                {"name":"deploy_service", "status":"failed"}
-            ]
-        }),
-    );
-    assert!(result.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
-    assert_eq!(json["data"]["image_built"], true);
-    assert_eq!(json["data"]["service_ready"], false);
-}
-
-#[test]
-fn deploy_status_failed_aggregate_build_does_not_guess_about_partial_images() {
-    let result = run_deploy_read(
-        &["--json", "deploys", "status"],
-        serde_json::json!({
-            "id":"deploy-1", "status":"failed",
-            "steps":[{"name":"build_image", "status":"failed"}]
-        }),
-    );
-    assert!(result.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
-    assert!(json["data"]["image_built"].is_null());
-}
-
-#[test]
-fn deploy_status_incomplete_build_evidence_is_unknown() {
-    let result = run_deploy_read(
-        &["--json", "deploys", "status"],
-        serde_json::json!({
-            "id":"deploy-1", "status":"building",
-            "steps":[{"name":"build_image", "status":"running"}]
-        }),
-    );
-    assert!(result.status.success());
-    let json: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
-    assert!(json["data"]["image_built"].is_null());
-}
-
-#[test]
-fn deploy_status_human_duration_names_whole_attempt() {
-    let result = run_deploy_read(
-        &["deploys", "status"],
-        serde_json::json!({
-            "id":"restart-1", "status":"live", "duration_ms":464059,
-            "steps":[{"name":"build_image", "status":"skipped"}]
-        }),
-    );
-    assert!(result.status.success());
-    assert!(result.stdout.is_empty());
-    let stderr = String::from_utf8(result.stderr).unwrap();
-    assert!(stderr.contains("image_built:   false"));
-    assert!(stderr.contains("deploy duration: 7m 44s"));
 }
 
 mod app_api_keys {
@@ -9921,61 +9336,6 @@ mod app_api_keys {
             .stderr(predicate::str::contains(RAW_KEY).not());
         create.assert();
     }
-}
-
-fn mock_github_connection_with_last_push(server: &mut Server, last_push: &str) -> Mock {
-    server
-        .mock(
-            "GET",
-            format!("/v1/apps/{TEST_APP_ID}/github/connection").as_str(),
-        )
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(format!(
-            r#"{{"id":"c1","app_id":"{TEST_APP_ID}","connected":true,"skip_env_var_check":false,"preview_enabled":false,"preview_ttl_hours":null,"connected_at":"2026-10-27T22:00:00Z","repo_full_name":"myorg/myrepo","default_branch":"main","installation_id":1,"services":[],"last_push":{last_push}}}"#
-        ))
-        .create()
-}
-
-#[test]
-fn test_doctor_push_skipped_push_exits_nonzero_with_next_step() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let _resolve = mock_resolve_app(&mut server);
-    let connection = mock_github_connection_with_last_push(
-        &mut server,
-        r#"{"at":"2026-10-27T22:12:00Z","branch":"main","commit_sha":"abc1234def","outcome":"deploy_on_push_off","needs_action":true,"summary":"The last push to main (abc1234) was skipped because deploy_on_push is false in floo.app.toml.","next_step":"Set deploy_on_push = true under [github] in floo.app.toml and push again."}"#,
-    );
-
-    floo()
-        .args(["--json", "doctor", "push", "--app", TEST_APP_NAME])
-        .env("HOME", home.path())
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains(
-            r#""outcome":"deploy_on_push_off""#,
-        ))
-        .stdout(predicate::str::contains("Set deploy_on_push = true"));
-
-    connection.assert();
-}
-
-#[test]
-fn test_doctor_push_started_deploy_exits_zero() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let _resolve = mock_resolve_app(&mut server);
-    let _connection = mock_github_connection_with_last_push(
-        &mut server,
-        r#"{"at":"2026-10-27T22:12:00Z","branch":"main","commit_sha":"abc1234def","outcome":"deploying","needs_action":false,"summary":"The last push to main (abc1234) created a dev deploy.","next_step":"Follow it with `floo deploys watch --commit abc1234`."}"#,
-    );
-
-    floo()
-        .args(["doctor", "push", "--app", TEST_APP_NAME])
-        .env("HOME", home.path())
-        .assert()
-        .success()
-        .stderr(predicate::str::contains("created a dev deploy"));
 }
 
 const STATUS_SHA: &str = "cccccccccccccccccccccccccccccccccccccccc";

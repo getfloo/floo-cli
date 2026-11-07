@@ -363,6 +363,13 @@ fn a_repo_floo_cannot_read_stops_before_anything_is_pushed() {
         &mut server,
         json!({"accessible": false, "reason": "APP_NOT_INSTALLED"}),
     );
+    let link = "https://api.getfloo.com/v1/github/setup/install?setup_token=t";
+    let _setup = server
+        .mock("POST", "/v1/github/setup/begin")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(json!({ "install_url": link }).to_string())
+        .create();
     let moved = mock_move(&mut server).expect(0);
 
     let output = floo(&env, &[TARGET])
@@ -378,7 +385,9 @@ fn a_repo_floo_cannot_read_stops_before_anything_is_pushed() {
     assert!(reply["error"]["suggestion"]
         .as_str()
         .unwrap()
-        .starts_with("floo apps github setup && floo connect acme/storefront"));
+        .starts_with(&format!(
+            "Open {link}, install the App on acme, then floo connect acme/storefront"
+        )));
     assert_eq!(refs(&env.bare(TARGET)), "");
 }
 

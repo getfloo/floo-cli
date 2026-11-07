@@ -468,14 +468,36 @@ fn test_deploy_help() {
 }
 
 #[test]
-fn test_releases_promote_help() {
+fn test_promote_help() {
     floo()
-        .args(["releases", "promote", "--help"])
+        .args(["promote", "--help"])
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "Promote a floo-managed project to prod",
+            "Release the version live on dev to prod",
         ));
+}
+
+#[test]
+fn test_removed_commands_name_their_replacement() {
+    floo()
+        .args(["apps", "github", "connect", "acme/shop"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "`floo apps github connect` was removed. Use `floo connect owner/repo`.",
+        ));
+    let output = floo()
+        .args(["--json", "releases", "promote", "--app", "shop"])
+        .assert()
+        .code(2)
+        .get_output()
+        .stdout
+        .clone();
+    let output: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(output["error"]["code"], "COMMAND_REMOVED");
+    assert_eq!(output["error"]["replacement"], "floo promote");
+    assert_eq!(output["error"]["removed"], "floo releases promote");
 }
 
 #[test]
@@ -689,16 +711,18 @@ fn test_deploy_watch_help() {
 #[test]
 fn test_deploy_rollback_help() {
     floo()
-        .args(["deploys", "rollback", "--help"])
+        .args(["rollback", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Rollback to a previous deploy"));
+        .stdout(predicate::str::contains(
+            "Roll an app back to a previous deploy",
+        ));
 }
 
 #[test]
 fn test_deploy_rollback_not_authenticated() {
     floo()
-        .args(["deploys", "rollback", "my-app", "some-deploy-id"])
+        .args(["rollback", "my-app", "some-deploy-id"])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
@@ -708,7 +732,7 @@ fn test_deploy_rollback_not_authenticated() {
 #[test]
 fn test_deploy_rollback_json_not_authenticated() {
     floo()
-        .args(["--json", "deploys", "rollback", "my-app", "some-deploy-id"])
+        .args(["--json", "rollback", "my-app", "some-deploy-id"])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
@@ -1028,8 +1052,8 @@ fn test_init_creates_config_json() {
         .success()
         .stdout(predicate::str::contains(r#""app_name":"myapp"#))
         .stdout(predicate::str::contains("floo preflight --json"))
-        .stdout(predicate::str::contains("commit and push"))
-        .stdout(predicate::str::contains("floo apps github connect"))
+        .stdout(predicate::str::contains("commit the generated files"))
+        .stdout(predicate::str::contains("floo deploy --json"))
         .stdout(predicate::str::contains(r#""success":true"#));
 
     // Service is now inline in floo.app.toml — no separate floo.service.toml
@@ -1044,7 +1068,7 @@ fn test_init_creates_config_json() {
 }
 
 #[test]
-fn test_init_links_config_docs_and_preserves_push_before_connect() {
+fn test_init_links_config_docs_and_puts_commit_before_deploy() {
     let project = tempfile::TempDir::new().unwrap();
     std::fs::write(
         project.path().join("package.json"),
@@ -1068,14 +1092,14 @@ fn test_init_links_config_docs_and_preserves_push_before_connect() {
         toml.starts_with("# floo.app.toml"),
         "header should lead the file"
     );
-    // The push auto-deploy contract is explicit.
+    // The commit-then-deploy step and the push auto-deploy contract are explicit.
     assert!(
-        toml.contains("Commit and push"),
-        "push contract must be in header"
+        toml.contains("Commit this file, then run `floo deploy`"),
+        "header must put the committed config before the first deploy"
     );
     assert!(
-        toml.contains("Commit and push this file before `floo apps github connect`"),
-        "header must put the pushed source before the first connect"
+        toml.contains("every push to your default branch"),
+        "push contract must be in header"
     );
     assert!(toml.contains("https://getfloo.com/docs/reference/config-spec.md"));
     assert!(toml.contains("https://getfloo.com/docs/introduction"));
@@ -2699,14 +2723,7 @@ fn test_cron_run_json_not_authenticated() {
 #[test]
 fn test_dry_run_rollback() {
     floo()
-        .args([
-            "--json",
-            "--dry-run",
-            "deploys",
-            "rollback",
-            "my-app",
-            "deploy-123",
-        ])
+        .args(["--json", "--dry-run", "rollback", "my-app", "deploy-123"])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -2716,7 +2733,7 @@ fn test_dry_run_rollback() {
 #[test]
 fn test_dry_run_rollback_human_has_preview() {
     floo()
-        .args(["--dry-run", "deploys", "rollback", "my-app", "deploy-123"])
+        .args(["--dry-run", "rollback", "my-app", "deploy-123"])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()

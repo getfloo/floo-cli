@@ -422,6 +422,8 @@ pub fn deploy(args: DeployArgs) {
         None
     };
 
+    super::deploy::validate(path);
+
     let logged_in = crate::config::load_config().api_key.is_some();
     if output::is_dry_run_mode() && !logged_in {
         output::dry_run_preview(
@@ -454,6 +456,9 @@ pub fn deploy(args: DeployArgs) {
         plan = ask_plan(&client, &folder, &app_name, None);
     }
     if !plan.ok {
+        if plan.code.as_deref() == Some("GITHUB_APP_NOT_INSTALLED") {
+            offer_setup_link(&client, &mut plan, &quoted);
+        }
         stop_with_plan(&plan, &quoted);
     }
     if app_name != configured {
@@ -555,6 +560,22 @@ fn suggestion(plan: &DeployPlan, quoted: &str) -> String {
                 .or(step.cli.clone())
         })
         .unwrap_or_else(|| format!("floo deploy {quoted}"))
+}
+
+/// floo's one-link GitHub setup: GitHub asks the person to authorize, then to
+/// install the floo App, and the installation is linked to this floo org.
+pub(crate) fn github_setup_link(client: &FlooClient) -> Option<String> {
+    let started = client.github_setup_begin().ok()?;
+    started["install_url"].as_str().map(str::to_owned)
+}
+
+/// A plan that stops on a missing installation gets the setup link to open,
+/// since a plain GitHub install page wouldn't link the installation to floo.
+fn offer_setup_link(client: &FlooClient, plan: &mut DeployPlan, quoted: &str) {
+    if let (Some(link), Some(step)) = (github_setup_link(client), plan.next.first_mut()) {
+        step.open = Some(link);
+        step.cli = Some(format!("floo deploy {quoted}"));
+    }
 }
 
 fn stop_with_plan(plan: &DeployPlan, quoted: &str) -> ! {
@@ -815,7 +836,7 @@ pub(crate) fn hosted_git(path: &Path, clone_url: &str) -> Command {
     #[cfg(windows)]
     let executable = executable.replace('\\', "/");
     let helper = format!(
-        "credential.helper=!{} projects git-credential",
+        "credential.helper=!{} git-credential",
         shell_quote(&executable)
     );
     let mut command = git(path);

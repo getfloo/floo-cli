@@ -10,15 +10,14 @@ use crate::project_config::{self, AppFileAppSection, AppFileConfig, AppServiceEn
 
 /// Header comment block written above `[app]` on `floo init`.
 ///
-/// Keep the push-before-connect invariant beside the file it protects. Link
+/// Keep the commit-before-deploy step beside the file it needs. Link
 /// configuration details to web docs so generated comments do not become a
 /// second platform reference.
 const APP_TOML_HEADER: &str = r#"# floo.app.toml — see https://getfloo.com/docs/reference/config-spec.md
 #
-# Commit and push this file before `floo apps github connect`. Connect creates
-# the floo app and triggers the first deploy from the pushed GitHub source.
-# After that, every push to your default branch builds and deploys to the dev
-# environment automatically (no manual deploy command needed). See
+# Commit this file, then run `floo deploy`. It deploys from the folder's GitHub
+# repo, or from a copy floo hosts. After that, every push to your default branch
+# builds and deploys to the dev environment automatically. See
 # https://getfloo.com/docs/introduction.
 #
 # Run `floo docs config` for the configuration reference."#;
@@ -259,7 +258,7 @@ fn init_non_interactive(
         },
         "agents_md_written": agents_md_written,
         "hint": "Edit floo.app.toml to configure your services — run 'floo docs config' for the schema",
-        "next_step": "Run 'floo preflight --json', commit and push the generated files, then connect GitHub with 'floo apps github connect <owner/repo>'.",
+        "next_step": "Run 'floo preflight --json', commit the generated files, then run 'floo deploy --json'.",
     });
 
     if !project_path.join("Dockerfile").exists() {
@@ -269,10 +268,8 @@ fn init_non_interactive(
     }
 
     if !output::is_json_mode() {
-        eprintln!("  Next: edit floo.app.toml, then run 'floo preflight'.");
-        eprintln!("        Commit and push these files before running");
-        eprintln!("        'floo apps github connect <owner/repo>'.");
-        eprintln!("        Connect deploys the pushed commit; later pushes deploy automatically.");
+        eprintln!("  Next: edit floo.app.toml, commit, then run 'floo deploy'.");
+        eprintln!("        Later pushes to the default branch deploy automatically.");
     }
     output::success(&format!("Initialized app '{app_name}'."), Some(json_data));
 }
@@ -448,10 +445,8 @@ fn init_interactive(
         output::info("Wrote AGENTS.md (agent operating notes)", None);
     }
 
-    eprintln!("  Next: edit floo.app.toml, then run 'floo preflight'.");
-    eprintln!("        Commit and push these files before running");
-    eprintln!("        'floo apps github connect <owner/repo>'.");
-    eprintln!("        Connect deploys the pushed commit; later pushes deploy automatically.");
+    eprintln!("  Next: edit floo.app.toml, commit, then run 'floo deploy'.");
+    eprintln!("        Later pushes to the default branch deploy automatically.");
     output::success(&format!("Initialized app '{app_name}'."), None);
 }
 

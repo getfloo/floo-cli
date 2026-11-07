@@ -613,18 +613,9 @@ pub struct DeployDiagnostic {
     pub knowledge_ref: Option<String>,
 }
 
-/// Execution evidence for one aggregate deploy phase; excludes step logs.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeployStep {
-    pub name: String,
-    pub status: String,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Deploy {
     pub id: String,
-    #[serde(default, skip_serializing)]
-    pub steps: Vec<DeployStep>,
     #[serde(default)]
     pub app_id: Option<String>,
     #[serde(default)]
@@ -1265,84 +1256,6 @@ pub struct PromoteResponse {
 }
 
 // --- GitHub ---
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GitHubConnectResponse {
-    pub default_branch: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GitHubStatusResponse {
-    pub id: String,
-    pub app_id: String,
-    pub skip_env_var_check: bool,
-    pub preview_enabled: bool,
-    pub preview_ttl_hours: Option<i64>,
-    pub connected_at: String,
-    pub repo_full_name: Option<String>,
-    pub default_branch: Option<String>,
-    pub installation_id: Option<i64>,
-    pub services: Vec<ServiceGitHubInfo>,
-    /// The last push webhook for this app and what floo did with it.
-    #[serde(default)]
-    pub last_push: Option<GitHubLastPush>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GitHubLastPush {
-    pub at: String,
-    pub branch: String,
-    pub commit_sha: String,
-    pub outcome: String,
-    pub needs_action: bool,
-    pub summary: String,
-    pub next_step: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServiceGitHubInfo {
-    pub name: String,
-    pub repo_full_name: Option<String>,
-    pub default_branch: Option<String>,
-    pub installation_id: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum GitHubSetupStatus {
-    None,
-    AwaitingInstallation,
-    AwaitingOrgApproval,
-    /// The authorizing GitHub identity can reach more than one floo
-    /// installation, so the API refuses to guess which one the caller meant
-    /// and returns the candidate list instead.
-    AwaitingSelection,
-    Ready,
-    /// A status this CLI predates. Without this arm serde fails the whole
-    /// response and the caller reports an undiagnosable parse error at HTTP
-    /// 200 — which is exactly how `awaiting_selection` presented before this
-    /// variant existed. An unknown status must degrade to a version-skew
-    /// message, never to a decoding failure.
-    #[serde(other)]
-    Unknown,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct GitHubInstallationCandidate {
-    pub installation_id: i64,
-    pub owner_login: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GitHubSetupPollResponse {
-    pub status: GitHubSetupStatus,
-    pub installation_id: Option<i64>,
-    /// Populated only for `AwaitingSelection`. The API treats this list as the
-    /// proof of what the authorizing user may bind; an installation outside it
-    /// is refused, so the CLI must select from it rather than invent an ID.
-    #[serde(default)]
-    pub candidates: Vec<GitHubInstallationCandidate>,
-}
 
 // --- Dev Session ---
 

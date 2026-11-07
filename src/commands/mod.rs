@@ -24,7 +24,6 @@ pub mod edge;
 pub mod env;
 pub mod events;
 pub mod feedback;
-pub mod github;
 pub mod init;
 pub mod logs;
 pub mod notifications;
@@ -33,6 +32,7 @@ pub mod orgs;
 pub mod previews;
 pub mod projects;
 pub mod releases;
+pub mod removed;
 pub mod rollbacks;
 pub mod run;
 

@@ -14,169 +14,6 @@ use crate::deploy_status;
 use crate::errors::ErrorCode;
 use crate::output;
 
-/// Compact, agent-safe deploy status summary.
-///
-/// Composed entirely from existing API endpoints (`get_app` + the
-/// latest entry in `list_deploys` / `get_deploy`). Emits derived phase
-/// booleans the user can branch on without parsing build logs:
-///
-/// - `image_built` — true for a successful aggregate build step, false when
-///   skipped, unknown otherwise; not a claim that every service was rebuilt
-/// - `service_ready` — Cloud Run is serving the new revision
-/// - `host_bound` — the gateway URL is wired and the deploy is LIVE
-///
-/// Always emits the same compact shape; never includes build logs or
-/// other audit payload that could carry secret env values. Closes
-/// feedback `5c7621fd` (floo-artifact, 2026-04-30): "add a safe
-/// status/debug command that summarizes deploy state without dumping
-/// build logs, Cloud Run audit payloads, or secret env values."
-pub fn status(app: Option<&str>, deploy_id: Option<&str>) {
-    super::require_auth();
-    let client = super::init_client(None);
-
-    let (app_id, app_name) = super::resolve_app_from_config(&client, app);
-
-    let app_info = match client.get_app(&app_id) {
-        Ok(a) => a,
-        Err(e) => {
-            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-            process::exit(1);
-        }
-    };
-
-    let deploy = match deploy_id {
-        Some(id) => {
-            let full_id = resolve_deploy_id(&client, &app_id, id);
-            match client.get_deploy(&app_id, &full_id) {
-                Ok(d) => d,
-                Err(e) => {
-                    output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-                    process::exit(1);
-                }
-            }
-        }
-        None => match client.list_deploys(&app_id) {
-            Ok(list) => match list.deploys.into_iter().next() {
-                Some(d) => d,
-                None => {
-                    output::error(
-                        "No deploys found for this app yet.",
-                        &ErrorCode::DeployNotFound,
-                        Some(
-                            "Push to the connected GitHub branch, or run \
-                             `floo redeploy --app <name>`.",
-                        ),
-                    );
-                    process::exit(1);
-                }
-            },
-            Err(e) => {
-                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-                process::exit(1);
-            }
-        },
-    };
-
-    let deploy_status = deploy.status.as_deref().unwrap_or("unknown");
-    let app_status = app_info.status.as_deref().unwrap_or("unknown");
-    let gateway_url = app_info.url.as_deref().or(deploy.url.as_deref());
-    let commit_short = deploy.commit_sha.as_deref().map(super::short_sha);
-
-    let build_step = deploy.steps.iter().find(|step| step.name == "build_image");
-    let image_built = match build_step.map(|step| step.status.as_str()) {
-        Some("success") => Some(true),
-        Some("skipped") => Some(false),
-        // A failed multi-service build may already have built some images.
-        // Missing or incomplete step evidence cannot answer this boolean.
-        _ => None,
-    };
-    let service_ready = matches!(deploy_status, "live");
-    // host_bound is the strict signal: the gateway URL is wired AND the
-    // deploy is the one currently serving. A deploy that "looks live"
-    // because the direct Cloud Run URL serves new code but the gateway
-    // 502s is exactly the floo-artifact 2026-04-30 fed461a6 shape — so
-    // host_bound=false on that state is the right answer for an agent.
-    let host_bound = service_ready && gateway_url.is_some() && app_status == "live";
-
-    let next_command = derive_next_command(deploy_status, host_bound);
-
-    let summary = serde_json::json!({
-        "app": app_name,
-        "deploy_id": deploy.id,
-        "commit": commit_short,
-        "status": deploy_status,
-        "app_status": app_status,
-        "status_semantics": {
-            "status": "deploy_attempt",
-            "app_status": "currently_serving_app",
-        },
-        "url": gateway_url,
-        "image_built": image_built,
-        "service_ready": service_ready,
-        "host_bound": host_bound,
-        "failure_reason": failure_reason(&deploy),
-        "failing_stage": failure_stage(&deploy),
-        "created_at": deploy.created_at,
-        "started_at": deploy.started_at,
-        "finished_at": deploy.finished_at,
-        "duration_ms": deploy.duration_ms,
-        "next_command": next_command,
-        "diagnostics": deploy.diagnostics,
-    });
-
-    if output::is_json_mode() {
-        output::success("Deploy status retrieved.", Some(summary));
-        return;
-    }
-
-    let header = format!("{} ({})", app_name, deploy.id);
-    output::bold_line(&header);
-    output::dim_line(&format!(
-        "  status:        {} (deploy attempt)",
-        colored_status(deploy_status)
-    ));
-    output::dim_line(&format!("  app_status:    {} (current app)", app_status));
-    output::dim_line(&format!(
-        "  commit:        {}",
-        commit_short.unwrap_or("\u{2014}")
-    ));
-    output::dim_line(&format!(
-        "  url:           {}",
-        gateway_url.unwrap_or("\u{2014}")
-    ));
-    output::dim_line(&format!(
-        "  image_built:   {}",
-        image_built.map_or("unknown", |built| if built { "true" } else { "false" })
-    ));
-    output::dim_line(&format!("  service_ready: {}", service_ready));
-    output::dim_line(&format!("  host_bound:    {}", host_bound));
-    output::dim_line(&format!(
-        "  deploy duration: {}",
-        format_duration_ms(deploy.duration_ms)
-    ));
-    if let Some(reason) = failure_reason(&deploy) {
-        let stage = failure_stage(&deploy).unwrap_or("unknown");
-        output::dim_line(&format!("  failure:       {stage}: {reason}"));
-    }
-    output::dim_line(&format!("  next_command:  {}", next_command));
-    render_diagnostics(&deploy.diagnostics);
-}
-
-/// Suggest the next command an agent or operator should run, based on
-/// the current state. Agent-safe: never names a destructive command
-/// without explicit caller confirmation.
-fn derive_next_command(deploy_status: &str, host_bound: bool) -> &'static str {
-    match deploy_status {
-        "pending" | "scheduled" | "building" | "deploying" | "configuring_routing" => {
-            "floo deploys watch"
-        }
-        "failed" => "floo deploys logs",
-        "live" if host_bound => "floo logs",
-        "live" => "floo apps show",
-        _ => "floo apps show",
-    }
-}
-
 fn deploy_list_payload(result: &crate::api_types::ListDeploysResponse) -> serde_json::Value {
     let deploys: Vec<serde_json::Value> = result
         .deploys
@@ -398,7 +235,7 @@ pub fn logs(deploy_id: Option<&str>, app: Option<&str>, follow: bool) {
                     output::error(
                         "No deploys found for this app.",
                         &ErrorCode::DeployNotFound,
-                        Some("Connect a repo first: floo apps github connect <owner/repo>"),
+                        Some("Deploy the app first: floo deploy"),
                     );
                     process::exit(1);
                 }
@@ -728,7 +565,7 @@ pub fn watch(app: Option<&str>, commit: Option<&str>) {
             output::error(
                 "No deploy found.",
                 &ErrorCode::DeployNotFound,
-                Some("Connect a repo first: floo apps github connect <owner/repo>"),
+                Some("Deploy the app first: floo deploy"),
             );
             process::exit(1);
         }
@@ -887,7 +724,7 @@ fn find_deploy_by_commit(
                 ),
                 &ErrorCode::DeployTimeout,
                 Some(&format!(
-                    "The push may still deploy. Run `floo deploys watch --commit {sha_prefix}` to keep waiting, or `floo doctor push` to see why it has not deployed."
+                    "The push may still deploy. Run `floo deploys watch --commit {sha_prefix}` to keep waiting, or `floo status --commit {sha_prefix}` to see why it has not deployed."
                 )),
             );
             process::exit(1);
