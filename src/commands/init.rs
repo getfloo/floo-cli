@@ -258,7 +258,7 @@ fn init_non_interactive(
         },
         "agents_md_written": agents_md_written,
         "hint": "Edit floo.app.toml to configure your services — run 'floo docs config' for the schema",
-        "next_step": "Run 'floo preflight --json', commit the generated files, then run 'floo deploy --json'.",
+        "next_step": "Run 'floo deploy --preflight --json' to check the config, commit the generated files, then run 'floo deploy --json'.",
     });
 
     if !project_path.join("Dockerfile").exists() {

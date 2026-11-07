@@ -241,13 +241,137 @@ fn preflight_without_sign_in_reports_the_folder_with_credentials_stripped() {
         .clone();
     assert!(!String::from_utf8_lossy(&out).contains("ghp_secret"));
     let value: Value = serde_json::from_slice(&out).unwrap();
-    assert_eq!(value["data"]["action"], "plan");
-    assert_eq!(value["data"]["commit"], sha);
+    assert_eq!(value["data"]["valid"], true);
+    let plan = &value["data"]["deploy_plan"];
+    assert_eq!(plan["code"], "NOT_AUTHENTICATED");
+    assert_eq!(plan["commit"], sha);
     assert_eq!(
-        value["data"]["remotes"],
+        plan["remotes"],
         json!([{"name": "origin", "url": "https://github.com/acme/client-portal.git"}])
     );
     assert!(pushed(&env).is_none());
+}
+
+/// `floo deploy --preflight` is the one check before a deploy: the config report,
+/// then the plan, with nothing created or pushed. An invalid config never plans.
+#[test]
+fn preflight_checks_the_config_then_shows_the_plan_and_changes_nothing() {
+    let mut server = Server::new();
+    let env = setup(&server);
+    committed_repo(&env);
+    git(
+        env.repo.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/acme/client-portal",
+        ],
+    );
+    let source = json!({"kind": "github", "repo": "acme/client-portal", "branch": "main"});
+    let planned = server
+        .mock("POST", "/v1/deploy/plan")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(plan(json!({
+            "ok": true, "decision": "connect_github", "source": source,
+            "message": "origin is acme/client-portal and floo can read it.",
+        })))
+        .expect(2)
+        .create();
+    let lookup = server
+        .mock("GET", "/v1/apps")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"apps":[]}"#)
+        .expect(2)
+        .create();
+    let create = server.mock("POST", "/v1/apps").expect(0).create();
+
+    let out = floo(&env)
+        .args(["--preflight", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let value: Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(value["data"]["valid"], true);
+    assert_eq!(value["data"]["app"], "client-portal");
+    assert_eq!(value["data"]["services"][0]["name"], "web");
+    assert_eq!(value["data"]["plan_skipped_reason"], "APP_NOT_CREATED");
+    assert_eq!(value["data"]["deploy_plan"]["ok"], true);
+    assert_eq!(value["data"]["deploy_plan"]["decision"], "connect_github");
+
+    floo(&env)
+        .arg("--preflight")
+        .assert()
+        .success()
+        .stderr(predicates::str::contains(
+            "Deploy plan: origin is acme/client-portal and floo can read it.",
+        ));
+    planned.assert();
+
+    std::fs::write(
+        env.repo.path().join("floo.app.toml"),
+        "[app]\nname = \"client-portal\"\n\n[services.web]\ntype = \"web\"\npath = \"missing\"\nport = 3000\ningress = \"public\"\n",
+    )
+    .unwrap();
+    let out = floo(&env)
+        .args(["--preflight", "--json"])
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    let value: Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(value["data"]["valid"], false);
+    assert!(value["data"].get("deploy_plan").is_none());
+    planned.assert();
+    lookup.assert();
+    create.assert();
+    assert!(pushed(&env).is_none());
+}
+
+/// The checks run before git is set up, and the plan names the git step that's missing.
+#[test]
+fn preflight_runs_the_config_checks_before_the_folder_is_a_repository() {
+    let mut server = Server::new();
+    let env = setup(&server);
+    let _lookup = server
+        .mock("GET", "/v1/apps")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"apps":[]}"#)
+        .create();
+    let planned = server.mock("POST", "/v1/deploy/plan").expect(0).create();
+    write_config(env.repo.path());
+    let out = floo(&env)
+        .args(["--preflight", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let value: Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(value["data"]["valid"], true);
+    let plan = &value["data"]["deploy_plan"];
+    assert_eq!(plan["ok"], false);
+    assert_eq!(plan["code"], "NOT_A_GIT_REPOSITORY");
+    assert!(plan["next"][0]["cli"]
+        .as_str()
+        .unwrap()
+        .contains(" init && git -C "));
+
+    // --env only means something with --preflight.
+    floo(&env).args(["--env", "prod"]).assert().code(2);
+    floo(&env)
+        .args(["--preflight", "--env", "prod", "--json"])
+        .assert()
+        .success();
+    planned.assert();
 }
 
 fn mock_watch(server: &mut Server, name: &str, sha: &str) -> Vec<mockito::Mock> {

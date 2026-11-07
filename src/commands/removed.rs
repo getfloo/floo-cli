@@ -44,6 +44,11 @@ const REMOVED: &[(&[&str], &str, &str)] = &[
     ),
     (&["doctor", "push"], "floo status", ""),
     (&["releases", "promote"], "floo promote", ""),
+    (
+        &["preflight"],
+        "floo deploy --preflight",
+        " It runs the same checks, then shows what the deploy would do; nothing is created or pushed.",
+    ),
 ];
 
 /// Flags clap accepts anywhere in a command path. None of them takes a value.
@@ -143,7 +148,10 @@ mod tests {
             None
         );
         assert_eq!(replacement(&argv(&["logs", "--app", "status"])), None);
-        assert_eq!(replacement(&argv(&["preflight", "./app"])), None);
+        assert_eq!(
+            replacement(&argv(&["deploy", "--preflight", "./app"])),
+            None
+        );
     }
 
     #[test]

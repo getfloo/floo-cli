@@ -30,11 +30,34 @@ pub struct DeployArgs {
     pub hosted: bool,
     /// Rename the app in floo.app.toml (and commit that) before deploying.
     pub name: Option<String>,
+    /// With --preflight: the environment whose runtime values to resolve.
+    pub env: String,
 }
 
 pub(crate) fn stop(message: &str, code: &str, next: &str) -> ! {
     output::error(message, &ErrorCode::from_api(code), Some(next));
     process::exit(1);
+}
+
+/// A reason the folder can't deploy yet, and the command that fixes it.
+struct Blocker {
+    message: String,
+    code: &'static str,
+    next: String,
+}
+
+impl Blocker {
+    fn new(message: impl Into<String>, code: &'static str, next: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            code,
+            next: next.into(),
+        }
+    }
+
+    fn exit(&self) -> ! {
+        stop(&self.message, self.code, &self.next)
+    }
 }
 
 pub(crate) fn git(path: &Path) -> Command {
@@ -223,16 +246,16 @@ pub(crate) fn looks_secret(path: &str) -> bool {
         || ["id_rsa", "id_dsa", "id_ecdsa", "id_ed25519"].contains(&name.as_str())
 }
 
-/// Stop on uncommitted work, naming secret-looking files first so the fix never
-/// tells the user to commit them.
-fn require_clean_tree(path: &Path, quoted: &str) {
+/// Uncommitted work, naming secret-looking files first so the fix never tells
+/// the user to commit them.
+fn dirty_tree(path: &Path, quoted: &str) -> Option<Blocker> {
     let status = git_stdout(
         path,
         &["status", "--porcelain", "-z", "--untracked-files=all"],
     )
     .unwrap_or_default();
     if status.is_empty() {
-        return;
+        return None;
     }
     let secrets: Vec<String> = changed_files(&status)
         .into_iter()
@@ -245,8 +268,8 @@ fn require_clean_tree(path: &Path, quoted: &str) {
             .map(|file| shell_quote(file))
             .collect::<Vec<_>>()
             .join(" ");
-        stop(
-            &format!(
+        return Some(Blocker::new(
+            format!(
                 "{} look{} like secrets and git would commit {}: {}. Keep secrets out of the repository and set them with floo env set.",
                 if secrets.len() == 1 { "This file" } else { "These files" },
                 if secrets.len() == 1 { "s" } else { "" },
@@ -254,17 +277,49 @@ fn require_clean_tree(path: &Path, quoted: &str) {
                 secrets.join(", ")
             ),
             "SECRET_FILES_NOT_IGNORED",
-            &format!(
+            format!(
                 "printf '%s\\n' {ignore} >> {}/.gitignore, commit .gitignore, then floo env import <file> after the first deploy",
                 quoted
             ),
-        );
+        ));
     }
-    stop(
+    Some(Blocker::new(
         "The working tree has uncommitted changes. floo deploys commits, so they would be left out.",
         "UNCOMMITTED_CHANGES",
-        &format!("git -C {quoted} add -A && git -C {quoted} commit -m \"<message>\" && floo deploy {quoted}"),
-    );
+        format!("git -C {quoted} add -A && git -C {quoted} commit -m \"<message>\" && floo deploy {quoted}"),
+    ))
+}
+
+/// What keeps the folder from deploying: no repository, floo.app.toml below the
+/// root, no commit, or uncommitted work. floo deploys a commit of the whole repo.
+fn folder_blocker(path: &Path, quoted: &str) -> Option<Blocker> {
+    let display = path.display();
+    let Some(top_level) = git_read(path, &["rev-parse", "--show-toplevel"]) else {
+        return Some(Blocker::new(
+            format!("{display} is not a git repository."),
+            "NOT_A_GIT_REPOSITORY",
+            format!(
+                "git -C {quoted} init && git -C {quoted} add -A && git -C {quoted} commit -m \"Initial commit\" && floo deploy {quoted}"
+            ),
+        ));
+    };
+    if !same_dir(Path::new(&top_level), path) {
+        return Some(Blocker::new(
+            format!(
+                "floo.app.toml must sit at the repository root ({top_level}); floo builds the pushed repository from its root."
+            ),
+            "INVALID_PATH",
+            format!("Move floo.app.toml to {top_level}, then run floo deploy {}.", shell_quote(&top_level)),
+        ));
+    }
+    if git_read(path, &["rev-parse", "--verify", "HEAD"]).is_none() {
+        return Some(Blocker::new(
+            "The repository has no commits yet.",
+            "NO_COMMITS",
+            format!("git -C {quoted} add -A && git -C {quoted} commit -m \"Initial commit\" && floo deploy {quoted}"),
+        ));
+    }
+    dirty_tree(path, quoted)
 }
 
 /// The paths in `git status --porcelain -z` output. Each entry is `XY path`, and a
@@ -384,72 +439,23 @@ pub fn deploy(args: DeployArgs) {
         }
     };
 
-    let Some(top_level) = git_read(path, &["rev-parse", "--show-toplevel"]) else {
-        stop(
-            &format!("{display} is not a git repository."),
-            "NOT_A_GIT_REPOSITORY",
-            &format!(
-                "git -C {quoted} init && git -C {quoted} add -A && git -C {quoted} commit -m \"Initial commit\" && floo deploy {quoted}"
-            ),
-        )
-    };
-    if !same_dir(Path::new(&top_level), path) {
-        stop(
-            &format!(
-                "floo.app.toml must sit at the repository root ({top_level}); floo builds the pushed repository from its root."
-            ),
-            "INVALID_PATH",
-            &format!("Move floo.app.toml to {top_level}, then run floo deploy {}.", shell_quote(&top_level)),
-        );
+    if output::is_dry_run_mode() {
+        return preflight(&args, &config, &quoted);
     }
-    if git_read(path, &["rev-parse", "--verify", "HEAD"]).is_none() {
-        stop(
-            "The repository has no commits yet.",
-            "NO_COMMITS",
-            &format!("git -C {quoted} add -A && git -C {quoted} commit -m \"Initial commit\" && floo deploy {quoted}"),
-        )
+    if let Some(blocker) = folder_blocker(path, &quoted) {
+        blocker.exit();
     }
-    require_clean_tree(path, &quoted);
     let configured = config.app.name.clone();
     let app_name = args.name.clone().unwrap_or_else(|| configured.clone());
     let head = git_read(path, &["rev-parse", "HEAD"]).unwrap_or_default();
     let mut folder = Folder::read(path, head);
-    let choice = if args.github {
-        Some("github")
-    } else if args.hosted {
-        Some("floo")
-    } else {
-        None
-    };
+    let choice = chosen_source(&args);
 
     super::deploy::validate(path);
-
-    let logged_in = crate::config::load_config().api_key.is_some();
-    if output::is_dry_run_mode() && !logged_in {
-        output::dry_run_preview(
-            &format!(
-                "Would plan and deploy commit {} of app '{app_name}'. Sign in (floo auth login) to see where it deploys from.",
-                super::short_sha(&folder.head)
-            ),
-            json!({
-                "action": "plan",
-                "app": app_name,
-                "commit": folder.head,
-                "remotes": folder.remotes.iter().map(|r| json!({"name": r.name, "url": r.url})).collect::<Vec<_>>(),
-                "branch": folder.branch,
-                "source": choice,
-            }),
-        );
-        return;
-    }
 
     super::require_auth();
     let client = super::init_client(None);
     let mut plan = ask_plan(&client, &folder, &app_name, choice);
-    if output::is_dry_run_mode() {
-        output::dry_run_preview(&plan.message, output::to_value(&plan));
-        return;
-    }
     if plan.ok && plan.decision.as_deref() == Some("create_github_repo") {
         create_github_repo(path, &app_name, &quoted);
         folder = Folder::read(path, folder.head);
@@ -499,6 +505,81 @@ pub fn deploy(args: DeployArgs) {
         _ => stop_with_plan(&plan, &quoted),
     }
     ship(path, &folder, &app_name, &source, &quoted);
+}
+
+/// The source `--github` or `--hosted` asks for, if either was passed.
+fn chosen_source(args: &DeployArgs) -> Option<&'static str> {
+    if args.github {
+        Some("github")
+    } else if args.hosted {
+        Some("floo")
+    } else {
+        None
+    }
+}
+
+/// `floo deploy --preflight`: every check, then what the deploy would do, with
+/// nothing created or pushed. The config checks need neither git nor sign-in,
+/// so they also run on a folder that isn't committed yet.
+fn preflight(args: &DeployArgs, config: &project_config::AppFileConfig, quoted: &str) {
+    let path = args.path.as_path();
+    let app_name = args.name.clone().unwrap_or_else(|| config.app.name.clone());
+    super::deploy::check(path, args.name.clone(), &args.env, || {
+        deploy_preview(args, &app_name, quoted)
+    });
+}
+
+/// The deploy plan, or the first thing that would stop the deploy before it.
+fn deploy_preview(args: &DeployArgs, app_name: &str, quoted: &str) -> super::deploy::PlanPreview {
+    let path = args.path.as_path();
+    let blocked = |code: &str, message: &str, next: &str| super::deploy::PlanPreview {
+        data: json!({
+            "ok": false,
+            "app": app_name,
+            "code": code,
+            "message": message,
+            "next": [{ "cli": next }],
+        }),
+        summary: format!("The deploy would stop: {message}\n  Next: {next}"),
+    };
+    if let Some(blocker) = folder_blocker(path, quoted) {
+        return blocked(blocker.code, &blocker.message, &blocker.next);
+    }
+    let head = git_read(path, &["rev-parse", "HEAD"]).unwrap_or_default();
+    let folder = Folder::read(path, head);
+    if crate::config::load_config().api_key.is_none() {
+        // What the plan call would send, so the folder can be checked signed out.
+        let mut preview = blocked(
+            "NOT_AUTHENTICATED",
+            "Sign in to see where floo would deploy this from.",
+            "floo auth login",
+        );
+        preview.data["commit"] = json!(folder.head);
+        preview.data["branch"] = json!(folder.branch);
+        preview.data["remotes"] = json!(folder
+            .remotes
+            .iter()
+            .map(|r| json!({"name": r.name, "url": r.url}))
+            .collect::<Vec<_>>());
+        return preview;
+    }
+    let client = super::init_client(None);
+    let plan = ask_plan(&client, &folder, app_name, chosen_source(args));
+    let summary = if plan.ok {
+        let mut lines = vec![format!("Deploy plan: {}", plan.message)];
+        lines.extend(plan.warnings.iter().map(|warning| format!("  ! {warning}")));
+        lines.join("\n")
+    } else {
+        format!(
+            "The deploy would stop: {}\n  Next: {}",
+            plan.message,
+            suggestion(&plan, quoted)
+        )
+    };
+    super::deploy::PlanPreview {
+        data: output::to_value(&plan),
+        summary,
+    }
 }
 
 /// Branch names the API accepts for a source: git already refused the rest of

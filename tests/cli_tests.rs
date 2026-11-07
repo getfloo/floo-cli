@@ -1052,7 +1052,7 @@ fn test_init_creates_config_json() {
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""app_name":"myapp"#))
-        .stdout(predicate::str::contains("floo preflight --json"))
+        .stdout(predicate::str::contains("floo deploy --preflight --json"))
         .stdout(predicate::str::contains("commit the generated files"))
         .stdout(predicate::str::contains("floo deploy --json"))
         .stdout(predicate::str::contains(r#""success":true"#));
@@ -1170,7 +1170,12 @@ ingress = "public"
     .unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -1195,7 +1200,12 @@ path = "./api"
     std::fs::create_dir(project.path().join("api")).unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
@@ -1233,7 +1243,12 @@ ingress = "public"
     .unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -1271,7 +1286,12 @@ ingress = "public"
     .unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -1321,7 +1341,7 @@ managed = ["postgres", "redis", "storage"]
     std::fs::create_dir(project.path().join("api")).unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args(["--json", "deploy", "--preflight", project.path().to_str().unwrap()])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -1363,7 +1383,12 @@ ingress = "public"
     .unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
@@ -1378,7 +1403,7 @@ ingress = "public"
 /// preflight runs from a subdirectory, `resolve_app_context` walks up to the
 /// config; a valid `path = "./api"` must not false-error SERVICE_PATH_NOT_FOUND.
 #[test]
-fn test_preflight_resolves_service_path_from_config_dir_not_cwd() {
+fn test_deploy_preflight_checks_service_paths_from_the_repository_root() {
     let project = tempfile::TempDir::new().unwrap();
     std::fs::write(
         project.path().join("floo.app.toml"),
@@ -1394,17 +1419,26 @@ ingress = "public"
     )
     .unwrap();
     std::fs::create_dir(project.path().join("api")).unwrap();
-    // A nested subdir the user might invoke preflight from.
     let subdir = project.path().join("api").join("nested");
     std::fs::create_dir(&subdir).unwrap();
 
     floo()
-        .args(["--json", "preflight", subdir.to_str().unwrap()])
+        .args(["--json", "deploy", "--preflight"])
+        .current_dir(&subdir)
+        .arg(project.path())
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""valid":true"#))
         .stdout(predicate::str::contains("SERVICE_PATH_NOT_FOUND").not());
+    // floo deploy builds the repository from floo.app.toml at its root.
+    floo()
+        .args(["--json", "deploy", "--preflight"])
+        .arg(&subdir)
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(r#""code":"NO_CONFIG_FOUND""#));
 }
 
 /// A migrate_command with no managed Postgres and no local DATABASE_URL warns —
@@ -1429,7 +1463,12 @@ migrate_command = "alembic upgrade head"
     .unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -1464,7 +1503,12 @@ migrate_command = "alembic upgrade head"
     .unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -1495,7 +1539,12 @@ required = ["STRIPE_SECRET_KEY"]
     .unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -1534,7 +1583,12 @@ required = ["STRIPE_SECRET_KEY"]
     .unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "redeploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -1572,7 +1626,12 @@ required = ["STRIPE_SECRET_KEY"]
     .unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -1609,7 +1668,12 @@ required = ["STRIPE_SECRET_KEY"]
     .unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -1639,7 +1703,12 @@ ingress = "public"
     // No local `services/api` dir — it lives in the external repo.
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -1674,7 +1743,12 @@ ingress = "public"
     .unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -1707,7 +1781,12 @@ migrate_command = "alembic upgrade head"
     // the migrate step still has no reachable database.
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -1745,7 +1824,12 @@ migrate_command = "alembic upgrade head"
     .unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -1776,7 +1860,12 @@ env_file = "missing.env"
     // missing.env intentionally absent.
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "redeploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
@@ -1823,7 +1912,8 @@ path = "./api"
     floo()
         .args([
             "--json",
-            "preflight",
+            "redeploy",
+            "--preflight",
             project.path().to_str().unwrap(),
             "--services",
             "web",
@@ -1860,7 +1950,12 @@ required = ["STRIPE_SECRET_KEY"]
     std::fs::write(project.path().join(".env"), "STRIPE_SECRET_KEY=\n").unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "redeploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -1895,7 +1990,12 @@ env_file = ".floo.env"
     .unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -1925,7 +2025,12 @@ ingress = "public"
     .unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -1957,7 +2062,12 @@ ingress = "public"
     .unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -1989,7 +2099,12 @@ ingress = "public"
     .unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -2040,7 +2155,12 @@ ingress = "public"
     std::fs::write(&env_path, "STRIPE_SECRET_KEY=sk_live_abc\n").unwrap();
 
     let output = floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .output()
         .unwrap();
@@ -2090,7 +2210,12 @@ ingress = "public"
     std::fs::write(project.path().join(".env"), "PUBLIC_KEY=pk_abc\n").unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -2124,7 +2249,12 @@ ingress = "public"
     .unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -2165,7 +2295,12 @@ env_file = ".floo.env"
     .unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -2201,7 +2336,12 @@ service = "web"
     .unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
@@ -2244,7 +2384,12 @@ service = "worker"
     std::fs::create_dir(project.path().join("api")).unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .failure()
@@ -2279,7 +2424,12 @@ service = "web"
     .unwrap();
 
     floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .assert()
         .success()
@@ -2310,7 +2460,12 @@ ingress = "public"
     .unwrap();
 
     let output = floo()
-        .args(["--json", "preflight", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", "/tmp/floo-test-nonexistent")
         .output()
         .unwrap();
@@ -3224,9 +3379,22 @@ port = 8000
                 )
             };
             std::fs::write(project.path().join(file), manifest).unwrap();
+            if file == "floo.service.toml" {
+                // floo deploy reads the app from floo.app.toml at the root.
+                std::fs::write(
+                    project.path().join("floo.app.toml"),
+                    "[app]\nname = \"myapp\"\n",
+                )
+                .unwrap();
+            }
             std::fs::write(project.path().join("Dockerfile"), "FROM scratch\n").unwrap();
             let output = floo()
-                .args(["--json", "preflight", project.path().to_str().unwrap()])
+                .args([
+                    "--json",
+                    "deploy",
+                    "--preflight",
+                    project.path().to_str().unwrap(),
+                ])
                 .env("HOME", project.path())
                 .output()
                 .unwrap();
@@ -3278,7 +3446,7 @@ fn domains_remove_is_not_a_command() {
 fn local_preflight(project: &std::path::Path) -> Command {
     let mut command = floo();
     command
-        .args(["--json", "preflight"])
+        .args(["--json", "deploy", "--preflight"])
         .current_dir(project)
         .env("FLOO_CONFIG_DIR", project.join(".test-config"))
         .env("FLOO_NO_UPDATE_CHECK", "1");
@@ -3372,7 +3540,7 @@ fn test_preflight_does_not_walk_past_worktree_git_file() {
 }
 
 #[test]
-fn test_preflight_app_flag_preserves_manifest_and_paths_at_git_root() {
+fn test_deploy_preflight_name_keeps_inline_service_paths() {
     let repo = tempfile::TempDir::new().unwrap();
     std::fs::create_dir(repo.path().join(".git")).unwrap();
     std::fs::write(
@@ -3380,11 +3548,10 @@ fn test_preflight_app_flag_preserves_manifest_and_paths_at_git_root() {
         "[app]\nname = 'configured'\n[services.api]\npath = './api'\ntype = 'api'\nport = 8000\n",
     )
     .unwrap();
-    let child = repo.path().join("api/nested");
-    std::fs::create_dir_all(&child).unwrap();
+    std::fs::create_dir(repo.path().join("api")).unwrap();
 
-    local_preflight(&child)
-        .args(["--app", "override"])
+    local_preflight(repo.path())
+        .args(["--name", "override"])
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""app":"override""#))
@@ -3393,7 +3560,7 @@ fn test_preflight_app_flag_preserves_manifest_and_paths_at_git_root() {
 }
 
 #[test]
-fn test_preflight_app_flag_preserves_delegated_service_discovery() {
+fn test_deploy_preflight_name_preserves_delegated_service_discovery() {
     let repo = tempfile::TempDir::new().unwrap();
     std::fs::create_dir(repo.path().join(".git")).unwrap();
     std::fs::write(
@@ -3407,11 +3574,9 @@ fn test_preflight_app_flag_preserves_delegated_service_discovery() {
         "[app]\nname = 'configured'\n[service]\nname = 'api'\ntype = 'api'\nport = 8000\ningress = 'public'\n",
     )
     .unwrap();
-    let child = repo.path().join("nested");
-    std::fs::create_dir(&child).unwrap();
 
-    local_preflight(&child)
-        .args(["--app", "override"])
+    local_preflight(repo.path())
+        .args(["--name", "override"])
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""app":"override""#))
@@ -3449,25 +3614,24 @@ fn test_preflight_rejects_conflicting_colocated_app_names() {
 }
 
 #[test]
-fn test_preflight_app_flag_cannot_hide_conflicting_colocated_app_names() {
+fn test_deploy_preflight_name_cannot_hide_conflicting_colocated_app_names() {
     let repo = conflicting_app_manifests();
 
     local_preflight(repo.path())
-        .args(["--app", "service-name"])
+        .args(["--name", "service-name"])
         .assert()
         .failure()
         .stdout(predicate::str::contains(r#""code":"APP_NAME_MISMATCH""#));
 }
 
 #[test]
-fn test_preflight_app_flag_cannot_hide_ancestor_legacy_config() {
+fn test_deploy_preflight_name_cannot_hide_legacy_config() {
     let repo = tempfile::TempDir::new().unwrap();
     std::fs::write(repo.path().join("floo.toml"), "[app]\nname = 'old'").unwrap();
-    let child = repo.path().join("child");
-    std::fs::create_dir(&child).unwrap();
+    std::fs::write(repo.path().join("floo.app.toml"), "[app]\nname = 'new'").unwrap();
 
-    local_preflight(&child)
-        .args(["--app", "override"])
+    local_preflight(repo.path())
+        .args(["--name", "override"])
         .assert()
         .failure()
         .stdout(predicate::str::contains(r#""code":"LEGACY_CONFIG""#));
