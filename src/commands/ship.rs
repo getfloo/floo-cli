@@ -428,6 +428,14 @@ pub fn deploy(args: DeployArgs) {
 
     let config = match project_config::load_app_config(path) {
         Ok(Some(config)) => config,
+        Ok(None) if path.join(project_config::LEGACY_CONFIG_FILE).exists() => stop(
+            &format!(
+                "Found legacy {} in {display}. This format is no longer supported.",
+                project_config::LEGACY_CONFIG_FILE
+            ),
+            "LEGACY_CONFIG",
+            "Migrate to floo.app.toml. See https://getfloo.com/docs/reference/config-spec for details.",
+        ),
         Ok(None) => stop(
             &format!("No floo.app.toml in {display}."),
             "NO_CONFIG_FOUND",

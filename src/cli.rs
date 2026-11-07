@@ -159,12 +159,19 @@ Examples:
   floo deploy --hosted                     Let floo host a copy of the code instead
   floo deploy --name shop-2                Use another app name (written to floo.app.toml)
   floo deploy --preflight --json           Check the config and show the plan; nothing is created or pushed
+  floo deploy --rebuild --app my-app       Build the app's current commit again
+  floo deploy --restart --app my-app       Apply env var changes without a build
 
 floo asks the API where the code deploys from, then creates, connects or pushes.
 A folder that pushes to github.com deploys from that repo; floo hosts a copy only
 with --hosted. The default branch deploys dev; any other branch gets a preview
 URL and leaves dev alone. Every stop creates nothing and names the fix. Commit
-your changes first.")]
+your changes first.
+
+--rebuild and --restart act on an app that already has a dev deploy and push
+nothing: --rebuild builds the connected branch's current commit again, and
+--restart starts the running image again with the current env vars.")]
+    #[command(group(clap::ArgGroup::new("redeploy").args(["rebuild", "restart"])))]
     Deploy {
         /// Repository root holding floo.app.toml.
         #[arg(default_value = ".")]
@@ -185,6 +192,37 @@ your changes first.")]
         /// With --preflight: the environment whose runtime values to resolve.
         #[arg(long, default_value = "dev", value_parser = ["dev", "prod", "preview"], requires = "dry_run")]
         env: String,
+
+        /// Build the app's current commit again and deploy it to dev; pushes nothing.
+        #[arg(long, conflicts_with_all = ["github", "hosted", "name"])]
+        rebuild: bool,
+
+        /// Restart dev with the current env vars, without a build; pushes nothing.
+        #[arg(long, conflicts_with_all = ["github", "hosted", "name"])]
+        restart: bool,
+
+        /// With --rebuild or --restart: the app, when not the one in floo.app.toml.
+        #[arg(short, long, requires = "redeploy")]
+        app: Option<String>,
+
+        /// With --rebuild or --restart: only these services (repeatable, or comma-separated).
+        #[arg(
+            short,
+            long = "service",
+            visible_alias = "services",
+            value_delimiter = ',',
+            requires = "redeploy"
+        )]
+        services: Vec<String>,
+
+        /// With --rebuild: declare no migrations are pending and skip the MIGRATE step.
+        ///
+        /// The platform takes you at your word: if you're wrong, the new image
+        /// boots against an unmigrated schema. The deploy records MIGRATE as
+        /// SKIPPED (not SUCCESS) so the audit trail is unambiguous about whether
+        /// migrations ran. A restart never migrates, because the image already did.
+        #[arg(long, requires = "rebuild", conflicts_with = "restart")]
+        skip_migrations: bool,
 
         #[command(flatten)]
         preflight: PreflightArgs,
@@ -301,56 +339,6 @@ cached. An app on your own GitHub repo clones from GitHub as usual.")]
         operation: String,
     },
 
-    /// Force a redeploy (after env var changes, config updates, or to rebuild).
-    #[command(after_help = "\
-Examples:
-  floo redeploy --app my-app               Redeploy with fresh env vars (no rebuild)
-  floo redeploy --app my-app --rebuild     Rebuild current GitHub default-branch HEAD
-  floo redeploy                            Redeploy from current project directory
-  floo redeploy --service api              Redeploy specific services only
-
-Note: Deploys are triggered by `git push`. Use `floo redeploy` to apply env var changes or rebuild the unchanged GitHub commit once the app has a dev deploy. If a no-rebuild restart reports an unavailable immutable contract, run the exact `--rebuild` command it returns.")]
-    Redeploy {
-        /// Project directory (only needed when --app is not provided).
-        #[arg(default_value = ".")]
-        path: PathBuf,
-
-        /// Existing app ID or name to deploy to.
-        #[arg(short, long)]
-        app: Option<String>,
-
-        /// Deploy only these services (--service api --service web, or --service api,web).
-        #[arg(
-            short,
-            long = "service",
-            visible_alias = "services",
-            value_delimiter = ','
-        )]
-        services: Vec<String>,
-
-        /// Rebuild the exact current GitHub default-branch commit (reparse immutable contracts and run Cloud Build).
-        #[arg(long)]
-        rebuild: bool,
-
-        /// Re-sync env vars from configured env_file before deploying.
-        #[arg(long)]
-        sync_env: bool,
-
-        /// Hotfix: declare no migrations are pending and skip the MIGRATE step.
-        ///
-        /// The platform takes you at your word — if you're wrong, the new
-        /// image boots against an unmigrated schema. The deploy records
-        /// MIGRATE as SKIPPED (not SUCCESS) so the audit trail is
-        /// unambiguous about whether migrations ran. Meaningful only on
-        /// rebuild deploys; rollback and restart already skip MIGRATE
-        /// because the image was previously migrated.
-        #[arg(long)]
-        skip_migrations: bool,
-
-        #[command(flatten)]
-        preflight: PreflightArgs,
-    },
-
     /// View and manage deploy history.
     #[command(
         name = "deploys",
@@ -361,7 +349,7 @@ Examples:
   floo deploys logs <id> --follow           Stream build logs in real-time
   floo status --wait --app my-app           Follow a deploy until it finishes
 
-Note: Push to the connected GitHub branch to deploy. `floo redeploy` restarts an app that already has a dev deploy; it cannot run the first one."
+Note: Push to the connected GitHub branch to deploy. `floo deploy --rebuild` builds the current commit again once the app has a dev deploy."
     )]
     Deploys(DeploysSubcommands),
 
@@ -1102,7 +1090,7 @@ pub enum EnvCommands {
         #[arg(long = "service", visible_alias = "services", value_delimiter = ',')]
         services: Vec<String>,
 
-        /// Restart the app after setting the env var (redeploy with fresh env vars).
+        /// Restart dev after setting the env var, so it runs with the new value.
         #[arg(long)]
         restart: bool,
 
@@ -1353,7 +1341,7 @@ pub enum ServicesCommands {
     /// Accepts the service name as a positional or via `--service` for parity
     /// with the rest of the CLI's flag-based API. Pass exactly one.
     /// `--services` is accepted as a plural alias to match the multi-service
-    /// flag used by `floo logs` / `floo redeploy`.
+    /// flag used by `floo logs` / `floo deploy --rebuild`.
     Show {
         /// Service name (positional form). Mutually exclusive with `--service`.
         service_name: Option<String>,
@@ -2170,14 +2158,25 @@ pub fn run() {
             hosted,
             name,
             env,
+            rebuild,
+            restart,
+            app,
+            services,
+            skip_migrations,
             preflight: _,
-        } => commands::ship::deploy(commands::ship::DeployArgs {
-            path,
-            github,
-            hosted,
-            name,
-            env,
-        }),
+        } => {
+            if rebuild || restart {
+                commands::deploy::redeploy(&path, app, services, rebuild, skip_migrations)
+            } else {
+                commands::ship::deploy(commands::ship::DeployArgs {
+                    path,
+                    github,
+                    hosted,
+                    name,
+                    env,
+                })
+            }
+        }
 
         Commands::Connect { repo, app, branch } => {
             commands::connect::connect(commands::connect::ConnectArgs { repo, app, branch })
@@ -2201,16 +2200,6 @@ pub fn run() {
         Commands::Clone { app, dir } => commands::projects::clone(&app, dir.as_deref()),
 
         Commands::GitCredential { operation } => commands::projects::git_credential(&operation),
-
-        Commands::Redeploy {
-            path,
-            app,
-            services,
-            rebuild,
-            sync_env,
-            skip_migrations,
-            preflight: _,
-        } => commands::deploy::deploy(path, app, services, rebuild, sync_env, skip_migrations),
 
         Commands::Deploys(sub) => match sub {
             DeploysSubcommands::List { app, limit, cursor } => {
@@ -2763,21 +2752,26 @@ mod tests {
 
     #[test]
     fn deprecated_dry_run_flag_is_a_hidden_compatibility_alias() {
-        let cli = Cli::try_parse_from(["floo", "redeploy", "--dry-run", "--app", "my-app"])
-            .unwrap_or_else(|error| panic!("deprecated --dry-run alias must parse: {error}"));
-        let Commands::Redeploy { preflight, .. } = cli.command else {
-            panic!("expected redeploy command");
+        let cli = Cli::try_parse_from([
+            "floo",
+            "deploy",
+            "--dry-run",
+            "--rebuild",
+            "--app",
+            "my-app",
+        ])
+        .unwrap_or_else(|error| panic!("deprecated --dry-run alias must parse: {error}"));
+        let Commands::Deploy { preflight, .. } = cli.command else {
+            panic!("expected deploy command");
         };
         assert!(preflight.dry_run);
 
         let mut root = Cli::command();
-        let redeploy = root
-            .find_subcommand_mut("redeploy")
-            .expect("redeploy command");
-        let preflight = redeploy
+        let deploy = root.find_subcommand_mut("deploy").expect("deploy command");
+        let preflight = deploy
             .get_arguments()
             .find(|argument| argument.get_id() == "dry_run")
-            .expect("redeploy preflight argument");
+            .expect("deploy preflight argument");
         assert_eq!(preflight.get_long(), Some("preflight"));
         assert!(
             preflight
@@ -2820,8 +2814,8 @@ mod tests {
     fn rewrite_leaves_subcommand_unchanged() {
         // If a subcommand is already present, don't touch --version — let clap
         // handle any flag validation at the subcommand level.
-        let out = rewrite_bare_version_flag(argv(&["floo", "redeploy", "--app", "my-app"]));
-        assert_eq!(strs(&out), vec!["floo", "redeploy", "--app", "my-app"]);
+        let out = rewrite_bare_version_flag(argv(&["floo", "status", "--app", "my-app"]));
+        assert_eq!(strs(&out), vec!["floo", "status", "--app", "my-app"]);
     }
 
     #[test]
@@ -2890,7 +2884,6 @@ mod tests {
     fn preflight_supported_commands_accept_the_flag() {
         let invocations: &[(&str, &[&str])] = &[
             ("init", &["floo", "init", "--preflight"]),
-            ("redeploy", &["floo", "redeploy", "--preflight"]),
             ("deploy", &["floo", "deploy", "--preflight"]),
             ("dev", &["floo", "dev", "--preflight"]),
             ("update", &["floo", "update", "--preflight"]),
@@ -3101,15 +3094,49 @@ mod tests {
     }
 
     #[test]
-    fn redeploy_accepts_both_service_spellings_and_short() {
-        // `redeploy` keeps its `-s` short form alongside the renamed long flag.
+    fn deploy_rebuild_accepts_both_service_spellings_and_short() {
         for flag in ["--service", "--services", "-s"] {
-            let cli = Cli::try_parse_from(["floo", "redeploy", flag, "api"])
-                .unwrap_or_else(|e| panic!("clap rejected `redeploy {flag}`: {e}"));
-            let Commands::Redeploy { services, .. } = cli.command else {
-                panic!("expected Redeploy");
+            let cli = Cli::try_parse_from(["floo", "deploy", "--rebuild", flag, "api"])
+                .unwrap_or_else(|e| panic!("clap rejected `deploy --rebuild {flag}`: {e}"));
+            let Commands::Deploy { services, .. } = cli.command else {
+                panic!("expected Deploy");
             };
-            assert_eq!(services, vec!["api"], "redeploy {flag}");
+            assert_eq!(services, vec!["api"], "deploy --rebuild {flag}");
+        }
+    }
+
+    #[test]
+    fn rebuild_and_restart_flags_only_go_with_each_other() {
+        for args in [
+            &["floo", "deploy", "--app", "shop"][..],
+            &["floo", "deploy", "--service", "api"],
+            &["floo", "deploy", "--restart", "--skip-migrations"],
+            &["floo", "deploy", "--rebuild", "--restart"],
+            &["floo", "deploy", "--rebuild", "--hosted"],
+            &["floo", "deploy", "--restart", "--name", "shop-2"],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err(), "accepted {args:?}");
+        }
+        for args in [
+            &[
+                "floo",
+                "deploy",
+                "--rebuild",
+                "--app",
+                "shop",
+                "--skip-migrations",
+            ][..],
+            &[
+                "floo",
+                "deploy",
+                "--restart",
+                "--app",
+                "shop",
+                "--service",
+                "api",
+            ],
+        ] {
+            assert!(Cli::try_parse_from(args).is_ok(), "rejected {args:?}");
         }
     }
 

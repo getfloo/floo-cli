@@ -10,7 +10,7 @@ use crate::output;
 use crate::project_config;
 use serde::Serialize;
 
-const DEPLOY_HINT: &str = "Push a commit to deploy with the updated env vars. Once the app has a dev deploy, `floo redeploy` applies them without a code change.";
+const DEPLOY_HINT: &str = "Push a commit to deploy with the updated env vars. Once the app has a dev deploy, `floo deploy --restart` applies them without a code change.";
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -782,7 +782,7 @@ pub fn set(
                                 results.len(),
                                 e.message
                             ),
-                            Some("Wait for the active deploy to finish, then push a commit or run `floo redeploy`."),
+                            Some("Wait for the active deploy to finish, then push a commit or run `floo deploy --restart`."),
                         ),
                         "RESTART_DISPATCH_FAILED" => (
                             RestartState::AttemptCreated,

@@ -2726,44 +2726,6 @@ fn test_env_import_all_preflight_makes_no_post() {
 }
 
 #[test]
-fn test_sync_env_with_service_is_rejected_before_api_calls() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let calls = server.mock("GET", Matcher::Any).expect(0).create();
-    floo()
-        .args(["--json", "redeploy", "--sync-env", "--service", "web"])
-        .args(["--app", TEST_APP_NAME])
-        .env("HOME", home.path())
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains(r#""code":"INVALID_ARGUMENTS""#))
-        .stdout(predicate::str::contains("--sync-env cannot be combined"));
-    calls.assert();
-}
-
-#[test]
-fn test_sync_env_service_list_error_exits_nonzero() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let project = inline_env_project();
-    let _resolve = mock_resolve_app(&mut server);
-    let services = server
-        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/services").as_str())
-        .match_query(Matcher::Any)
-        .with_status(403)
-        .with_body(r#"{"detail":{"code":"FORBIDDEN","message":"service lookup denied"}}"#)
-        .create();
-    floo()
-        .args(["--json", "redeploy", "--sync-env"])
-        .current_dir(project.path())
-        .env("HOME", home.path())
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains("service lookup denied"));
-    services.assert();
-}
-
-#[test]
 fn test_env_import_json() {
     let mut server = Server::new();
     let home = setup_config(&server);
@@ -5394,100 +5356,6 @@ fn test_status_wait_coalesced_superseded_descendant_is_non_failure_terminal() {
 // ───────────────────────── Deploy ─────────────────────────
 
 #[test]
-fn test_deploy_new_app_json() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let org = server.mock("GET", "/v1/orgs/me").expect(0).create();
-
-    // Create a temp project with package.json for detection and service config
-    let project = inline_env_project();
-    std::fs::write(
-        project.path().join("package.json"),
-        r#"{"name":"test-project","version":"1.0.0","dependencies":{"express":"^4"}}"#,
-    )
-    .unwrap();
-    let manifest = project.path().join("floo.app.toml");
-    let local = std::fs::read_to_string(&manifest).unwrap();
-    let declarations = r#"
-environments.dev.access_mode = 'public'
-auth.redirect_uris = ['https://example.com/callback']
-github = { deploy_on_push = false, preview_environments = true, preview_ttl_hours = 24 }
-cron.cleanup = { schedule = '0 * * * *', command = 'echo cleanup', service = 'web' }
-"#;
-    std::fs::write(&manifest, format!("{declarations}{local}")).unwrap();
-    let _services = mock_list_services_one(&mut server);
-    let _env = server
-        .mock("GET", format!("/v1/apps/{TEST_APP_ID}/env").as_str())
-        .match_query(Matcher::Any)
-        .with_body(r#"{"env_vars":[]}"#)
-        .create();
-    let imported = server
-        .mock(
-            "POST",
-            format!("/v1/apps/{TEST_APP_ID}/env/import").as_str(),
-        )
-        .match_query(Matcher::Any)
-        .match_body(Matcher::Json(
-            serde_json::json!({"env_vars":[{"key":"COLOR","value":"blue"}], "service_id":TEST_SERVICE_ID}),
-        ))
-        .with_body(r#"{"imported":1}"#)
-        .create();
-
-    // Config-resolved deploy: resolve_app (name lookup) returns 404, then creates app
-    let _m_list = server
-        .mock("GET", "/v1/apps")
-        .match_query(Matcher::AllOf(vec![
-            Matcher::UrlEncoded("page".into(), "1".into()),
-            Matcher::UrlEncoded("per_page".into(), "100".into()),
-        ]))
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(r#"{"apps":[]}"#)
-        .create();
-
-    let _m_create_app = server
-        .mock("POST", "/v1/apps")
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(format!(
-            r#"{{"id":"{TEST_APP_ID}","name":"test-deploy","status":"created","runtime":"nodejs"}}"#
-        ))
-        .create();
-
-    // Return status "live" immediately to skip the polling loop
-    let _m_deploy = server
-        .mock(
-            "POST",
-            format!("/v1/apps/{TEST_APP_ID}/deploys").as_str(),
-        )
-        .match_body(Matcher::Json(serde_json::json!({"framework": "Express", "env": "dev"})))
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(
-            r#"{"id":"deploy-001","status":"live","url":"https://test-deploy.floo.app","build_logs":""}"#,
-        )
-        .create();
-
-    floo()
-        .args([
-            "--json",
-            "redeploy",
-            "--sync-env",
-            project.path().to_str().unwrap(),
-        ])
-        .env("HOME", home.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""success":true"#))
-        .stdout(predicate::str::contains(r#""app""#))
-        .stdout(predicate::str::contains(r#""deploy""#))
-        .stdout(predicate::str::contains(r#""detection""#));
-    _m_deploy.assert();
-    imported.assert();
-    org.assert();
-}
-
-#[test]
 fn test_deploy_existing_app_by_name_json() {
     let mut server = Server::new();
     let home = setup_config(&server);
@@ -5531,7 +5399,8 @@ fn test_deploy_existing_app_by_name_json() {
     floo()
         .args([
             "--json",
-            "redeploy",
+            "deploy",
+            "--restart",
             project.path().to_str().unwrap(),
             "--app",
             TEST_APP_NAME,
@@ -5560,7 +5429,7 @@ fn test_redeploy_rebuild_requests_server_resolved_github_head() {
         .create();
 
     floo()
-        .args(["--json", "redeploy", "--app", TEST_APP_NAME, "--rebuild"])
+        .args(["--json", "deploy", "--rebuild", "--app", TEST_APP_NAME])
         .env("HOME", home.path())
         .assert()
         .success()
@@ -5583,7 +5452,7 @@ fn test_redeploy_rebuild_requires_runtime_with_service_selectors() {
         .with_body(r#"{"id":"deploy-rebuilt","status":"live"}"#)
         .create();
     floo()
-        .args(["--json", "redeploy", "--app", TEST_APP_NAME, "--rebuild"])
+        .args(["--json", "deploy", "--rebuild", "--app", TEST_APP_NAME])
         .args(["--service", "web", "--skip-migrations"])
         .env("HOME", home.path())
         .assert()
@@ -5621,7 +5490,7 @@ fn test_redeploy_restart_json_preserves_typed_contract_recovery() {
         .create();
 
     floo()
-        .args(["--json", "redeploy", "--app", TEST_APP_NAME])
+        .args(["--json", "deploy", "--restart", "--app", TEST_APP_NAME])
         .env("HOME", home.path())
         .assert()
         .failure()
@@ -5668,7 +5537,7 @@ fn test_redeploy_restart_human_prints_invalid_contract_rebuild_command() {
         .create();
 
     floo()
-        .args(["redeploy", "--app", TEST_APP_NAME])
+        .args(["deploy", "--restart", "--app", TEST_APP_NAME])
         .env("HOME", home.path())
         .assert()
         .failure()
@@ -5720,7 +5589,8 @@ fn test_deploy_app_flag_not_found_keyed_on_status() {
     floo()
         .args([
             "--json",
-            "redeploy",
+            "deploy",
+            "--restart",
             project.path().to_str().unwrap(),
             "--app",
             missing,
@@ -5733,106 +5603,8 @@ fn test_deploy_app_flag_not_found_keyed_on_status() {
         // NOT_FOUND error with no suggestion.
         .stdout(predicate::str::contains("APP_NOT_FOUND"))
         .stdout(predicate::str::contains(
-            "Check the app name or ID and try again.",
+            "Check the app name, or run floo deploy first",
         ));
-}
-
-#[test]
-fn test_deploy_config_not_found_keyed_on_status_creates() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    // Config-resolved (no --app): a UUID app name in floo.service.toml routes
-    // resolve_app to GET /v1/apps/{id}, so a 404 carrying a drifted code must
-    // still be treated as "app doesn't exist yet" → create it, not surfaced as
-    // a hard error.
-    let missing = "22222222-2222-2222-2222-222222222222";
-
-    let project = TempDir::new().unwrap();
-    std::fs::write(
-        project.path().join("package.json"),
-        r#"{"name":"test-project","version":"1.0.0"}"#,
-    )
-    .unwrap();
-    write_service_config(&project, missing);
-
-    let _m_get = server
-        .mock("GET", format!("/v1/apps/{missing}").as_str())
-        .with_status(404)
-        .with_header("content-type", "application/json")
-        .with_body(r#"{"detail":{"code":"NOT_FOUND","message":"Not found"}}"#)
-        .create();
-
-    let _m_create = server
-        .mock("POST", "/v1/apps")
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(format!(
-            r#"{{"id":"{TEST_APP_ID}","name":"web","status":"created","runtime":"nodejs"}}"#
-        ))
-        .create();
-
-    let _m_deploy = server
-        .mock("POST", format!("/v1/apps/{TEST_APP_ID}/deploys").as_str())
-        .match_body(Matcher::Json(
-            serde_json::json!({"env": "dev", "services": ["web"], "skip_migrations": true}),
-        ))
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(
-            r#"{"id":"deploy-001","status":"live","url":"https://web.floo.app","build_logs":""}"#,
-        )
-        .create();
-
-    floo()
-        .args(["--json", "redeploy", project.path().to_str().unwrap()])
-        .args(["--services", "web", "--skip-migrations"])
-        .env("HOME", home.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""success":true"#));
-    _m_deploy.assert();
-}
-
-#[test]
-fn test_deploy_fails_with_invalid_response_when_app_id_missing() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-
-    let project = TempDir::new().unwrap();
-    std::fs::write(
-        project.path().join("package.json"),
-        r#"{"name":"test-project","version":"1.0.0"}"#,
-    )
-    .unwrap();
-    write_service_config(&project, "test-deploy");
-
-    // resolve_app returns 404 (name not found), so deploy creates app
-    let _m_list = server
-        .mock("GET", "/v1/apps")
-        .match_query(Matcher::AllOf(vec![
-            Matcher::UrlEncoded("page".into(), "1".into()),
-            Matcher::UrlEncoded("per_page".into(), "100".into()),
-        ]))
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(r#"{"apps":[]}"#)
-        .create();
-
-    // create_app returns response without "id" field
-    let _m_create_app = server
-        .mock("POST", "/v1/apps")
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(r#"{"name":"test-deploy","status":"created","runtime":"nodejs"}"#)
-        .create();
-
-    floo()
-        .args(["--json", "redeploy", project.path().to_str().unwrap()])
-        .env("HOME", home.path())
-        .assert()
-        .failure()
-        .stdout(predicate::str::contains(r#""code":"PARSE_ERROR""#))
-        .stdout(predicate::str::contains("Failed to parse response"));
 }
 
 #[test]
@@ -5881,7 +5653,8 @@ fn test_deploy_failed_json_includes_logs_and_suggestion() {
     floo()
         .args([
             "--json",
-            "redeploy",
+            "deploy",
+            "--restart",
             project.path().to_str().unwrap(),
             "--app",
             TEST_APP_NAME,
@@ -6175,7 +5948,7 @@ fn test_deploy_with_sse_streaming() {
         r#"{"name":"test-project","version":"1.0.0"}"#,
     )
     .unwrap();
-    write_service_config(&project, "test-stream");
+    write_app_and_service_config(&project, TEST_APP_NAME);
 
     // resolve_app: name lookup returns empty, so app gets created
     let _m_list = server
@@ -6186,16 +5959,7 @@ fn test_deploy_with_sse_streaming() {
         ]))
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"apps":[]}"#)
-        .create();
-
-    let _m_create_app = server
-        .mock("POST", "/v1/apps")
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(format!(
-            r#"{{"id":"{TEST_APP_ID}","name":"test-stream","status":"created","runtime":"nodejs"}}"#
-        ))
+        .with_body(format!(r#"{{"apps":[{app}]}}"#, app = app_json()))
         .create();
 
     // Deploy returns pending (Phase 2 — not terminal)
@@ -6240,7 +6004,7 @@ fn test_deploy_with_sse_streaming() {
         .create();
 
     floo()
-        .args(["redeploy", project.path().to_str().unwrap()])
+        .args(["deploy", "--rebuild", project.path().to_str().unwrap()])
         .env("HOME", home.path())
         .assert()
         .success()
@@ -6260,7 +6024,7 @@ fn test_deploy_sse_fallback_to_polling() {
         r#"{"name":"test-project","version":"1.0.0"}"#,
     )
     .unwrap();
-    write_service_config(&project, "test-fallback");
+    write_app_and_service_config(&project, TEST_APP_NAME);
 
     // resolve_app: name lookup returns empty, so app gets created
     let _m_list = server
@@ -6271,16 +6035,7 @@ fn test_deploy_sse_fallback_to_polling() {
         ]))
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"apps":[]}"#)
-        .create();
-
-    let _m_create_app = server
-        .mock("POST", "/v1/apps")
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(format!(
-            r#"{{"id":"{TEST_APP_ID}","name":"test-fallback","status":"created","runtime":"nodejs"}}"#
-        ))
+        .with_body(format!(r#"{{"apps":[{app}]}}"#, app = app_json()))
         .create();
 
     // Deploy returns pending (Phase 2)
@@ -6318,7 +6073,7 @@ fn test_deploy_sse_fallback_to_polling() {
         .create();
 
     floo()
-        .args(["redeploy", project.path().to_str().unwrap()])
+        .args(["deploy", "--rebuild", project.path().to_str().unwrap()])
         .env("HOME", home.path())
         .assert()
         .success()
@@ -6337,7 +6092,7 @@ fn test_deploy_json_mode_uses_polling() {
         r#"{"name":"test-project","version":"1.0.0"}"#,
     )
     .unwrap();
-    write_service_config(&project, "test-poll");
+    write_app_and_service_config(&project, TEST_APP_NAME);
 
     // resolve_app returns 404, then creates app
     let _m_list = server
@@ -6348,16 +6103,7 @@ fn test_deploy_json_mode_uses_polling() {
         ]))
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"apps":[]}"#)
-        .create();
-
-    let _m_create_app = server
-        .mock("POST", "/v1/apps")
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(format!(
-            r#"{{"id":"{TEST_APP_ID}","name":"test-poll","status":"created","runtime":"nodejs"}}"#
-        ))
+        .with_body(format!(r#"{{"apps":[{app}]}}"#, app = app_json()))
         .create();
 
     // Deploy returns pending
@@ -6398,7 +6144,12 @@ fn test_deploy_json_mode_uses_polling() {
         .create();
 
     floo()
-        .args(["--json", "redeploy", project.path().to_str().unwrap()])
+        .args([
+            "--json",
+            "deploy",
+            "--rebuild",
+            project.path().to_str().unwrap(),
+        ])
         .env("HOME", home.path())
         .assert()
         .success()
@@ -6592,7 +6343,6 @@ fn test_preflight_declares_enabled_modern_and_legacy_services_without_lock() {
                 {"name": "web", "env_managed": ["redis:cache", "redis:queue"]}
             ]
         })))
-        .expect(2)
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(r#"{"managed_services":{"to_provision":[{"type":"redis","name":"cache","tier":"basic","risk":{"tier":1,"destructive":false,"data_loss":false}}],"to_retry":[],"to_deprovision":[],"to_retain":[],"to_orphan":[],"in_flight_deprovisioning":[]},"summary":{"action_count":1,"destructive_count":0},"destructive":false,"data_loss":false}"#)
@@ -6640,21 +6390,6 @@ managed = ["redis:cache", "redis:queue"]
         .stdout(predicate::str::contains(r#""handle":"redis:queue""#))
         .stdout(predicate::str::contains(r#""mode":"explicit""#))
         .stdout(predicate::str::contains("unused").not());
-    let preview = floo()
-        .args([
-            "--json",
-            "redeploy",
-            "--preflight",
-            project.path().to_str().unwrap(),
-        ])
-        .env("HOME", home.path())
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    let payload: serde_json::Value = serde_json::from_slice(&preview).unwrap();
-    assert_eq!(payload["data"]["plan"]["summary"]["action_count"], 1);
     planner.assert();
 }
 
@@ -8719,11 +8454,6 @@ fn test_preflight_propagates_remote_validation_failure() {
     assert_remote_preflight_failure(&["--json", "deploy", "--preflight"], 422);
 }
 
-#[test]
-fn test_redeploy_preflight_propagates_remote_validation_failure() {
-    assert_remote_preflight_failure(&["--json", "redeploy", "--preflight"], 422);
-}
-
 /// Before the first deploy the app doesn't exist, and the Quickstart says to run
 /// preflight first: the local checks must still pass instead of APP_NOT_FOUND.
 #[test]
@@ -8793,58 +8523,6 @@ fn test_preflight_propagates_resolution_failure() {
         .stdout(predicate::str::contains(r#""success":false"#))
         .stdout(predicate::str::contains("Expired credentials"));
     lookup.assert();
-}
-
-#[test]
-fn test_redeploy_validation_findings_match_standalone_preflight() {
-    let server = Server::new();
-    let home = setup_config(&server);
-    let project = TempDir::new().unwrap();
-    std::fs::write(project.path().join("floo.app.toml"),
-        "[app]\nname = \"my-app\"\n[services.web]\npath = \"missing\"\ntype = \"web\"\nport = 3000\ningress = \"public\"\n").unwrap();
-    let standalone = floo()
-        .args(["--json", "deploy", "--preflight"])
-        .arg(project.path())
-        .env("HOME", home.path())
-        .assert()
-        .failure()
-        .get_output()
-        .stdout
-        .clone();
-    let preview = floo()
-        .args(["--json", "redeploy", "--preflight"])
-        .arg(project.path())
-        .env("HOME", home.path())
-        .assert()
-        .failure()
-        .get_output()
-        .stdout
-        .clone();
-    let redeploy = floo()
-        .args(["--json", "redeploy"])
-        .arg(project.path())
-        .env("HOME", home.path())
-        .assert()
-        .failure()
-        .get_output()
-        .stdout
-        .clone();
-    let payload: serde_json::Value = serde_json::from_slice(&standalone).unwrap();
-    assert_eq!(payload["success"], false);
-    assert_eq!(payload["data"]["valid"], false);
-    assert_eq!(
-        payload["data"]["findings"][0]["code"],
-        "SERVICE_PATH_NOT_FOUND"
-    );
-    assert_eq!(preview, standalone);
-    assert_eq!(redeploy, standalone);
-    floo()
-        .arg("redeploy")
-        .arg(project.path())
-        .env("HOME", home.path())
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("path './missing' does not exist"));
 }
 
 #[cfg(unix)]

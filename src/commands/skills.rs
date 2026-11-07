@@ -332,7 +332,6 @@ const RECOMMENDED_PERMISSIONS: &[Permission] = &[
     permission!(ReadOnly, ["releases", "list"]),
     permission!(ReadOnly, ["releases", "show"]),
     permission!(ReadOnly, ["deploy"], PREFLIGHT_FLAG),
-    permission!(ReadOnly, ["redeploy"], PREFLIGHT_FLAG),
     permission!(ReadOnly, ["docs"]),
     permission!(ReadOnly, ["commands"]),
     permission!(ReadOnly, ["version"]),
@@ -342,7 +341,6 @@ const RECOMMENDED_PERMISSIONS: &[Permission] = &[
     permission!(ReadOnly, ["orgs", "members", "list"]),
     permission!(ReadOnly, ["billing", "auto-top-up", "get"]),
     permission!(ReadWrite, ["env", "get"]),
-    permission!(ReadWrite, ["redeploy"]),
     permission!(ReadWrite, ["deploy"]),
     permission!(ReadWrite, ["previews", "delete"]),
     permission!(ReadWrite, ["previews", "resources", "reset"]),
@@ -477,7 +475,6 @@ mod tests {
             "Bash(floo apps show:*)",
             "Bash(floo deploy --preflight:*)",
             "Bash(floo status:*)",
-            "Bash(floo redeploy --preflight:*)",
             "Bash(floo docs:*)",
         ] {
             assert!(read_only.iter().any(|permission| permission == expected));
@@ -495,7 +492,6 @@ mod tests {
     fn test_recommended_permissions_read_write() {
         let (_, read_write) = recommended_permissions();
         for expected in [
-            "Bash(floo redeploy:*)",
             "Bash(floo deploy:*)",
             "Bash(floo connect:*)",
             "Bash(floo previews resources reset:*)",
