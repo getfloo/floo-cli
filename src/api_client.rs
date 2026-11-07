@@ -159,6 +159,16 @@ impl FlooClient {
             .map_err(|e| FlooApiError::new(0, "CONNECTION_ERROR", e.to_string()))
     }
 
+    fn put_json(
+        &self,
+        path: &str,
+        body: &Value,
+    ) -> Result<reqwest::blocking::Response, FlooApiError> {
+        let req = self.apply_headers(self.client.put(self.url(path)).json(body));
+        req.send()
+            .map_err(|e| FlooApiError::new(0, "CONNECTION_ERROR", e.to_string()))
+    }
+
     fn delete(&self, path: &str) -> Result<reqwest::blocking::Response, FlooApiError> {
         let req = self.apply_headers(self.client.delete(self.url(path)));
         req.send()
@@ -225,6 +235,12 @@ impl FlooClient {
     pub fn create_app_with_source(&self, name: &str, source: &Value) -> Result<App, FlooApiError> {
         let body = serde_json::json!({"name": name, "source": source});
         let response = self.post_json("/v1/apps", &body)?;
+        self.handle_response(response)
+    }
+
+    /// Make a GitHub repo the app's source; a hosted app moves to it.
+    pub fn set_app_source(&self, app_id: &str, source: &Value) -> Result<Value, FlooApiError> {
+        let response = self.put_json(&format!("/v1/apps/{app_id}/source"), source)?;
         self.handle_response(response)
     }
 

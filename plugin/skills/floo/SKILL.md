@@ -28,7 +28,9 @@ From a local git repository with a `floo.app.toml`, `floo deploy` deploys from
 the folder's GitHub repo when it has one, and otherwise stops to ask: pass
 `--github` (a private repo in the user's account) or `--hosted` (floo keeps a
 copy). It pushes the current commit and waits for the dev deploy. A stop's JSON
-`error.next` lists the fixes; ask the user when it offers more than one.
+`error.next` lists the fixes; ask the user when it offers more than one. A hosted
+app moves to the user's own GitHub repo with `floo connect owner/repo`, after the
+user creates it empty.
 
 The CLI is a convenience. Use `floo commands --json` to discover commands and `floo <command> --help`
 for syntax supported by the installed version. Use `--json` for structured output.

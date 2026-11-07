@@ -32,19 +32,19 @@ pub struct DeployArgs {
     pub name: Option<String>,
 }
 
-fn stop(message: &str, code: &str, next: &str) -> ! {
+pub(crate) fn stop(message: &str, code: &str, next: &str) -> ! {
     output::error(message, &ErrorCode::from_api(code), Some(next));
     process::exit(1);
 }
 
-fn git(path: &Path) -> Command {
+pub(crate) fn git(path: &Path) -> Command {
     let mut command = Command::new("git");
     command.arg("-C").arg(path);
     command
 }
 
 /// Runs a git command that only reads, returning trimmed stdout on success.
-fn git_read(path: &Path, args: &[&str]) -> Option<String> {
+pub(crate) fn git_read(path: &Path, args: &[&str]) -> Option<String> {
     git_stdout(path, args).map(|stdout| stdout.trim().to_string())
 }
 
@@ -787,8 +787,10 @@ fn push_github(path: &Path, remote: &str, branch: &str, head: &str, quoted: &str
     stop(&message, "GIT_PUSH_FAILED", &next);
 }
 
-fn push_hosted(path: &Path, clone_url: &str, branch: &str, quoted: &str) {
-    // Only credential-free managed HTTPS URLs reach git, as in `projects clone`.
+/// git with floo's short-lived token for a hosted repo, and no other credential
+/// helper, so no keychain stores the token. Refuses any URL that isn't a
+/// credential-free floo-hosted HTTPS URL, as `projects clone` does.
+pub(crate) fn hosted_git(path: &Path, clone_url: &str) -> Command {
     if clone_url
         .strip_prefix("https://github.com/")
         .and_then(managed_app_id)
@@ -816,12 +818,18 @@ fn push_hosted(path: &Path, clone_url: &str, branch: &str, quoted: &str) {
         "credential.helper=!{} projects git-credential",
         shell_quote(&executable)
     );
-    let refspec = format!("HEAD:refs/heads/{branch}");
-    // Reset inherited helpers so no keychain stores the short-lived token, and push
-    // to the validated URL, not a remote name that could carry another pushurl.
-    let status = git(path)
+    let mut command = git(path);
+    command
         .args(["-c", "credential.helper=", "-c", &helper])
-        .args(["-c", "credential.useHttpPath=true", "push"])
+        .args(["-c", "credential.useHttpPath=true"]);
+    command
+}
+
+fn push_hosted(path: &Path, clone_url: &str, branch: &str, quoted: &str) {
+    let refspec = format!("HEAD:refs/heads/{branch}");
+    // Push to the validated URL, not a remote name that could carry another pushurl.
+    let status = hosted_git(path, clone_url)
+        .arg("push")
         .args([clone_url, refspec.as_str()])
         // Keep stdout for floo's JSON.
         .stdout(Stdio::from(io::stderr()))
