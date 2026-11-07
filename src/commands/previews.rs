@@ -157,11 +157,23 @@ pub fn list(app_flag: Option<&str>) {
     );
 }
 
+/// `floo status --preview`: a preview's latest deploy, URL and managed-resource
+/// branches.
 pub fn status(app_flag: Option<&str>, preview_identifier: &str) {
     super::require_auth();
     let client = super::init_client(None);
     let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
     let preview = resolve_preview(&client, &app_id, &app_name, preview_identifier);
+    let branches = match client.list_preview_managed_resource_branches(&app_id, &preview.slug) {
+        Ok(listing) => listing.resources,
+        Err(e) => {
+            output::warn(&format!(
+                "Resource branches unavailable ({}); showing the ones the preview reported.",
+                e.message
+            ));
+            preview.managed_resource_branches.clone()
+        }
+    };
 
     if output::is_json_mode() {
         output::success(
@@ -175,6 +187,7 @@ pub fn status(app_flag: Option<&str>, preview_identifier: &str) {
                 "url": preview.url,
                 "expires_at": preview.expires_at,
                 "database_branches": output::to_value(&preview.database_branches),
+                "managed_resource_branches": output::to_value(&branches),
                 "dev_prod_untouched": true,
             })),
         );
@@ -183,6 +196,9 @@ pub fn status(app_flag: Option<&str>, preview_identifier: &str) {
 
     output::info(&format!("Preview {} for {app_name}", preview.slug), None);
     render_preview(&preview);
+    if !branches.is_empty() {
+        render_resource_table(&branches);
+    }
     output::info(
         &format!(
             "Next: floo logs --preview {} --app {app_name}",
@@ -274,94 +290,8 @@ pub fn delete(app_flag: Option<&str>, preview_identifier: &str, yes: bool) {
     }
 }
 
-pub fn resources_list(app_flag: Option<&str>, preview_identifier: &str) {
-    super::require_auth();
-    let client = super::init_client(None);
-    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
-    let preview = resolve_preview(&client, &app_id, &app_name, preview_identifier);
-    let listing = match client.list_preview_managed_resource_branches(&app_id, &preview.slug) {
-        Ok(listing) => listing,
-        Err(e) => {
-            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-            process::exit(1);
-        }
-    };
-
-    if output::is_json_mode() {
-        output::success(
-            "Preview managed-resource branches retrieved.",
-            Some(serde_json::json!({
-                "app": app_json(&app_id, &app_name),
-                "preview": preview_json(&preview),
-                "managed_resource_branches": output::to_value(&listing.resources),
-                "total": listing.total,
-                "dev_prod_untouched": true,
-            })),
-        );
-        return;
-    }
-
-    output::info(
-        &format!(
-            "Preview managed-resource branches for {app_name} (preview: {}):",
-            preview.slug
-        ),
-        None,
-    );
-    render_preview(&preview);
-    if listing.resources.is_empty() {
-        output::info(
-            "No preview managed-resource branches. This preview has no floo-managed service attachments.",
-            None,
-        );
-        return;
-    }
-    render_resource_table(&listing.resources);
-}
-
-pub fn resources_show(app_flag: Option<&str>, preview_identifier: &str, resource_key: &str) {
-    super::require_auth();
-    let client = super::init_client(None);
-    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
-    let preview = resolve_preview(&client, &app_id, &app_name, preview_identifier);
-    let branch =
-        match client.get_preview_managed_resource_branch(&app_id, &preview.slug, resource_key) {
-            Ok(branch) => branch,
-            Err(e) => {
-                output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-                process::exit(1);
-            }
-        };
-
-    if output::is_json_mode() {
-        output::success(
-            "Preview managed-resource branch retrieved.",
-            Some(serde_json::json!({
-                "app": app_json(&app_id, &app_name),
-                "preview": preview_json(&preview),
-                "managed_resource_branch": output::to_value(&branch),
-                "dev_prod_untouched": true,
-            })),
-        );
-        return;
-    }
-
-    output::info(
-        &format!(
-            "Preview managed-resource branch {} for {app_name} (preview: {}):",
-            branch.resource_key, preview.slug
-        ),
-        None,
-    );
-    render_resource_detail(&branch);
-}
-
-pub fn resources_reset(
-    app_flag: Option<&str>,
-    preview_identifier: &str,
-    resource_key: &str,
-    yes: bool,
-) {
+/// `floo previews reset`: reset one preview managed-resource branch.
+pub fn reset(app_flag: Option<&str>, preview_identifier: &str, resource_key: &str, yes: bool) {
     use crate::confirm::{confirm_tier2, ConfirmOutcome, RiskMetadata, Tier};
 
     if output::is_dry_run_mode() {
@@ -472,7 +402,7 @@ pub(crate) fn latest_deploy_id(
             output::error(
                 &format!("Preview '{}' has no deploy yet.", preview.slug),
                 &ErrorCode::DeployNotFound,
-                Some("Run `floo previews status` to inspect the preview lifecycle."),
+                Some("Run `floo status --preview <preview>` to see where it stands."),
             );
             process::exit(1);
         }
@@ -496,7 +426,7 @@ fn poll_deploy(client: &FlooClient, app_id: &str, initial: &Deploy) -> Deploy {
             output::error(
                 "Preview deploy timed out after 10 minutes.",
                 &ErrorCode::DeployTimeout,
-                Some("The deploy may still complete. Run `floo previews status <preview>`."),
+                Some("The deploy may still complete. Run `floo status --preview <preview>`."),
             );
             process::exit(1);
         }
@@ -555,7 +485,7 @@ fn emit_preview_command_result(
         output::info(&format!("URL: {url}"), None);
     }
     output::info(
-        &format!("Next: floo previews status {slug} --app {app_name}"),
+        &format!("Next: floo status --preview {slug} --app {app_name}"),
         None,
     );
 }

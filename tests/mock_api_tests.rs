@@ -3789,7 +3789,7 @@ fn test_services_list_json_returns_both_app_and_managed_services() {
 }
 
 #[test]
-fn test_preview_resources_list_json_returns_all_managed_resource_branches() {
+fn test_status_preview_json_returns_all_managed_resource_branches() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
@@ -3817,9 +3817,8 @@ fn test_preview_resources_list_json_returns_all_managed_resource_branches() {
     floo()
         .args([
             "--json",
-            "previews",
-            "resources",
-            "list",
+            "status",
+            "--preview",
             "feat-db-abcde",
             "--app",
             TEST_APP_NAME,
@@ -3840,7 +3839,7 @@ fn test_preview_resources_list_json_returns_all_managed_resource_branches() {
 }
 
 #[test]
-fn test_preview_resources_reset_dry_run_and_yes_use_generic_endpoint() {
+fn test_previews_reset_dry_run_and_yes_use_generic_endpoint() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
@@ -3850,7 +3849,6 @@ fn test_preview_resources_reset_dry_run_and_yes_use_generic_endpoint() {
             "--json",
             "--dry-run",
             "previews",
-            "resources",
             "reset",
             "feat-db-abcde",
             "--app",
@@ -3893,7 +3891,6 @@ fn test_preview_resources_reset_dry_run_and_yes_use_generic_endpoint() {
         .args([
             "--json",
             "previews",
-            "resources",
             "reset",
             "feat-db-abcde",
             "--app",
@@ -3912,7 +3909,7 @@ fn test_preview_resources_reset_dry_run_and_yes_use_generic_endpoint() {
 }
 
 #[test]
-fn test_previews_status_resolves_preview_url_identifier() {
+fn test_status_preview_resolves_preview_url_identifier() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
@@ -3929,8 +3926,8 @@ fn test_previews_status_resolves_preview_url_identifier() {
     floo()
         .args([
             "--json",
-            "previews",
             "status",
+            "--preview",
             "https://my-app-preview-feat-db-abcde.on.getfloo.com",
             "--app",
             TEST_APP_NAME,

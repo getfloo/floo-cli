@@ -316,9 +316,6 @@ const RECOMMENDED_PERMISSIONS: &[Permission] = &[
     permission!(ReadOnly, ["status"]),
     permission!(ReadOnly, ["deploys"]),
     permission!(ReadOnly, ["previews", "list"]),
-    permission!(ReadOnly, ["previews", "status"]),
-    permission!(ReadOnly, ["previews", "resources", "list"]),
-    permission!(ReadOnly, ["previews", "resources", "show"]),
     permission!(ReadOnly, ["env", "list"]),
     permission!(ReadOnly, ["services", "list"]),
     permission!(ReadOnly, ["services", "show"]),
@@ -339,7 +336,7 @@ const RECOMMENDED_PERMISSIONS: &[Permission] = &[
     permission!(ReadWrite, ["env", "get"]),
     permission!(ReadWrite, ["deploy"]),
     permission!(ReadWrite, ["previews", "delete"]),
-    permission!(ReadWrite, ["previews", "resources", "reset"]),
+    permission!(ReadWrite, ["previews", "reset"]),
     permission!(ReadWrite, ["rollback"]),
     permission!(ReadWrite, ["init"]),
     permission!(ReadWrite, ["env", "set"]),
@@ -465,9 +462,7 @@ mod tests {
         for expected in [
             "Bash(floo apps list:*)",
             "Bash(floo logs:*)",
-            "Bash(floo previews status:*)",
-            "Bash(floo previews resources list:*)",
-            "Bash(floo previews resources show:*)",
+            "Bash(floo previews list:*)",
             "Bash(floo apps show:*)",
             "Bash(floo deploy --preflight:*)",
             "Bash(floo status:*)",
@@ -490,7 +485,7 @@ mod tests {
         for expected in [
             "Bash(floo deploy:*)",
             "Bash(floo connect:*)",
-            "Bash(floo previews resources reset:*)",
+            "Bash(floo previews reset:*)",
             "Bash(floo env set:*)",
             "Bash(floo apps delete:*)",
         ] {

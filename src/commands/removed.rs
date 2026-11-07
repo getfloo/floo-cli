@@ -42,6 +42,26 @@ const REMOVED: &[(&[&str], &str, &str)] = &[
         " It takes a deploy ID, --app and --follow as before.",
     ),
     (
+        &["previews", "status"],
+        "floo status --preview <branch>",
+        " It also lists the preview's resource branches.",
+    ),
+    (
+        &["previews", "resources", "list"],
+        "floo status --preview <branch>",
+        "",
+    ),
+    (
+        &["previews", "resources", "show"],
+        "floo status --preview <branch> --json",
+        " It carries every resource branch.",
+    ),
+    (
+        &["previews", "resources", "reset"],
+        "floo previews reset <branch> --resource <key>",
+        "",
+    ),
+    (
         &["previews", "logs"],
         "floo logs --preview <branch>",
         " `floo logs build --preview <branch>` shows its build logs.",

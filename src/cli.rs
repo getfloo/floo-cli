@@ -259,7 +259,8 @@ Examples:
   floo status                      This folder's HEAD
   floo status --commit 4f2a9c1     Another commit
   floo status --app my-app         The newest dev deploy of an app
-  floo status --wait               Follow the deploy until it finishes")]
+  floo status --wait               Follow the deploy until it finishes
+  floo status --preview feat-foo   A preview: its deploy, URL and resource branches")]
     Status {
         /// App ID or name. Defaults to the app in floo.app.toml and the folder's HEAD.
         #[arg(short, long)]
@@ -273,6 +274,11 @@ Examples:
         /// finishes, then report. Exits 1 when it fails.
         #[arg(long)]
         wait: bool,
+
+        /// A preview instead of dev: its slug, source branch, preview URL, or
+        /// unambiguous #PR. Shows its latest deploy, URL and resource branches.
+        #[arg(long, conflicts_with_all = ["commit", "wait"])]
+        preview: Option<String>,
     },
 
     /// Release the version live on dev to prod. Only apps that use a prod environment need this.
@@ -377,8 +383,9 @@ branch to deploy; `floo deploy --rebuild` builds the current commit again."
         after_help = "\
 Examples:
   floo previews list --app my-app --json
-  floo previews status --app my-app feat-foo-abcde
+  floo status --preview feat-foo-abcde --app my-app
   floo logs --preview feat-foo-abcde --app my-app
+  floo previews reset feat-foo-abcde --app my-app --resource postgres:default --yes
   floo previews delete --app my-app feat-foo-abcde --yes
 
 A preview deploys the branch's pushed commit; dirty local files are not
@@ -1630,16 +1637,6 @@ pub enum PreviewsSubcommands {
         app: Option<String>,
     },
 
-    /// Show preview sandbox status.
-    Status {
-        /// Preview slug, source branch, preview URL, or unambiguous #PR.
-        preview: String,
-
-        /// App name or ID (uses config file if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-    },
-
     /// Delete a preview sandbox and its preview-owned resources.
     Delete {
         /// Preview slug, source branch, preview URL, or unambiguous #PR.
@@ -1657,50 +1654,11 @@ pub enum PreviewsSubcommands {
         preflight: PreflightArgs,
     },
 
-    /// Inspect and reset preview managed-resource branches.
-    #[command(subcommand)]
-    Resources(PreviewResourcesSubcommands),
-}
-
-#[derive(Subcommand)]
-pub enum PreviewResourcesSubcommands {
-    /// List preview-owned Postgres, Redis, and Storage branches.
+    /// Reset one of a preview's Postgres, Redis or Storage branches. `floo status --preview` lists them.
     #[command(after_help = "\
 Examples:
-  floo previews resources list feat-db-abcde --app my-app
-  floo previews resources list feat-db-abcde --app my-app --json")]
-    List {
-        /// Preview slug, source branch, preview URL, or unambiguous #PR.
-        preview: String,
-
-        /// App name or ID (uses config file if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-    },
-
-    /// Show one preview managed-resource branch.
-    #[command(after_help = "\
-Examples:
-  floo previews resources show feat-db-abcde --app my-app --resource redis:default
-  floo previews resources show feat-db-abcde --app my-app --resource storage:uploads --json")]
-    Show {
-        /// Preview slug, source branch, preview URL, or unambiguous #PR.
-        preview: String,
-
-        /// App name or ID (uses config file if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-
-        /// Resource key, shaped type:name, e.g. postgres:default or redis:cache.
-        #[arg(long)]
-        resource: String,
-    },
-
-    /// Reset one preview managed-resource branch.
-    #[command(after_help = "\
-Examples:
-  floo previews resources reset feat-db-abcde --app my-app --resource postgres:default --yes
-  floo previews resources reset feat-db-abcde --app my-app --resource redis:cache --preflight --json
+  floo previews reset feat-db-abcde --app my-app --resource postgres:default --yes
+  floo previews reset feat-db-abcde --app my-app --resource redis:cache --preflight --json
 
 Reset is preview-scoped. Dev and prod resources are not touched. Providers that
 do not yet support reset fail closed with the API's named reset blocker.")]
@@ -2226,9 +2184,15 @@ pub fn run() {
             commands::connect::connect(commands::connect::ConnectArgs { repo, app, branch })
         }
 
-        Commands::Status { app, commit, wait } => {
-            commands::status::status(app.as_deref(), commit.as_deref(), wait)
-        }
+        Commands::Status {
+            app,
+            commit,
+            wait,
+            preview,
+        } => match preview {
+            Some(preview) => commands::previews::status(app.as_deref(), &preview),
+            None => commands::status::status(app.as_deref(), commit.as_deref(), wait),
+        },
 
         Commands::Promote { app, tag } => {
             commands::releases::promote(app.as_deref(), tag.as_deref())
@@ -2253,32 +2217,19 @@ pub fn run() {
         } => commands::deploys::list(app.as_deref(), env.as_deref(), limit, cursor.as_deref()),
         Commands::Previews(sub) => match sub {
             PreviewsSubcommands::List { app } => commands::previews::list(app.as_deref()),
-            PreviewsSubcommands::Status { preview, app } => {
-                commands::previews::status(app.as_deref(), &preview)
-            }
             PreviewsSubcommands::Delete {
                 preview,
                 app,
                 yes,
                 preflight: _,
             } => commands::previews::delete(app.as_deref(), &preview, yes),
-            PreviewsSubcommands::Resources(sub) => match sub {
-                PreviewResourcesSubcommands::List { preview, app } => {
-                    commands::previews::resources_list(app.as_deref(), &preview)
-                }
-                PreviewResourcesSubcommands::Show {
-                    preview,
-                    app,
-                    resource,
-                } => commands::previews::resources_show(app.as_deref(), &preview, &resource),
-                PreviewResourcesSubcommands::Reset {
-                    preview,
-                    app,
-                    resource,
-                    yes,
-                    preflight: _,
-                } => commands::previews::resources_reset(app.as_deref(), &preview, &resource, yes),
-            },
+            PreviewsSubcommands::Reset {
+                preview,
+                app,
+                resource,
+                yes,
+                preflight: _,
+            } => commands::previews::reset(app.as_deref(), &preview, &resource, yes),
         },
         Commands::Auth(sub) => match sub {
             AuthCommands::Login { api_key, force } => {
@@ -2927,11 +2878,10 @@ mod tests {
                 &["floo", "previews", "delete", "feat-example", "--preflight"],
             ),
             (
-                "previews resources reset",
+                "previews reset",
                 &[
                     "floo",
                     "previews",
-                    "resources",
                     "reset",
                     "feat-db-abcde",
                     "--app",
@@ -3099,6 +3049,21 @@ mod tests {
         assert_eq!(merged.preview.as_deref(), Some("feat-x"));
         assert_eq!(merged.since.as_deref(), Some("5m"), "the subcommand wins");
         assert!(!merged.live, "--live stays the subcommand's own");
+    }
+
+    #[test]
+    fn status_preview_stands_alone() {
+        assert!(Cli::try_parse_from(["floo", "status", "--preview", "feat-x"]).is_ok());
+        for flag in ["--wait", "--commit"] {
+            let mut argv = vec!["floo", "status", "--preview", "feat-x", flag];
+            if flag == "--commit" {
+                argv.push("abc1234");
+            }
+            assert!(
+                Cli::try_parse_from(argv).is_err(),
+                "`status --preview` follows no dev deploy, so it rejects {flag}"
+            );
+        }
     }
 
     #[test]
