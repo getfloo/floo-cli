@@ -182,21 +182,37 @@ Examples:
         preflight: PreflightArgs,
     },
 
-    /// Push this repository to its floo-hosted project and wait for the dev deploy.
+    /// Deploy this repository to dev: from its GitHub repo, or a copy floo hosts.
     #[command(after_help = "\
 Examples:
   floo deploy                              Deploy the repository in the current directory
   floo deploy ./my-app                     Deploy ./my-app
-  floo deploy --preflight --json           Show what would happen without pushing
+  floo deploy --github                     No remote yet: create a private GitHub repo with gh
+  floo deploy --hosted                     Let floo host a copy of the code instead
+  floo deploy --name shop-2                Use another app name (written to floo.app.toml)
+  floo deploy --preflight --json           Show the plan without creating or pushing
 
-The first run creates a floo-hosted project named after [app] name in
-floo.app.toml (hosted, invite-only login, postgres), adds a git remote named
-'floo', and pushes the current commit. Later runs push to that remote. Commit
+floo asks the API where the code deploys from, then creates, connects or pushes.
+A folder that pushes to github.com deploys from that repo; floo hosts a copy only
+with --hosted. The default branch deploys dev; any other branch gets a preview
+URL and leaves dev alone. Every stop creates nothing and names the fix. Commit
 your changes first.")]
     Deploy {
         /// Repository root holding floo.app.toml.
         #[arg(default_value = ".")]
         path: PathBuf,
+
+        /// With no git remote, create a private GitHub repo in your account (needs gh).
+        #[arg(long, conflicts_with = "hosted")]
+        github: bool,
+
+        /// Let floo host a copy of the code instead of deploying from GitHub.
+        #[arg(long)]
+        hosted: bool,
+
+        /// App name to deploy as; written to floo.app.toml and committed once accepted.
+        #[arg(long)]
+        name: Option<String>,
 
         #[command(flatten)]
         preflight: PreflightArgs,
@@ -2267,7 +2283,18 @@ pub fn run() {
             preflight: _,
         } => commands::deploy::preflight(path, app, services, env),
 
-        Commands::Deploy { path, preflight: _ } => commands::ship::deploy(path),
+        Commands::Deploy {
+            path,
+            github,
+            hosted,
+            name,
+            preflight: _,
+        } => commands::ship::deploy(commands::ship::DeployArgs {
+            path,
+            github,
+            hosted,
+            name,
+        }),
 
         Commands::Redeploy {
             path,

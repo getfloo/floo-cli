@@ -213,6 +213,21 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    // --- Deploy plan ---
+
+    /// Ask where a deploy's code comes from. Read-only: nothing is created.
+    pub fn plan_deploy(&self, body: &Value) -> Result<DeployPlan, FlooApiError> {
+        let response = self.post_json("/v1/deploy/plan", body)?;
+        self.handle_response(response)
+    }
+
+    /// Create an app with its code source in one call; a refused source creates nothing.
+    pub fn create_app_with_source(&self, name: &str, source: &Value) -> Result<App, FlooApiError> {
+        let body = serde_json::json!({"name": name, "source": source});
+        let response = self.post_json("/v1/apps", &body)?;
+        self.handle_response(response)
+    }
+
     // --- Managed projects ---
 
     pub fn create_project(&self, name: &str) -> Result<ProjectResponse, FlooApiError> {
