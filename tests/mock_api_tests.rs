@@ -4017,6 +4017,7 @@ fn test_logs_preview_reads_the_preview_deploy_runtime_logs() {
         .with_body(
             r#"{"logs":[{"timestamp":"2026-06-24T10:02:00Z","severity":"INFO","message":"Preview booted","deployment_id":"deploy-preview-1","service_name":"web"}],"total":1,"app_name":"my-app"}"#,
         )
+        .expect(2)
         .create();
 
     floo()
@@ -4025,6 +4026,22 @@ fn test_logs_preview_reads_the_preview_deploy_runtime_logs() {
             "logs",
             "--preview",
             "feat-db-abcde",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Preview booted"));
+
+    // Named before `query`, the preview still selects its deploy.
+    floo()
+        .args([
+            "--json",
+            "logs",
+            "--preview",
+            "feat-db-abcde",
+            "query",
             "--app",
             TEST_APP_NAME,
         ])

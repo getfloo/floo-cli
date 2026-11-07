@@ -771,6 +771,24 @@ fn test_logs_tail_help() {
 }
 
 #[test]
+fn test_logs_preview_before_query_rejects_env_after_it() {
+    floo()
+        .args([
+            "--json",
+            "logs",
+            "--preview",
+            "feat-x",
+            "query",
+            "--env",
+            "prod",
+        ])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains(r#""code":"INVALID_ARGUMENTS""#));
+}
+
+#[test]
 fn test_logs_not_authenticated() {
     floo()
         .args(["logs", "--app", "my-app"])

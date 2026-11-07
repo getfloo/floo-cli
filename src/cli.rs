@@ -657,6 +657,35 @@ pub struct LogsOptions {
     requests: bool,
 }
 
+impl LogsOptions {
+    /// A subcommand's options, filled in by what came before the subcommand,
+    /// so `floo logs --preview x query` reads the preview. The subcommand wins
+    /// where both are set; `--live` and `--tail` stay the subcommand's own.
+    fn over(self, parent: LogsOptions) -> LogsOptions {
+        LogsOptions {
+            app: self.app.or(parent.app),
+            tail: self.tail,
+            since: self.since.or(parent.since),
+            error: self.error || parent.error,
+            severity: self.severity.or(parent.severity),
+            services: if self.services.is_empty() {
+                parent.services
+            } else {
+                self.services
+            },
+            cron: self.cron.or(parent.cron),
+            search: self.search.or(parent.search),
+            deployment: self.deployment.or(parent.deployment),
+            cursor: self.cursor.or(parent.cursor),
+            live: self.live,
+            output: self.output.or(parent.output),
+            env: self.env.or(parent.env),
+            preview: self.preview.or(parent.preview),
+            requests: self.requests || parent.requests,
+        }
+    }
+}
+
 #[derive(Subcommand, Clone)]
 pub enum LogsSubcommands {
     /// Query stored runtime logs once.
@@ -2046,6 +2075,18 @@ fn exit_with_clap_error_json(err: &clap::Error) -> ! {
 
 /// Runtime logs, or the gateway's request logs with `--requests`.
 fn runtime_logs(options: LogsOptions) {
+    // Clap rejects these together on one level; options merged from before and
+    // after a subcommand can still meet here.
+    if options.preview.is_some()
+        && (options.env.is_some() || options.deployment.is_some() || options.requests)
+    {
+        output::error(
+            "--preview picks the deployment and environment itself.",
+            &crate::errors::ErrorCode::InvalidArguments,
+            Some("Drop --env, --deployment and --requests, or drop --preview."),
+        );
+        std::process::exit(2);
+    }
     if options.requests {
         commands::logs::request_logs(commands::logs::RequestLogsArgs {
             app_flag: options.app,
@@ -2665,8 +2706,9 @@ pub fn run() {
                 // `floo logs --preview x build` names the preview before `build`.
                 preview.or(options.preview).as_deref(),
             ),
-            Some(LogsSubcommands::Query { options }) => runtime_logs(options),
-            Some(LogsSubcommands::Tail { options }) => {
+            Some(LogsSubcommands::Query { options: sub }) => runtime_logs(sub.over(options)),
+            Some(LogsSubcommands::Tail { options: sub }) => {
+                let options = sub.over(options);
                 if options.output.is_some() {
                     output::error(
                         "`floo logs tail` cannot write to --output.",
@@ -3062,6 +3104,32 @@ mod tests {
             panic!("expected logs tail");
         };
         assert_eq!(options.preview.as_deref(), Some("feat-x"));
+    }
+
+    #[test]
+    fn logs_options_before_a_subcommand_fill_its_gaps() {
+        let cli = Cli::try_parse_from([
+            "floo",
+            "logs",
+            "--preview",
+            "feat-x",
+            "--since",
+            "1h",
+            "query",
+            "--since",
+            "5m",
+        ])
+        .unwrap();
+        let Commands::Logs { command, options } = cli.command else {
+            panic!("expected Logs");
+        };
+        let Some(LogsSubcommands::Query { options: sub }) = command.map(|boxed| *boxed) else {
+            panic!("expected logs query");
+        };
+        let merged = sub.over(options);
+        assert_eq!(merged.preview.as_deref(), Some("feat-x"));
+        assert_eq!(merged.since.as_deref(), Some("5m"), "the subcommand wins");
+        assert!(!merged.live, "--live stays the subcommand's own");
     }
 
     #[test]
