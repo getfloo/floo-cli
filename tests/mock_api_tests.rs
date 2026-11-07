@@ -3988,12 +3988,8 @@ fn test_previews_delete_uses_preview_teardown_endpoint() {
         .stdout(predicate::str::contains(r#""dev_prod_untouched":true"#));
 }
 
-#[test]
-fn test_previews_logs_reads_latest_preview_deploy_logs() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let _resolve = mock_resolve_app(&mut server);
-    let _preview = server
+fn mock_preview_detail(server: &mut Server) -> Mock {
+    server
         .mock(
             "GET",
             format!("/v1/apps/{TEST_APP_ID}/previews/feat-db-abcde").as_str(),
@@ -4001,11 +3997,18 @@ fn test_previews_logs_reads_latest_preview_deploy_logs() {
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(preview_detail_json(""))
-        .create();
-    let _logs = server
+        .create()
+}
+
+#[test]
+fn test_logs_preview_reads_the_preview_deploy_runtime_logs() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _preview = mock_preview_detail(&mut server);
+    let logs = server
         .mock("GET", format!("/v1/apps/{TEST_APP_ID}/logs").as_str())
         .match_query(Matcher::AllOf(vec![
-            Matcher::UrlEncoded("limit".into(), "100".into()),
             Matcher::UrlEncoded("deployment".into(), "deploy-preview-1".into()),
             Matcher::UrlEncoded("env".into(), "preview".into()),
         ]))
@@ -4019,8 +4022,43 @@ fn test_previews_logs_reads_latest_preview_deploy_logs() {
     floo()
         .args([
             "--json",
-            "previews",
             "logs",
+            "--preview",
+            "feat-db-abcde",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Preview booted"));
+    logs.assert();
+}
+
+#[test]
+fn test_logs_build_preview_shows_the_preview_deploy_build_logs() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _preview = mock_preview_detail(&mut server);
+    let deploy = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/deploys/deploy-preview-1").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"id":"deploy-preview-1","status":"live","build_logs":"Step 1/2: install\nStep 2/2: build","created_at":"2026-06-24T10:00:00Z"}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "logs",
+            "build",
+            "--preview",
             "feat-db-abcde",
             "--app",
             TEST_APP_NAME,
@@ -4031,7 +4069,41 @@ fn test_previews_logs_reads_latest_preview_deploy_logs() {
         .stdout(predicate::str::contains(
             r#""deploy_id":"deploy-preview-1""#,
         ))
-        .stdout(predicate::str::contains("Preview booted"));
+        .stdout(predicate::str::contains("Step 2/2: build"));
+    deploy.assert();
+}
+
+#[test]
+fn test_logs_build_reads_the_named_deploy() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let deploy = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/deploys/0b8d4a8e-1f7c-4c2e-9d55-3f0f6f1a2b3c").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"id":"0b8d4a8e-1f7c-4c2e-9d55-3f0f6f1a2b3c","status":"failed","build_logs":"npm ERR! missing script: build","created_at":"2026-06-24T10:00:00Z"}"#,
+        )
+        .create();
+
+    floo()
+        .args([
+            "--json",
+            "logs",
+            "build",
+            "0b8d4a8e-1f7c-4c2e-9d55-3f0f6f1a2b3c",
+            "--app",
+            TEST_APP_NAME,
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("missing script: build"));
+    deploy.assert();
 }
 
 #[test]

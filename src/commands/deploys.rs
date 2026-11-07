@@ -213,15 +213,20 @@ fn print_deploy_header(deploy: &Deploy) {
     output::dim_line("");
 }
 
-pub fn logs(deploy_id: Option<&str>, app: Option<&str>, follow: bool) {
+/// `floo logs build`: one deploy's build logs, by default the app's latest
+/// deploy, or with `preview` the preview's latest deploy.
+pub fn logs(deploy_id: Option<&str>, app: Option<&str>, follow: bool, preview: Option<&str>) {
     super::require_auth();
     let client = super::init_client(None);
 
-    let (app_id, _app_name) = super::resolve_app_from_config(&client, app);
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app);
 
-    let resolved_deploy_id: String = match deploy_id {
-        Some(id) => resolve_deploy_id(&client, &app_id, id),
-        None => {
+    let resolved_deploy_id: String = match (deploy_id, preview) {
+        (_, Some(preview)) => {
+            crate::commands::previews::latest_deploy_id(&client, &app_id, &app_name, preview)
+        }
+        (Some(id), None) => resolve_deploy_id(&client, &app_id, id),
+        (None, None) => {
             let result = match client.list_deploys(&app_id) {
                 Ok(r) => r,
                 Err(e) => {

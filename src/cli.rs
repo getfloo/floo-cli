@@ -346,7 +346,7 @@ cached. An app on your own GitHub repo clones from GitHub as usual.")]
         after_help = "\
 Examples:
   floo deploys list --app my-app            Show deploy history
-  floo deploys logs <id> --follow           Stream build logs in real-time
+  floo logs build <id> --follow             Stream a deploy's build logs
   floo status --wait --app my-app           Follow a deploy until it finishes
 
 Note: Push to the connected GitHub branch to deploy. `floo deploy --rebuild` builds the current commit again once the app has a dev deploy."
@@ -361,7 +361,7 @@ Note: Push to the connected GitHub branch to deploy. `floo deploy --rebuild` bui
 Examples:
   floo previews list --app my-app --json
   floo previews status --app my-app feat-foo-abcde
-  floo previews logs --app my-app feat-foo-abcde --follow
+  floo logs --preview feat-foo-abcde --app my-app
   floo previews delete --app my-app feat-foo-abcde --yes
 
 A preview deploys the branch's pushed commit; dirty local files are not
@@ -458,13 +458,16 @@ Examples:
     #[command(subcommand)]
     Releases(ReleasesCommands),
 
-    /// View runtime logs for an app.
+    /// View runtime logs and build logs for an app.
     #[command(after_help = "\
 Examples:
   floo logs query --app my-app --since 1h         Query stored runtime logs
   floo logs query --app my-app --deployment latest --json
   floo logs tail --app my-app --env prod          Stream runtime logs
-  floo logs --app my-app --live                   Backwards-compatible tail")]
+  floo logs --app my-app --live                   Backwards-compatible tail
+  floo logs --preview feat-foo --app my-app       Runtime logs of a preview
+  floo logs build --app my-app --follow           Build logs of the latest deploy
+  floo logs build --preview feat-foo --app my-app Build logs of a preview")]
     Logs {
         #[command(subcommand)]
         command: Option<Box<LogsSubcommands>>,
@@ -642,6 +645,11 @@ pub struct LogsOptions {
     #[arg(long, value_parser = ["dev", "prod"])]
     env: Option<String>,
 
+    /// Show the logs of a preview's latest deploy: its slug, source branch,
+    /// preview URL, or unambiguous #PR.
+    #[arg(long, conflicts_with_all = ["env", "deployment", "requests"])]
+    preview: Option<String>,
+
     /// Show HTTP requests captured by floo's gateway instead of app-level
     /// log output. Each line is one proxied request with the public URL,
     /// status, and latency.
@@ -661,6 +669,25 @@ pub enum LogsSubcommands {
     Tail {
         #[command(flatten)]
         options: LogsOptions,
+    },
+
+    /// Show build logs for a deploy (defaults to the latest deploy).
+    Build {
+        /// Deploy ID (defaults to the latest deploy if omitted).
+        deploy_id: Option<String>,
+
+        /// App name or ID (uses config file if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Follow logs in real-time (stream active deploys).
+        #[arg(short, long)]
+        follow: bool,
+
+        /// Show the build logs of a preview's latest deploy: its slug, source
+        /// branch, preview URL, or unambiguous #PR.
+        #[arg(long, conflicts_with = "deploy_id")]
+        preview: Option<String>,
     },
 }
 
@@ -1588,20 +1615,6 @@ pub enum DeploysSubcommands {
         #[arg(long)]
         cursor: Option<String>,
     },
-
-    /// Show build logs for a deploy (defaults to the latest deploy).
-    Logs {
-        /// Deploy ID (defaults to latest deploy if omitted).
-        deploy_id: Option<String>,
-
-        /// App name or ID (uses config file if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-
-        /// Follow logs in real-time (stream active deploys).
-        #[arg(short, long)]
-        follow: bool,
-    },
 }
 
 #[derive(Subcommand)]
@@ -1621,24 +1634,6 @@ pub enum PreviewsSubcommands {
         /// App name or ID (uses config file if omitted).
         #[arg(short, long)]
         app: Option<String>,
-    },
-
-    /// Show logs for the preview's latest deploy.
-    Logs {
-        /// Preview slug, source branch, preview URL, or unambiguous #PR.
-        preview: String,
-
-        /// App name or ID (uses config file if omitted).
-        #[arg(short, long)]
-        app: Option<String>,
-
-        /// Follow deploy logs while the preview deploy is active.
-        #[arg(short, long)]
-        follow: bool,
-
-        /// Number of runtime log lines to fetch when not streaming deploy logs.
-        #[arg(long, default_value_t = 100)]
-        tail: u32,
     },
 
     /// Delete a preview sandbox and its preview-owned resources.
@@ -2049,6 +2044,39 @@ fn exit_with_clap_error_json(err: &clap::Error) -> ! {
     std::process::exit(err.exit_code());
 }
 
+/// Runtime logs, or the gateway's request logs with `--requests`.
+fn runtime_logs(options: LogsOptions) {
+    if options.requests {
+        commands::logs::request_logs(commands::logs::RequestLogsArgs {
+            app_flag: options.app,
+            tail: options.tail,
+            since: options.since,
+            live: options.live,
+        });
+    } else {
+        let severity = if options.error {
+            Some("ERROR".to_string())
+        } else {
+            options.severity
+        };
+        commands::logs::logs(commands::logs::LogsArgs {
+            app_flag: options.app,
+            tail: options.tail,
+            since: options.since,
+            severity,
+            services: options.services,
+            cron: options.cron,
+            search: options.search,
+            deployment: options.deployment,
+            cursor: options.cursor,
+            live: options.live,
+            output_path: options.output,
+            env: options.env,
+            preview: options.preview,
+        });
+    }
+}
+
 pub fn run() {
     let args = rewrite_bare_version_flag(std::env::args_os().collect());
     let args = rewrite_preflight_flag_position(args);
@@ -2205,23 +2233,12 @@ pub fn run() {
             DeploysSubcommands::List { app, limit, cursor } => {
                 commands::deploys::list(app.as_deref(), limit, cursor.as_deref())
             }
-            DeploysSubcommands::Logs {
-                deploy_id,
-                app,
-                follow,
-            } => commands::deploys::logs(deploy_id.as_deref(), app.as_deref(), follow),
         },
         Commands::Previews(sub) => match sub {
             PreviewsSubcommands::List { app } => commands::previews::list(app.as_deref()),
             PreviewsSubcommands::Status { preview, app } => {
                 commands::previews::status(app.as_deref(), &preview)
             }
-            PreviewsSubcommands::Logs {
-                preview,
-                app,
-                follow,
-                tail,
-            } => commands::previews::logs(app.as_deref(), &preview, follow, tail),
             PreviewsSubcommands::Delete {
                 preview,
                 app,
@@ -2635,56 +2652,35 @@ pub fn run() {
 
         Commands::Discover => commands::command_tree::commands(),
 
-        Commands::Logs { command, options } => {
-            let options = match command.map(|boxed| *boxed) {
-                Some(LogsSubcommands::Query { options }) => options,
-                Some(LogsSubcommands::Tail { options }) => {
-                    if options.output.is_some() {
-                        output::error(
-                            "`floo logs tail` cannot write to --output.",
-                            &crate::errors::ErrorCode::InvalidFormat,
-                            Some(
-                                "Use `floo logs query --output <path>` for a finite log snapshot.",
-                            ),
-                        );
-                        std::process::exit(1);
-                    }
-                    let mut options = options;
-                    options.live = true;
-                    options
+        Commands::Logs { command, options } => match command.map(|boxed| *boxed) {
+            Some(LogsSubcommands::Build {
+                deploy_id,
+                app,
+                follow,
+                preview,
+            }) => commands::deploys::logs(
+                deploy_id.as_deref(),
+                app.or(options.app).as_deref(),
+                follow,
+                preview.as_deref(),
+            ),
+            Some(LogsSubcommands::Query { options }) => runtime_logs(options),
+            Some(LogsSubcommands::Tail { options }) => {
+                if options.output.is_some() {
+                    output::error(
+                        "`floo logs tail` cannot write to --output.",
+                        &crate::errors::ErrorCode::InvalidFormat,
+                        Some("Use `floo logs query --output <path>` for a finite log snapshot."),
+                    );
+                    std::process::exit(1);
                 }
-                None => options,
-            };
-
-            if options.requests {
-                commands::logs::request_logs(commands::logs::RequestLogsArgs {
-                    app_flag: options.app,
-                    tail: options.tail,
-                    since: options.since,
-                    live: options.live,
-                });
-            } else {
-                let severity = if options.error {
-                    Some("ERROR".to_string())
-                } else {
-                    options.severity
-                };
-                commands::logs::logs(commands::logs::LogsArgs {
-                    app_flag: options.app,
-                    tail: options.tail,
-                    since: options.since,
-                    severity,
-                    services: options.services,
-                    cron: options.cron,
-                    search: options.search,
-                    deployment: options.deployment,
-                    cursor: options.cursor,
-                    live: options.live,
-                    output_path: options.output,
-                    env: options.env,
-                });
+                runtime_logs(LogsOptions {
+                    live: true,
+                    ..options
+                })
             }
-        }
+            None => runtime_logs(options),
+        },
         Commands::Version => commands::update::version(),
         Commands::Update {
             version,
@@ -3044,6 +3040,49 @@ mod tests {
     // to special-case singular vs plural per subcommand. Canonical is
     // `--service`; `--services` is a visible alias (same arg id), so existing
     // scripts keep working and `--service` is the one true name in help.
+
+    #[test]
+    fn logs_preview_replaces_env_and_deployment() {
+        for flag in ["--env", "--deployment", "--requests"] {
+            let mut argv = vec!["floo", "logs", "--preview", "feat-x", flag];
+            if flag != "--requests" {
+                argv.push("dev");
+            }
+            assert!(
+                Cli::try_parse_from(argv).is_err(),
+                "`logs --preview` must reject {flag}"
+            );
+        }
+        let cli = Cli::try_parse_from(["floo", "logs", "tail", "--preview", "feat-x"]).unwrap();
+        let Commands::Logs { command, .. } = cli.command else {
+            panic!("expected Logs");
+        };
+        let Some(LogsSubcommands::Tail { options }) = command.map(|boxed| *boxed) else {
+            panic!("expected logs tail");
+        };
+        assert_eq!(options.preview.as_deref(), Some("feat-x"));
+    }
+
+    #[test]
+    fn logs_build_takes_a_deploy_or_a_preview() {
+        let cli = Cli::try_parse_from(["floo", "logs", "build", "abc123", "-f"]).unwrap();
+        let Commands::Logs { command, .. } = cli.command else {
+            panic!("expected Logs");
+        };
+        let Some(LogsSubcommands::Build {
+            deploy_id, follow, ..
+        }) = command.map(|boxed| *boxed)
+        else {
+            panic!("expected logs build");
+        };
+        assert_eq!(deploy_id.as_deref(), Some("abc123"));
+        assert!(follow);
+        assert!(
+            Cli::try_parse_from(["floo", "logs", "build", "abc123", "--preview", "feat-x"])
+                .is_err(),
+            "a deploy ID and --preview name two deploys"
+        );
+    }
 
     #[test]
     fn run_accepts_both_service_spellings() {
