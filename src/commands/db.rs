@@ -1,6 +1,9 @@
+use std::path::{Path, PathBuf};
 use std::process;
 
+use percent_encoding::percent_decode_str;
 use serde_json::Value;
+use url::Url;
 
 use crate::errors::{ErrorCode, FlooError};
 use crate::output;
@@ -249,6 +252,175 @@ pub fn schema(app_flag: Option<&str>) {
     }
 }
 
+const PG_DUMP_INSTALL_HINT: &str = "Install the PostgreSQL 17+ client tools: \
+macOS `brew install libpq && brew link --force libpq`, Debian/Ubuntu `apt install postgresql-client-17`, \
+or https://www.postgresql.org/download/";
+
+/// The `pg_dump` command line for one dump. The password travels in
+/// `PGPASSWORD`, never in `args`, so it does not show up in `ps`.
+#[derive(Debug)]
+struct PgDumpInvocation {
+    args: Vec<String>,
+    password: String,
+}
+
+/// Build the `pg_dump` invocation from the environment's `DATABASE_URL`.
+///
+/// `--no-owner --no-privileges` keep the dump restorable into any Postgres:
+/// the managed role is named `app`, which the destination will not have.
+fn pg_dump_invocation(
+    database_url: &str,
+    file: &Path,
+    format: &str,
+) -> Result<PgDumpInvocation, FlooError> {
+    let invalid = || {
+        FlooError::new(
+            ErrorCode::Other("INVALID_DATABASE_URL".to_string()),
+            "DATABASE_URL is not a postgres:// connection URL.",
+        )
+    };
+    let mut url = Url::parse(database_url).map_err(|_| invalid())?;
+    if !matches!(url.scheme(), "postgres" | "postgresql") {
+        return Err(invalid());
+    }
+    let password = percent_decode_str(url.password().unwrap_or(""))
+        .decode_utf8()
+        .map_err(|_| invalid())?
+        .into_owned();
+    url.set_password(None).map_err(|_| invalid())?;
+    let format_flag = if format == "custom" { "c" } else { "p" };
+    Ok(PgDumpInvocation {
+        args: vec![
+            format!("--dbname={url}"),
+            format!("--file={}", file.display()),
+            format!("--format={format_flag}"),
+            "--no-owner".to_string(),
+            "--no-privileges".to_string(),
+            "--no-password".to_string(),
+        ],
+        password,
+    })
+}
+
+/// The local `pg_dump` version line, or `None` when it is not on PATH.
+fn pg_dump_version() -> Option<String> {
+    let out = process::Command::new("pg_dump")
+        .arg("--version")
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Map a failed `pg_dump` run to a floo error. pg_dump refuses to dump a
+/// server newer than itself; that case gets the install hint.
+fn pg_dump_failure(stderr: &str) -> FlooError {
+    let detail = stderr.trim();
+    if detail.contains("server version mismatch") {
+        return FlooError::with_suggestion(
+            ErrorCode::Other("PG_DUMP_VERSION_MISMATCH".to_string()),
+            format!("pg_dump is older than the database server. {detail}"),
+            PG_DUMP_INSTALL_HINT,
+        );
+    }
+    FlooError::new(
+        ErrorCode::Other("PG_DUMP_FAILED".to_string()),
+        format!("pg_dump failed. {detail}"),
+    )
+}
+
+fn exit_with(e: &FlooError) -> ! {
+    output::error(&e.message, &e.code, e.suggestion.as_deref());
+    process::exit(1);
+}
+
+pub fn dump(app_flag: Option<&str>, environment: &str, file: &Path, format: &str) {
+    // Check the local tool before reading the credential, so a missing
+    // pg_dump never costs an audited secret read.
+    let Some(version) = pg_dump_version() else {
+        exit_with(&FlooError::with_suggestion(
+            ErrorCode::Other("PG_DUMP_NOT_FOUND".to_string()),
+            "pg_dump was not found on PATH. `floo db dump` runs your local pg_dump.",
+            PG_DUMP_INSTALL_HINT,
+        ));
+    };
+
+    super::require_auth();
+    let client = super::init_client(None);
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
+
+    let database_url = match client.get_env_var(&app_id, "DATABASE_URL", None, environment) {
+        Ok(var) => var.value.unwrap_or_default(),
+        Err(e) if e.code == "ENV_VAR_NOT_FOUND" => exit_with(&FlooError::with_suggestion(
+            ErrorCode::Other("DATABASE_NOT_FOUND".to_string()),
+            format!("'{app_name}' has no DATABASE_URL in {environment}, so there is no database to dump."),
+            format!("Run `floo env list --app {app_name} --env {environment}` to see what is set."),
+        )),
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+
+    // Write to a sibling `.partial` file and rename on success, so a failed
+    // dump never leaves a truncated file that looks complete, and never
+    // clobbers an earlier good dump at the same path.
+    let mut partial = file.as_os_str().to_owned();
+    partial.push(".partial");
+    let partial = PathBuf::from(partial);
+
+    let invocation = match pg_dump_invocation(&database_url, &partial, format) {
+        Ok(i) => i,
+        Err(e) => exit_with(&e),
+    };
+
+    if !output::is_json_mode() {
+        output::info(
+            &format!("Dumping the {environment} database of '{app_name}' with {version}..."),
+            None,
+        );
+    }
+
+    let run = process::Command::new("pg_dump")
+        .args(&invocation.args)
+        .env("PGPASSWORD", &invocation.password)
+        // Applies only when DATABASE_URL does not set sslmode itself.
+        .env("PGSSLMODE", "require")
+        .stdin(process::Stdio::null())
+        .output();
+
+    let failure = match run {
+        Ok(out) if out.status.success() => std::fs::rename(&partial, file).err().map(|e| {
+            FlooError::new(
+                ErrorCode::Other("DUMP_WRITE_FAILED".to_string()),
+                format!("Could not write {}: {e}", file.display()),
+            )
+        }),
+        Ok(out) => Some(pg_dump_failure(&String::from_utf8_lossy(&out.stderr))),
+        Err(e) => Some(pg_dump_failure(&e.to_string())),
+    };
+    if let Some(e) = failure {
+        let _ = std::fs::remove_file(&partial);
+        exit_with(&e);
+    }
+
+    let bytes = std::fs::metadata(file).map(|m| m.len()).unwrap_or(0);
+    output::success(
+        &format!(
+            "Wrote the {environment} database of '{app_name}' to {} ({bytes} bytes).",
+            file.display()
+        ),
+        Some(serde_json::json!({
+            "app": app_name,
+            "env": environment,
+            "file": file.display().to_string(),
+            "format": format,
+            "bytes": bytes,
+        })),
+    );
+}
+
 fn value_to_display(v: &Value) -> String {
     match v {
         Value::Null => "NULL".to_string(),
@@ -318,6 +490,59 @@ mod tests {
                 .code
                 .as_str(),
             "INVALID_LIMIT"
+        );
+    }
+
+    #[test]
+    fn test_pg_dump_invocation_moves_password_out_of_args() {
+        let inv = pg_dump_invocation(
+            "postgresql://app:p%40ss%2Fw0rd@ep-x.us-east-2.aws.neon.tech:5432/app?sslmode=require",
+            Path::new("out.sql.partial"),
+            "plain",
+        )
+        .unwrap();
+        assert_eq!(inv.password, "p@ss/w0rd");
+        assert_eq!(
+            inv.args,
+            vec![
+                "--dbname=postgresql://app@ep-x.us-east-2.aws.neon.tech:5432/app?sslmode=require",
+                "--file=out.sql.partial",
+                "--format=p",
+                "--no-owner",
+                "--no-privileges",
+                "--no-password",
+            ]
+        );
+        assert!(inv.args.iter().all(|a| !a.contains("w0rd")));
+    }
+
+    #[test]
+    fn test_pg_dump_invocation_custom_format() {
+        let inv =
+            pg_dump_invocation("postgres://app:pw@h/app", Path::new("x.dump"), "custom").unwrap();
+        assert!(inv.args.contains(&"--format=c".to_string()));
+    }
+
+    #[test]
+    fn test_pg_dump_invocation_rejects_non_postgres_url() {
+        for url in ["", "mysql://u:p@h/db", "not a url"] {
+            let err = pg_dump_invocation(url, Path::new("x"), "plain").unwrap_err();
+            assert_eq!(err.code.as_str(), "INVALID_DATABASE_URL", "url={url:?}");
+        }
+    }
+
+    #[test]
+    fn test_pg_dump_failure_flags_version_mismatch() {
+        let err = pg_dump_failure(
+            "pg_dump: error: aborting because of server version mismatch\n\
+             pg_dump: detail: server version: 17.5; pg_dump version: 16.4\n",
+        );
+        assert_eq!(err.code.as_str(), "PG_DUMP_VERSION_MISMATCH");
+        assert!(err.message.contains("17.5"));
+        assert!(err.suggestion.is_some());
+        assert_eq!(
+            pg_dump_failure("connection refused").code.as_str(),
+            "PG_DUMP_FAILED"
         );
     }
 

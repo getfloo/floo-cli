@@ -9446,3 +9446,196 @@ fn status_json_passes_the_api_answer_through() {
         .stdout(predicate::str::contains(r#""live":true"#))
         .stdout(predicate::str::contains(r#""next_step":null"#));
 }
+
+// ───────────────────────── db dump ─────────────────────────
+
+const DUMP_DATABASE_URL: &str =
+    "postgresql://app:dump-pw-123@ep-test.us-east-2.aws.neon.tech:5432/app?sslmode=require";
+
+/// A fake `pg_dump` on PATH. `--version` prints a version; a dump run logs
+/// its arguments and PGPASSWORD next to itself, then writes `body` to the
+/// `--file=` target and exits with `exit_code` (printing `stderr` first).
+#[cfg(unix)]
+fn fake_pg_dump(dir: &std::path::Path, body: &str, stderr: &str, exit_code: i32) {
+    use std::os::unix::fs::PermissionsExt;
+    let log = dir.join("pg_dump.log");
+    let script = format!(
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then echo "pg_dump (PostgreSQL) 17.2"; exit 0; fi
+printf 'PGPASSWORD=%s\n' "$PGPASSWORD" > "{log}"
+for a in "$@"; do
+  printf 'ARG=%s\n' "$a" >> "{log}"
+  case "$a" in --file=*) out="${{a#--file=}}" ;; esac
+done
+printf '%s' "{body}" > "$out"
+printf '%s' "{stderr}" >&2
+exit {exit_code}
+"#,
+        log = log.display(),
+    );
+    let path = dir.join("pg_dump");
+    std::fs::write(&path, script).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+fn mock_dump_database_url(server: &mut Server, env: &str, status: usize, body: &str) -> Mock {
+    server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/env/DATABASE_URL").as_str(),
+        )
+        .match_query(Matcher::UrlEncoded("env".into(), env.into()))
+        .with_status(status)
+        .with_header("content-type", "application/json")
+        .with_body(body)
+        .create()
+}
+
+#[cfg(unix)]
+#[test]
+fn test_db_dump_runs_pg_dump_with_password_in_env_only() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let get = mock_dump_database_url(
+        &mut server,
+        "prod",
+        200,
+        &format!(r#"{{"key":"DATABASE_URL","value":"{DUMP_DATABASE_URL}"}}"#),
+    );
+    let bin = TempDir::new().unwrap();
+    fake_pg_dump(bin.path(), "-- dump body", "", 0);
+    let out = home.path().join("my-app.sql");
+
+    floo()
+        .args([
+            "--json",
+            "db",
+            "dump",
+            "--app",
+            TEST_APP_NAME,
+            "--env",
+            "prod",
+            "-o",
+        ])
+        .arg(&out)
+        .env("HOME", home.path())
+        .env("PATH", bin.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""success":true"#))
+        .stdout(predicate::str::contains(r#""env":"prod""#))
+        .stdout(predicate::str::contains("dump-pw-123").not());
+    get.assert();
+
+    assert_eq!(std::fs::read_to_string(&out).unwrap(), "-- dump body");
+    assert!(!home.path().join("my-app.sql.partial").exists());
+    let log = std::fs::read_to_string(bin.path().join("pg_dump.log")).unwrap();
+    assert!(log.contains("PGPASSWORD=dump-pw-123\n"), "{log}");
+    let args: Vec<&str> = log.lines().filter(|l| l.starts_with("ARG=")).collect();
+    assert!(args.iter().all(|a| !a.contains("dump-pw-123")), "{log}");
+    assert!(args.contains(&"ARG=--format=p"), "{log}");
+    assert!(args.contains(&"ARG=--no-owner"), "{log}");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_db_dump_failure_keeps_earlier_file_and_reports_version_mismatch() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _get = mock_dump_database_url(
+        &mut server,
+        "dev",
+        200,
+        &format!(r#"{{"key":"DATABASE_URL","value":"{DUMP_DATABASE_URL}"}}"#),
+    );
+    let bin = TempDir::new().unwrap();
+    fake_pg_dump(
+        bin.path(),
+        "partial",
+        "pg_dump: error: aborting because of server version mismatch",
+        1,
+    );
+    let out = home.path().join("my-app.sql");
+    std::fs::write(&out, "earlier good dump").unwrap();
+
+    floo()
+        .args(["--json", "db", "dump", "--app", TEST_APP_NAME, "-o"])
+        .arg(&out)
+        .env("HOME", home.path())
+        .env("PATH", bin.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("PG_DUMP_VERSION_MISMATCH"));
+
+    assert_eq!(std::fs::read_to_string(&out).unwrap(), "earlier good dump");
+    assert!(!home.path().join("my-app.sql.partial").exists());
+}
+
+#[test]
+fn test_db_dump_without_pg_dump_fails_before_reading_credentials() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let get = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{TEST_APP_ID}/env/DATABASE_URL").as_str(),
+        )
+        .match_query(Matcher::Any)
+        .expect(0)
+        .create();
+    let empty = TempDir::new().unwrap();
+
+    floo()
+        .args([
+            "--json",
+            "db",
+            "dump",
+            "--app",
+            TEST_APP_NAME,
+            "-o",
+            "x.sql",
+        ])
+        .env("HOME", home.path())
+        .env("PATH", empty.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("PG_DUMP_NOT_FOUND"))
+        .stdout(predicate::str::contains("postgresql"));
+    get.assert();
+}
+
+#[cfg(unix)]
+#[test]
+fn test_db_dump_without_database_url_names_the_env() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _resolve = mock_resolve_app(&mut server);
+    let _get = mock_dump_database_url(
+        &mut server,
+        "dev",
+        404,
+        r#"{"detail":{"code":"ENV_VAR_NOT_FOUND","message":"Environment variable 'DATABASE_URL' not found."}}"#,
+    );
+    let bin = TempDir::new().unwrap();
+    fake_pg_dump(bin.path(), "", "", 0);
+
+    floo()
+        .args([
+            "--json",
+            "db",
+            "dump",
+            "--app",
+            TEST_APP_NAME,
+            "-o",
+            "x.sql",
+        ])
+        .env("HOME", home.path())
+        .env("PATH", bin.path())
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("DATABASE_NOT_FOUND"))
+        .stdout(predicate::str::contains("no DATABASE_URL in dev"));
+    assert!(!bin.path().join("pg_dump.log").exists());
+}
