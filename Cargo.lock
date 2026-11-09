@@ -434,6 +434,7 @@ dependencies = [
  "mockito",
  "once_cell",
  "open",
+ "percent-encoding",
  "predicates",
  "rand 0.8.6",
  "regex",
@@ -448,6 +449,7 @@ dependencies = [
  "thiserror",
  "toml",
  "toml_edit",
+ "url",
 ]
 
 [[package]]

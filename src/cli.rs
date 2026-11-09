@@ -536,13 +536,14 @@ Read the returned URL for guidance; page content is not bundled or version-pinne
         topic: Option<String>,
     },
 
-    /// Query and inspect schema for an app's managed database.
+    /// Query, inspect, and export an app's managed database.
     #[command(
         subcommand,
         after_help = "\
 Examples:
   floo db query --app my-app \"SELECT * FROM users LIMIT 10\"
-  floo db schema --app my-app"
+  floo db schema --app my-app
+  floo db dump --app my-app --env prod -o my-app.sql"
     )]
     Db(DbCommands),
 
@@ -1735,6 +1736,41 @@ Examples:
         #[arg(short, long)]
         app: Option<String>,
     },
+
+    /// Export the app's whole managed database to a local file with pg_dump.
+    ///
+    /// Runs your local `pg_dump` (PostgreSQL 17 or newer) against the
+    /// environment's `DATABASE_URL`, so the data goes straight from the
+    /// database to your machine. Reading `DATABASE_URL` needs a write-scoped
+    /// key. The dump leaves out owners and grants, so it restores into any
+    /// Postgres.
+    #[command(after_help = "\
+Examples:
+  floo db dump --app my-app -o my-app.sql
+  floo db dump --app my-app --env prod -o my-app.sql
+  floo db dump --app my-app --env prod --format custom -o my-app.dump
+
+Restore elsewhere:
+  psql \"$NEW_DATABASE_URL\" -f my-app.sql
+  pg_restore --no-owner -d \"$NEW_DATABASE_URL\" my-app.dump")]
+    Dump {
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Environment to dump: dev or prod.
+        #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
+        env: String,
+
+        /// File to write the dump to.
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// pg_dump format: plain SQL (restore with psql) or custom (restore
+        /// with pg_restore).
+        #[arg(long, default_value = "plain", value_parser = ["plain", "custom"])]
+        format: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2550,6 +2586,12 @@ pub fn run() {
                 preflight: _,
             } => commands::db::query(app.as_deref(), &sql, &env, limit),
             DbCommands::Schema { app } => commands::db::schema(app.as_deref()),
+            DbCommands::Dump {
+                app,
+                env,
+                output,
+                format,
+            } => commands::db::dump(app.as_deref(), &env, &output, &format),
         },
 
         Commands::Cron(sub) => match sub {
