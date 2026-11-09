@@ -412,15 +412,22 @@ the database finishes applying it.",
         }
     }
 
-    // --- Start fixture-user proxies (accounts-mode + --fixture-user) ---
+    // --- Start local proxies: fixture-user headers and/or User accounts sign-in ---
     //
     // Started BEFORE the table is printed so the auth-proxied URL is known.
     // Started BEFORE child processes so the proxy port is bound by the time
     // the user copies the URL — the upstream connection will fail until the
     // dev_command actually listens, but the bind itself succeeds immediately.
     let mut proxy_ports: HashMap<String, u16> = HashMap::new();
-    if fixture_active {
-        let user = fixture_user.clone().expect("fixture_active implies Some");
+    let role = dev_proxy::ProxyRole {
+        user: fixture_active.then(|| fixture_user.clone()).flatten(),
+        // A User accounts app gets FLOO_AUTH_URL; its /api/auth goes to dev's service.
+        sign_in: session
+            .services
+            .values()
+            .find_map(|env| env.get("FLOO_AUTH_URL").cloned()),
+    };
+    if let Some(user) = &role.user {
         output::info(
             &format!(
                 "  Identity headers: injecting X-Floo-User-* as {} on accounts-mode services",
@@ -428,16 +435,24 @@ the database finishes applying it.",
             ),
             None,
         );
+    }
+    if let Some(sign_in) = &role.sign_in {
+        output::info(
+            &format!("  User accounts: the proxied URL forwards sign-in to {sign_in}"),
+            None,
+        );
+    }
+    if role.user.is_some() || role.sign_in.is_some() {
         for svc in &services {
-            match dev_proxy::start_proxy(0, svc.port, user.clone()) {
+            match dev_proxy::start_proxy(0, svc.port, role.clone()) {
                 Ok((_handle, bound_port)) => {
                     proxy_ports.insert(svc.name.clone(), bound_port);
                 }
                 Err(e) => {
                     output::warn(&format!(
-                        "Failed to start identity-header proxy for '{}': {e}. \
-                         The raw service URL still works — your app just won't \
-                         see X-Floo-User-* headers.",
+                        "Failed to start the local proxy for '{}': {e}. \
+                         The raw service URL still works, without X-Floo-User-* \
+                         headers or sign-in.",
                         svc.name
                     ));
                 }
