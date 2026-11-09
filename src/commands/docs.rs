@@ -147,9 +147,15 @@ pub(crate) const TOPICS: &[Topic] = &[
     },
     Topic {
         name: "auth",
-        summary: "Hosted app authentication, identity, and access",
+        summary: "Team access: sign-in for internal apps (org members and invitees)",
         aliases: NO_ALIASES,
         path: "guides/app-auth",
+    },
+    Topic {
+        name: "users",
+        summary: "User accounts: sign-up and sign-in for an external app's own users",
+        aliases: &["user-accounts", "end-users"],
+        path: "guides/user-accounts",
     },
     Topic {
         name: "notifications",

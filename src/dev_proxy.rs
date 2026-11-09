@@ -1,4 +1,5 @@
-//! Local fixture-user proxy for `floo dev` against accounts-mode apps.
+//! Local proxy for `floo dev`: fixture-user identity headers for accounts-mode
+//! apps, and `/api/auth` forwarded to dev's sign-in service for User accounts apps.
 //!
 //! In production, the floo gateway authenticates each request and injects
 //! `X-Floo-User-Email`, `X-Floo-User-Id`, `X-Floo-User-Name`, and
@@ -11,7 +12,11 @@
 //! The proxy injects the four identity headers and forwards the rest of the
 //! request to the real dev_command.
 //!
-//! Pure stdlib — no async runtime, no new dependencies. One thread per accepted
+//! For a User accounts app, requests under `/api/auth` go to the dev
+//! environment's sign-in service instead (`FLOO_AUTH_URL`), so local pages sign
+//! in with first-party cookies on localhost against dev's users.
+//!
+//! Pure stdlib (plus the CLI's blocking HTTP client for the sign-in hop). One thread per accepted
 //! connection. Suitable for dev traffic; not a hardened production proxy.
 
 use std::io::{Read, Write};
@@ -58,21 +63,30 @@ fn sanitize(value: &str) -> String {
 /// alongside the listener thread handle. The thread runs until the listener is
 /// dropped or the process exits — there is no graceful shutdown signal because
 /// `floo dev` always exits the whole process at the end of the session.
+/// What the proxy adds in front of one local service.
+#[derive(Clone, Debug, Default)]
+pub struct ProxyRole {
+    /// Identity headers injected on every request (accounts-mode + `--fixture-user`).
+    pub user: Option<FixtureUser>,
+    /// The dev environment's `FLOO_AUTH_URL`; requests under its path go there.
+    pub sign_in: Option<String>,
+}
+
 pub fn start_proxy(
     listen_port: u16,
     backend_port: u16,
-    user: FixtureUser,
+    role: ProxyRole,
 ) -> std::io::Result<(JoinHandle<()>, u16)> {
     let listener = TcpListener::bind(("127.0.0.1", listen_port))?;
     let bound_port = listener.local_addr()?.port();
-    let user = Arc::new(user);
+    let role = Arc::new(role);
     let handle = thread::spawn(move || {
         for stream in listener.incoming() {
             match stream {
                 Ok(client) => {
-                    let user = Arc::clone(&user);
+                    let role = Arc::clone(&role);
                     thread::spawn(move || {
-                        let _ = handle_connection(client, backend_port, &user);
+                        let _ = handle_connection(client, backend_port, &role);
                     });
                 }
                 Err(_) => {
@@ -88,7 +102,7 @@ pub fn start_proxy(
 fn handle_connection(
     mut client: TcpStream,
     backend_port: u16,
-    user: &FixtureUser,
+    role: &ProxyRole,
 ) -> std::io::Result<()> {
     client.set_read_timeout(Some(Duration::from_secs(60)))?;
 
@@ -111,7 +125,15 @@ fn handle_connection(
     };
 
     let body_prefix = headers.split_off(header_end + 4);
-    let modified_headers = inject_identity_headers(&headers, user);
+    if let Some(sign_in) = &role.sign_in {
+        if let Some(target) = sign_in_target(&headers, sign_in) {
+            return forward_sign_in(client, &headers, body_prefix, &target);
+        }
+    }
+    let modified_headers = match &role.user {
+        Some(user) => inject_identity_headers(&headers, user),
+        None => headers,
+    };
 
     let mut backend = TcpStream::connect(("127.0.0.1", backend_port))?;
     backend.set_read_timeout(Some(Duration::from_secs(60)))?;
@@ -123,6 +145,116 @@ fn handle_connection(
 
     pipe_bidirectional(client, backend);
     Ok(())
+}
+
+/// The sign-in URL for a request under the auth path, or None for any other path.
+fn sign_in_target(request_head: &[u8], auth_url: &str) -> Option<String> {
+    let line =
+        std::str::from_utf8(&request_head[..find_subsequence(request_head, b"\r\n")?]).ok()?;
+    let path = line.split(' ').nth(1)?;
+    let after_scheme = auth_url.find("://")? + 3;
+    let origin_end = auth_url[after_scheme..]
+        .find('/')
+        .map_or(auth_url.len(), |i| after_scheme + i);
+    let auth_path = &auth_url[origin_end..];
+    let rest = path.strip_prefix(auth_path)?;
+    (rest.is_empty() || rest.starts_with('/') || rest.starts_with('?'))
+        .then(|| format!("{}{path}", &auth_url[..origin_end]))
+}
+
+/// Send one request to dev's sign-in service and write its answer back. Cookies
+/// come back without a Domain, so the browser keeps them for localhost.
+fn forward_sign_in(
+    mut client: TcpStream,
+    request_head: &[u8],
+    mut body: Vec<u8>,
+    target: &str,
+) -> std::io::Result<()> {
+    let head = String::from_utf8_lossy(request_head);
+    let mut lines = head.split("\r\n");
+    let method = lines
+        .next()
+        .and_then(|line| line.split(' ').next())
+        .unwrap_or("GET")
+        .to_string();
+    let mut headers = reqwest::header::HeaderMap::new();
+    let mut length = 0usize;
+    for line in lines.filter(|line| !line.is_empty()) {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        let (name, value) = (name.trim().to_ascii_lowercase(), value.trim());
+        if name == "content-length" {
+            length = value.parse().unwrap_or(0);
+        }
+        if matches!(
+            name.as_str(),
+            "host" | "connection" | "content-length" | "accept-encoding"
+        ) {
+            continue;
+        }
+        if let (Ok(name), Ok(value)) = (
+            reqwest::header::HeaderName::from_bytes(name.as_bytes()),
+            reqwest::header::HeaderValue::from_str(value),
+        ) {
+            headers.append(name, value);
+        }
+    }
+    while body.len() < length {
+        let mut chunk = vec![0u8; length - body.len()];
+        let n = client.read(&mut chunk)?;
+        if n == 0 {
+            break;
+        }
+        body.extend_from_slice(&chunk[..n]);
+    }
+    let response = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .and_then(|http| {
+            http.request(method.parse().unwrap_or(reqwest::Method::GET), target)
+                .headers(headers)
+                .body(body)
+                .send()
+        });
+    let response = match response {
+        Ok(response) => response,
+        Err(error) => {
+            let message = format!("floo dev could not reach dev's sign-in service: {error}");
+            write!(
+                client,
+                "HTTP/1.1 502 Bad Gateway\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{message}",
+                message.len()
+            )?;
+            return Ok(());
+        }
+    };
+    let status = response.status();
+    let mut out = format!(
+        "HTTP/1.1 {} {}\r\n",
+        status.as_u16(),
+        status.canonical_reason().unwrap_or("")
+    );
+    for (name, value) in response.headers() {
+        if matches!(
+            name.as_str(),
+            "transfer-encoding" | "connection" | "content-length"
+        ) {
+            continue;
+        }
+        out.push_str(&format!(
+            "{name}: {}\r\n",
+            String::from_utf8_lossy(value.as_bytes())
+        ));
+    }
+    let body = response.bytes().unwrap_or_default();
+    out.push_str(&format!(
+        "content-length: {}\r\nconnection: close\r\n\r\n",
+        body.len()
+    ));
+    client.write_all(out.as_bytes())?;
+    client.write_all(&body)?;
+    client.flush()
 }
 
 /// Insert identity headers immediately before the final `\r\n\r\n`.
@@ -252,6 +384,60 @@ mod tests {
     }
 
     #[test]
+    fn sign_in_target_matches_only_the_auth_path() {
+        let auth = "https://shop.getfloo.app/api/auth";
+        let target =
+            |line: &str| sign_in_target(format!("{line}\r\nHost: x\r\n\r\n").as_bytes(), auth);
+        assert_eq!(
+            target("POST /api/auth/sign-in/email HTTP/1.1").as_deref(),
+            Some("https://shop.getfloo.app/api/auth/sign-in/email")
+        );
+        assert_eq!(
+            target("GET /api/auth?x=1 HTTP/1.1").as_deref(),
+            Some("https://shop.getfloo.app/api/auth?x=1")
+        );
+        assert_eq!(target("GET /api/authors HTTP/1.1"), None);
+        assert_eq!(target("GET / HTTP/1.1"), None);
+    }
+
+    #[test]
+    fn sign_in_requests_go_to_the_sign_in_service_with_every_cookie_back() {
+        let service = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let service_port = service.local_addr().unwrap().port();
+        thread::spawn(move || {
+            if let Ok((mut s, _)) = service.accept() {
+                let mut buf = [0u8; 4096];
+                let _ = s.set_read_timeout(Some(Duration::from_secs(2)));
+                let _ = s.read(&mut buf);
+                let _ = s.write_all(
+                    b"HTTP/1.1 200 OK\r\nSet-Cookie: a=1; Path=/\r\nSet-Cookie: b=2; Path=/\r\n\
+                      Content-Length: 4\r\nConnection: close\r\n\r\nnull",
+                );
+            }
+        });
+        // No backend: a sign-in request never reaches the local service.
+        let role = ProxyRole {
+            user: None,
+            sign_in: Some(format!("http://127.0.0.1:{service_port}/api/auth")),
+        };
+        let (_proxy_handle, proxy_port) = start_proxy(0, 9, role).unwrap();
+        let mut client = TcpStream::connect(("127.0.0.1", proxy_port)).unwrap();
+        client
+            .write_all(b"GET /api/auth/get-session HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut response = Vec::new();
+        let _ = client.read_to_end(&mut response);
+        let response = String::from_utf8_lossy(&response).to_lowercase();
+        assert!(response.starts_with("http/1.1 200"), "{response}");
+        assert!(response.contains("set-cookie: a=1"), "{response}");
+        assert!(response.contains("set-cookie: b=2"), "{response}");
+        assert!(response.ends_with("null"), "{response}");
+    }
+
+    #[test]
     fn end_to_end_proxy_injects_headers_to_backend() {
         // Stand up a tiny "backend" on an ephemeral port that captures the
         // first request bytes, then start the proxy in front of it on
@@ -284,7 +470,11 @@ mod tests {
             }
         });
 
-        let (_proxy_handle, proxy_port) = start_proxy(0, backend_port, fixture()).unwrap();
+        let role = ProxyRole {
+            user: Some(fixture()),
+            sign_in: None,
+        };
+        let (_proxy_handle, proxy_port) = start_proxy(0, backend_port, role).unwrap();
 
         let mut client = TcpStream::connect(("127.0.0.1", proxy_port)).unwrap();
         client
