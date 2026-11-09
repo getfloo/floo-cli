@@ -736,9 +736,10 @@ fn access_note(config: &AppFileConfig, plan: &DeployPlan) -> Option<String> {
     }
     let org = &plan.org;
     if config.user_accounts() {
+        let table = config.dev_access_mode_table();
         return Some(format!(
             "User accounts is on, but only signed-in members of {org} can open this app, so \
-             your users can't reach it. Set [app] access_mode = \"public\" in floo.app.toml."
+             your users can't reach it. Set {table} access_mode = \"public\" in floo.app.toml."
         ));
     }
     let mut note = format!(

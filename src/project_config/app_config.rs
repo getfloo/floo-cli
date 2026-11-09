@@ -99,6 +99,19 @@ impl AppFileConfig {
             .or(self.app.access_mode)
     }
 
+    /// The floo.app.toml table that sets the dev access mode; a dev override wins over `[app]`.
+    pub fn dev_access_mode_table(&self) -> &'static str {
+        let dev_override = self
+            .environments
+            .get("dev")
+            .is_some_and(|env| env.access_mode.is_some());
+        if dev_override {
+            "[environments.dev]"
+        } else {
+            "[app]"
+        }
+    }
+
     /// Whether `[managed.<name>.users]` gives the app its own sign-in for its users.
     pub fn user_accounts(&self) -> bool {
         self.managed

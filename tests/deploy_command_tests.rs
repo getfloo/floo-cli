@@ -434,7 +434,37 @@ fn preflight_explains_user_accounts_instead_of_suggesting_team_access() {
         .find(|finding| finding["code"] == "USER_ACCOUNTS_BEHIND_TEAM_SIGN_IN")
         .expect("warning");
     assert_eq!(blocked["severity"], "warning");
+    assert!(blocked["message"]
+        .as_str()
+        .unwrap()
+        .contains("`[app] access_mode = \"public\"`"));
     assert!(!findings.iter().any(|f| f["code"] == "USER_ACCOUNTS_ON"));
+
+    // A dev override wins over [app], so the fix names the override.
+    std::fs::write(
+        env.repo.path().join("floo.app.toml"),
+        format!("{config}\n[environments.dev]\naccess_mode = \"accounts\"\n"),
+    )
+    .unwrap();
+    let out = floo(&env)
+        .args(["--preflight", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let value: Value = serde_json::from_slice(&out).unwrap();
+    let blocked = value["data"]["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|finding| finding["code"] == "USER_ACCOUNTS_BEHIND_TEAM_SIGN_IN")
+        .expect("warning")
+        .clone();
+    assert!(blocked["message"]
+        .as_str()
+        .unwrap()
+        .contains("`[environments.dev] access_mode = \"public\"`"));
 }
 
 /// A new hosted app starts behind team sign-in, so preflight must not call it public.

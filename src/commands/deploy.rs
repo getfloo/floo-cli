@@ -1790,12 +1790,17 @@ fn generate_security_findings(
     // User accounts is the app's own sign-in, so team sign-in in front of it locks users out.
     if config.is_some_and(project_config::AppFileConfig::user_accounts) {
         if access_mode == Some(AppAccessMode::Accounts) {
+            let table = config.map_or(
+                "[app]",
+                project_config::AppFileConfig::dev_access_mode_table,
+            );
             findings.push(PreflightFinding::warning(
                 "USER_ACCOUNTS_BEHIND_TEAM_SIGN_IN",
-                "User accounts is on, but `access_mode = \"accounts\"` puts floo's team \
-                 sign-in in front of the app, so your users can't reach it. Set \
-                 `[app] access_mode = \"public\"` in floo.app.toml."
-                    .to_string(),
+                format!(
+                    "User accounts is on, but `access_mode = \"accounts\"` puts floo's team \
+                     sign-in in front of the app, so your users can't reach it. Set \
+                     `{table} access_mode = \"public\"` in floo.app.toml."
+                ),
             ));
         } else {
             findings.push(PreflightFinding::info(
