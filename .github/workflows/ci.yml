@@ -57,6 +57,10 @@ jobs:
       - name: Run installer script e2e
         run: bash tests/install_script_e2e.sh
 
+      - name: Run npx launcher tests
+        run: node --test
+        working-directory: npm/getfloo
+
       - name: Run test-harness guard tests
         run: bash tests/test_script_test.sh
 
