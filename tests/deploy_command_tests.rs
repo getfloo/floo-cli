@@ -64,7 +64,7 @@ fn setup(server: &Server) -> Env {
     std::fs::write(
         &shim,
         format!(
-            "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = push ]; then\n    printf '%s\\n' \"$@\" > \"$PUSH_ARGS\"\n    exit \"${{PUSH_EXIT:-0}}\"\n  fi\n  if [ \"$arg\" = ls-remote ]; then\n    printf '%s' \"$LS_REMOTE\"\n    exit 0\n  fi\ndone\nexec {} \"$@\"\n",
+            "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = push ]; then\n    printf '%s\\n' \"$@\" > \"$PUSH_ARGS\"\n    if [ -n \"$PUSH_403_ONCE\" ] && [ ! -e \"$PUSH_403_ONCE\" ]; then\n      : > \"$PUSH_403_ONCE\"\n      echo 'fatal: unable to access: The requested URL returned error: 403' >&2\n      exit 128\n    fi\n    exit \"${{PUSH_EXIT:-0}}\"\n  fi\n  if [ \"$arg\" = ls-remote ]; then\n    printf '%s' \"$LS_REMOTE\"\n    exit 0\n  fi\ndone\nexec {} \"$@\"\n",
             real_git()
         ),
     )
@@ -693,6 +693,73 @@ fn hosted_creates_an_empty_repo_adds_origin_and_pushes_without_force() {
             clone_url.as_str(),
             "HEAD:refs/heads/main"
         ]
+    );
+}
+
+#[test]
+fn a_new_hosted_repo_pushes_again_while_github_still_refuses_with_403() {
+    let mut server = Server::new();
+    let env = setup(&server);
+    let sha = committed_repo(&env);
+    let source = json!({"kind": "floo", "repo": REPO, "branch": "main"});
+    let _plan = server
+        .mock("POST", "/v1/deploy/plan")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(plan(
+            json!({"ok": true, "decision": "create_hosted", "source": {"kind": "floo"}}),
+        ))
+        .create();
+    let _create = server
+        .mock("POST", "/v1/apps")
+        .with_status(201)
+        .with_header("content-type", "application/json")
+        .with_body(app("client-portal", source).to_string())
+        .create();
+    let _watch = mock_watch(&mut server, "client-portal", &sha);
+    let refused = env.home.path().join("refused-once");
+
+    floo(&env)
+        .args(["--hosted", "--json"])
+        .env("PUSH_403_ONCE", &refused)
+        .assert()
+        .success();
+    // GitHub refused the first push, and the second one went through.
+    assert!(refused.exists());
+    assert_eq!(
+        pushed(&env).unwrap().last().unwrap(),
+        "HEAD:refs/heads/main"
+    );
+}
+
+#[test]
+fn an_existing_hosted_repo_does_not_retry_a_refused_push() {
+    let mut server = Server::new();
+    let env = setup(&server);
+    committed_repo(&env);
+    let _plan = server
+        .mock("POST", "/v1/deploy/plan")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(plan(json!({
+            "ok": true,
+            "decision": "push",
+            "source": {"kind": "floo", "repo": REPO, "branch": "main"},
+        })))
+        .create();
+    let refused = env.home.path().join("refused-once");
+
+    let out = floo(&env)
+        .arg("--json")
+        .env("PUSH_403_ONCE", &refused)
+        .assert()
+        .failure()
+        .get_output()
+        .stdout
+        .clone();
+    assert_eq!(
+        json_lines(&out).last().unwrap()["error"]["code"],
+        "GIT_PUSH_FAILED"
     );
 }
 

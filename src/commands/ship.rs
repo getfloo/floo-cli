@@ -4,9 +4,11 @@
 //! claims no name, and names the fix. The API makes the decision so the CLI,
 //! MCP and HTTP agents get the same answer.
 
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
+use std::thread;
+use std::time::Duration;
 
 use serde_json::{json, Value};
 
@@ -483,6 +485,7 @@ pub fn deploy(args: DeployArgs) {
     let Some(mut source) = plan.source.clone() else {
         stop_with_plan(&plan, &quoted)
     };
+    let new_repo = plan.decision.as_deref() == Some("create_hosted");
     match plan.decision.as_deref() {
         Some("push") => {}
         Some("connect_github") => {
@@ -512,7 +515,7 @@ pub fn deploy(args: DeployArgs) {
         }
         _ => stop_with_plan(&plan, &quoted),
     }
-    ship(path, &folder, &app_name, &source, &quoted);
+    ship(path, &folder, &app_name, &source, &quoted, new_repo);
 }
 
 /// The source `--github` or `--hosted` asks for, if either was passed.
@@ -754,7 +757,7 @@ fn create_github_repo(path: &Path, app: &str, quoted: &str) {
 
 /// Push HEAD to the app's source and wait: the default branch deploys dev, any
 /// other branch gets a preview and leaves dev alone.
-fn ship(path: &Path, folder: &Folder, app: &str, source: &AppSource, quoted: &str) {
+fn ship(path: &Path, folder: &Folder, app: &str, source: &AppSource, quoted: &str, new_repo: bool) {
     let repo = source.repo.clone().unwrap_or_default();
     let default_branch = source.branch.clone().unwrap_or_else(|| "main".to_string());
     let branch = folder
@@ -765,7 +768,7 @@ fn ship(path: &Path, folder: &Folder, app: &str, source: &AppSource, quoted: &st
     if source.kind == "floo" {
         let clone_url = format!("https://github.com/{repo}.git");
         ensure_hosted_remote(path, folder, &clone_url, quoted);
-        push_hosted(path, &clone_url, &branch, quoted);
+        push_hosted(path, &clone_url, &branch, quoted, new_repo);
     } else {
         let Some(remote) = folder.remote_for(&repo) else {
             if let Some(remote) = folder
@@ -935,35 +938,82 @@ pub(crate) fn hosted_git(path: &Path, clone_url: &str) -> Command {
     command
 }
 
-fn push_hosted(path: &Path, clone_url: &str, branch: &str, quoted: &str) {
+/// Seconds to wait before each retry of a new hosted repo's first push.
+///
+/// GitHub refuses floo's push token with 403 for a few seconds after it creates a
+/// repository, so the first `floo deploy` failed where a rerun worked.
+const NEW_REPO_PUSH_WAITS: [u64; 4] = [2, 4, 8, 15];
+
+fn push_hosted(path: &Path, clone_url: &str, branch: &str, quoted: &str, new_repo: bool) {
     let refspec = format!("HEAD:refs/heads/{branch}");
-    // Push to the validated URL, not a remote name that could carry another pushurl.
-    let status = hosted_git(path, clone_url)
-        .arg("push")
-        .args([clone_url, refspec.as_str()])
-        // Keep stdout for floo's JSON.
-        .stdout(Stdio::from(io::stderr()))
-        .status();
-    match status {
-        Ok(status) if status.success() => {}
-        Ok(status) => stop(
-            &format!("git push failed ({status}). Check the git error above."),
+    let waits: &[u64] = if new_repo { &NEW_REPO_PUSH_WAITS } else { &[] };
+    let mut waits = waits.iter();
+    loop {
+        // Push to the validated URL, not a remote name that could carry another pushurl.
+        let output = hosted_git(path, clone_url)
+            .arg("push")
+            .args([clone_url, refspec.as_str()])
+            // Keep stdout for floo's JSON; read git's errors to spot GitHub's 403.
+            .stdout(Stdio::from(io::stderr()))
+            .stderr(Stdio::piped())
+            .output();
+        let output = match output {
+            Ok(output) => output,
+            Err(error) => stop(
+                &format!("Failed to run git push: {error}"),
+                "GIT_FAILED",
+                &format!("floo deploy {quoted}"),
+            ),
+        };
+        if !output.status.success() && refused_by_github(&output.stderr) {
+            if let Some(wait) = waits.next() {
+                if !output::is_json_mode() {
+                    eprintln!("GitHub is still setting up the new repository. Pushing again in {wait}s...");
+                }
+                thread::sleep(Duration::from_secs(*wait));
+                continue;
+            }
+        }
+        let _ = io::stderr().write_all(&output.stderr);
+        if output.status.success() {
+            return;
+        }
+        stop(
+            &format!(
+                "git push failed ({}). Check the git error above.",
+                output.status
+            ),
             "GIT_PUSH_FAILED",
             &format!(
                 "git -C {quoted} pull --no-rebase {clone_url} {branch} && floo deploy {quoted}"
             ),
-        ),
-        Err(error) => stop(
-            &format!("Failed to run git push: {error}"),
-            "GIT_FAILED",
-            &format!("floo deploy {quoted}"),
-        ),
+        )
     }
+}
+
+/// git's message when GitHub refuses the push credential.
+fn refused_by_github(stderr: &[u8]) -> bool {
+    let stderr = String::from_utf8_lossy(stderr);
+    stderr.contains("The requested URL returned error: 403")
+        || (stderr.contains("Permission to") && stderr.contains("denied"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_github_refusing_the_credential_counts_as_a_refused_push() {
+        assert!(refused_by_github(
+            b"remote: Permission to floo-hosted/x.git denied to floo[bot].\nfatal: unable to access 'https://github.com/floo-hosted/x.git/': The requested URL returned error: 403\n"
+        ));
+        assert!(!refused_by_github(
+            b" ! [rejected]        HEAD -> main (fetch first)\nerror: failed to push some refs\n"
+        ));
+        assert!(!refused_by_github(
+            b"fatal: unable to access: The requested URL returned error: 500\n"
+        ));
+    }
 
     #[test]
     fn a_hosted_repo_takes_any_branch_the_api_accepts() {
