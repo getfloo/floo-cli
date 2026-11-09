@@ -1784,39 +1784,47 @@ fn generate_security_findings(
 ) -> Vec<PreflightFinding> {
     let mut findings: Vec<PreflightFinding> = Vec::new();
 
-    // Check access_mode — note when no auth is configured.
-    // Inspect local config with environment overrides; the server reads the committed manifest.
-    let access_mode = resolved.app_config.as_ref().and_then(|c| {
-        c.environments
-            .get("dev")
-            .and_then(|env| env.access_mode)
-            .or(c.app.access_mode)
-    });
-    // User accounts is the app's own sign-in, so a public app is the expected shape.
-    let user_accounts = resolved.app_config.as_ref().is_some_and(|c| {
-        c.managed
-            .values()
-            .any(|block| block.users.is_some() && block.enabled != Some(false))
-    });
-    if user_accounts {
-        findings.push(PreflightFinding::info(
-            "USER_ACCOUNTS_ON",
-            "User accounts is on: floo serves sign-in for your app's own users at /api/auth \
-             (`[managed.<name>.users]`). `access_mode` is team access for internal apps and \
-             stays \"public\" here. See `floo docs users`."
-                .to_string(),
-        ));
-    } else if matches!(access_mode, None | Some(AppAccessMode::Public)) {
-        // Closes feedback 88e32b22 (floo-artifact 2026-05-01): the user had to
-        // dig into the docs to discover that access_mode is a toml knob and
-        // where it goes. Be specific: `[app]` is the placement applied today.
+    // Who can open the app. The deploy plan says what floo gives an app that doesn't ask.
+    let config = resolved.app_config.as_ref();
+    let access_mode = config.and_then(project_config::AppFileConfig::dev_access_mode);
+    // User accounts is the app's own sign-in, so team sign-in in front of it locks users out.
+    if config.is_some_and(project_config::AppFileConfig::user_accounts) {
+        if access_mode == Some(AppAccessMode::Accounts) {
+            let table = config.map_or(
+                "[app]",
+                project_config::AppFileConfig::dev_access_mode_table,
+            );
+            findings.push(PreflightFinding::warning(
+                "USER_ACCOUNTS_BEHIND_TEAM_SIGN_IN",
+                format!(
+                    "User accounts is on, but `access_mode = \"accounts\"` puts floo's team \
+                     sign-in in front of the app, so your users can't reach it. Set \
+                     `{table} access_mode = \"public\"` in floo.app.toml."
+                ),
+            ));
+        } else {
+            findings.push(PreflightFinding::info(
+                "USER_ACCOUNTS_ON",
+                "User accounts is on: floo serves sign-in for your app's own users at /api/auth \
+                 (`[managed.<name>.users]`). `access_mode` is team access for internal apps; set \
+                 `[app] access_mode = \"public\"` so your users don't need a floo sign-in. \
+                 See `floo docs users`."
+                    .to_string(),
+            ));
+        }
+    } else if access_mode == Some(AppAccessMode::Public) {
         findings.push(PreflightFinding::info(
             "ACCESS_MODE_PUBLIC",
-            "Access mode is 'public' (no auth). Anyone can access your app. \
-             To require auth, set `[app] access_mode = \"accounts\"` in \
-             floo.app.toml — that's the placement applied on every push. \
-             Per-env overrides via `[environments.<name>]` are accepted by \
-             the schema but not yet applied server-side."
+            "Access mode is 'public': anyone with the link can open your app. To require a \
+             floo sign-in, set `[app] access_mode = \"accounts\"` in floo.app.toml."
+                .to_string(),
+        ));
+    } else if access_mode.is_none() {
+        findings.push(PreflightFinding::info(
+            "ACCESS_MODE_UNSET",
+            "floo.app.toml doesn't set `access_mode`, so the app keeps the mode floo gives it, \
+             shown with the deploy plan. Set `[app] access_mode = \"public\"` or \
+             `\"accounts\"` to choose."
                 .to_string(),
         ));
     }

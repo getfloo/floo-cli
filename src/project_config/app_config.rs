@@ -90,6 +90,36 @@ pub struct AppFileConfig {
     pub cron: HashMap<String, CronJobConfig>,
 }
 
+impl AppFileConfig {
+    /// The access mode floo.app.toml asks for on dev, if it sets one.
+    pub fn dev_access_mode(&self) -> Option<AppAccessMode> {
+        self.environments
+            .get("dev")
+            .and_then(|env| env.access_mode)
+            .or(self.app.access_mode)
+    }
+
+    /// The floo.app.toml table that sets the dev access mode; a dev override wins over `[app]`.
+    pub fn dev_access_mode_table(&self) -> &'static str {
+        let dev_override = self
+            .environments
+            .get("dev")
+            .is_some_and(|env| env.access_mode.is_some());
+        if dev_override {
+            "[environments.dev]"
+        } else {
+            "[app]"
+        }
+    }
+
+    /// Whether `[managed.<name>.users]` gives the app its own sign-in for its users.
+    pub fn user_accounts(&self) -> bool {
+        self.managed
+            .values()
+            .any(|block| block.users.is_some() && block.enabled != Some(false))
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ManagedServiceSection {

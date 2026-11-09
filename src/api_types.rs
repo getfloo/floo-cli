@@ -41,6 +41,9 @@ pub struct DeployPlan {
     pub message: String,
     #[serde(default)]
     pub source: Option<AppSource>,
+    /// Who can open the dev URL now, or once the plan is carried out.
+    #[serde(default)]
+    pub access_mode: Option<String>,
     #[serde(default)]
     pub next: Vec<NextStep>,
     #[serde(default)]
