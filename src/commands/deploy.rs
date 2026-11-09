@@ -1793,10 +1793,11 @@ fn generate_security_findings(
             .or(c.app.access_mode)
     });
     // User accounts is the app's own sign-in, so a public app is the expected shape.
-    let user_accounts = resolved
-        .app_config
-        .as_ref()
-        .is_some_and(|c| c.managed.values().any(|block| block.users.is_some()));
+    let user_accounts = resolved.app_config.as_ref().is_some_and(|c| {
+        c.managed
+            .values()
+            .any(|block| block.users.is_some() && block.enabled != Some(false))
+    });
     if user_accounts {
         findings.push(PreflightFinding::info(
             "USER_ACCOUNTS_ON",
