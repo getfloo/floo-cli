@@ -1,20 +1,17 @@
 #!/usr/bin/env node
 'use strict';
 
-const { spawnSync } = require('node:child_process');
 const { InstallError, ensureBinary } = require('../lib/install.js');
+const { run } = require('../lib/run.js');
 
 async function main() {
   const binary = await ensureBinary();
-  const result = spawnSync(binary, process.argv.slice(2), { stdio: 'inherit' });
-  if (result.error) {
-    throw new InstallError(`Could not run ${binary}: ${result.error.message}`);
-  }
-  if (result.signal) {
-    process.kill(process.pid, result.signal);
+  const { code, signal } = await run(binary, process.argv.slice(2));
+  if (signal) {
+    process.kill(process.pid, signal);
     return;
   }
-  process.exitCode = result.status;
+  process.exitCode = code;
 }
 
 main().catch((error) => {
