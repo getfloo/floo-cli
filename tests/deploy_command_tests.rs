@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
 use mockito::{Matcher, Server};
+use predicates::prelude::PredicateBooleanExt;
 use serde_json::{json, Value};
 use tempfile::TempDir;
 
@@ -411,6 +412,92 @@ fn preflight_explains_user_accounts_instead_of_suggesting_team_access() {
         .collect();
     assert!(codes.contains(&"USER_ACCOUNTS_ON"), "{codes:?}");
     assert!(!codes.contains(&"ACCESS_MODE_PUBLIC"), "{codes:?}");
+
+    // Team sign-in in front of user accounts locks the app's own users out.
+    let config = std::fs::read_to_string(env.repo.path().join("floo.app.toml")).unwrap();
+    std::fs::write(
+        env.repo.path().join("floo.app.toml"),
+        config.replacen("[app]\n", "[app]\naccess_mode = \"accounts\"\n", 1),
+    )
+    .unwrap();
+    let out = floo(&env)
+        .args(["--preflight", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let value: Value = serde_json::from_slice(&out).unwrap();
+    let findings = value["data"]["findings"].as_array().unwrap();
+    let blocked = findings
+        .iter()
+        .find(|finding| finding["code"] == "USER_ACCOUNTS_BEHIND_TEAM_SIGN_IN")
+        .expect("warning");
+    assert_eq!(blocked["severity"], "warning");
+    assert!(!findings.iter().any(|f| f["code"] == "USER_ACCOUNTS_ON"));
+}
+
+/// A new hosted app starts behind team sign-in, so preflight must not call it public.
+#[test]
+fn preflight_says_when_only_the_org_can_open_the_app() {
+    let mut server = Server::new();
+    let env = setup(&server);
+    committed_repo(&env);
+    let config = std::fs::read_to_string(env.repo.path().join("floo.app.toml")).unwrap();
+    std::fs::write(
+        env.repo.path().join("floo.app.toml"),
+        config.replace("access_mode = \"accounts\"\n", ""),
+    )
+    .unwrap();
+    git(
+        env.repo.path(),
+        &["commit", "-qam", "floo picks the access mode"],
+    );
+    let planned = server
+        .mock("POST", "/v1/deploy/plan")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(plan(json!({
+            "ok": true, "decision": "create_hosted", "source": {"kind": "floo"},
+            "access_mode": "accounts",
+        })))
+        .expect(2)
+        .create();
+    let _lookup = server
+        .mock("GET", "/v1/apps")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"apps":[]}"#)
+        .create();
+
+    let out = floo(&env)
+        .args(["--preflight", "--hosted", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let value: Value = serde_json::from_slice(&out).unwrap();
+    let codes: Vec<&str> = value["data"]["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|finding| finding["code"].as_str())
+        .collect();
+    assert!(codes.contains(&"ACCESS_MODE_UNSET"), "{codes:?}");
+    assert!(!codes.contains(&"ACCESS_MODE_PUBLIC"), "{codes:?}");
+    assert_eq!(value["data"]["deploy_plan"]["access_mode"], "accounts");
+
+    floo(&env)
+        .args(["--preflight", "--hosted"])
+        .assert()
+        .success()
+        .stderr(
+            predicates::str::contains("Only signed-in members of acme can open it")
+                .and(predicates::str::contains("For a public site")),
+        );
+    planned.assert();
 }
 
 fn mock_watch(server: &mut Server, name: &str, sha: &str) -> Vec<mockito::Mock> {
@@ -658,9 +745,10 @@ fn hosted_creates_an_empty_repo_adds_origin_and_pushes_without_force() {
         ))
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(plan(
-            json!({"ok": true, "decision": "create_hosted", "source": {"kind": "floo"}}),
-        ))
+        .with_body(plan(json!({
+            "ok": true, "decision": "create_hosted", "source": {"kind": "floo"},
+            "access_mode": "accounts",
+        })))
         .create();
     let created = server
         .mock("POST", "/v1/apps")
@@ -673,7 +761,12 @@ fn hosted_creates_an_empty_repo_adds_origin_and_pushes_without_force() {
         .create();
     let _watch = mock_watch(&mut server, "client-portal", &sha);
 
-    floo(&env).args(["--hosted", "--json"]).assert().success();
+    let out = floo(&env).args(["--hosted", "--json"]).assert().success();
+    let events = json_lines(&out.get_output().stdout);
+    assert_eq!(
+        (&events[0]["event"], &events[0]["access_mode"]),
+        (&json!("plan"), &json!("accounts"))
+    );
     planned.assert();
     created.assert();
     let clone_url = format!("https://github.com/{REPO}.git");

@@ -16,7 +16,7 @@ use crate::api_client::FlooClient;
 use crate::api_types::{AppSource, DeployPlan};
 use crate::errors::ErrorCode;
 use crate::output;
-use crate::project_config;
+use crate::project_config::{self, AppAccessMode, AppFileConfig};
 
 use super::projects::{managed_app_id, shell_quote};
 
@@ -480,7 +480,7 @@ pub fn deploy(args: DeployArgs) {
     if app_name != configured {
         folder.head = rename_app(path, &config, &app_name, &quoted);
     }
-    emit_plan(&plan);
+    emit_plan(&plan, &config);
 
     let Some(mut source) = plan.source.clone() else {
         stop_with_plan(&plan, &quoted)
@@ -536,12 +536,17 @@ fn preflight(args: &DeployArgs, config: &project_config::AppFileConfig, quoted: 
     let path = args.path.as_path();
     let app_name = args.name.clone().unwrap_or_else(|| config.app.name.clone());
     super::deploy::check(path, args.name.clone(), &args.env, || {
-        deploy_preview(args, &app_name, quoted)
+        deploy_preview(args, config, &app_name, quoted)
     });
 }
 
 /// The deploy plan, or the first thing that would stop the deploy before it.
-fn deploy_preview(args: &DeployArgs, app_name: &str, quoted: &str) -> super::deploy::PlanPreview {
+fn deploy_preview(
+    args: &DeployArgs,
+    config: &AppFileConfig,
+    app_name: &str,
+    quoted: &str,
+) -> super::deploy::PlanPreview {
     let path = args.path.as_path();
     let blocked = |code: &str, message: &str, next: &str| super::deploy::PlanPreview {
         data: json!({
@@ -579,6 +584,7 @@ fn deploy_preview(args: &DeployArgs, app_name: &str, quoted: &str) -> super::dep
     let summary = if plan.ok {
         let mut lines = vec![format!("Deploy plan: {}", plan.message)];
         lines.extend(plan.warnings.iter().map(|warning| format!("  ! {warning}")));
+        lines.extend(access_note(config, &plan));
         lines.join("\n")
     } else {
         format!(
@@ -690,7 +696,7 @@ fn stop_with_plan(plan: &DeployPlan, quoted: &str) -> ! {
     process::exit(1);
 }
 
-fn emit_plan(plan: &DeployPlan) {
+fn emit_plan(plan: &DeployPlan, config: &AppFileConfig) {
     if output::is_json_mode() {
         output::print_json(&json!({
             "event": "plan",
@@ -700,6 +706,7 @@ fn emit_plan(plan: &DeployPlan) {
             "decision": plan.decision,
             "message": plan.message,
             "source": plan.source,
+            "access_mode": dev_access_mode(config, plan),
             "warnings": plan.warnings,
         }));
         return;
@@ -708,6 +715,39 @@ fn emit_plan(plan: &DeployPlan) {
     for warning in &plan.warnings {
         output::warn(warning);
     }
+    if let Some(note) = access_note(config, plan) {
+        eprintln!("{note}");
+    }
+}
+
+/// Who can open the dev URL once this deploys: floo.app.toml's mode, else the plan's.
+fn dev_access_mode(config: &AppFileConfig, plan: &DeployPlan) -> Option<String> {
+    match config.dev_access_mode() {
+        Some(AppAccessMode::Accounts) => Some("accounts".to_string()),
+        Some(AppAccessMode::Public) => Some("public".to_string()),
+        None => plan.access_mode.clone(),
+    }
+}
+
+/// Said when only the org can open the app, since a plain request then gets 401.
+fn access_note(config: &AppFileConfig, plan: &DeployPlan) -> Option<String> {
+    if dev_access_mode(config, plan).as_deref() != Some("accounts") {
+        return None;
+    }
+    let org = &plan.org;
+    if config.user_accounts() {
+        return Some(format!(
+            "User accounts is on, but only signed-in members of {org} can open this app, so \
+             your users can't reach it. Set [app] access_mode = \"public\" in floo.app.toml."
+        ));
+    }
+    let mut note = format!(
+        "Only signed-in members of {org} can open it; a request without a floo sign-in gets 401."
+    );
+    if config.dev_access_mode().is_none() {
+        note.push_str(" For a public site, set [app] access_mode = \"public\" in floo.app.toml.");
+    }
+    Some(note)
 }
 
 /// `gh repo create` in the user's own account: floo never creates repos there itself.
