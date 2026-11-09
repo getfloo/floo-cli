@@ -1792,7 +1792,20 @@ fn generate_security_findings(
             .and_then(|env| env.access_mode)
             .or(c.app.access_mode)
     });
-    if matches!(access_mode, None | Some(AppAccessMode::Public)) {
+    // User accounts is the app's own sign-in, so a public app is the expected shape.
+    let user_accounts = resolved
+        .app_config
+        .as_ref()
+        .is_some_and(|c| c.managed.values().any(|block| block.users.is_some()));
+    if user_accounts {
+        findings.push(PreflightFinding::info(
+            "USER_ACCOUNTS_ON",
+            "User accounts is on: floo serves sign-in for your app's own users at /api/auth \
+             (`[managed.<name>.users]`). `access_mode` is team access for internal apps and \
+             stays \"public\" here. See `floo docs users`."
+                .to_string(),
+        ));
+    } else if matches!(access_mode, None | Some(AppAccessMode::Public)) {
         // Closes feedback 88e32b22 (floo-artifact 2026-05-01): the user had to
         // dig into the docs to discover that access_mode is a toml knob and
         // where it goes. Be specific: `[app]` is the placement applied today.

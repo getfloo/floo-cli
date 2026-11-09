@@ -42,7 +42,11 @@ pub(super) fn toml_parse_error(file_label: &str, err: toml::de::Error) -> crate:
             } else {
                 "Remove or correct it."
             };
-            format!("Unknown key `{key}`. {correction} See {SCHEMA_URL} for the schema reference.")
+            // An older floo rejects keys a newer schema added (feedback ae6aec6c).
+            let update = crate::version_check::cached_newer_version(crate::constants::VERSION)
+                .map(|latest| format!(" This floo predates {latest}, which may accept it: run `floo update` first."))
+                .unwrap_or_default();
+            format!("Unknown key `{key}`.{update} {correction} See {SCHEMA_URL} for the schema reference.")
         }
         None => format!("See {SCHEMA_URL} for the schema reference."),
     };

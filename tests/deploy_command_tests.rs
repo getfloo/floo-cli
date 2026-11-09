@@ -374,6 +374,45 @@ fn preflight_runs_the_config_checks_before_the_folder_is_a_repository() {
     planned.assert();
 }
 
+/// A User accounts app is public by design: preflight explains User accounts
+/// instead of suggesting team access (feedback ae6aec6c).
+#[test]
+fn preflight_explains_user_accounts_instead_of_suggesting_team_access() {
+    let mut server = Server::new();
+    let env = setup(&server);
+    let _lookup = server
+        .mock("GET", "/v1/apps")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"apps":[]}"#)
+        .create();
+    std::fs::write(
+        env.repo.path().join("floo.app.toml"),
+        "[app]\nname = \"client-portal\"\n\n\
+         [services.web]\ntype = \"web\"\npath = \".\"\nport = 3000\ningress = \"public\"\n\n\
+         [managed.default]\ntype = \"postgres\"\n\n[managed.default.users]\n\
+         allowed_email_domains = [\"duke.edu\"]\n",
+    )
+    .unwrap();
+    let out = floo(&env)
+        .args(["--preflight", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let value: Value = serde_json::from_slice(&out).unwrap();
+    let codes: Vec<&str> = value["data"]["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|finding| finding["code"].as_str())
+        .collect();
+    assert!(codes.contains(&"USER_ACCOUNTS_ON"), "{codes:?}");
+    assert!(!codes.contains(&"ACCESS_MODE_PUBLIC"), "{codes:?}");
+}
+
 fn mock_watch(server: &mut Server, name: &str, sha: &str) -> Vec<mockito::Mock> {
     vec![
         server

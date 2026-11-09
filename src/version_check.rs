@@ -76,6 +76,14 @@ fn read_cache() -> Option<VersionCache> {
     serde_json::from_str(&content).ok()
 }
 
+/// The newer release the last background check found, if any. Reads the cache
+/// only: no network call on an error path.
+pub fn cached_newer_version(current_version: &str) -> Option<String> {
+    read_cache()
+        .map(|cache| cache.latest_version)
+        .filter(|latest| is_newer(latest, current_version))
+}
+
 fn write_cache(cache: &VersionCache) {
     let Some(path) = cache_path() else { return };
     if let Some(parent) = path.parent() {
