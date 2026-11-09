@@ -9478,6 +9478,17 @@ exit {exit_code}
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
+/// A dump leaves no temp file behind next to its target, on success or failure.
+fn assert_no_partial_files(dir: &std::path::Path) {
+    let leftovers: Vec<_> = std::fs::read_dir(dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".partial"))
+        .collect();
+    assert!(leftovers.is_empty(), "leftover temp files: {leftovers:?}");
+}
+
 fn mock_dump_database_url(server: &mut Server, env: &str, status: usize, body: &str) -> Mock {
     server
         .mock(
@@ -9529,7 +9540,7 @@ fn test_db_dump_runs_pg_dump_with_password_in_env_only() {
     get.assert();
 
     assert_eq!(std::fs::read_to_string(&out).unwrap(), "-- dump body");
-    assert!(!home.path().join("my-app.sql.partial").exists());
+    assert_no_partial_files(home.path());
     let log = std::fs::read_to_string(bin.path().join("pg_dump.log")).unwrap();
     assert!(log.contains("PGPASSWORD=dump-pw-123\n"), "{log}");
     let args: Vec<&str> = log.lines().filter(|l| l.starts_with("ARG=")).collect();
@@ -9570,7 +9581,7 @@ fn test_db_dump_failure_keeps_earlier_file_and_reports_version_mismatch() {
         .stdout(predicate::str::contains("PG_DUMP_VERSION_MISMATCH"));
 
     assert_eq!(std::fs::read_to_string(&out).unwrap(), "earlier good dump");
-    assert!(!home.path().join("my-app.sql.partial").exists());
+    assert_no_partial_files(home.path());
 }
 
 #[test]

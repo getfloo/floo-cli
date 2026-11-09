@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process;
 
 use percent_encoding::percent_decode_str;
@@ -283,11 +283,36 @@ fn pg_dump_invocation(
     if !matches!(url.scheme(), "postgres" | "postgresql") {
         return Err(invalid());
     }
-    let password = percent_decode_str(url.password().unwrap_or(""))
-        .decode_utf8()
-        .map_err(|_| invalid())?
-        .into_owned();
+    let decode = |raw: &str| {
+        percent_decode_str(raw)
+            .decode_utf8()
+            .map(|s| s.into_owned())
+            .map_err(|_| invalid())
+    };
+    // libpq also reads `?password=`; strip every one so no credential reaches
+    // argv. The raw segments are kept as-is: re-encoding would turn spaces
+    // into `+`, which libpq does not decode.
+    let mut query_password = None;
+    let mut kept = Vec::new();
+    for segment in url
+        .query()
+        .unwrap_or("")
+        .split('&')
+        .filter(|s| !s.is_empty())
+    {
+        let (key, value) = segment.split_once('=').unwrap_or((segment, ""));
+        if decode(key)? == "password" {
+            query_password.get_or_insert(decode(value)?);
+        } else {
+            kept.push(segment.to_string());
+        }
+    }
+    let password = match url.password() {
+        Some(raw) => decode(raw)?,
+        None => query_password.unwrap_or_default(),
+    };
     url.set_password(None).map_err(|_| invalid())?;
+    url.set_query((!kept.is_empty()).then(|| kept.join("&")).as_deref());
     let format_flag = if format == "custom" { "c" } else { "p" };
     Ok(PgDumpInvocation {
         args: vec![
@@ -363,16 +388,35 @@ pub fn dump(app_flag: Option<&str>, environment: &str, file: &Path, format: &str
         }
     };
 
-    // Write to a sibling `.partial` file and rename on success, so a failed
-    // dump never leaves a truncated file that looks complete, and never
-    // clobbers an earlier good dump at the same path.
-    let mut partial = file.as_os_str().to_owned();
-    partial.push(".partial");
-    let partial = PathBuf::from(partial);
+    // Write to a uniquely named temp file next to the target and rename it on
+    // success, so a failed dump never leaves a truncated file that looks
+    // complete or clobbers an earlier good dump, and overlapping dumps never
+    // share a partial file.
+    let dir = file
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let write_failed = |e: std::io::Error| {
+        FlooError::new(
+            ErrorCode::Other("DUMP_WRITE_FAILED".to_string()),
+            format!("Could not write {}: {e}", file.display()),
+        )
+    };
+    let partial = match tempfile::Builder::new()
+        .prefix(".floo-db-dump-")
+        .suffix(".partial")
+        .tempfile_in(dir)
+    {
+        Ok(f) => f.into_temp_path(),
+        Err(e) => exit_with(&write_failed(e)),
+    };
 
     let invocation = match pg_dump_invocation(&database_url, &partial, format) {
         Ok(i) => i,
-        Err(e) => exit_with(&e),
+        Err(e) => {
+            let _ = partial.close();
+            exit_with(&e);
+        }
     };
 
     if !output::is_json_mode() {
@@ -390,18 +434,26 @@ pub fn dump(app_flag: Option<&str>, environment: &str, file: &Path, format: &str
         .stdin(process::Stdio::null())
         .output();
 
+    // `process::exit` skips destructors, so every failure path removes the
+    // temp file explicitly; `persist` is the atomic rename.
     let failure = match run {
-        Ok(out) if out.status.success() => std::fs::rename(&partial, file).err().map(|e| {
-            FlooError::new(
-                ErrorCode::Other("DUMP_WRITE_FAILED".to_string()),
-                format!("Could not write {}: {e}", file.display()),
-            )
-        }),
-        Ok(out) => Some(pg_dump_failure(&String::from_utf8_lossy(&out.stderr))),
-        Err(e) => Some(pg_dump_failure(&e.to_string())),
+        Ok(out) if out.status.success() => match partial.persist(file) {
+            Ok(()) => None,
+            Err(e) => {
+                let _ = e.path.close();
+                Some(write_failed(e.error))
+            }
+        },
+        Ok(out) => {
+            let _ = partial.close();
+            Some(pg_dump_failure(&String::from_utf8_lossy(&out.stderr)))
+        }
+        Err(e) => {
+            let _ = partial.close();
+            Some(pg_dump_failure(&e.to_string()))
+        }
     };
     if let Some(e) = failure {
-        let _ = std::fs::remove_file(&partial);
         exit_with(&e);
     }
 
@@ -514,6 +566,35 @@ mod tests {
             ]
         );
         assert!(inv.args.iter().all(|a| !a.contains("w0rd")));
+    }
+
+    #[test]
+    fn test_pg_dump_invocation_moves_query_password_out_of_args() {
+        // Only a query-string password: it becomes PGPASSWORD and is stripped,
+        // while other parameters keep their raw encoding.
+        let inv = pg_dump_invocation(
+            "postgresql://app@h:5432/app?sslmode=require&password=q%26pw&options=-c%20x%3Dy",
+            Path::new("out.sql"),
+            "plain",
+        )
+        .unwrap();
+        assert_eq!(inv.password, "q&pw");
+        assert_eq!(
+            inv.args[0],
+            "--dbname=postgresql://app@h:5432/app?sslmode=require&options=-c%20x%3Dy"
+        );
+
+        // Both present: the userinfo password wins and every query copy is
+        // stripped; a URL left with no parameters has no `?`.
+        let inv = pg_dump_invocation(
+            "postgresql://app:userinfo-pw@h/app?password=query-pw&password=other",
+            Path::new("out.sql"),
+            "plain",
+        )
+        .unwrap();
+        assert_eq!(inv.password, "userinfo-pw");
+        assert_eq!(inv.args[0], "--dbname=postgresql://app@h/app");
+        assert!(inv.args.iter().all(|a| !a.contains("-pw")));
     }
 
     #[test]
