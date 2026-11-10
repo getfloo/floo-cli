@@ -8817,6 +8817,38 @@ mod local_env_contract {
     }
 
     #[test]
+    fn dev_refuses_a_port_another_process_already_serves() {
+        let mut server = Server::new();
+        let home = setup_config(&server);
+        let _resolve = mock_resolve_app(&mut server);
+        let busy = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = busy.local_addr().unwrap().port();
+        let project = project("");
+        let manifest = project.path().join("floo.app.toml");
+        let content = std::fs::read_to_string(&manifest).unwrap();
+        std::fs::write(
+            &manifest,
+            content.replace("port = 3000", &format!("port = {port}")),
+        )
+        .unwrap();
+        let create = server
+            .mock(
+                "POST",
+                format!("/v1/apps/{TEST_APP_ID}/dev-session").as_str(),
+            )
+            .expect(0)
+            .create();
+        command(&server, &home, &project)
+            .args(["dev", "--json"])
+            .assert()
+            .failure()
+            .stdout(predicate::str::contains(r#""code":"PORT_IN_USE""#))
+            .stdout(predicate::str::contains(format!("lsof -i :{port}")));
+        assert!(!project.path().join("web/spawned").exists());
+        create.assert();
+    }
+
+    #[test]
     fn dev_detaches_and_checks_all_services_before_any_spawn() {
         let mut server = Server::new();
         let home = setup_config(&server);

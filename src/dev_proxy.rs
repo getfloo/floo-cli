@@ -20,7 +20,7 @@
 //! connection. Suitable for dev traffic; not a hardened production proxy.
 
 use std::io::{Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
+use std::net::{Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -56,7 +56,7 @@ fn sanitize(value: &str) -> String {
         .collect()
 }
 
-/// Bind a proxy on `listen_port` (loopback) forwarding to `127.0.0.1:backend_port`,
+/// Bind a proxy on `listen_port` (loopback) forwarding to the local service on `backend_port`,
 /// injecting the fixture user's identity headers into every request.
 ///
 /// Pass `listen_port = 0` to let the OS choose. Returns the actually-bound port
@@ -135,7 +135,18 @@ fn handle_connection(
         None => headers,
     };
 
-    let mut backend = TcpStream::connect(("127.0.0.1", backend_port))?;
+    let mut backend = match connect_local(backend_port) {
+        Ok(backend) => backend,
+        Err(error) => {
+            return bad_gateway(
+                client,
+                &format!(
+                    "floo dev: nothing answered on localhost:{backend_port} (tried 127.0.0.1 and ::1): {error}. \
+Is the service's dev_command running on port {backend_port}?"
+                ),
+            );
+        }
+    };
     backend.set_read_timeout(Some(Duration::from_secs(60)))?;
     backend.write_all(&modified_headers)?;
     if !body_prefix.is_empty() {
@@ -220,13 +231,10 @@ fn forward_sign_in(
     let response = match response {
         Ok(response) => response,
         Err(error) => {
-            let message = format!("floo dev could not reach dev's sign-in service: {error}");
-            write!(
+            return bad_gateway(
                 client,
-                "HTTP/1.1 502 Bad Gateway\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{message}",
-                message.len()
-            )?;
-            return Ok(());
+                &format!("floo dev could not reach dev's sign-in service: {error}"),
+            );
         }
     };
     let status = response.status();
@@ -255,6 +263,25 @@ fn forward_sign_in(
     client.write_all(out.as_bytes())?;
     client.write_all(&body)?;
     client.flush()
+}
+
+/// Connect to a service on this machine. Dev servers listen on 127.0.0.1 or,
+/// like Vite and Nuxt on macOS, only on ::1, so try both.
+pub fn connect_local(port: u16) -> std::io::Result<TcpStream> {
+    TcpStream::connect(
+        &[
+            SocketAddr::from((Ipv4Addr::LOCALHOST, port)),
+            SocketAddr::from((Ipv6Addr::LOCALHOST, port)),
+        ][..],
+    )
+}
+
+fn bad_gateway(mut client: TcpStream, message: &str) -> std::io::Result<()> {
+    write!(
+        client,
+        "HTTP/1.1 502 Bad Gateway\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{message}",
+        message.len()
+    )
 }
 
 /// Insert identity headers immediately before the final `\r\n\r\n`.
@@ -491,5 +518,49 @@ mod tests {
         assert!(received_str.contains("X-Floo-User-Email: jane@acme.com\r\n"));
         assert!(received_str.contains("X-Floo-User-Role: member\r\n"));
         assert!(received_str.contains("GET / HTTP/1.1\r\n"));
+    }
+
+    fn get_through_proxy(backend_port: u16) -> String {
+        let (_handle, proxy_port) = start_proxy(0, backend_port, ProxyRole::default()).unwrap();
+        let mut client = TcpStream::connect(("127.0.0.1", proxy_port)).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        client
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
+        let mut response = String::new();
+        let _ = client.read_to_string(&mut response);
+        response
+    }
+
+    #[test]
+    fn proxy_reaches_a_backend_listening_only_on_ipv6_loopback() {
+        // Vite and Nuxt on macOS bind ::1 only. Skip where the host has no IPv6 loopback.
+        let Ok(backend) = TcpListener::bind((Ipv6Addr::LOCALHOST, 0)) else {
+            return;
+        };
+        let backend_port = backend.local_addr().unwrap().port();
+        thread::spawn(move || {
+            let (mut s, _) = backend.accept().unwrap();
+            let _ = s.read(&mut [0u8; 1024]);
+            let _ = s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+        });
+        assert!(get_through_proxy(backend_port).starts_with("HTTP/1.1 200 OK"));
+    }
+
+    #[test]
+    fn proxy_answers_502_when_nothing_listens_on_the_service_port() {
+        let port = TcpListener::bind(("127.0.0.1", 0))
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let response = get_through_proxy(port);
+        assert!(
+            response.starts_with("HTTP/1.1 502 Bad Gateway"),
+            "{response}"
+        );
+        assert!(response.contains(&format!("nothing answered on localhost:{port}")));
     }
 }
