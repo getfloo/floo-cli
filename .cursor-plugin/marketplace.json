@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "floo",
-      "source": "./plugin",
+      "source": "plugin",
       "category": "deployment"
     }
   ]
