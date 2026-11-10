@@ -1,6 +1,7 @@
 {
   "name": "floo",
-  "version": "0.3.3",
+  "displayName": "floo",
+  "version": "0.3.4",
   "description": "Deploy and host apps built with AI. Claude builds the app and floo runs it at a live URL with sign-in, Postgres, scheduled jobs, logs and deploys.",
   "author": {
     "name": "floo",
