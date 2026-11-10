@@ -1873,14 +1873,17 @@ fn generate_security_findings(
         ));
     }
 
-    // Managed-service credentials reaching a browser-facing (web) service — a
-    // real risk whether the app has one service or ten.
+    // Implicit attachment hands managed credentials to every service. With two
+    // or more services, scoping them to the ones that need them is actionable.
+    // One service, or an explicit `managed = [...]`, is the intended setup:
+    // server-side env never reaches the browser on its own.
     let web_service_names: Vec<&str> = services
         .iter()
         .filter(|s| s.service_type == ServiceType::Web)
         .map(|s| s.name.as_str())
         .collect();
     if env_plan.mode == "implicit_all"
+        && services.len() > 1
         && !web_service_names.is_empty()
         && env_plan.services.iter().any(|svc| !svc.managed.is_empty())
     {
@@ -1891,24 +1894,6 @@ fn generate_security_findings(
                 web_service_names.join(", "),
             ),
         ));
-    } else {
-        for svc_plan in &env_plan.services {
-            let Some(svc) = services.iter().find(|s| s.name == svc_plan.service) else {
-                continue;
-            };
-            if svc.service_type == ServiceType::Web && !svc_plan.managed.is_empty() {
-                let handles: Vec<&str> =
-                    svc_plan.managed.iter().map(|m| m.handle.as_str()).collect();
-                findings.push(PreflightFinding::warning(
-                    "MANAGED_CREDS_TO_WEB",
-                    format!(
-                        "Web service '{}' receives managed credentials: {}. Keep this only if browser-facing code really needs them server-side.",
-                        svc.name,
-                        handles.join(", "),
-                    ),
-                ));
-            }
-        }
     }
 
     // Secret-shaped vars sitting in a web service's env file — they may ship to
