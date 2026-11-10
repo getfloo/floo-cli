@@ -1,6 +1,7 @@
 {
   "name": "floo",
-  "version": "0.3.3",
+  "displayName": "floo",
+  "version": "0.3.4",
   "description": "Deploy and host apps built with AI. Claude builds the app and floo runs it at a live URL with sign-in, Postgres, scheduled jobs, logs and deploys.",
   "author": {
     "name": "floo",
@@ -20,5 +21,7 @@
   ],
   "skills": "./skills/",
   "homepage": "https://getfloo.com",
-  "privacyPolicyUrl": "https://getfloo.com/legal/privacy"
+  "privacyPolicyUrl": "https://getfloo.com/legal/privacy",
+  "supportUrl": "https://getfloo.com/docs/guides/troubleshooting",
+  "termsOfServiceUrl": "https://getfloo.com/legal/terms"
 }
