@@ -5,15 +5,15 @@
     "url": "https://getfloo.com"
   },
   "metadata": {
-    "description": "The floo plugin for Claude Code: build and host internal software with team sign-in, Postgres, and scheduled jobs."
+    "description": "The floo plugin for Claude Code: deploy and host apps built with AI, with sign-in, Postgres, and scheduled jobs."
   },
   "plugins": [
     {
       "name": "floo",
       "source": "./plugin",
-      "description": "Deploy and run the internal apps your agent builds on floo, with team sign-in, Postgres, scheduled jobs, and the floo MCP server.",
+      "description": "Deploy and host apps built with AI. Claude builds the app and floo runs it at a live URL with sign-in, Postgres, scheduled jobs, logs and deploys.",
       "category": "deployment",
-      "homepage": "https://getfloo.com/internal-apps"
+      "homepage": "https://getfloo.com"
     }
   ]
 }

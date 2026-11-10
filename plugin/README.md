@@ -1,11 +1,11 @@
 # floo
 
-Build internal apps for your team from Claude, and floo hosts them. Ask for a tool in plain words, such as "a page where my team logs customer requests and I see them by week", and Claude creates the app on floo, writes the code, deploys it, and gives you a link your team signs in to. It works the same in Claude chat, Cowork and Claude Code.
+Deploy and host apps built with AI. Ask Claude for an app in plain words, such as "a page where my team logs customer requests and I see them by week" or "a booking page my customers can use", and Claude creates the app on floo, writes the code, deploys it, and gives you a live link. Keep it private to the people you invite, or open it to the public. It works the same in Claude chat, Cowork and Claude Code.
 
 ## What's included
 
 - **The floo connector** (`https://api.getfloo.com/mcp`). Claude can use it to create apps, read and change their code, wait on deploys, read logs, and promote an app to production when you ask.
-- **The floo skill.** It teaches Claude the floo workflow: team sign-in, managed Postgres, scheduled jobs, and how to fix a failed deploy from its error message.
+- **The floo skill.** It teaches Claude the floo workflow: sign-in, managed Postgres, scheduled jobs, and how to fix a failed deploy from its error message.
 
 ## Get started
 
@@ -20,7 +20,7 @@ Build internal apps for your team from Claude, and floo hosts them. Ask for a to
 
 Try:
 
-- "Build an internal tool where my team logs customer requests, and show them by week."
+- "Build an app where my team logs customer requests, and show them by week."
 - "Add a status column to my requests app and email me when one is marked urgent."
 - "Why did my last deploy fail? Fix it and deploy again."
 
