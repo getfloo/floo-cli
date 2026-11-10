@@ -55,7 +55,7 @@ mod tests {
     #[test]
     fn terminal_membership() {
         // Every settled status must be terminal or the poll/stream loops spin for
-        // POLL_TIMEOUT (10 min): `superseded` was the original miss (feedback
+        // POLL_TIMEOUT (20 min): `superseded` was the original miss (feedback
         // 1748af72, 2026-04-24) and `cancelled` the more recent one (getfloo/floo#1354).
         for s in ["live", "failed", "superseded", "cancelled"] {
             assert!(is_terminal(s), "{s} should be terminal");

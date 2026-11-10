@@ -20,7 +20,8 @@ use crate::project_config::{
 use crate::resolve::resolve_app;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
-const POLL_TIMEOUT: Duration = Duration::from_secs(600); // 10 minutes
+/// Same budget as the deploy log stream, so JSON mode (which only polls) waits as long.
+const POLL_TIMEOUT: Duration = Duration::from_secs(1200);
 
 #[derive(Debug, Serialize)]
 struct EnvInjectionPlan {
@@ -2516,7 +2517,7 @@ fn poll_deploy_resuming(
 
         if poll_start.elapsed() >= POLL_TIMEOUT {
             output::error(
-                "Deploy timed out after 10 minutes",
+                "Deploy timed out after 20 minutes",
                 &ErrorCode::DeployTimeout,
                 Some(&format!(
                     "The deploy may still complete. Check status with \
