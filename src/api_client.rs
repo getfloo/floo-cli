@@ -244,26 +244,7 @@ impl FlooClient {
         self.handle_response(response)
     }
 
-    // --- Managed projects ---
-
-    pub fn list_projects(&self) -> Result<ListProjectsResponse, FlooApiError> {
-        self.handle_response(self.get("/v1/projects")?)
-    }
-
-    /// The projects API exposes a list endpoint, not a single-project GET.
-    pub fn get_project(&self, name_or_id: &str) -> Result<ProjectResponse, FlooApiError> {
-        self.list_projects()?
-            .projects
-            .into_iter()
-            .find(|project| project.name == name_or_id || project.app_id == name_or_id)
-            .ok_or_else(|| {
-                FlooApiError::new(
-                    404,
-                    "PROJECT_NOT_FOUND",
-                    format!("Project '{name_or_id}' not found."),
-                )
-            })
-    }
+    // --- Hosted repositories ---
 
     pub fn project_git_token(&self, app_id: &str) -> Result<ProjectGitTokenResponse, FlooApiError> {
         let response = self.post_json(
