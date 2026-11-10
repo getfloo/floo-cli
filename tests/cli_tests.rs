@@ -3032,40 +3032,35 @@ fn stage_test_update(home: &std::path::Path, profile: &str) -> std::path::PathBu
 
 #[test]
 #[allow(deprecated)]
-fn test_json_mode_no_version_check_output() {
-    for args in [
-        vec!["--json", "init", "example", "--dry-run"],
-        vec!["--json", "version"],
-    ] {
-        let home = tempfile::tempdir().unwrap();
-        let staged = stage_test_update(home.path(), "floo");
-        let target = home.path().join("install/floo");
-        let mut server = Server::new();
-        let check = server.mock("GET", "/latest").expect(0).create();
-        let result = Command::cargo_bin("floo")
-            .unwrap()
-            .args(args)
-            .current_dir(home.path())
-            .env("HOME", home.path())
-            .env_remove("FLOO_CONFIG_DIR")
-            .env_remove("FLOO_NO_UPDATE_CHECK")
-            .env("FLOO_UPDATE_TARGET_PATH", &target)
-            .env("FLOO_UPDATE_API_BASE", server.url())
-            .assert()
-            .success()
-            .stderr(predicate::str::is_empty());
-        let json: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
-        assert_eq!(json["success"], true);
-        assert!(
-            staged.join("metadata.json").exists(),
-            "startup must not consume staging"
-        );
-        assert!(
-            !target.exists(),
-            "neither startup nor post-command may install"
-        );
-        check.assert();
-    }
+fn test_json_version_never_updates_automatically() {
+    let home = tempfile::tempdir().unwrap();
+    let staged = stage_test_update(home.path(), "floo");
+    let target = home.path().join("install/floo");
+    let mut server = Server::new();
+    let check = server.mock("GET", "/latest").expect(0).create();
+    let result = Command::cargo_bin("floo")
+        .unwrap()
+        .args(["--json", "version"])
+        .current_dir(home.path())
+        .env("HOME", home.path())
+        .env_remove("FLOO_CONFIG_DIR")
+        .env_remove("FLOO_NO_UPDATE_CHECK")
+        .env("FLOO_UPDATE_TARGET_PATH", &target)
+        .env("FLOO_UPDATE_API_BASE", server.url())
+        .assert()
+        .success()
+        .stderr(predicate::str::is_empty());
+    let json: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    assert_eq!(json["success"], true);
+    assert!(
+        staged.join("metadata.json").exists(),
+        "startup must not consume staging"
+    );
+    assert!(
+        !target.exists(),
+        "neither startup nor post-command may install"
+    );
+    check.assert();
 }
 
 #[test]
@@ -3075,13 +3070,14 @@ fn test_automatic_update_gate_table() {
     use std::process::Stdio;
     // This HTTP-only gate test must not spend its 500ms exit window loading OS trust.
     let trust = tempfile::tempdir().unwrap();
-    // A real stdout PTY isolates the JSON guard from the non-TTY guard.
+    // Agent sessions (no terminal) and --json runs update like a terminal does.
     for (profile, json, tty, disabled, expected) in [
         ("floo", false, true, false, true),
-        ("floo", true, true, false, false),
-        ("floo", false, false, false, false),
-        ("floo", true, false, false, false),
+        ("floo", true, true, false, true),
+        ("floo", false, false, false, true),
+        ("floo", true, false, false, true),
         ("floo", false, true, true, false),
+        ("floo", true, false, true, false),
         ("floo-local", false, true, false, false),
         ("floo-dev", false, true, false, false),
     ] {
@@ -3141,6 +3137,10 @@ fn test_automatic_update_gate_table() {
         assert!(!stderr.contains("Updated floo"), "{stderr}");
         if json {
             assert!(stderr.is_empty(), "{stderr}");
+        }
+        if json && !tty {
+            let payload: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+            assert_eq!(payload["success"], true);
         }
         check.assert();
     }
