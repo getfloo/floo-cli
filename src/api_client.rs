@@ -18,6 +18,7 @@ impl FlooClient {
     pub fn new(config: Option<FlooConfig>) -> Result<Self, FlooApiError> {
         let config = config.unwrap_or_else(load_config);
         let client = Client::builder()
+            .user_agent(crate::constants::USER_AGENT)
             .timeout(Duration::from_secs(30))
             .build()
             .map_err(|e| {
@@ -704,6 +705,7 @@ impl FlooClient {
         deploy_id: &str,
     ) -> Result<reqwest::blocking::Response, FlooApiError> {
         let streaming_client = Client::builder()
+            .user_agent(crate::constants::USER_AGENT)
             .timeout(Duration::from_secs(1200))
             .build()
             .map_err(|e| {

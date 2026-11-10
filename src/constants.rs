@@ -6,3 +6,5 @@ pub const DEFAULT_API_URL: &str = "https://api.getfloo.com";
 pub const DEV_API_URL: &str = "https://api.dev.getfloo.com";
 pub const CONFIG_FILE_NAME: &str = "config.json";
 pub const VERSION: &str = env!("FLOO_VERSION");
+/// Sent on every API request, so the API can tell which CLI release is calling.
+pub const USER_AGENT: &str = concat!("floo-cli/", env!("FLOO_VERSION"));

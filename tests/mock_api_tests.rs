@@ -303,6 +303,28 @@ fn test_apps_list_json() {
 }
 
 #[test]
+fn test_api_requests_name_the_cli_release() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+
+    let m = server
+        .mock("GET", "/v1/apps")
+        .match_query(Matcher::Any)
+        .match_header("user-agent", Matcher::Regex(r"^floo-cli/\S+$".into()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"apps":[]}"#)
+        .create();
+
+    floo()
+        .args(["--json", "apps", "list"])
+        .env("HOME", home.path())
+        .assert()
+        .success();
+    m.assert();
+}
+
+#[test]
 fn test_billing_spend_cap_get_json_uses_cents_key() {
     // #1161: `spend-cap get` emits the cap as `spend_cap_cents`, consistent
     // with `billing usage` and every other *_cents field. The bare `spend_cap`

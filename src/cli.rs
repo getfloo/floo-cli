@@ -1,5 +1,4 @@
 use std::ffi::OsString;
-use std::io::IsTerminal;
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
@@ -1879,10 +1878,10 @@ pub enum CronCommands {
     },
 }
 
+/// Agents and `--json` runs update too: they never run `floo update` on their
+/// own, so a gate on an interactive terminal left them on old releases. Update
+/// notices go to stderr, so stdout and `--json` output stay clean.
 fn should_check_version(cli: &Cli) -> bool {
-    if cli.json || !std::io::stdout().is_terminal() {
-        return false;
-    }
     if crate::config::is_local_binary() || crate::config::is_dev_binary() {
         return false;
     }
@@ -2143,7 +2142,6 @@ pub fn run() {
         return;
     }
 
-    // Both automatic update phases run only in interactive human sessions.
     let do_version_check = should_check_version(&cli);
     if do_version_check {
         crate::version_check::apply_staged_update(VERSION);
