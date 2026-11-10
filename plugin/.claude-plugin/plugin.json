@@ -1,7 +1,7 @@
 {
   "name": "floo",
-  "version": "0.3.2",
-  "description": "Deploy and run the internal apps your agent builds on floo: team sign-in, Postgres, scheduled jobs, and the floo MCP server.",
+  "version": "0.3.3",
+  "description": "Deploy and host apps built with AI. Claude builds the app and floo runs it at a live URL with sign-in, Postgres, scheduled jobs, logs and deploys.",
   "author": {
     "name": "floo",
     "url": "https://github.com/getfloo"
@@ -12,13 +12,13 @@
     "floo",
     "deploy",
     "hosting",
+    "apps",
     "internal-tools",
-    "internal-apps",
     "postgres",
     "cron",
     "mcp"
   ],
   "skills": "./skills/",
-  "homepage": "https://getfloo.com/internal-apps",
+  "homepage": "https://getfloo.com",
   "privacyPolicyUrl": "https://getfloo.com/legal/privacy"
 }
