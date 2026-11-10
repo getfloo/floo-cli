@@ -837,7 +837,6 @@ If {handle} already exists, attach it with [services.<name>.env] managed = [\"{h
 /// Global flag set by the signal handler (must be static for the C signal handler).
 static SHUTDOWN_FLAG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
-#[cfg(unix)]
 /// Declared managed services whose primary env key reached no service, as
 /// (attachment handle, missing key) pairs.
 fn managed_without_credentials(
@@ -860,6 +859,7 @@ fn managed_without_credentials(
         .collect()
 }
 
+#[cfg(unix)]
 extern "C" fn signal_handler(_sig: libc::c_int) {
     SHUTDOWN_FLAG.store(1, Ordering::SeqCst);
 }
