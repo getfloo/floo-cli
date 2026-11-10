@@ -65,7 +65,7 @@ fn list_mock(server: &mut Server, projects: Vec<Value>) -> mockito::Mock {
 
 fn token_mock(server: &mut Server, token: &str) -> mockito::Mock {
     server
-        .mock("POST", format!("/v1/projects/{APP_ID}/git-token").as_str())
+        .mock("POST", format!("/v1/apps/{APP_ID}/git-token").as_str())
         .match_header("authorization", "Bearer floo_test123")
         .match_header("x-floo-org-id", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
         .with_status(200)
@@ -202,7 +202,7 @@ fn credential_rejects_protocol_injection_without_printing_token() {
 fn credential_api_error_keeps_stdout_empty_even_in_json_mode() {
     let mut server = Server::new();
     let home = setup(&server);
-    let mock = server.mock("POST", format!("/v1/projects/{APP_ID}/git-token").as_str())
+    let mock = server.mock("POST", format!("/v1/apps/{APP_ID}/git-token").as_str())
         .with_status(403)
         .with_body(json!({"detail": {"code": "MANAGED_REPO_NOT_OWNED", "message": "Repository is not owned.", "hint": "Check your organization."}}).to_string())
         .create();
