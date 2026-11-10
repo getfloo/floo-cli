@@ -76,12 +76,21 @@ pub fn diff(app_flag: Option<&str>, event_id: &str) {
         ),
         None,
     );
-    for file in diff
-        .get("files")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
+    let files = diff.get("files").and_then(Value::as_array);
+    let listed = files.map_or(0, Vec::len);
+    let changed = diff
+        .get("changed_files")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    if changed > listed as u64 {
+        output::info(
+            &format!(
+                "GitHub lists {listed} of the {changed} files this fix changes; the rest are not shown."
+            ),
+            None,
+        );
+    }
+    for file in files.into_iter().flatten() {
         output::info(
             &format!("\n{} ({})", field(file, "filename"), field(file, "status")),
             None,

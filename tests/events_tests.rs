@@ -137,7 +137,7 @@ fn diff_prints_the_commit_to_approve_and_each_patch() {
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(format!(
-            r#"{{"pr_url":"https://github.com/floo-managed/my-app/pull/7","head_sha":"{head}",
+            r#"{{"pr_url":"https://github.com/floo-managed/my-app/pull/7","head_sha":"{head}","changed_files":3,
                "files":[{{"filename":"app.py","status":"modified","additions":1,"deletions":1,"patch":"-a\n+b"}},
                         {{"filename":"logo.png","status":"added","additions":0,"deletions":0,"patch":null}}]}}"#
         ))
@@ -152,7 +152,8 @@ fn diff_prints_the_commit_to_approve_and_each_patch() {
             "floo events approve {EVENT_ID} --commit {head}"
         )))
         .stderr(predicate::str::contains("+b"))
-        .stderr(predicate::str::contains("No line-by-line view"));
+        .stderr(predicate::str::contains("No line-by-line view"))
+        .stderr(predicate::str::contains("GitHub lists 2 of the 3 files"));
 }
 
 #[test]
