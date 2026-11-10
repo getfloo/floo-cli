@@ -321,6 +321,11 @@ pub fn dev(args: DevArgs) {
         }
     }
 
+    let managed_without_credentials = managed_without_credentials(
+        &project_config::discover_managed_services(&resolved),
+        &session,
+    );
+
     // --- Confirm Postgres reachability before handing off ---
     //
     // `postgres_authorized` means the API's Cloud SQL patch was ACCEPTED, not
@@ -400,6 +405,14 @@ the database finishes applying it.",
                 "  Set them in your local shell if the app needs them.",
                 None,
             );
+        }
+
+        for (handle, key) in &managed_without_credentials {
+            output::warn(&format!(
+                "floo.app.toml declares {handle}, but no local service got {key}. \
+Managed services are created on the first `floo deploy`: run it once, then restart floo dev. \
+If {handle} already exists, attach it with [services.<name>.env] managed = [\"{handle}\"]."
+            ));
         }
 
         // Check if redis env vars were provided for any service
@@ -515,6 +528,12 @@ the database finishes applying it.",
                     None => serde_json::Value::Null,
                 },
                 "withheld_secret_keys": session.withheld_secret_keys,
+                // Declared in floo.app.toml but no service got its credentials:
+                // not provisioned yet (first deploy creates it) or not attached.
+                "managed_without_credentials": managed_without_credentials
+                    .iter()
+                    .map(|(handle, _)| handle)
+                    .collect::<Vec<_>>(),
                 "services": json_services,
             }
         }));
@@ -798,6 +817,28 @@ the database finishes applying it.",
 static SHUTDOWN_FLAG: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 #[cfg(unix)]
+/// Declared managed services whose primary env key reached no service, as
+/// (attachment handle, missing key) pairs.
+fn managed_without_credentials(
+    declared: &[project_config::ManagedServiceDeclaration],
+    session: &crate::api_types::DevSessionResponse,
+) -> Vec<(String, String)> {
+    declared
+        .iter()
+        .filter_map(|decl| {
+            let handle = if decl.name == "default" {
+                decl.service_type.clone()
+            } else {
+                format!("{}:{}", decl.service_type, decl.name)
+            };
+            let key = project_config::managed_env_attachment_keys(&handle)
+                .into_iter()
+                .next()?;
+            (!session.services.values().any(|env| env.contains_key(&key))).then_some((handle, key))
+        })
+        .collect()
+}
+
 extern "C" fn signal_handler(_sig: libc::c_int) {
     SHUTDOWN_FLAG.store(1, Ordering::SeqCst);
 }
@@ -871,7 +912,10 @@ pub(super) fn cleanup_session(
 
 #[cfg(test)]
 mod tests {
-    use crate::project_config::{AppServiceEntry, AppServiceType};
+    use std::collections::HashMap;
+
+    use super::managed_without_credentials;
+    use crate::project_config::{self, AppServiceEntry, AppServiceType};
 
     fn entry_with(repo: Option<&str>, dev_command: Option<&str>) -> AppServiceEntry {
         AppServiceEntry {
@@ -905,6 +949,41 @@ mod tests {
             None if entry.repo.is_some() => "skipped_external",
             None => "missing",
         }
+    }
+
+    #[test]
+    fn managed_without_credentials_names_declared_services_no_service_received() {
+        let declared: Vec<project_config::ManagedServiceDeclaration> = [
+            ("postgres", "default"),
+            ("redis", "cache"),
+            ("storage", "default"),
+        ]
+        .into_iter()
+        .map(|(kind, name)| project_config::ManagedServiceDeclaration {
+            service_type: kind.into(),
+            name: name.into(),
+            tier: None,
+        })
+        .collect();
+        let session = crate::api_types::DevSessionResponse {
+            session_id: "s".into(),
+            services: HashMap::from([
+                (
+                    "web".into(),
+                    HashMap::from([("REDIS_URL_CACHE".into(), "redis://".into())]),
+                ),
+                ("worker".into(), HashMap::new()),
+            ]),
+            postgres_authorized: false,
+            withheld_secret_keys: Vec::new(),
+        };
+        assert_eq!(
+            managed_without_credentials(&declared, &session),
+            vec![
+                ("postgres".to_string(), "DATABASE_URL".to_string()),
+                ("storage".to_string(), "STORAGE_BUCKET".to_string()),
+            ]
+        );
     }
 
     #[test]
