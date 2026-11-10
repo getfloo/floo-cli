@@ -105,6 +105,8 @@ The installed binary owns command syntax and documentation discovery:
 - The typed registry in `src/commands/docs.rs` owns topic names, aliases, summaries, URLs, and JSON discovery.
 - https://getfloo.com/docs owns platform guidance, onboarding, examples, and troubleshooting. `floo docs` returns links to those current pages; articles are neither bundled nor pinned to the installed CLI version.
 - `plugin/skills/floo/SKILL.md` is the single entry point to command help and web docs; operational guidance lives on the website. The CLI embeds this same file for installation and refresh.
+- `skills/<task>/SKILL.md` are task-named entry points for skill directories (`npx skills add getfloo/floo-cli` reads the root `skills/` folder). Each names one job in its description and links the web page that owns it; none holds long-form guidance.
+- `npm/getfloo` is the `npx getfloo` launcher. It downloads the release binary, verifies checksum and signature against the same pinned key as `install.sh`, and runs it; it has no commands of its own.
 - README owns installation and contributor instructions and links to the web quickstart.
 
 When behavior changes, update its canonical web documentation and any affected
@@ -119,6 +121,7 @@ against the live Clap tree.
 3. GitHub Release created with binaries + SHA256 checksums + RSA signatures
 4. Slack `#releases` ping fires (mirrors the platform's deploy.yml notification — gated on `secrets.SLACK_RELEASES_WEBHOOK`; skips with a warning if unset, fails the release if Slack rejects the post)
 5. Install script downloads from these releases and verifies checksum + signature before install
+6. The `getfloo` npm package always fetches the latest release, so a CLI release needs no npm publish. Publish `npm/getfloo` by hand (`npm publish` from that folder) only when the launcher itself changes.
 
 ### Required secrets
 

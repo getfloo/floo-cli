@@ -1,0 +1,35 @@
+{
+  "name": "getfloo",
+  "version": "0.1.0",
+  "description": "Run the floo CLI with npx: deploy and host apps built with AI.",
+  "homepage": "https://getfloo.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/getfloo/floo-cli.git",
+    "directory": "npm/getfloo"
+  },
+  "license": "MIT",
+  "bin": {
+    "floo": "bin/floo.js",
+    "getfloo": "bin/floo.js"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": [
+    "floo",
+    "deploy",
+    "hosting",
+    "cli",
+    "postgres",
+    "ai"
+  ]
+}
