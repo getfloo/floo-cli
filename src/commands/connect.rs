@@ -177,7 +177,7 @@ fn require_access(client: &FlooClient, repo: &str, rerun: &str) {
         ),
         _ => (
             format!("floo's GitHub App isn't installed where it can reach {repo}."),
-            match super::ship::github_setup_link(client) {
+            match super::ship::github_setup_link(client, repo) {
                 Some(link) => format!("Open {link}, install the App on {owner}, then {rerun}"),
                 None => format!("Install the floo GitHub App on {owner}, then {rerun}"),
             },

@@ -1185,8 +1185,12 @@ impl FlooClient {
 
     /// Start GitHub setup: the returned link authorizes the person on GitHub,
     /// installs the floo App where they choose, and links it to this org.
-    pub fn github_setup_begin(&self) -> Result<Value, FlooApiError> {
-        let resp = self.post_json("/v1/github/setup/begin", &serde_json::json!({}))?;
+    /// Naming the repository's `owner` settles which installation to link when
+    /// the person reaches the App on several accounts.
+    pub fn github_setup_begin(&self, owner: &str) -> Result<Value, FlooApiError> {
+        let owner: String = url::form_urlencoded::byte_serialize(owner.as_bytes()).collect();
+        let path = format!("/v1/github/setup/begin?owner={owner}");
+        let resp = self.post_json(&path, &serde_json::json!({}))?;
         self.handle_response(resp)
     }
 
