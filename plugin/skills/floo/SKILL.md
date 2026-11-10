@@ -17,7 +17,7 @@ https://getfloo.com/docs/introduction instead, then
 https://getfloo.com/docs/guides/agent-setup for authority and verification.
 
 The floo MCP tools (`search_api`, `read_api`, `write_api` and named tools such as
-`create_project` and `get_deploy`) call the same API when the floo MCP server
+`create_app` and `get_deploy`) call the same API when the floo MCP server
 (`https://api.getfloo.com/mcp`) is connected.
 
 No shell, or one that cannot reach api.getfloo.com (Cowork, claude.ai)? Use
