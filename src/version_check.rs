@@ -132,18 +132,20 @@ fn cache_is_fresh(cache: &VersionCache) -> bool {
     elapsed < CACHE_TTL_SECS
 }
 
+/// Whether `remote` is a later release than `local`. Releases are `vYYYY.MM.DD`;
+/// a second release on one day is `vYYYY.MM.DD.N`, which sorts after the plain date.
 fn is_newer(remote: &str, local: &str) -> bool {
-    let parse = |v: &str| -> Option<(u64, u64, u64)> {
+    let parse = |v: &str| -> Option<[u64; 4]> {
         let v = v.strip_prefix('v').unwrap_or(v);
-        let parts: Vec<&str> = v.split('.').collect();
-        if parts.len() != 3 {
-            return None;
+        let parts: Vec<u64> = v
+            .split('.')
+            .map(|part| part.parse().ok())
+            .collect::<Option<_>>()?;
+        match parts[..] {
+            [a, b, c] => Some([a, b, c, 0]),
+            [a, b, c, d] => Some([a, b, c, d]),
+            _ => None,
         }
-        Some((
-            parts[0].parse().ok()?,
-            parts[1].parse().ok()?,
-            parts[2].parse().ok()?,
-        ))
     };
 
     match (parse(remote), parse(local)) {
@@ -500,6 +502,16 @@ mod tests {
         assert!(!is_newer("v0.2.0", "invalid"));
         assert!(!is_newer("", ""));
         assert!(!is_newer("v1.0", "v0.9.0"));
+    }
+
+    #[test]
+    fn test_is_newer_same_day_release() {
+        assert!(is_newer("v2026.11.10.1", "v2026.11.10"));
+        assert!(is_newer("v2026.11.10.2", "v2026.11.10.1"));
+        assert!(is_newer("v2026.11.11", "v2026.11.10.2"));
+        assert!(!is_newer("v2026.11.10", "v2026.11.10.1"));
+        assert!(!is_newer("v2026.11.10.1", "v2026.11.10.1"));
+        assert!(!is_newer("v2026.11.10.1.1", "v2026.11.10"));
     }
 
     #[test]
