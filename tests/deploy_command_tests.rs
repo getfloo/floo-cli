@@ -705,13 +705,15 @@ fn a_stop_carries_the_plan_and_creates_nothing() {
         .with_body(plan(json!({
             "ok": false, "code": "GITHUB_APP_NOT_INSTALLED", "decision": "connect_github",
             "message": "floo can't read acme/client-portal yet.",
+            "source": {"kind": "github", "repo": "acme/client-portal", "branch": "main"},
             "next": [{"open": url, "cli": "floo apps github setup"}, {"cli": "floo deploy --hosted"}],
         })))
         .create();
-    // A bare install page wouldn't link the installation to floo; setup's link does.
+    // A bare install page wouldn't link the installation to floo; setup's link does,
+    // and it is begun for the repo's owner so setup never stops to ask which account.
     let link = "https://api.getfloo.com/v1/github/setup/install?setup_token=t";
     let setup = server
-        .mock("POST", "/v1/github/setup/begin")
+        .mock("POST", "/v1/github/setup/begin?owner=acme")
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(json!({ "install_url": link }).to_string())

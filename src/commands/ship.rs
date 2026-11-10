@@ -662,15 +662,20 @@ fn suggestion(plan: &DeployPlan, quoted: &str) -> String {
 
 /// floo's one-link GitHub setup: GitHub asks the person to authorize, then to
 /// install the floo App, and the installation is linked to this floo org.
-pub(crate) fn github_setup_link(client: &FlooClient) -> Option<String> {
-    let started = client.github_setup_begin().ok()?;
+/// Setup is begun for the account that owns `repo`, so it links that
+/// account's installation without asking which one.
+pub(crate) fn github_setup_link(client: &FlooClient, repo: &str) -> Option<String> {
+    let owner = repo.split('/').next().unwrap_or_default();
+    let started = client.github_setup_begin(owner).ok()?;
     started["install_url"].as_str().map(str::to_owned)
 }
 
 /// A plan that stops on a missing installation gets the setup link to open,
 /// since a plain GitHub install page wouldn't link the installation to floo.
 fn offer_setup_link(client: &FlooClient, plan: &mut DeployPlan, quoted: &str) {
-    if let (Some(link), Some(step)) = (github_setup_link(client), plan.next.first_mut()) {
+    let repo = plan.source.as_ref().and_then(|source| source.repo.clone());
+    let link = github_setup_link(client, repo.as_deref().unwrap_or_default());
+    if let (Some(link), Some(step)) = (link, plan.next.first_mut()) {
         step.open = Some(link);
         step.cli = Some(format!("floo deploy {quoted}"));
     }

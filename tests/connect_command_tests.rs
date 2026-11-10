@@ -365,7 +365,7 @@ fn a_repo_floo_cannot_read_stops_before_anything_is_pushed() {
     );
     let link = "https://api.getfloo.com/v1/github/setup/install?setup_token=t";
     let _setup = server
-        .mock("POST", "/v1/github/setup/begin")
+        .mock("POST", "/v1/github/setup/begin?owner=acme")
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(json!({ "install_url": link }).to_string())
