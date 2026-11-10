@@ -8,9 +8,7 @@ use colored::Colorize;
 
 use crate::api_client::FlooClient;
 use crate::api_types::{CoalescedCommit, Deploy, Release};
-use crate::commands::deploy::{
-    poll_deploy, render_diagnostics, settle_to_terminal, stream_deploy, stream_deploy_json,
-};
+use crate::commands::deploy::{poll_deploy, render_diagnostics, settle_to_terminal, stream_deploy};
 use crate::deploy_status;
 use crate::errors::ErrorCode;
 use crate::output;
@@ -351,40 +349,11 @@ pub fn logs(deploy_id: Option<&str>, app: Option<&str>, follow: bool, preview: O
 
     // JSON mode
     if output::is_json_mode() {
-        if follow && !is_terminal {
-            // Stream NDJSON for active deploys
-            match stream_deploy_json(&client, &app_id, &deploy.id) {
-                Ok(d) => {
-                    let final_status = d.status.as_deref().unwrap_or("unknown");
-                    if deploy_status::is_failure(final_status) {
-                        process::exit(1);
-                    }
-                    return;
-                }
-                Err(e) => {
-                    // Fallback: poll and emit final state
-                    eprintln!(
-                        "Stream unavailable ({}), falling back to polling...",
-                        e.code
-                    );
-                    let final_deploy = poll_deploy(&client, &app_id, &deploy);
-                    let is_failed =
-                        deploy_status::is_failure(final_deploy.status.as_deref().unwrap_or(""));
-                    output::success(
-                        "Deploy logs retrieved.",
-                        Some(serde_json::json!({
-                            "deploy_id": final_deploy.id,
-                            "status": final_deploy.status,
-                            "build_logs": final_deploy.build_logs,
-                        })),
-                    );
-                    if is_failed {
-                        process::exit(1);
-                    }
-                    return;
-                }
-            }
-        }
+        let deploy = if follow && !is_terminal {
+            poll_deploy(&client, &app_id, &deploy)
+        } else {
+            deploy
+        };
         let is_failed = deploy_status::is_failure(deploy.status.as_deref().unwrap_or(""));
         output::success(
             "Deploy logs retrieved.",
@@ -443,7 +412,8 @@ pub fn logs(deploy_id: Option<&str>, app: Option<&str>, follow: bool, preview: O
                 poll_deploy(&client, &app_id, &deploy)
             }
         };
-        print_final_status(&final_deploy);
+        let data = serde_json::Map::from_iter([("deploy".into(), output::to_value(&final_deploy))]);
+        report(&final_deploy, data);
     } else {
         // Active deploy + no follow: show what we have and hint
         if let Some(logs) = deploy.build_logs.as_deref().filter(|l| is_real_log(l)) {
@@ -644,16 +614,41 @@ fn holds_back_push(deploy: &Deploy) -> bool {
     running && is_dev(deploy)
 }
 
-pub fn watch(app: Option<&str>, commit: Option<&str>) {
+/// A followed deploy, plus the lineage when its commit was folded into a newer one.
+pub struct Followed {
+    pub deploy: Deploy,
+    pub commit_coalesced: Option<serde_json::Value>,
+}
+
+impl Followed {
+    /// The `data` fields a JSON document reports for this deploy.
+    pub fn data(&self) -> serde_json::Map<String, serde_json::Value> {
+        let mut data = serde_json::Map::new();
+        data.insert("deploy".into(), output::to_value(&self.deploy));
+        if let Some(lineage) = &self.commit_coalesced {
+            data.insert("commit_coalesced".into(), lineage.clone());
+        }
+        data
+    }
+}
+
+/// Follow and report the deploy of `commit`; `plan` joins the JSON document.
+pub fn watch(app: Option<&str>, commit: Option<&str>, plan: Option<serde_json::Value>) {
     super::require_auth();
     let client = super::init_client(None);
-    let (app_id, app_name) = super::resolve_app_from_config(&client, app);
-    follow(&client, &app_id, &app_name, commit);
+    let (app_id, _) = super::resolve_app_from_config(&client, app);
+    let followed = follow(&client, &app_id, commit);
+    let mut data = followed.data();
+    if let Some(plan) = plan {
+        data.insert("plan".into(), plan);
+    }
+    report(&followed.deploy, data);
 }
 
 /// Follow the app's dev deploy of `commit` (the newest dev deploy without one)
-/// until it finishes. Exits 1 after reporting a failed deploy.
-pub fn follow(client: &FlooClient, app_id: &str, app_name: &str, commit: Option<&str>) {
+/// until it finishes. Human mode narrates progress; JSON mode prints nothing,
+/// so the caller's one document carries the result.
+pub fn follow(client: &FlooClient, app_id: &str, commit: Option<&str>) -> Followed {
     let matched = match commit {
         Some(sha) => find_deploy_by_commit(client, app_id, sha),
         None => find_latest_deploy(client, app_id).map(|deploy| (deploy, None)),
@@ -671,22 +666,28 @@ pub fn follow(client: &FlooClient, app_id: &str, app_name: &str, commit: Option<
         }
     };
 
-    if let Some(lineage) = coalesced_commit.as_ref() {
-        emit_commit_coalesced(lineage, &deploy);
+    let commit_coalesced = coalesced_commit
+        .as_ref()
+        .map(|lineage| coalesced_json(lineage, &deploy));
+    if output::is_json_mode() {
+        let deploy = poll_deploy(client, app_id, &deploy);
+        return Followed {
+            deploy,
+            commit_coalesced,
+        };
     }
-    emit_deploy_found(&deploy, app_name);
+
+    if let Some(lineage) = coalesced_commit.as_ref() {
+        announce_coalesced(lineage, &deploy);
+    }
+    announce_deploy_found(&deploy);
 
     let status = deploy.status.as_deref().unwrap_or("");
-    if deploy_status::is_terminal(status) {
+    let deploy = if deploy_status::is_terminal(status) {
         print_completed_deploy(&deploy);
-        print_final_status(&deploy);
-        return;
-    }
-
-    // Stream the active deploy
-    let deploy_id = deploy.id.clone();
-    let final_deploy = if !output::is_json_mode() {
-        match stream_deploy(client, app_id, &deploy_id) {
+        deploy
+    } else {
+        match stream_deploy(client, app_id, &deploy.id) {
             // settle_to_terminal owns the stream-ends-non-terminal race for
             // EVERY stream consumer now — this inline fallback moved there.
             Ok(d) => settle_to_terminal(client, app_id, d),
@@ -698,21 +699,11 @@ pub fn follow(client: &FlooClient, app_id: &str, app_name: &str, commit: Option<
                 poll_deploy(client, app_id, &deploy)
             }
         }
-    } else {
-        match stream_deploy_json(client, app_id, &deploy_id) {
-            Ok(d) => {
-                // stream_deploy_json already emitted the "done" NDJSON event
-                let status = d.status.as_deref().unwrap_or("unknown");
-                if deploy_status::is_failure(status) {
-                    process::exit(1);
-                }
-                return;
-            }
-            Err(_) => poll_deploy(client, app_id, &deploy),
-        }
     };
-
-    print_final_status(&final_deploy);
+    Followed {
+        deploy,
+        commit_coalesced,
+    }
 }
 
 /// The newest dev deploy, paging past prod and preview deploys.
@@ -845,55 +836,46 @@ fn find_deploy_by_commit(
 }
 
 fn announce_held_back(running: &Deploy, sha_prefix: &str) {
+    if output::is_json_mode() {
+        return;
+    }
     let running_commit = running
         .commit_sha
         .as_deref()
         .map(super::short_sha)
         .unwrap_or("\u{2014}");
-    if output::is_json_mode() {
-        output::print_json(&serde_json::json!({
-            "event": "queued_behind_deploy",
-            "deploy_id": running.id,
-            "deploy_commit": running_commit,
-            "requested_commit": sha_prefix,
-        }));
-    } else {
-        output::info(
-            &format!(
-                "Deploy {} ({running_commit}) is still running. Commit {} deploys as soon as it finishes.",
-                running.id,
-                super::short_sha(sha_prefix),
-            ),
-            None,
-        );
-    }
+    output::info(
+        &format!(
+            "Deploy {} ({running_commit}) is still running. Commit {} deploys as soon as it finishes.",
+            running.id,
+            super::short_sha(sha_prefix),
+        ),
+        None,
+    );
 }
 
-fn emit_commit_coalesced(lineage: &CoalescedCommit, deploy: &Deploy) {
-    let effective_commit = deploy.commit_sha.as_deref().unwrap_or("unknown");
-    if output::is_json_mode() {
-        output::print_json(&serde_json::json!({
-            "event": "commit_coalesced",
-            "lineage_status": "superseded",
-            "requested_commit": lineage.requested_commit_sha,
-            "effective_commit": effective_commit,
-            "effective_deploy_id": deploy.id,
-        }));
-    } else {
-        output::info(
-            &format!(
-                "Commit {} was coalesced into descendant {} — following deploy {}.",
-                super::short_sha(&lineage.requested_commit_sha),
-                super::short_sha(effective_commit),
-                deploy.id,
-            ),
-            None,
-        );
-    }
+fn coalesced_json(lineage: &CoalescedCommit, deploy: &Deploy) -> serde_json::Value {
+    serde_json::json!({
+        "lineage_status": "superseded",
+        "requested_commit": lineage.requested_commit_sha,
+        "effective_commit": deploy.commit_sha.as_deref().unwrap_or("unknown"),
+        "effective_deploy_id": deploy.id,
+    })
 }
 
-fn emit_deploy_found(deploy: &Deploy, app_name: &str) {
-    let deploy_id = &deploy.id;
+fn announce_coalesced(lineage: &CoalescedCommit, deploy: &Deploy) {
+    output::info(
+        &format!(
+            "Commit {} was coalesced into descendant {} — following deploy {}.",
+            super::short_sha(&lineage.requested_commit_sha),
+            super::short_sha(deploy.commit_sha.as_deref().unwrap_or("unknown")),
+            deploy.id,
+        ),
+        None,
+    );
+}
+
+fn announce_deploy_found(deploy: &Deploy) {
     let status = deploy.status.as_deref().unwrap_or("unknown");
     let env = deploy.env.as_deref().unwrap_or("unknown");
     let commit = deploy
@@ -901,22 +883,13 @@ fn emit_deploy_found(deploy: &Deploy, app_name: &str) {
         .as_deref()
         .map(super::short_sha)
         .unwrap_or("\u{2014}");
-
-    if output::is_json_mode() {
-        output::print_json(&serde_json::json!({
-            "event": "deploy_found",
-            "deploy_id": deploy_id,
-            "app": app_name,
-            "status": status,
-            "env": env,
-            "commit": commit,
-        }));
-    } else {
-        output::info(
-            &format!("Watching deploy {deploy_id} ({commit}) \u{2014} {status} ({env})"),
-            None,
-        );
-    }
+    output::info(
+        &format!(
+            "Watching deploy {} ({commit}) \u{2014} {status} ({env})",
+            deploy.id
+        ),
+        None,
+    );
 }
 
 fn print_completed_deploy(deploy: &Deploy) {
@@ -932,59 +905,44 @@ fn print_completed_deploy(deploy: &Deploy) {
     }
 }
 
-fn print_final_status(deploy: &Deploy) {
+/// Report a finished deploy: one message, and in JSON mode one document whose
+/// `data` is `data`. Exits 1 when the deploy did not go live.
+pub fn report(deploy: &Deploy, data: serde_json::Map<String, serde_json::Value>) {
     render_diagnostics(&deploy.diagnostics);
     let status = deploy.status.as_deref().unwrap_or("unknown");
     let url = deploy.url.as_deref().unwrap_or("");
+    let data = Some(serde_json::Value::Object(data));
 
-    if output::is_json_mode() {
-        output::print_json(&serde_json::json!({
-            "event": "done",
-            "diagnostics": deploy.diagnostics,
-            "status": status,
-            "url": url,
-        }));
-        if deploy_status::is_failure(status) {
-            process::exit(1);
-        }
-        return;
-    }
-
-    // Human mode: report the terminal disposition. Matching on `classify` makes a
-    // newly-added terminal status a compile error here instead of silently falling
-    // through to the generic-success arm.
+    // Matching on `classify` makes a newly-added terminal status a compile error
+    // here instead of silently falling through to the generic-success arm.
     match deploy_status::classify(status) {
         Some(deploy_status::Terminal::Failed) => {
-            output::error(
+            output::error_with_data(
                 "Deploy failed.",
                 &ErrorCode::DeployFailed,
                 Some("Check build output above, or run `floo logs` for details."),
+                data,
             );
             process::exit(1);
         }
         Some(deploy_status::Terminal::Superseded) => {
-            output::success(
-                "Deploy superseded by a newer deploy.",
-                Some(serde_json::json!({ "deploy": output::to_value(deploy) })),
-            );
+            output::success("Deploy superseded by a newer deploy.", data);
         }
         Some(deploy_status::Terminal::Cancelled) => {
             output::success(
                 "Deploy cancelled: its target environment was removed before it ran.",
-                Some(serde_json::json!({ "deploy": output::to_value(deploy) })),
+                data,
             );
         }
         Some(deploy_status::Terminal::Live) => {
-            output::success(
-                &format!("Deploy {status}: {url}"),
-                Some(serde_json::json!({ "deploy": output::to_value(deploy) })),
-            );
+            output::success(&format!("Deploy {status}: {url}"), data);
         }
         None => {
-            output::error(
+            output::error_with_data(
                 &format!("Deploy ended in unexpected state: {status}"),
                 &ErrorCode::DeployFailed,
                 Some("Check deploy status with `floo deploys --app <name>`."),
+                data,
             );
             process::exit(1);
         }

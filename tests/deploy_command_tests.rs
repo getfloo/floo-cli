@@ -136,12 +136,9 @@ fn error(output: &[u8]) -> Value {
     value["error"].clone()
 }
 
-fn json_lines(output: &[u8]) -> Vec<Value> {
-    String::from_utf8_lossy(output)
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect()
+/// `--json` stdout parsed as exactly one document; a second line fails the parse.
+fn json_document(output: &[u8]) -> Value {
+    serde_json::from_slice(output).unwrap()
 }
 
 fn fails(env: &Env, args: &[&str]) -> Value {
@@ -600,10 +597,9 @@ fn a_github_folder_creates_the_app_on_its_repo_pushes_and_watches() {
         .clone();
     planned.assert();
     created.assert();
-    let events = json_lines(&out);
-    assert_eq!(events[0]["event"], "plan");
-    assert_eq!(events[0]["decision"], "connect_github");
-    assert_eq!(events.last().unwrap()["status"], "live");
+    let doc = json_document(&out);
+    assert_eq!(doc["data"]["plan"]["decision"], "connect_github");
+    assert_eq!(doc["data"]["deploy"]["status"], "live");
     let args = pushed(&env).unwrap();
     assert_eq!(args[2..], ["push", "origin", "HEAD:refs/heads/main"]);
 }
@@ -794,11 +790,8 @@ fn hosted_creates_an_empty_repo_adds_origin_and_pushes_without_force() {
     let _watch = mock_watch(&mut server, "client-portal", &sha);
 
     let out = floo(&env).args(["--hosted", "--json"]).assert().success();
-    let events = json_lines(&out.get_output().stdout);
-    assert_eq!(
-        (&events[0]["event"], &events[0]["access_mode"]),
-        (&json!("plan"), &json!("accounts"))
-    );
+    let doc = json_document(&out.get_output().stdout);
+    assert_eq!(doc["data"]["plan"]["access_mode"], "accounts");
     planned.assert();
     created.assert();
     let clone_url = format!("https://github.com/{REPO}.git");
@@ -882,10 +875,7 @@ fn an_existing_hosted_repo_does_not_retry_a_refused_push() {
         .get_output()
         .stdout
         .clone();
-    assert_eq!(
-        json_lines(&out).last().unwrap()["error"]["code"],
-        "GIT_PUSH_FAILED"
-    );
+    assert_eq!(json_document(&out)["error"]["code"], "GIT_PUSH_FAILED");
 }
 
 #[test]
@@ -952,8 +942,7 @@ fn fails_with_push_error(env: &Env, args: &[&str]) -> Value {
         .get_output()
         .stdout
         .clone();
-    let lines = json_lines(&out);
-    lines.last().unwrap()["error"].clone()
+    json_document(&out)["error"].clone()
 }
 
 #[test]

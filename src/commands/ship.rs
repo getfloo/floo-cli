@@ -480,7 +480,7 @@ pub fn deploy(args: DeployArgs) {
     if app_name != configured {
         folder.head = rename_app(path, &config, &app_name, &quoted);
     }
-    emit_plan(&plan, &config);
+    let plan_json = emit_plan(&plan, &config);
 
     let Some(mut source) = plan.source.clone() else {
         stop_with_plan(&plan, &quoted)
@@ -515,7 +515,9 @@ pub fn deploy(args: DeployArgs) {
         }
         _ => stop_with_plan(&plan, &quoted),
     }
-    ship(path, &folder, &app_name, &source, &quoted, new_repo);
+    ship(
+        path, &folder, &app_name, &source, &quoted, new_repo, plan_json,
+    );
 }
 
 /// The source `--github` or `--hosted` asks for, if either was passed.
@@ -701,20 +703,20 @@ fn stop_with_plan(plan: &DeployPlan, quoted: &str) -> ! {
     process::exit(1);
 }
 
-fn emit_plan(plan: &DeployPlan, config: &AppFileConfig) {
+/// Say the plan (human mode) and return it for the command's one JSON document.
+fn emit_plan(plan: &DeployPlan, config: &AppFileConfig) -> serde_json::Value {
+    let plan_json = json!({
+        "ok": plan.ok,
+        "app": plan.app,
+        "org": plan.org,
+        "decision": plan.decision,
+        "message": plan.message,
+        "source": plan.source,
+        "access_mode": dev_access_mode(config, plan),
+        "warnings": plan.warnings,
+    });
     if output::is_json_mode() {
-        output::print_json(&json!({
-            "event": "plan",
-            "ok": plan.ok,
-            "app": plan.app,
-            "org": plan.org,
-            "decision": plan.decision,
-            "message": plan.message,
-            "source": plan.source,
-            "access_mode": dev_access_mode(config, plan),
-            "warnings": plan.warnings,
-        }));
-        return;
+        return plan_json;
     }
     eprintln!("{}", plan.message);
     for warning in &plan.warnings {
@@ -723,6 +725,7 @@ fn emit_plan(plan: &DeployPlan, config: &AppFileConfig) {
     if let Some(note) = access_note(config, plan) {
         eprintln!("{note}");
     }
+    plan_json
 }
 
 /// Who can open the dev URL once this deploys: floo.app.toml's mode, else the plan's.
@@ -803,7 +806,15 @@ fn create_github_repo(path: &Path, app: &str, quoted: &str) {
 
 /// Push HEAD to the app's source and wait: the default branch deploys dev, any
 /// other branch gets a preview and leaves dev alone.
-fn ship(path: &Path, folder: &Folder, app: &str, source: &AppSource, quoted: &str, new_repo: bool) {
+fn ship(
+    path: &Path,
+    folder: &Folder,
+    app: &str,
+    source: &AppSource,
+    quoted: &str,
+    new_repo: bool,
+    plan: serde_json::Value,
+) {
     let repo = source.repo.clone().unwrap_or_default();
     let default_branch = source.branch.clone().unwrap_or_else(|| "main".to_string());
     let branch = folder
@@ -844,9 +855,16 @@ fn ship(path: &Path, folder: &Folder, app: &str, source: &AppSource, quoted: &st
         push_github(path, &remote.name, &branch, &folder.head, quoted);
     }
     if preview {
-        super::previews::up(Some(app), &branch, true, Some(&folder.head), None);
+        super::previews::up(
+            Some(app),
+            &branch,
+            true,
+            Some(&folder.head),
+            None,
+            Some(plan),
+        );
     } else {
-        super::deploys::watch(Some(app), Some(&folder.head));
+        super::deploys::watch(Some(app), Some(&folder.head), Some(plan));
     }
 }
 

@@ -997,10 +997,7 @@ fn deploy_restart(
                 }
             }
         } else {
-            match stream_deploy_json(client, app_id, &deploy_id) {
-                Ok(d) => d,
-                Err(_) => poll_deploy(client, app_id, &deploy_data),
-            }
+            poll_deploy(client, app_id, &deploy_data)
         };
     }
 
@@ -1104,11 +1101,7 @@ fn deploy_rebuild(
             }
         }
     } else {
-        let deploy_id = deploy_data.id.clone();
-        match stream_deploy_json(client, app_id, &deploy_id) {
-            Ok(final_data) => deploy_data = final_data,
-            Err(_) => deploy_data = poll_deploy(client, app_id, &deploy_data),
-        }
+        deploy_data = poll_deploy(client, app_id, &deploy_data);
     }
 
     render_diagnostics(&deploy_data.diagnostics);
@@ -2379,99 +2372,6 @@ pub(crate) fn stream_deploy(
         deploy: client.get_deploy(app_id, deploy_id)?,
         printed,
     })
-}
-
-/// Stream deploy events via SSE and emit NDJSON to stdout for JSON mode.
-pub(crate) fn stream_deploy_json(
-    client: &FlooClient,
-    app_id: &str,
-    deploy_id: &str,
-) -> Result<Deploy, FlooApiError> {
-    let response = client.stream_deploy_logs(app_id, deploy_id)?;
-    let reader = std::io::BufReader::new(response);
-
-    let mut event_type = String::new();
-    let mut data_buf = String::new();
-
-    for line_result in reader.lines() {
-        let line = match line_result {
-            Ok(l) => l,
-            Err(_) => break,
-        };
-
-        if let Some(suffix) = line.strip_prefix("event: ") {
-            event_type = suffix.to_string();
-        } else if let Some(suffix) = line.strip_prefix("data: ") {
-            data_buf = suffix.to_string();
-        } else if line.starts_with(':') {
-            continue;
-        } else if line.is_empty() && !event_type.is_empty() {
-            match event_type.as_str() {
-                "status" => {
-                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data_buf) {
-                        let status = parsed.get("status").and_then(|v| v.as_str()).unwrap_or("");
-                        output::print_json(
-                            &serde_json::json!({"event": "status", "status": status}),
-                        );
-                    }
-                }
-                "log" => {
-                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data_buf) {
-                        if let Some(text) = parsed.get("text").and_then(|v| v.as_str()) {
-                            output::print_json(&serde_json::json!({"event": "log", "text": text}));
-                        }
-                    }
-                }
-                "done" => {
-                    // The server's done payload can carry the raced non-terminal
-                    // status (#208). Emission moved below the loop: the done
-                    // event is built from the SETTLED deploy, so agents never
-                    // see "done" with status=deploying.
-                    break;
-                }
-                "error" => {
-                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&data_buf) {
-                        let msg = parsed
-                            .get("message")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("Stream error");
-                        return Err(FlooApiError::new(0, "STREAM_ERROR", msg));
-                    }
-                    break;
-                }
-                _ => {}
-            }
-            event_type.clear();
-            data_buf.clear();
-        }
-    }
-
-    // Settle BEFORE the done event exists anywhere: the stream closes when
-    // the executor job exits, racing the worker's LIVE commit (#208). One
-    // emission point, always terminal — also covers streams that EOF without
-    // a server done event (previously: no done event at all).
-    //
-    // Retry the post-stream read once: a transient blip here would otherwise
-    // return Err before the done event is emitted while the caller's poll
-    // fallback still succeeds — an NDJSON stream with no done on a green
-    // deploy (codex #208 round 3). A persistent failure still returns Err,
-    // and the caller's poll exits loudly.
-    let fetched = match client.get_deploy(app_id, deploy_id) {
-        Ok(d) => d,
-        Err(_) => {
-            thread::sleep(POLL_INTERVAL);
-            client.get_deploy(app_id, deploy_id)?
-        }
-    };
-    // JSON mode printed no human log lines, so the settle poll resumes from zero.
-    let final_deploy = settle_to_terminal(client, app_id, fetched.into());
-    output::print_json(&serde_json::json!({
-        "event": "done",
-        "diagnostics": final_deploy.diagnostics,
-        "status": final_deploy.status.as_deref().unwrap_or(""),
-        "url": final_deploy.url.as_deref().unwrap_or(""),
-    }));
-    Ok(final_deploy)
 }
 
 /// Settle a stream-returned deploy to a TERMINAL status before anyone acts
