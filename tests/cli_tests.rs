@@ -1993,14 +1993,23 @@ ingress = "public"
         ));
 }
 
-/// Managed credentials reaching a single public web service is a real exposure —
-/// surfaced as a warning even with only one service.
-#[test]
-fn test_preflight_managed_creds_to_single_web_service() {
+fn preflight_json(manifest: &str) -> String {
     let project = tempfile::TempDir::new().unwrap();
-    std::fs::write(
-        project.path().join("floo.app.toml"),
-        r#"[app]
+    std::fs::write(project.path().join("floo.app.toml"), manifest).unwrap();
+    let output = floo()
+        .args([
+            "--json",
+            "deploy",
+            "--preflight",
+            project.path().to_str().unwrap(),
+        ])
+        .env("HOME", "/tmp/floo-test-nonexistent")
+        .output()
+        .unwrap();
+    String::from_utf8(output.stdout).unwrap()
+}
+
+const POSTGRES_APP: &str = r#"[app]
 name = "myapp"
 
 [postgres]
@@ -2011,21 +2020,31 @@ type = "web"
 path = "."
 port = 3000
 ingress = "public"
-"#,
-    )
-    .unwrap();
+"#;
 
-    floo()
-        .args([
-            "--json",
-            "deploy",
-            "--preflight",
-            project.path().to_str().unwrap(),
-        ])
-        .env("HOME", "/tmp/floo-test-nonexistent")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""code":"MANAGED_CREDS_TO_WEB""#));
+/// One web service with a database is the most common setup: its credentials
+/// stay server-side, so preflight stays quiet whether attachment is implicit
+/// or explicit.
+#[test]
+fn test_preflight_managed_creds_quiet_for_single_web_service() {
+    let explicit = format!("{POSTGRES_APP}\n[services.web.env]\nmanaged = [\"postgres\"]\n");
+    for manifest in [POSTGRES_APP.to_string(), explicit] {
+        let stdout = preflight_json(&manifest);
+        assert!(stdout.contains(r#""success":true"#), "{stdout}");
+        assert!(!stdout.contains("MANAGED_CREDS_TO_WEB"), "{stdout}");
+    }
+}
+
+/// With several services, implicit attachment hands the database to all of
+/// them, so preflight suggests scoping it.
+#[test]
+fn test_preflight_managed_creds_warns_for_implicit_multi_service() {
+    let manifest = format!("{POSTGRES_APP}\n[services.worker]\ntype = \"worker\"\npath = \".\"\ncommand = \"node worker.js\"\n");
+    let stdout = preflight_json(&manifest);
+    assert!(
+        stdout.contains(r#""code":"MANAGED_CREDS_TO_WEB""#),
+        "{stdout}"
+    );
 }
 
 /// A secret-shaped var in a web service's .env stamps the documented top-level
