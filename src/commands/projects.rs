@@ -6,6 +6,7 @@ use crate::api_client::FlooClient;
 use crate::config::load_config;
 use crate::errors::{ErrorCode, FlooApiError};
 use crate::output;
+use crate::resolve::resolve_app;
 
 fn fail(error: FlooApiError) -> ! {
     let next = if error.status_code == 401 || error.code == "NOT_AUTHENTICATED" {
@@ -57,23 +58,46 @@ pub(crate) fn shell_quote(value: &str) -> String {
     }
 }
 
+/// End `floo clone` on an app with no floo-hosted repository, naming what to run instead.
+fn no_hosted_repo(message: &str, code: &str, next: &str) -> ! {
+    output::error(message, &ErrorCode::from_api(code), Some(next));
+    process::exit(1);
+}
+
 pub fn clone(name_or_id: &str, dir: Option<&Path>) {
-    let project = client()
-        .get_project(name_or_id)
-        .unwrap_or_else(|error| fail(error));
+    let app = resolve_app(&client(), name_or_id).unwrap_or_else(|error| fail(error));
+    let repo = match app.source.as_ref() {
+        Some(source) if source.kind == "floo" => source.repo.as_deref().unwrap_or_default(),
+        Some(source) => {
+            let repo = source.repo.as_deref().unwrap_or_default();
+            no_hosted_repo(
+                &format!(
+                    "{} deploys from {repo} on GitHub. Clone it from there.",
+                    app.name
+                ),
+                "SOURCE_IS_GITHUB",
+                &format!("next: git clone https://github.com/{repo}.git"),
+            )
+        }
+        None => no_hosted_repo(
+            &format!(
+                "{} has no code yet, so there is nothing to clone.",
+                app.name
+            ),
+            "APP_HAS_NO_SOURCE",
+            "next: floo deploy (in the app's folder)",
+        ),
+    };
     // Only pass credential-free managed HTTPS URLs to git. This also prevents
     // clone URLs from invoking an arbitrary git transport or storing userinfo.
-    let app_id = project
-        .clone_url
-        .strip_prefix("https://github.com/")
-        .and_then(managed_app_id);
-    if !app_id.is_some_and(|id| id.eq_ignore_ascii_case(&project.app_id)) {
+    if !managed_app_id(repo).is_some_and(|id| id.eq_ignore_ascii_case(&app.id)) {
         fail(FlooApiError::new(
             0,
             "INVALID_RESPONSE",
-            "Project clone URL must be a managed GitHub HTTPS repository matching the app ID.",
+            "The app's repository must be a floo-hosted GitHub repository matching the app ID.",
         ));
     }
+    let clone_url = format!("https://github.com/{repo}.git");
     let executable = std::env::current_exe()
         .unwrap_or_else(|error| fail(FlooApiError::new(0, "FILE_ERROR", error.to_string())));
     let executable = executable
@@ -92,7 +116,7 @@ pub fn clone(name_or_id: &str, dir: Option<&Path>) {
         "credential.helper=!{} git-credential",
         shell_quote(&executable)
     );
-    let dir = dir.unwrap_or_else(|| Path::new(&project.name));
+    let dir = dir.unwrap_or_else(|| Path::new(&app.name));
     let result = Command::new("git")
         .arg("clone")
         // Reset inherited helper lists so credential-store/keychains never see
@@ -100,7 +124,7 @@ pub fn clone(name_or_id: &str, dir: Option<&Path>) {
         .args(["-c", "credential.helper=", "-c", &helper])
         .args(["-c", "credential.useHttpPath=true"])
         .arg("--")
-        .arg(&project.clone_url)
+        .arg(&clone_url)
         .arg(dir)
         // Preserve floo's single-JSON-object stdout contract.
         .stdout(Stdio::from(io::stderr()))
@@ -130,7 +154,11 @@ pub fn clone(name_or_id: &str, dir: Option<&Path>) {
     }
     output::success(
         &format!("directory: {}\nnext: read AGENTS.md", dir.display()),
-        Some(serde_json::json!({ "directory": dir, "project": project, "next": "read AGENTS.md" })),
+        Some(serde_json::json!({
+            "directory": dir,
+            "app": { "id": app.id, "name": app.name, "source": app.source },
+            "next": "read AGENTS.md",
+        })),
     );
 }
 

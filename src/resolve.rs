@@ -40,18 +40,8 @@ pub(crate) fn is_uuid_identifier(identifier: &str) -> bool {
     true
 }
 
-fn match_app_from_list_response(
-    list_response: &ListAppsResponse,
-    identifier: &str,
-) -> Result<App, FlooApiError> {
-    for app in &list_response.apps {
-        if app.name == identifier {
-            return Ok(app.clone());
-        }
-    }
-
-    Err(FlooApiError::new(404, "APP_NOT_FOUND", "App not found."))
-}
+/// The API's largest app page.
+const APP_PAGE_SIZE: u32 = 100;
 
 fn resolve_app_with_client<C: AppResolverClient>(
     client: &C,
@@ -62,9 +52,18 @@ fn resolve_app_with_client<C: AppResolverClient>(
         return client.get_app(identifier);
     }
 
-    // Name lookup via list for non-UUID identifiers.
-    let response = client.list_apps(1, 100)?;
-    match_app_from_list_response(&response, identifier)
+    // A name is looked up in the org's app list, page by page until the list ends.
+    for page in 1.. {
+        let apps = client.list_apps(page, APP_PAGE_SIZE)?.apps;
+        let last_page = apps.len() < APP_PAGE_SIZE as usize;
+        if let Some(app) = apps.into_iter().find(|app| app.name == identifier) {
+            return Ok(app);
+        }
+        if last_page {
+            break;
+        }
+    }
+    Err(FlooApiError::new(404, "APP_NOT_FOUND", "App not found."))
 }
 
 pub fn resolve_app(client: &FlooClient, identifier: &str) -> Result<App, FlooApiError> {
@@ -282,5 +281,42 @@ mod tests {
         assert_eq!(error.code, "APP_NOT_FOUND");
         assert_eq!(error.message, "App not found.");
         assert!(error.extra.is_none());
+    }
+    /// Serves its apps in pages, like the API.
+    struct PagedClient(Vec<App>);
+
+    impl AppResolverClient for PagedClient {
+        fn get_app(&self, _app_id: &str) -> Result<App, FlooApiError> {
+            Err(FlooApiError::new(404, "APP_NOT_FOUND", "App not found."))
+        }
+
+        fn list_apps(&self, page: u32, per_page: u32) -> Result<ListAppsResponse, FlooApiError> {
+            let apps = self
+                .0
+                .chunks(per_page as usize)
+                .nth(page as usize - 1)
+                .map(<[App]>::to_vec)
+                .unwrap_or_default();
+            Ok(make_list(apps))
+        }
+    }
+
+    #[test]
+    fn name_lookup_reads_past_the_first_page_and_stops_at_the_end() {
+        let apps: Vec<App> = (0..APP_PAGE_SIZE + 1)
+            .map(|n| make_app(&format!("id-{n}"), &format!("app-{n}")))
+            .collect();
+        let client = PagedClient(apps);
+
+        let found = resolve_app_with_client(&client, "app-100").unwrap();
+        assert_eq!(found.id, "id-100");
+
+        let error = resolve_app_with_client(&client, "missing").unwrap_err();
+        assert_eq!(error.code, "APP_NOT_FOUND");
+
+        // A list that ends exactly on a full page still ends.
+        let full_page = PagedClient(client.0[..APP_PAGE_SIZE as usize].to_vec());
+        let error = resolve_app_with_client(&full_page, "missing").unwrap_err();
+        assert_eq!(error.code, "APP_NOT_FOUND");
     }
 }

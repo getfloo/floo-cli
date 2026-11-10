@@ -9,15 +9,15 @@ const REPO: &str =
     "floo-managed/floo-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-0123456789abcdef0123456789abcdef";
 const TOKEN: &str = "ghs_mock_ephemeral_project_token";
 
-fn project() -> Value {
+fn app() -> Value {
     json!({
-        "app_id": APP_ID,
+        "id": APP_ID,
         "name": "client-portal",
-        "app_url": "https://client-portal.example.test",
-        "repo_full_name": REPO,
-        "clone_url": format!("https://github.com/{REPO}.git"),
-        "default_branch": "main",
-        "first_deploy_id": null,
+        "org_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "status": "live",
+        "url": "https://client-portal.example.test",
+        "created_at": "2026-09-09T12:00:00Z",
+        "source": {"kind": "floo", "repo": REPO, "branch": "main"},
     })
 }
 
@@ -53,13 +53,23 @@ fn floo(home: &TempDir) -> Command {
     command
 }
 
-fn list_mock(server: &mut Server, projects: Vec<Value>) -> mockito::Mock {
+/// `floo clone <name>` finds the app in the org's app list.
+fn list_mock(server: &mut Server, apps: Vec<Value>) -> mockito::Mock {
     server
-        .mock("GET", "/v1/projects")
+        .mock("GET", "/v1/apps?page=1&per_page=100")
         .match_header("authorization", "Bearer floo_test123")
         .match_header("x-floo-org-id", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
         .with_status(200)
-        .with_body(json!({"projects": projects}).to_string())
+        .with_body(json!({"apps": apps, "total": apps.len()}).to_string())
+        .create()
+}
+
+/// `floo clone <app id>` reads the app directly.
+fn app_mock(server: &mut Server, app: &Value) -> mockito::Mock {
+    server
+        .mock("GET", format!("/v1/apps/{APP_ID}").as_str())
+        .with_status(200)
+        .with_body(app.to_string())
         .create()
 }
 
@@ -73,7 +83,7 @@ fn token_mock(server: &mut Server, token: &str) -> mockito::Mock {
             json!({
                 "token": token,
                 "expires_at": "2026-09-09T13:00:00Z",
-                "clone_url": project()["clone_url"],
+                "clone_url": format!("https://github.com/{REPO}.git"),
             })
             .to_string(),
         )
@@ -227,11 +237,11 @@ fn clone_missing_project_and_missing_git_have_next_commands() {
         .args(["clone", "missing", "--json"])
         .assert()
         .failure()
-        .stdout(predicate::str::contains("PROJECT_NOT_FOUND"))
+        .stdout(predicate::str::contains("APP_NOT_FOUND"))
         .stdout(predicate::str::contains("next: floo apps list"));
     mock.assert();
     mock.remove();
-    let mock = list_mock(&mut server, vec![project()]);
+    let mock = app_mock(&mut server, &app());
     floo(&home)
         .env("PATH", home.path())
         .args(["clone", APP_ID])
@@ -244,6 +254,35 @@ fn clone_missing_project_and_missing_git_have_next_commands() {
         .stderr(predicate::str::contains(format!(
             "next: floo clone {APP_ID}"
         )));
+    mock.assert();
+}
+
+#[test]
+fn clone_of_an_app_floo_does_not_host_names_what_to_run_instead() {
+    let mut server = Server::new();
+    let home = setup(&server);
+    let mut on_github = app();
+    on_github["source"] = json!({"kind": "github", "repo": "acme/client-portal", "branch": "main"});
+    let mock = app_mock(&mut server, &on_github);
+    floo(&home)
+        .args(["clone", APP_ID, "--json"])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("SOURCE_IS_GITHUB"))
+        .stdout(predicate::str::contains(
+            "next: git clone https://github.com/acme/client-portal.git",
+        ));
+    mock.assert();
+    mock.remove();
+    let mut no_code = app();
+    no_code.as_object_mut().unwrap().remove("source");
+    let mock = app_mock(&mut server, &no_code);
+    floo(&home)
+        .args(["clone", APP_ID, "--json"])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("APP_HAS_NO_SOURCE"))
+        .stdout(predicate::str::contains("next: floo deploy"));
     mock.assert();
 }
 
@@ -278,7 +317,11 @@ mod git_tests {
             ("client-portal", None),
             (APP_ID, Some("destination with spaces")),
         ] {
-            let mock = list_mock(&mut server, vec![project()]);
+            let mock = if dir.is_some() {
+                app_mock(&mut server, &app())
+            } else {
+                list_mock(&mut server, vec![app()])
+            };
             let mut command = floo(&home);
             let executable = command.get_program().to_string_lossy().to_string();
             command
@@ -306,7 +349,7 @@ mod git_tests {
                 [executable, "git-credential".into()]
             );
             assert_eq!(args[5..8], ["-c", "credential.useHttpPath=true", "--"]);
-            assert_eq!(args[8], project()["clone_url"]);
+            assert_eq!(args[8], format!("https://github.com/{REPO}.git"));
             assert_eq!(args[9], expected_dir);
             mock.assert();
             mock.remove();
@@ -318,7 +361,7 @@ mod git_tests {
         let mut server = Server::new();
         let home = setup(&server);
         let bin = git_shim(&home);
-        let mock = list_mock(&mut server, vec![project()]);
+        let mock = list_mock(&mut server, vec![app()]);
         floo(&home)
             .env("PATH", bin)
             .env("GIT_ARGS", home.path().join("git-args"))
@@ -335,19 +378,20 @@ mod git_tests {
     }
 
     #[test]
-    fn clone_rejects_credential_urls_and_non_managed_transports_before_git() {
-        for url in [
-            "https://token@github.com/owner/repo",
+    fn clone_rejects_repositories_floo_does_not_host_for_the_app_before_git() {
+        for repo in [
+            "token@github.com/owner/repo",
             "ext::arbitrary-command",
-            "ssh://github.com/owner/repo",
-            "https://github.com/owner/ordinary-repo",
+            "owner/ordinary-repo",
+            // Another app's hosted repository.
+            "floo-managed/floo-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-ffffffffffffffffffffffffffffffff",
         ] {
             let mut server = Server::new();
             let home = setup(&server);
             let bin = git_shim(&home);
-            let mut project = project();
-            project["clone_url"] = json!(url);
-            let mock = list_mock(&mut server, vec![project]);
+            let mut app = app();
+            app["source"]["repo"] = json!(repo);
+            let mock = list_mock(&mut server, vec![app]);
             floo(&home)
                 .env("PATH", bin)
                 .env("GIT_ARGS", home.path().join("git-args"))
@@ -355,8 +399,10 @@ mod git_tests {
                 .assert()
                 .failure()
                 .stdout("")
-                .stderr(predicate::str::contains("Project clone URL must be"))
-                .stderr(predicate::str::contains(url).not());
+                .stderr(predicate::str::contains(
+                    "must be a floo-hosted GitHub repository",
+                ))
+                .stderr(predicate::str::contains(repo).not());
             assert!(!home.path().join("git-args").exists());
             mock.assert();
         }
@@ -374,7 +420,7 @@ mod git_tests {
         std::fs::create_dir(&workspace).unwrap();
         let executable = workspace.join("floo-local");
         std::fs::copy(assert_cmd::cargo::cargo_bin("floo-local"), &executable).unwrap();
-        let mock = list_mock(&mut server, vec![project()]);
+        let mock = list_mock(&mut server, vec![app()]);
         let mut command = Command::new(&executable);
         isolated(&mut command, &home);
         command
