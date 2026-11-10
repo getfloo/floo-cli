@@ -21,5 +21,7 @@
   ],
   "skills": "./skills/",
   "homepage": "https://getfloo.com",
-  "privacyPolicyUrl": "https://getfloo.com/legal/privacy"
+  "privacyPolicyUrl": "https://getfloo.com/legal/privacy",
+  "supportUrl": "https://getfloo.com/docs/guides/troubleshooting",
+  "termsOfServiceUrl": "https://getfloo.com/legal/terms"
 }
