@@ -1376,6 +1376,12 @@ impl FlooClient {
         self.handle_response_value(resp)
     }
 
+    pub fn start_repair(&self, app_id: &str, event_id: &str) -> Result<Value, FlooApiError> {
+        let path = format!("/v1/apps/{app_id}/reparo/events/{event_id}/repair");
+        let resp = self.post_json(&path, &serde_json::json!({}))?;
+        self.handle_response_value(resp)
+    }
+
     // --- Feedback ---
 
     pub fn submit_feedback(

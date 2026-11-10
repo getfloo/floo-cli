@@ -1785,6 +1785,20 @@ pub enum EventsCommands {
         #[arg(long)]
         status: Option<String>,
     },
+    /// Start a repair run for one event: a coding agent works on the failing
+    /// deploy's code and floo opens a draft pull request with its fix.
+    #[command(after_help = "\
+Needs repair mode on for the app, which is set in the dashboard's Alerts tab.
+An event gets at most one run, and an app at most three in progress.
+Nothing is merged or deployed: you review the pull request.")]
+    Repair {
+        /// The event's ID, from `floo events list`.
+        event_id: String,
+
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2634,6 +2648,9 @@ pub fn run() {
         Commands::Events(sub) => match sub {
             EventsCommands::List { app, status } => {
                 commands::events::list(app.as_deref(), status.as_deref())
+            }
+            EventsCommands::Repair { event_id, app } => {
+                commands::events::start_repair(app.as_deref(), &event_id)
             }
         },
 

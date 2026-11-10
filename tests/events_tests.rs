@@ -1,0 +1,124 @@
+//! `floo events`: each event's repair run in the list, and starting one by hand.
+
+use assert_cmd::Command;
+use mockito::{Matcher, Mock, Server};
+use predicates::prelude::*;
+use tempfile::TempDir;
+
+const APP_ID: &str = "app-uuid-1234";
+const EVENT_ID: &str = "evt-uuid-1";
+
+#[allow(deprecated)]
+fn floo() -> Command {
+    Command::cargo_bin("floo-local").unwrap()
+}
+
+fn setup_config(server: &Server) -> TempDir {
+    let home = TempDir::new().unwrap();
+    let config_dir = home.path().join(".floo-local");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("config.json"),
+        format!(
+            r#"{{"api_key":"floo_test123","api_url":"{}"}}"#,
+            server.url()
+        ),
+    )
+    .unwrap();
+    home
+}
+
+fn mock_resolve_app(server: &mut Server) -> Mock {
+    server
+        .mock("GET", "/v1/apps")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"apps":[{{"id":"{APP_ID}","name":"my-app","org_id":"org-1","status":"live","url":"https://my-app.getfloo.app","runtime":"nodejs","created_at":"2026-11-01T00:00:00Z"}}]}}"#
+        ))
+        .create()
+}
+
+#[test]
+fn list_shows_each_repair_run_and_its_pull_request() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _apps = mock_resolve_app(&mut server);
+    let _events = server
+        .mock("GET", format!("/v1/apps/{APP_ID}/reparo/events").as_str())
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"events":[
+              {"id":"e1","status":"triggered","repair_phase":"verifying","repair_failure_reason":null,
+               "repair_pr_url":"https://github.com/floo-managed/my-app/pull/7","created_at":"2026-11-09T00:00:00Z"},
+              {"id":"e2","status":"triggered","repair_phase":"failed","repair_failure_reason":"no_fix",
+               "repair_pr_url":null,"created_at":"2026-11-09T00:00:00Z"},
+              {"id":"e3","status":"succeeded","repair_phase":null,"repair_failure_reason":null,
+               "repair_pr_url":null,"created_at":"2026-11-09T00:00:00Z"}
+            ],"total":3,"page":1,"per_page":20}"#,
+        )
+        .create();
+
+    floo()
+        .args(["events", "list", "--app", "my-app"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Repair"))
+        .stderr(predicate::str::contains("verifying"))
+        .stderr(predicate::str::contains(
+            "https://github.com/floo-managed/my-app/pull/7",
+        ))
+        .stderr(predicate::str::contains("failed: no_fix"));
+}
+
+#[test]
+fn repair_starts_a_run_for_the_event() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _apps = mock_resolve_app(&mut server);
+    let start = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{APP_ID}/reparo/events/{EVENT_ID}/repair").as_str(),
+        )
+        .with_status(202)
+        .with_header("content-type", "application/json")
+        .with_body(format!(r#"{{"id":"{EVENT_ID}","repair_phase":"pending"}}"#))
+        .create();
+
+    floo()
+        .args(["--json", "events", "repair", EVENT_ID, "--app", "my-app"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""repair_phase":"pending""#));
+    start.assert();
+}
+
+#[test]
+fn repair_reports_the_api_refusal() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _apps = mock_resolve_app(&mut server);
+    let _refused = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{APP_ID}/reparo/events/{EVENT_ID}/repair").as_str(),
+        )
+        .with_status(409)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"detail":{"code":"REPAIR_MODE_OFF","message":"Turn on repair mode for this app first."}}"#,
+        )
+        .create();
+
+    floo()
+        .args(["events", "repair", EVENT_ID, "--app", "my-app"])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Turn on repair mode"));
+}
