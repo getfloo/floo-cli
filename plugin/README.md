@@ -26,6 +26,11 @@ Try:
 
 Every change is a normal commit that deploys to your app's dev URL. Production changes only when you say "promote it", and Claude asks you first. Billing changes stay in the floo dashboard.
 
+## Where your data goes
+
+- **floo** (`api.getfloo.com` and `getfloo.com`). The connector and the skill both talk to floo. Your account details, your app's code, settings, logs and database stay on floo until you delete them.
+- **GitHub, only when you choose it.** In Claude Code, `floo deploy --github` and `floo connect owner/repo` keep the app's code in a repo in your own GitHub account.
+
 ## Links
 
 - Guide: https://getfloo.com/docs/guides/build-in-chat
