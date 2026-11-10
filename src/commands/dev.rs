@@ -231,6 +231,27 @@ pub fn dev(args: DevArgs) {
         }
     }
 
+    // --- Refuse ports another process already serves ---
+    //
+    // A leftover dev server would answer the printed URL with old code, and
+    // Vite would silently move to the next port, leaving that URL dead.
+    for svc in &services {
+        if dev_proxy::connect_local(svc.port).is_ok() {
+            output::error(
+                &format!(
+                    "Port {} for service '{}' is already in use by another process.",
+                    svc.port, svc.name
+                ),
+                &ErrorCode::PortInUse,
+                Some(&format!(
+                    "Stop that process (find it with `lsof -i :{}`) or change port for [services.{}] in floo.app.toml.",
+                    svc.port, svc.name
+                )),
+            );
+            process::exit(1);
+        }
+    }
+
     // --- Dry run short-circuit ---
     //
     // Dry-run must NOT call create_dev_session. That endpoint has two real
