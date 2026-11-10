@@ -122,3 +122,89 @@ fn repair_reports_the_api_refusal() {
         .failure()
         .stderr(predicate::str::contains("Turn on repair mode"));
 }
+
+#[test]
+fn diff_prints_the_commit_to_approve_and_each_patch() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _apps = mock_resolve_app(&mut server);
+    let head = "c".repeat(40);
+    let _diff = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{APP_ID}/reparo/events/{EVENT_ID}/diff").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"pr_url":"https://github.com/floo-managed/my-app/pull/7","head_sha":"{head}",
+               "files":[{{"filename":"app.py","status":"modified","additions":1,"deletions":1,"patch":"-a\n+b"}},
+                        {{"filename":"logo.png","status":"added","additions":0,"deletions":0,"patch":null}}]}}"#
+        ))
+        .create();
+
+    floo()
+        .args(["events", "diff", EVENT_ID, "--app", "my-app"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(format!(
+            "floo events approve {EVENT_ID} --commit {head}"
+        )))
+        .stderr(predicate::str::contains("+b"))
+        .stderr(predicate::str::contains("No line-by-line view"));
+}
+
+#[test]
+fn approve_sends_the_reviewed_commit() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _apps = mock_resolve_app(&mut server);
+    let head = "c".repeat(40);
+    let approve = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{APP_ID}/reparo/events/{EVENT_ID}/approve").as_str(),
+        )
+        .match_body(Matcher::Json(serde_json::json!({ "commit_sha": head })))
+        .with_status(202)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"id":"{EVENT_ID}","repair_phase":"verifying"}}"#
+        ))
+        .create();
+
+    floo()
+        .args([
+            "events", "approve", EVENT_ID, "--commit", &head, "--app", "my-app",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success();
+    approve.assert();
+}
+
+#[test]
+fn merge_reports_a_head_moved_since_verification() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _apps = mock_resolve_app(&mut server);
+    let _merge = server
+        .mock(
+            "POST",
+            format!("/v1/apps/{APP_ID}/reparo/events/{EVENT_ID}/merge").as_str(),
+        )
+        .with_status(409)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"detail":{"code":"REPAIR_HEAD_MOVED","message":"The pull request changed after floo verified it; it needs a new approval first."}}"#,
+        )
+        .create();
+
+    floo()
+        .args(["events", "merge", EVENT_ID, "--app", "my-app"])
+        .env("HOME", home.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("changed after floo verified it"));
+}

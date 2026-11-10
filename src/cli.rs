@@ -1799,6 +1799,41 @@ Nothing is merged or deployed: you review the pull request.")]
         #[arg(short, long)]
         app: Option<String>,
     },
+    /// Show the changes a repair's pull request proposes, and the commit they are at.
+    Diff {
+        /// The event's ID, from `floo events list`.
+        event_id: String,
+
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+    /// Approve a repair's preview at the commit you reviewed with `floo events diff`.
+    #[command(after_help = "\
+floo deploys that commit to a preview, replays the error's requests against it,
+and marks the fix verified if the error is gone. A commit pushed after your
+review is refused: review it again first.")]
+    Approve {
+        /// The event's ID, from `floo events list`.
+        event_id: String,
+
+        /// The commit you reviewed, as printed by `floo events diff`.
+        #[arg(long)]
+        commit: String,
+
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+    /// Merge a verified fix. Merging deploys it like any push to the default branch.
+    Merge {
+        /// The event's ID, from `floo events list`.
+        event_id: String,
+
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2651,6 +2686,17 @@ pub fn run() {
             }
             EventsCommands::Repair { event_id, app } => {
                 commands::events::start_repair(app.as_deref(), &event_id)
+            }
+            EventsCommands::Diff { event_id, app } => {
+                commands::events::diff(app.as_deref(), &event_id)
+            }
+            EventsCommands::Approve {
+                event_id,
+                commit,
+                app,
+            } => commands::events::approve(app.as_deref(), &event_id, &commit),
+            EventsCommands::Merge { event_id, app } => {
+                commands::events::merge(app.as_deref(), &event_id)
             }
         },
 

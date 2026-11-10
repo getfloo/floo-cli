@@ -2,21 +2,14 @@ use std::process;
 
 use serde_json::Value;
 
-use crate::errors::ErrorCode;
+use crate::api_client::FlooClient;
+use crate::errors::{ErrorCode, FlooApiError};
 use crate::output;
 
 pub fn list(app_flag: Option<&str>, status_filter: Option<&str>) {
-    super::require_auth();
-    let client = super::init_client(None);
-    let (app_id, _app_name) = super::resolve_app_from_config(&client, app_flag);
-
-    let result = match client.agent_events(&app_id, status_filter) {
-        Ok(r) => r,
-        Err(e) => {
-            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
-            process::exit(1);
-        }
-    };
+    let result = call(app_flag, |client, app_id| {
+        client.agent_events(app_id, status_filter)
+    });
 
     if output::is_json_mode() {
         output::success("Agent events.", Some(result));
@@ -57,15 +50,81 @@ pub fn list(app_flag: Option<&str>, status_filter: Option<&str>) {
 /// Start a repair run for one event. The run starts within a minute; its
 /// progress shows in `floo events list`.
 pub fn start_repair(app_flag: Option<&str>, event_id: &str) {
+    let event = call(app_flag, |client, app_id| {
+        client.start_repair(app_id, event_id)
+    });
+    output::success(
+        "Repair queued. floo opens a draft pull request if it finds a fix; follow it with `floo events list`.",
+        Some(event),
+    );
+}
+
+/// Print a repair PR's changed files and patches, and the commit to approve.
+pub fn diff(app_flag: Option<&str>, event_id: &str) {
+    let diff = call(app_flag, |client, app_id| {
+        client.repair_diff(app_id, event_id)
+    });
+    if output::is_json_mode() {
+        output::success("Repair changes.", Some(diff));
+        return;
+    }
+    output::info(
+        &format!(
+            "Commit {}. Approve it with: floo events approve {event_id} --commit {}",
+            field(&diff, "head_sha"),
+            field(&diff, "head_sha"),
+        ),
+        None,
+    );
+    for file in diff
+        .get("files")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        output::info(
+            &format!("\n{} ({})", field(file, "filename"), field(file, "status")),
+            None,
+        );
+        match file.get("patch").and_then(Value::as_str) {
+            Some(patch) => output::info(patch, None),
+            None => output::info("No line-by-line view of this file.", None),
+        }
+    }
+}
+
+/// Approve a repair's preview at the reviewed commit.
+pub fn approve(app_flag: Option<&str>, event_id: &str, commit: &str) {
+    let event = call(app_flag, |client, app_id| {
+        client.approve_repair(app_id, event_id, commit)
+    });
+    output::success(
+        "Preview approved. floo deploys it, checks that the error is gone, and marks the fix verified.",
+        Some(event),
+    );
+}
+
+/// Merge a verified repair's fix.
+pub fn merge(app_flag: Option<&str>, event_id: &str) {
+    let event = call(app_flag, |client, app_id| {
+        client.merge_repair(app_id, event_id)
+    });
+    output::success(
+        "Fix merged. It deploys like any push to your default branch.",
+        Some(event),
+    );
+}
+
+/// Run one call for the resolved app, exiting with the API's error on failure.
+fn call(
+    app_flag: Option<&str>,
+    request: impl FnOnce(&FlooClient, &str) -> Result<Value, FlooApiError>,
+) -> Value {
     super::require_auth();
     let client = super::init_client(None);
     let (app_id, _app_name) = super::resolve_app_from_config(&client, app_flag);
-
-    match client.start_repair(&app_id, event_id) {
-        Ok(event) => output::success(
-            "Repair queued. floo opens a draft pull request if it finds a fix; follow it with `floo events list`.",
-            Some(event),
-        ),
+    match request(&client, &app_id) {
+        Ok(value) => value,
         Err(e) => {
             output::error(&e.message, &ErrorCode::from_api(&e.code), None);
             process::exit(1);
