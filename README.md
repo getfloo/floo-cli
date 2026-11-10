@@ -168,6 +168,26 @@ The pre-push hook blocks a push whose Rust changes fail `./scripts/test`; bypass
 - [CLI Reference](https://getfloo.com/docs/cli/overview)
 - [Configuration Reference](https://getfloo.com/docs/reference/config-spec)
 
+### Guides
+
+- [Host an internal tool or admin dashboard built with AI](https://getfloo.com/docs/deploy/internal-tool)
+- [Deploy a customer-facing app built with AI](https://getfloo.com/docs/deploy/customer-app)
+- [Deploy an app without a GitHub repository](https://getfloo.com/docs/deploy/without-github)
+- [Build an app from Claude or ChatGPT](https://getfloo.com/docs/guides/build-in-chat)
+- [A safe backend for an app built with AI](https://getfloo.com/docs/guides/backend)
+- [App sign-in](https://getfloo.com/docs/guides/app-auth)
+- [Move from Vercel to floo](https://getfloo.com/docs/migrate/from-vercel)
+- [Move from Heroku to floo](https://getfloo.com/docs/migrate/from-heroku)
+- [Leave floo anytime](https://getfloo.com/docs/migrate/leave-floo)
+
+### From the blog
+
+- [The best platforms to host an internal tool built with Claude Code](https://getfloo.com/blog/best-platform-to-host-internal-tools-built-with-ai)
+- [How to build and deploy an internal tool with AI, step by step](https://getfloo.com/blog/how-to-build-and-deploy-an-internal-tool-with-ai)
+- [Where should I host an app I built with Claude Code?](https://getfloo.com/blog/where-to-host-an-app-built-with-claude-code)
+- [How to add a backend to an app your agent built](https://getfloo.com/blog/how-to-add-a-backend-to-an-app-your-agent-built)
+- [Your app is a container: take it anywhere](https://getfloo.com/blog/your-app-is-a-container-take-it-anywhere)
+
 ## License
 
 MIT. See [LICENSE](LICENSE) for details.
