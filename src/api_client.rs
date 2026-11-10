@@ -267,7 +267,7 @@ impl FlooClient {
 
     pub fn project_git_token(&self, app_id: &str) -> Result<ProjectGitTokenResponse, FlooApiError> {
         let response = self.post_json(
-            &format!("/v1/projects/{app_id}/git-token"),
+            &format!("/v1/apps/{app_id}/git-token"),
             &serde_json::json!({}),
         )?;
         self.handle_response(response)
