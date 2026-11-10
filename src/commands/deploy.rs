@@ -1268,6 +1268,22 @@ fn is_cloudsql_socket_database_url(value: &str) -> bool {
 /// invocation directory, so for `floo deploy ./sub` the service `path`s are
 /// relative to the config dir, which may be an ancestor. Using the invocation
 /// path would false-error `SERVICE_PATH_NOT_FOUND` on a valid monorepo service.
+/// True for an exec-form `CMD [...]` that passes `$PORT` straight to a program.
+/// Exec form skips the shell, so `$PORT` stays literal, unless the program is
+/// itself a shell run with `-c` (`CMD ["sh", "-c", "serve --port $PORT"]`).
+fn cmd_exec_form_leaves_port_unexpanded(line: &str) -> bool {
+    let Some(array) = line.strip_prefix("CMD ").map(str::trim_start) else {
+        return false;
+    };
+    if !array.starts_with('[') || !(array.contains("$PORT") || array.contains("${PORT}")) {
+        return false;
+    }
+    match serde_json::from_str::<Vec<String>>(array).as_deref() {
+        Ok([program, flag, ..]) => !(program.ends_with("sh") && flag == "-c"),
+        _ => true,
+    }
+}
+
 fn validate_preflight(
     services: &[ServiceConfig],
     all_service_names: &[String],
@@ -1504,12 +1520,9 @@ fn validate_preflight(
                             }
                         }
 
-                        // CMD exec form with $PORT or ${PORT} — variables don't expand in exec form.
                         // Emitted as a warning (not error) because heredoc content could produce
                         // false positives; the runtime failure makes it obvious quickly.
-                        if trimmed.starts_with("CMD [")
-                            && (trimmed.contains("$PORT") || trimmed.contains("${PORT}"))
-                        {
+                        if cmd_exec_form_leaves_port_unexpanded(trimmed) {
                             findings.push(
                                 PreflightFinding::warning(
                                     "CMD_EXEC_FORM_PORT",
@@ -2846,6 +2859,24 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    #[test]
+    fn cmd_exec_form_port_check_skips_shell_wrapped_commands() {
+        for line in [
+            r#"CMD ["node", "server.js", "--port", "$PORT"]"#,
+            r#"CMD ["uvicorn", "app:app", "--port", "${PORT}"]"#,
+        ] {
+            assert!(cmd_exec_form_leaves_port_unexpanded(line), "{line}");
+        }
+        for line in [
+            r#"CMD ["sh", "-c", "node server.js --port $PORT"]"#,
+            r#"CMD ["/bin/bash", "-c", "exec serve -l ${PORT}"]"#,
+            "CMD node server.js --port $PORT",
+            r#"CMD ["node", "server.js"]"#,
+        ] {
+            assert!(!cmd_exec_form_leaves_port_unexpanded(line), "{line}");
+        }
+    }
 
     fn mock_client(url: &str) -> FlooClient {
         FlooClient::new(Some(crate::config::FlooConfig {
