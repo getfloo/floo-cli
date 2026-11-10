@@ -5344,7 +5344,7 @@ fn test_status_wait_follows_coalesced_descendant_and_emits_structured_lineage() 
         .env("HOME", home.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains(r#""event":"commit_coalesced""#))
+        .stdout(predicate::str::contains(r#""commit_coalesced":{"#))
         .stdout(predicate::str::contains(r#""lineage_status":"superseded""#))
         .stdout(predicate::str::contains(format!(
             r#""requested_commit":"{requested}""#
@@ -5355,7 +5355,6 @@ fn test_status_wait_follows_coalesced_descendant_and_emits_structured_lineage() 
         .stdout(predicate::str::contains(
             r#""effective_deploy_id":"deploy-effective""#,
         ))
-        .stdout(predicate::str::contains(r#""event":"done""#))
         .stdout(predicate::str::contains(r#""status":"live""#));
 }
 
@@ -5507,7 +5506,7 @@ fn test_status_wait_prefers_exact_commit_on_later_page_over_coalesced_match() {
         .env("HOME", home.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains(r#""deploy_id":"deploy-exact""#))
+        .stdout(predicate::str::contains(r#""id":"deploy-exact""#))
         .stdout(predicate::str::contains("commit_coalesced").not());
 }
 
@@ -5556,7 +5555,7 @@ fn test_status_wait_coalesced_failed_descendant_keeps_failure_exit() {
         .env("HOME", home.path())
         .assert()
         .failure()
-        .stdout(predicate::str::contains(r#""event":"commit_coalesced""#))
+        .stdout(predicate::str::contains(r#""commit_coalesced":{"#))
         .stdout(predicate::str::contains(r#""status":"failed""#));
 }
 
@@ -5605,7 +5604,7 @@ fn test_status_wait_coalesced_superseded_descendant_is_non_failure_terminal() {
         .env("HOME", home.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains(r#""event":"commit_coalesced""#))
+        .stdout(predicate::str::contains(r#""commit_coalesced":{"#))
         .stdout(predicate::str::contains(r#""status":"superseded""#));
 }
 
@@ -8659,7 +8658,7 @@ fn failed_status_wait_renders_diagnostics_before_exiting() {
 }
 
 #[test]
-fn status_wait_json_done_includes_diagnostics() {
+fn status_wait_json_includes_diagnostics() {
     let result = run_deploy_read(
         &["--json", "status", "--wait"],
         serde_json::json!({
@@ -8667,16 +8666,13 @@ fn status_wait_json_done_includes_diagnostics() {
         }),
     );
     assert!(result.status.success());
-    let stdout = String::from_utf8(result.stdout).unwrap();
-    let done: serde_json::Value = stdout
-        .lines()
-        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
-        .find(|line| line["event"] == "done")
-        .unwrap();
-    // Then the status read, last, so an agent can read the answer from the final line.
-    let last: serde_json::Value = serde_json::from_str(stdout.lines().last().unwrap()).unwrap();
-    assert_eq!(last["data"]["summary"], "Live on dev.");
-    assert_eq!(done["diagnostics"][0], diagnostic_fixture()[0]);
+    // One document: the status read, with the followed deploy folded in.
+    let doc: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(doc["data"]["summary"], "Live on dev.");
+    assert_eq!(
+        doc["data"]["deploy"]["diagnostics"][0],
+        diagnostic_fixture()[0]
+    );
 }
 
 fn assert_remote_preflight_failure(args: &[&str], status: usize) {

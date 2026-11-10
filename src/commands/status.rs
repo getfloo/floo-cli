@@ -8,25 +8,36 @@ use std::process::{self, Command, Stdio};
 
 use serde_json::Value;
 
+use crate::deploy_status;
 use crate::errors::ErrorCode;
 use crate::output;
 
 pub fn status(app: Option<&str>, commit: Option<&str>, wait: bool) {
     super::require_auth();
     let client = super::init_client(None);
-    let (app_id, app_name) = super::resolve_app_from_config(&client, app);
+    let (app_id, _) = super::resolve_app_from_config(&client, app);
     // With no --app, the folder is the app's, so its HEAD is the commit to ask about.
     let commit = match commit {
         Some(commit) => Some(full_sha(commit)),
         None if app.is_none() => git(&["rev-parse", "--verify", "HEAD"]),
         None => None,
     };
-    if wait {
-        // Exits 1 after reporting a failed deploy, as `floo deploy` does.
-        super::deploys::follow(&client, &app_id, &app_name, commit.as_deref());
-    }
+    // Exits 1 after reporting a failed deploy, as `floo deploy` does. In JSON
+    // mode a live deploy is reported inside the status document instead.
+    let followed = wait.then(|| {
+        let followed = super::deploys::follow(&client, &app_id, commit.as_deref());
+        let status = followed.deploy.status.as_deref().unwrap_or("");
+        let failed = matches!(
+            deploy_status::classify(status),
+            None | Some(deploy_status::Terminal::Failed)
+        );
+        if !output::is_json_mode() || failed {
+            super::deploys::report(&followed.deploy, followed.data());
+        }
+        followed
+    });
 
-    let status = client
+    let mut status = client
         .get_app_status(&app_id, commit.as_deref())
         .unwrap_or_else(|error| {
             output::error(&error.message, &ErrorCode::from_api(&error.code), None);
@@ -34,6 +45,10 @@ pub fn status(app: Option<&str>, commit: Option<&str>, wait: bool) {
         });
     let summary = text(&status, "summary").unwrap_or("No status.").to_string();
     if output::is_json_mode() {
+        // With --wait, `deploy` is the one that was followed, not a later read.
+        if let (Some(followed), Some(fields)) = (&followed, status.as_object_mut()) {
+            fields.extend(followed.data());
+        }
         output::success(&summary, Some(status));
         return;
     }

@@ -19,6 +19,7 @@ pub fn up(
     wait: bool,
     commit_sha: Option<&str>,
     ref_name: Option<&str>,
+    plan: Option<serde_json::Value>,
 ) {
     let branch = branch.trim();
     if branch.is_empty() {
@@ -92,6 +93,7 @@ pub fn up(
         &app_name,
         &deploy,
         preview.as_ref(),
+        plan,
     );
 
     if wait && deploy_status::is_failure(deploy.status.as_deref().unwrap_or("")) {
@@ -448,11 +450,13 @@ fn emit_preview_command_result(
     app_name: &str,
     deploy: &Deploy,
     preview: Option<&PreviewEnvironment>,
+    plan: Option<serde_json::Value>,
 ) {
     if output::is_json_mode() {
         output::success(
             message,
             Some(serde_json::json!({
+                "plan": plan,
                 "app": app_json(app_id, app_name),
                 "preview": preview.map(preview_json).unwrap_or_else(|| serde_json::json!({
                     "slug": deploy.preview_slug,
