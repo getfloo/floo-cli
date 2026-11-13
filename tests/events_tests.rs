@@ -173,7 +173,8 @@ fn diff_of_a_recommendation_shows_the_agents_evidence_and_no_commit() {
                "files":[{"filename":"app/pricing.py","status":"modified","additions":1,"deletions":1,"patch":"-a\n+b"},
                         {"filename":"lib/b.py","status":"renamed","additions":0,"deletions":0,"patch":null,"previous_filename":"lib/a.py"}],
                "diagnosis":"Order 1002 has no discount.","reproduction_service":"web",
-               "reproduction":[{"method":"GET","path":"/orders/1002","body":null}],"reproduction_blocked":null}"#,
+               "reproduction":[{"method":"GET","path":"/orders/1002","body":null},
+                               {"method":"POST","path":"/orders","body":"{\"id\": \"9\"}"}],"reproduction_blocked":null}"#,
         )
         .create();
 
@@ -187,6 +188,8 @@ fn diff_of_a_recommendation_shows_the_agents_evidence_and_no_commit() {
         .stderr(predicate::str::contains("Order 1002 has no discount."))
         .stderr(predicate::str::contains("to the web service"))
         .stderr(predicate::str::contains("GET /orders/1002"))
+        .stderr(predicate::str::contains("POST /orders"))
+        .stderr(predicate::str::contains(r#"{"id": "9"}"#))
         .stderr(predicate::str::contains("lib/a.py → lib/b.py"));
 }
 

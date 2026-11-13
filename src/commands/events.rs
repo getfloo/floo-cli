@@ -126,6 +126,10 @@ fn print_evidence(diff: &Value) {
                 &format!("  {} {}", field(request, "method"), field(request, "path")),
                 None,
             );
+            // A failure can hinge on what was sent, so the body is part of the request.
+            if let Some(body) = request.get("body").and_then(Value::as_str) {
+                output::info(&format!("    {body}"), None);
+            }
         }
     }
 }
