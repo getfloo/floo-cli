@@ -54,12 +54,13 @@ pub fn start_repair(app_flag: Option<&str>, event_id: &str) {
         client.start_repair(app_id, event_id)
     });
     output::success(
-        "Repair queued. floo opens a draft pull request if it finds a fix; follow it with `floo events list`.",
+        "Run queued. If the agent finds a fix, floo opens a draft pull request (repair mode) or records it for `floo events diff` (recommend mode); follow it with `floo events list`.",
         Some(event),
     );
 }
 
-/// Print a repair PR's changed files and patches, and the commit to approve.
+/// Print a fix's changed files and patches, the agent's evidence, and the commit
+/// to approve; a recommendation has no commit, since floo applied nothing.
 pub fn diff(app_flag: Option<&str>, event_id: &str) {
     let diff = call(app_flag, |client, app_id| {
         client.repair_diff(app_id, event_id)
@@ -68,14 +69,17 @@ pub fn diff(app_flag: Option<&str>, event_id: &str) {
         output::success("Repair changes.", Some(diff));
         return;
     }
-    output::info(
-        &format!(
-            "Commit {}. Approve it with: floo events approve {event_id} --commit {}",
-            field(&diff, "head_sha"),
-            field(&diff, "head_sha"),
+    match diff.get("head_sha").and_then(Value::as_str) {
+        Some(sha) => output::info(
+            &format!("Commit {sha}. Approve it with: floo events approve {event_id} --commit {sha}"),
+            None,
         ),
-        None,
-    );
+        None => output::info(
+            "A recommended fix: floo didn't apply or test it. Apply it yourself, then check it with the requests below.",
+            None,
+        ),
+    }
+    print_evidence(&diff);
     let files = diff.get("files").and_then(Value::as_array);
     let listed = files.map_or(0, Vec::len);
     let changed = diff
@@ -91,13 +95,37 @@ pub fn diff(app_flag: Option<&str>, event_id: &str) {
         );
     }
     for file in files.into_iter().flatten() {
-        output::info(
-            &format!("\n{} ({})", field(file, "filename"), field(file, "status")),
-            None,
-        );
+        let name = match file.get("previous_filename").and_then(Value::as_str) {
+            Some(old) => format!("{old} → {}", field(file, "filename")),
+            None => field(file, "filename"),
+        };
+        output::info(&format!("\n{name} ({})", field(file, "status")), None);
         match file.get("patch").and_then(Value::as_str) {
             Some(patch) => output::info(patch, None),
             None => output::info("No line-by-line view of this file.", None),
+        }
+    }
+}
+
+/// The agent's diagnosis, and the requests that reproduce the error.
+fn print_evidence(diff: &Value) {
+    if let Some(diagnosis) = diff.get("diagnosis").and_then(Value::as_str) {
+        output::info(&format!("\nWhat the agent found:\n{diagnosis}"), None);
+    }
+    let requests = diff.get("reproduction").and_then(Value::as_array);
+    if let Some(requests) = requests.filter(|r| !r.is_empty()) {
+        output::info(
+            &format!(
+                "\nRequests that reproduce the error, to the {} service:",
+                field(diff, "reproduction_service")
+            ),
+            None,
+        );
+        for request in requests {
+            output::info(
+                &format!("  {} {}", field(request, "method"), field(request, "path")),
+                None,
+            );
         }
     }
 }

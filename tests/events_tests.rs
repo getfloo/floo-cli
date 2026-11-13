@@ -157,6 +157,40 @@ fn diff_prints_the_commit_to_approve_and_each_patch() {
 }
 
 #[test]
+fn diff_of_a_recommendation_shows_the_agents_evidence_and_no_commit() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _apps = mock_resolve_app(&mut server);
+    let _diff = server
+        .mock(
+            "GET",
+            format!("/v1/apps/{APP_ID}/reparo/events/{EVENT_ID}/diff").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"pr_url":null,"head_sha":null,"changed_files":2,
+               "files":[{"filename":"app/pricing.py","status":"modified","additions":1,"deletions":1,"patch":"-a\n+b"},
+                        {"filename":"lib/b.py","status":"renamed","additions":0,"deletions":0,"patch":null,"previous_filename":"lib/a.py"}],
+               "diagnosis":"Order 1002 has no discount.","reproduction_service":"web",
+               "reproduction":[{"method":"GET","path":"/orders/1002","body":null}],"reproduction_blocked":null}"#,
+        )
+        .create();
+
+    floo()
+        .args(["events", "diff", EVENT_ID, "--app", "my-app"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("floo didn't apply or test it"))
+        .stderr(predicate::str::contains("floo events approve").not())
+        .stderr(predicate::str::contains("Order 1002 has no discount."))
+        .stderr(predicate::str::contains("to the web service"))
+        .stderr(predicate::str::contains("GET /orders/1002"))
+        .stderr(predicate::str::contains("lib/a.py → lib/b.py"));
+}
+
+#[test]
 fn approve_sends_the_reviewed_commit() {
     let mut server = Server::new();
     let home = setup_config(&server);
