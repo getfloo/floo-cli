@@ -496,10 +496,6 @@ pub struct App {
     #[serde(default)]
     pub lifecycle_state: Option<String>,
     pub url: Option<String>,
-    /// Direct Cloud Run runtime URL of the primary user-facing service.
-    /// Debug-only — clients should hit `url` (the gateway URL).
-    #[serde(default)]
-    pub runtime_url: Option<String>,
     pub created_at: Option<String>,
     #[serde(default)]
     pub envs: Vec<EnvironmentSummary>,
@@ -769,9 +765,6 @@ pub struct ApiService {
     /// ingress, a worker/cron type, or an environment with no live surface.
     #[serde(default)]
     pub url: Option<String>,
-    /// Direct Cloud Run origin behind the edge.
-    /// Debug-only — clients should hit `url` (the gateway URL).
-    pub cloud_run_url: Option<String>,
     pub port: Option<u64>,
     #[serde(default)]
     pub cpu: Option<String>,
@@ -1228,7 +1221,6 @@ pub struct Release {
     pub promoted_by: Option<String>,
     pub created_at: Option<String>,
     pub deploy_id: Option<String>,
-    pub image_digest: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

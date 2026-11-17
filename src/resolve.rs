@@ -155,7 +155,6 @@ mod tests {
             org_id: None,
             status: None,
             url: None,
-            runtime_url: None,
             created_at: None,
             envs: vec![],
             source: None,
