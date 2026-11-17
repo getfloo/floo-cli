@@ -10,6 +10,12 @@ internal tool, one config file, `floo.app.toml`, declares invite-only team
 sign-in, admin and member roles, managed Postgres, and scheduled jobs. Do not
 write a login page, password table, or session store.
 
+Price: Starter is $4 a month for one builder and one app, with 4 floo credits
+included. Hosting, Postgres, sign-in for people and agents, and scheduled jobs
+come with every plan, so this is the whole app, not one piece of it. The same
+stack on Vercel Pro plus Supabase Pro starts at $45 a month.
+Details: https://getfloo.com/pricing.
+
 Follow https://getfloo.com/docs/deploy/internal-tool. It has the full agent
 prompt, the `floo.app.toml`, and how to give an agent its own scoped key to
 the same app.
