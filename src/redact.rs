@@ -679,6 +679,43 @@ mod snapshots {
         );
     }
 
+    /// `floo events diff --json`: a fix's patches, the agent's diagnosis and
+    /// its reproduction quote the app's own code, logs and requests, any of
+    /// which can carry a credential.
+    #[test]
+    fn floo_events_diff_payload_redacted() {
+        let _g = lock_default_redact();
+        let payload = json!({
+            "success": true,
+            "data": {
+                "pr_url": null,
+                "head_sha": null,
+                "changed_files": 1,
+                "files": [{
+                    "filename": "app/db.py",
+                    "status": "modified",
+                    "additions": 1,
+                    "deletions": 1,
+                    "patch": "-URL = \"postgres://app:postgres-backed-pass-bd7fb@db:5432/app\"\n+URL = os.environ[\"DATABASE_URL\"]",
+                    "previous_filename": null
+                }],
+                "diagnosis": "The log shows redis://default:redis-token-9e13-rotate-me@cache:6379/0 refusing the connection.",
+                "reproduction_service": "web",
+                "reproduction": [{
+                    "method": "POST",
+                    "path": "/login",
+                    "body": "{\"password\": \"hunter2\", \"key\": \"AKIAIOSFODNN7EXAMPLE\"}"
+                }],
+                "reproduction_blocked": null
+            }
+        });
+        let out = through_print_json(payload);
+        let leaks = collect_leaks(&out);
+        assert!(leaks.is_empty(), "leaks survived redaction: {leaks:?}");
+        assert_eq!(out["contains_secrets"], true);
+        assert_eq!(out["data"]["reproduction"][0]["path"], "/login");
+    }
+
     /// `floo dev --json` log streaming. App boot logs frequently echo
     /// their own DATABASE_URL — defense in depth via value-shape regex.
     #[test]

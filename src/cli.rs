@@ -1784,6 +1784,57 @@ pub enum EventsCommands {
         #[arg(long)]
         status: Option<String>,
     },
+    /// Start an agent run for one event: a coding agent works on the failing
+    /// deploy's code, and floo opens a draft pull request with its fix (repair
+    /// mode) or records the fix for you to apply (recommend mode).
+    #[command(after_help = "\
+Needs repair or recommend mode on for the app, set in the dashboard's Alerts tab.
+An event gets at most one run, and an app at most three in progress.
+Nothing is merged or deployed: you review the fix with `floo events diff`.")]
+    Repair {
+        /// The event's ID, from `floo events list`.
+        event_id: String,
+
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+    /// Show the changes a fix proposes, the agent's diagnosis and reproduction, and
+    /// the commit to approve (none for a recommendation, which floo did not apply).
+    Diff {
+        /// The event's ID, from `floo events list`.
+        event_id: String,
+
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+    /// Approve a repair's preview at the commit you reviewed with `floo events diff`.
+    #[command(after_help = "\
+floo deploys that commit to a preview, replays the error's requests against it,
+and marks the fix verified if the error is gone. A commit pushed after your
+review is refused: review it again first.")]
+    Approve {
+        /// The event's ID, from `floo events list`.
+        event_id: String,
+
+        /// The commit you reviewed, as printed by `floo events diff`.
+        #[arg(long)]
+        commit: String,
+
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
+    /// Merge a verified fix. Merging deploys it like any push to the default branch.
+    Merge {
+        /// The event's ID, from `floo events list`.
+        event_id: String,
+
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2632,6 +2683,20 @@ pub fn run() {
         Commands::Events(sub) => match sub {
             EventsCommands::List { app, status } => {
                 commands::events::list(app.as_deref(), status.as_deref())
+            }
+            EventsCommands::Repair { event_id, app } => {
+                commands::events::start_repair(app.as_deref(), &event_id)
+            }
+            EventsCommands::Diff { event_id, app } => {
+                commands::events::diff(app.as_deref(), &event_id)
+            }
+            EventsCommands::Approve {
+                event_id,
+                commit,
+                app,
+            } => commands::events::approve(app.as_deref(), &event_id, &commit),
+            EventsCommands::Merge { event_id, app } => {
+                commands::events::merge(app.as_deref(), &event_id)
             }
         },
 
