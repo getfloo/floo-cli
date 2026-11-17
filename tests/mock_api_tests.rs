@@ -165,7 +165,7 @@ fn mock_services_single_for_env(server: &mut Server, environment: Option<&str>) 
         .match_query(Matcher::AllOf(query))
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"services":[{"id":"svc-web-1","name":"web","type":"web","status":"live","url":"https://my-app-dev-web.on.getfloo.com","cloud_run_url":"https://floo-my-app-dev-web-l3txcgkazq-uc.a.run.app","port":3000,"cpu":"2","memory":"1Gi","max_instances":10,"min_instances":1,"instances":null,"max_request_body_mb":32,"runtime_plan":{"env":"dev","service_type":"web","availability":"warm","declared":{"cpu":"2","memory":"1Gi","min_instances":1,"max_instances":10,"instances":null},"effective":{"cpu":"2","memory":"1Gi","min_instances":1,"max_instances":10,"instances":null},"sources":{"cpu":"configured","memory":"configured","min_instances":"configured","max_instances":"configured","instances":null},"cpu_allocation":"request_based","cpu_allocation_reason":"http_request_scoped","warnings":[]}}]}"#)
+        .with_body(r#"{"services":[{"id":"svc-web-1","name":"web","type":"web","status":"live","url":"https://my-app-dev-web.on.getfloo.com","port":3000,"cpu":"2","memory":"1Gi","max_instances":10,"min_instances":1,"instances":null,"max_request_body_mb":32,"runtime_plan":{"env":"dev","service_type":"web","availability":"warm","declared":{"cpu":"2","memory":"1Gi","min_instances":1,"max_instances":10,"instances":null},"effective":{"cpu":"2","memory":"1Gi","min_instances":1,"max_instances":10,"instances":null},"sources":{"cpu":"configured","memory":"configured","min_instances":"configured","max_instances":"configured","instances":null},"cpu_allocation":"request_based","cpu_allocation_reason":"http_request_scoped","warnings":[]}}]}"#)
         .create()
 }
 
@@ -1140,66 +1140,6 @@ fn test_apps_show_with_app_flag() {
         .success()
         .stdout(predicate::str::contains(r#""success":true"#))
         .stdout(predicate::str::contains(TEST_APP_ID));
-}
-
-#[test]
-fn test_apps_show_json_surfaces_runtime_url() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let runtime_url = "https://floo-my-app-dev-web-l3txcgkazq-uc.a.run.app";
-
-    let _m = server
-        .mock("GET", "/v1/apps")
-        .match_query(Matcher::AllOf(vec![
-            Matcher::UrlEncoded("page".into(), "1".into()),
-            Matcher::UrlEncoded("per_page".into(), "100".into()),
-        ]))
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(format!(
-            r#"{{"apps":[{{"id":"{TEST_APP_ID}","name":"{TEST_APP_NAME}","org_id":"{TEST_ORG_ID}","status":"live","url":"https://test.floo.app","runtime":"rails","runtime_url":"{runtime_url}","created_at":"2024-01-01T00:00:00Z"}}]}}"#
-        ))
-        .create();
-    let _envs = mock_list_envs(&mut server);
-
-    floo()
-        .args(["--json", "apps", "show", TEST_APP_NAME])
-        .env("HOME", home.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""runtime_url""#))
-        .stdout(predicate::str::contains(runtime_url));
-}
-
-#[test]
-fn test_apps_show_human_includes_runtime_url() {
-    let mut server = Server::new();
-    let home = setup_config(&server);
-    let runtime_url = "https://floo-my-app-dev-web-l3txcgkazq-uc.a.run.app";
-
-    let _m = server
-        .mock("GET", "/v1/apps")
-        .match_query(Matcher::AllOf(vec![
-            Matcher::UrlEncoded("page".into(), "1".into()),
-            Matcher::UrlEncoded("per_page".into(), "100".into()),
-        ]))
-        .with_status(200)
-        .with_header("content-type", "application/json")
-        .with_body(format!(
-            r#"{{"apps":[{{"id":"{TEST_APP_ID}","name":"{TEST_APP_NAME}","org_id":"{TEST_ORG_ID}","status":"live","url":"https://test.floo.app","runtime":"rails","runtime_url":"{runtime_url}","created_at":"2024-01-01T00:00:00Z"}}]}}"#
-        ))
-        .create();
-    let _envs = mock_list_envs(&mut server);
-    let _m_org = mock_org_me(&mut server);
-
-    floo()
-        .args(["apps", "show", TEST_APP_NAME])
-        .env("HOME", home.path())
-        .assert()
-        .success()
-        .stderr(predicate::str::contains("Runtime URL:"))
-        .stderr(predicate::str::contains(runtime_url))
-        .stderr(predicate::str::contains("debug only"));
 }
 
 #[test]
@@ -4275,9 +4215,8 @@ fn test_services_list_human_renders_em_dash_when_service_has_no_public_url() {
 }
 
 #[test]
-fn test_services_show_human_labels_cloud_run_origin_as_debug_only() {
-    // `services show` keeps the origin — operators need it — but under its own
-    // label and caveat, never as the service's URL.
+fn test_services_show_human_never_prints_a_cloud_run_origin() {
+    // The API no longer sends one; an old response that still does stays hidden.
     let mut server = Server::new();
     let home = setup_config(&server);
     let _resolve = mock_resolve_app(&mut server);
@@ -4291,12 +4230,7 @@ fn test_services_show_human_labels_cloud_run_origin_as_debug_only() {
         .stderr(predicate::str::contains(
             "URL:     https://my-app-dev-web.on.getfloo.com",
         ))
-        .stderr(predicate::str::contains(
-            "Runtime URL:  https://floo-my-app-dev-web-l3txcgkazq-uc.a.run.app",
-        ))
-        .stderr(predicate::str::contains(
-            "direct runtime URL — debug only, not for clients",
-        ));
+        .stderr(predicate::str::contains("run.app").not());
 }
 
 #[test]
@@ -4423,10 +4357,7 @@ fn test_services_show_user_managed() {
     let service = &json["data"];
     assert_eq!(service["name"], "web");
     assert_eq!(service["url"], "https://my-app-dev-web.on.getfloo.com");
-    assert_eq!(
-        service["cloud_run_url"],
-        "https://floo-my-app-dev-web-l3txcgkazq-uc.a.run.app"
-    );
+    assert!(service.get("cloud_run_url").is_none());
     assert_eq!(service["cpu"], "2");
     assert_eq!(service["memory"], "1Gi");
     assert_eq!(service["max_instances"], 10);
