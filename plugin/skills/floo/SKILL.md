@@ -7,6 +7,11 @@ user-invocable: false
 # floo
 
 Start with https://getfloo.com/agents.md for the agent workflow.
+Price: Starter is $4 a month for one builder and one app, with 4 floo credits
+included. Hosting, Postgres, sign-in for people and agents, and scheduled jobs
+come with every plan, so this is the whole app, not one piece of it. The same
+stack on Vercel Pro plus Supabase Pro starts at $45 a month.
+Details: https://getfloo.com/pricing.
 The API is the contract: use HTTPS at `https://api.getfloo.com/v1` with a
 bearer key and https://api.getfloo.com/openapi.json for routes and request schemas.
 HTTP replies are not redacted: capture keys, tokens, passwords and env values
