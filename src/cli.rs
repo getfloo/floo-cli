@@ -907,6 +907,17 @@ pub enum OrganizationSsoCommands {
         no_browser: bool,
     },
 
+    /// Open a short-lived portal to connect or manage the SCIM directory.
+    Directory {
+        /// Organization slug or ID. Uses the current organization when omitted.
+        #[arg(long)]
+        org: Option<String>,
+
+        /// Print the portal URL without opening a browser.
+        #[arg(long)]
+        no_browser: bool,
+    },
+
     /// Verify with SSO in the dashboard and enable enforcement.
     Enforce {
         /// Organization slug or ID. Uses the current organization when omitted.
@@ -2402,7 +2413,10 @@ pub fn run() {
                     commands::organization_sso::status(org.as_deref())
                 }
                 OrganizationSsoCommands::Portal { org, no_browser } => {
-                    commands::organization_sso::portal(org.as_deref(), no_browser)
+                    commands::organization_sso::portal(org.as_deref(), no_browser, false)
+                }
+                OrganizationSsoCommands::Directory { org, no_browser } => {
+                    commands::organization_sso::portal(org.as_deref(), no_browser, true)
                 }
                 OrganizationSsoCommands::Enforce { org, no_browser } => {
                     commands::organization_sso::enforce(org.as_deref(), no_browser)

@@ -79,6 +79,7 @@ const SECRET_FIELD_NAMES: &[&str] = &[
     "connection_url",
     "webhook_url",
     "invite_url",
+    "portal_url",
     "generated_password",
     "encrypted_value",
 ];
@@ -976,6 +977,29 @@ mod snapshots {
             collect_leaks(&out).is_empty(),
             "AWS key leaked through warning"
         );
+    }
+
+    /// `floo orgs sso portal|directory --json`: the setup portal link opens a WorkOS
+    /// Admin Portal session for anyone who holds it, so it is a credential.
+    #[test]
+    fn sso_portal_session_url_redacted() {
+        let _g = lock_default_redact();
+        let payload = json!({
+            "success": true,
+            "data": {
+                "id": "sso-config-1",
+                "portal_url": "https://setup.example.test/launch/supersecretvaluethatshouldnotleak",
+                "expires_in_seconds": 300,
+            }
+        });
+        let out = through_print_json(payload);
+        let leaks = collect_leaks(&out);
+        assert!(
+            leaks.is_empty(),
+            "portal link survived redaction: {leaks:?}"
+        );
+        assert_eq!(out["contains_secrets"], true);
+        assert_eq!(out["data"]["expires_in_seconds"], 300);
     }
 
     /// Sweep test: kitchen-sink payload combining every leak vector.

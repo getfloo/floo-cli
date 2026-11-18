@@ -332,12 +332,19 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    /// Opens the provider's setup portal for SSO, or with `directory` for the SCIM directory.
     pub fn create_organization_sso_portal(
         &self,
         org_id: &str,
+        directory: bool,
     ) -> Result<OrganizationSsoPortalSessionResponse, FlooApiError> {
+        let path = if directory {
+            "sso/directory/portal-session"
+        } else {
+            "sso/portal-session"
+        };
         let resp = self.post_json(
-            &format!("/v1/organizations/{org_id}/sso/portal-session"),
+            &format!("/v1/organizations/{org_id}/{path}"),
             &serde_json::json!({}),
         )?;
         self.handle_response(resp)
