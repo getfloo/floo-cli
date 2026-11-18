@@ -130,6 +130,9 @@ pub struct ManagedServiceSection {
     /// Postgres only: `true` (awake 1 h after last use) or `"always"`. Validated by the server.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keep_warm: Option<toml::Value>,
+    /// Postgres only: the largest compute it scales to, `"micro"` to `"2xlarge"`. Validated by the server.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<String>,
 }
 
 /// A `[managed.<name>]` block: a named instance of a managed service type.
@@ -145,6 +148,9 @@ pub struct ManagedServiceBlock {
     /// Postgres only: `true` (awake 1 h after last use) or `"always"`. Validated by the server.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keep_warm: Option<toml::Value>,
+    /// Postgres only: the largest compute it scales to, `"micro"` to `"2xlarge"`. Validated by the server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<String>,
     /// Postgres only: a `[managed.<name>.users]` table turns on User accounts, sign-in for
     /// an external app's own users. Validated by the server.
     #[serde(default, skip_serializing_if = "Option::is_none")]

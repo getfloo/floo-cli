@@ -1002,6 +1002,21 @@ impl FlooClient {
         self.handle_response(resp)
     }
 
+    pub fn restore_postgres(
+        &self,
+        app_id: &str,
+        service_id: &str,
+        env: &str,
+        to: &str,
+    ) -> Result<Value, FlooApiError> {
+        let body = serde_json::json!({ "env": env, "to": to });
+        let resp = self.post_json(
+            &format!("/v1/apps/{app_id}/managed-services/{service_id}/postgres/restore"),
+            &body,
+        )?;
+        self.handle_response(resp)
+    }
+
     // --- Previews ---
 
     pub fn list_previews(

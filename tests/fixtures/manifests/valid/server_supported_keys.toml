@@ -30,6 +30,7 @@ service = "web"
 tier = "basic"
 enabled = true
 keep_warm = true
+size = "small"
 [redis]
 tier = "basic"
 enabled = false
@@ -43,6 +44,7 @@ enabled = true
 [managed.db]
 type = "postgres"
 keep_warm = "always"
+size = "large"
 [managed.db.users]
 [domains."app.example.com"]
 service = "web"

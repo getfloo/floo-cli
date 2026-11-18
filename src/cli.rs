@@ -1770,6 +1770,37 @@ Restore elsewhere:
         #[arg(long, default_value = "plain", value_parser = ["plain", "custom"])]
         format: String,
     },
+
+    /// Restore the app's database, in place, to an earlier time.
+    ///
+    /// Every write after that time is replaced. Connection strings do not
+    /// change; open connections drop once. The time must be inside the
+    /// restore window (the last day).
+    #[command(after_help = "\
+Examples:
+  floo db restore --app my-app --env prod --to 2h
+  floo db restore --app my-app --to 2026-11-18T02:00:00Z --yes")]
+    Restore {
+        /// App name or ID (reads from config if omitted).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Environment to restore: dev or prod.
+        #[arg(long, default_value = "dev", value_parser = ["dev", "prod"])]
+        env: String,
+
+        /// When to restore to: a time (2026-11-18T02:00:00Z) or how long ago (30m, 2h, 1d).
+        #[arg(long)]
+        to: String,
+
+        /// Postgres database name, when the app has more than one.
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Skip the confirmation prompt.
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2641,6 +2672,13 @@ pub fn run() {
                 output,
                 format,
             } => commands::db::dump(app.as_deref(), &env, &output, &format),
+            DbCommands::Restore {
+                app,
+                env,
+                to,
+                name,
+                yes,
+            } => commands::db::restore(app.as_deref(), name.as_deref(), &env, &to, yes),
         },
 
         Commands::Cron(sub) => match sub {
