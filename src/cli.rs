@@ -1800,6 +1800,9 @@ Examples:
         /// Skip the confirmation prompt.
         #[arg(long)]
         yes: bool,
+
+        #[command(flatten)]
+        preflight: PreflightArgs,
     },
 }
 
@@ -2678,6 +2681,7 @@ pub fn run() {
                 to,
                 name,
                 yes,
+                preflight: _,
             } => commands::db::restore(app.as_deref(), name.as_deref(), &env, &to, yes),
         },
 
