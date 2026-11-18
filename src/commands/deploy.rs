@@ -822,6 +822,7 @@ fn cron_json(resolved: &project_config::ResolvedApp) -> Vec<serde_json::Value> {
                 "command": cfg.command,
                 "service": cfg.service,
                 "timeout": cfg.timeout.unwrap_or(300),
+                "retries": cfg.retries.unwrap_or(2),
             })
         })
         .collect()

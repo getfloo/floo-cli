@@ -106,3 +106,4 @@ schedule = "0 9 * * *"
 command = "./cleanup.sh"
 service = "web"
 timeout = 300
+retries = 1
