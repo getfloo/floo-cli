@@ -1,10 +1,12 @@
 use std::path::Path;
 use std::process;
 
+use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use percent_encoding::percent_decode_str;
 use serde_json::Value;
 use url::Url;
 
+use crate::api_types::ManagedServiceSummary;
 use crate::errors::{ErrorCode, FlooError};
 use crate::output;
 
@@ -473,6 +475,152 @@ pub fn dump(app_flag: Option<&str>, environment: &str, file: &Path, format: &str
     );
 }
 
+/// Turn `--to` into the RFC 3339 UTC time the API takes: either a time
+/// (`2026-11-18T02:00:00Z`) or how long ago (`30m`, `2h`, `1d`). Pure, so the
+/// dry-run preview and the real run name the same moment.
+fn restore_time(input: &str, now: DateTime<Utc>) -> Result<DateTime<Utc>, FlooError> {
+    let input = input.trim();
+    if let Ok(at) = DateTime::parse_from_rfc3339(input) {
+        return Ok(at.with_timezone(&Utc));
+    }
+    // Checked arithmetic: a huge count is refused, never a panic.
+    let at = input.char_indices().last().and_then(|(i, unit)| {
+        let n: i64 = input[..i].parse().ok().filter(|n| *n > 0)?;
+        let seconds = match unit {
+            'm' => n.checked_mul(60),
+            'h' => n.checked_mul(3_600),
+            'd' => n.checked_mul(86_400),
+            _ => None,
+        }?;
+        now.checked_sub_signed(Duration::try_seconds(seconds)?)
+    });
+    match at {
+        Some(at) => Ok(at),
+        None => Err(FlooError::with_suggestion(
+            ErrorCode::Other("INVALID_RESTORE_TIME".to_string()),
+            format!("'{input}' is not a time floo can restore to."),
+            "Use a time like 2026-11-18T02:00:00Z, or how long ago: 30m, 2h, 1d.",
+        )),
+    }
+}
+
+/// The app's Postgres to restore: the one named, or the only one.
+fn resolve_postgres(
+    client: &crate::api_client::FlooClient,
+    app_id: &str,
+    app_name: &str,
+    name: Option<&str>,
+) -> ManagedServiceSummary {
+    let services = match client.list_managed_services(app_id) {
+        Ok(response) => response.managed_services,
+        Err(e) => {
+            output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+            process::exit(1);
+        }
+    };
+    let mut postgres: Vec<_> = services
+        .into_iter()
+        .filter(|s| s.service_type == "postgres" && name.is_none_or(|n| s.name == n))
+        .collect();
+    if postgres.len() == 1 {
+        return postgres.remove(0);
+    }
+    let message = match name {
+        Some(n) => format!("'{app_name}' has no Postgres database named '{n}'."),
+        None if postgres.is_empty() => format!("'{app_name}' has no Postgres database."),
+        None => format!("'{app_name}' has more than one Postgres database."),
+    };
+    let names: Vec<_> = postgres.iter().map(|s| s.name.as_str()).collect();
+    let suggestion = if names.is_empty() {
+        "Run `floo services list` to see the app's databases.".to_string()
+    } else {
+        format!("Pick one with --name: {}.", names.join(", "))
+    };
+    exit_with(&FlooError::with_suggestion(
+        ErrorCode::ManagedServiceNotFound,
+        message,
+        suggestion,
+    ));
+}
+
+pub fn restore(app_flag: Option<&str>, name: Option<&str>, environment: &str, to: &str, yes: bool) {
+    use crate::confirm::{confirm_tier2, ConfirmOutcome, RiskMetadata, Tier};
+
+    let at = match restore_time(to, Utc::now()) {
+        Ok(at) => at.to_rfc3339_opts(SecondsFormat::Secs, true),
+        Err(e) => exit_with(&e),
+    };
+    let risk: RiskMetadata = Tier::Two.into();
+    if output::is_dry_run_mode() {
+        output::dry_run_preview(
+            &format!(
+                "Would restore the {environment} database to {at}. Writes after that time would be replaced; connection strings would not change."
+            ),
+            serde_json::json!({
+                "action": "db_restore",
+                "app": app_flag,
+                "env": environment,
+                "to": at,
+                "destructive": risk.destructive,
+                "data_loss": risk.data_loss,
+                "tier": risk.tier,
+            }),
+        );
+        return;
+    }
+
+    super::require_auth();
+    let client = super::init_client(None);
+    let (app_id, app_name) = super::resolve_app_from_config(&client, app_flag);
+    let service = resolve_postgres(&client, &app_id, &app_name, name);
+
+    match confirm_tier2(
+        "Restore",
+        &format!(
+            "the {environment} database of '{app_name}' to {at}, replacing every write since then"
+        ),
+        yes,
+    ) {
+        ConfirmOutcome::Proceed => {}
+        ConfirmOutcome::Aborted => {
+            if output::is_json_mode() {
+                output::success("Cancelled.", Some(serde_json::json!({"cancelled": true})));
+            } else {
+                output::info("Cancelled.", None);
+            }
+            process::exit(0);
+        }
+        ConfirmOutcome::Refused { suggestion } => crate::confirm::exit_refused(
+            &format!(
+                "Refusing to restore the {environment} database of '{app_name}' without confirmation."
+            ),
+            &suggestion,
+        ),
+    }
+
+    if !output::is_json_mode() {
+        output::info(
+            &format!("Restoring the {environment} database of '{app_name}' to {at}..."),
+            None,
+        );
+    }
+    if let Err(e) = client.restore_postgres(&app_id, &service.id, environment, &at) {
+        output::error(&e.message, &ErrorCode::from_api(&e.code), None);
+        process::exit(1);
+    }
+    output::success(
+        &format!(
+            "Restored the {environment} database of '{app_name}' to {at}. Connection strings are unchanged."
+        ),
+        Some(serde_json::json!({
+            "app": app_name,
+            "database": service.name,
+            "env": environment,
+            "restored_to": at,
+        })),
+    );
+}
+
 fn value_to_display(v: &Value) -> String {
     match v {
         Value::Null => "NULL".to_string(),
@@ -487,6 +635,33 @@ fn value_to_display(v: &Value) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn test_restore_time_reads_a_time_or_how_long_ago() {
+        let now = DateTime::parse_from_rfc3339("2026-11-18T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let at = |input: &str| restore_time(input, now).map(|t| t.to_rfc3339());
+        assert_eq!(
+            at("2026-11-18T09:30:00+01:00").unwrap(),
+            "2026-11-18T08:30:00+00:00"
+        );
+        assert_eq!(at("30m").unwrap(), "2026-11-18T11:30:00+00:00");
+        assert_eq!(at(" 2h ").unwrap(), "2026-11-18T10:00:00+00:00");
+        assert_eq!(at("1d").unwrap(), "2026-11-17T12:00:00+00:00");
+        for bad in [
+            "",
+            "h",
+            "0h",
+            "-2h",
+            "2w",
+            "yesterday",
+            "9223372036854775807d",
+            "99999999999999m",
+        ] {
+            assert!(at(bad).is_err(), "{bad} should be refused");
+        }
+    }
 
     #[test]
     fn test_value_to_display_null() {
