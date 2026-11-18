@@ -271,6 +271,7 @@ fn directory_issue_label(issue: &str) -> &str {
     match issue {
         "multiple_directories" => "more than one directory is connected; remove the extra one",
         "provider_unavailable" => "the directory could not be read; floo retries every 5 minutes",
+        "not_linked" => "the directory is not linked yet, so nobody is added or removed",
         "last_admin_kept" => {
             "the directory removed the only admin; make someone else an admin to finish"
         }
