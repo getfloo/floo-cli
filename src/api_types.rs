@@ -470,6 +470,9 @@ pub struct OrganizationSsoDoctorResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrganizationSsoPortalSessionResponse {
     pub id: String,
+    /// A live Admin Portal session for whoever holds it: emitted as `portal_url`, which the
+    /// `--json` redactor treats as a secret unless `--reveal-secrets` is set.
+    #[serde(rename(serialize = "portal_url"))]
     pub url: String,
     pub expires_in_seconds: u64,
 }

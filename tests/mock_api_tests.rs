@@ -805,14 +805,14 @@ fn test_orgs_sso_portal_json_returns_short_lived_url_once() {
         .env("HOME", home.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            "https://setup.example.test/launch/ephemeral",
-        ))
+        // The portal link opens a live setup session: redacted unless revealed.
+        .stdout(predicate::str::contains("launch/ephemeral").not())
+        .stdout(predicate::str::contains("contains_secrets"))
         .stdout(predicate::str::contains(r#""expires_in_seconds":300"#));
 }
 
 #[test]
-fn test_orgs_sso_directory_json_returns_the_directory_portal_url() {
+fn test_orgs_sso_directory_json_reveals_the_portal_url_only_when_asked() {
     let mut server = Server::new();
     let home = setup_config(&server);
     let _org = mock_org_me(&mut server);
@@ -830,13 +830,14 @@ fn test_orgs_sso_directory_json_returns_the_directory_portal_url() {
         .create();
 
     floo()
-        .args(["--json", "orgs", "sso", "directory"])
+        .args(["--json", "--reveal-secrets", "orgs", "sso", "directory"])
         .env("HOME", home.path())
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "https://setup.example.test/launch/dsync",
-        ));
+            r#""portal_url":"https://setup.example.test/launch/dsync""#,
+        ))
+        .stdout(predicate::str::contains("contains_secrets"));
 }
 
 #[test]
