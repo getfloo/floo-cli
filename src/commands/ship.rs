@@ -14,11 +14,11 @@ use serde_json::{json, Value};
 
 use crate::api_client::FlooClient;
 use crate::api_types::{AppSource, DeployPlan};
-use crate::errors::ErrorCode;
+use crate::errors::{ErrorCode, FlooApiError};
 use crate::output;
 use crate::project_config::{self, AppAccessMode, AppFileConfig};
 
-use super::projects::{managed_app_id, shell_quote};
+use super::projects::{managed_app_id, shell_quote, GIT_TOKEN_APP_ENV, GIT_TOKEN_ENV};
 
 /// The remote a hosted repo gets when `origin` already points elsewhere.
 const HOSTED_REMOTE: &str = "floo";
@@ -737,7 +737,7 @@ fn dev_access_mode(config: &AppFileConfig, plan: &DeployPlan) -> Option<String> 
     }
 }
 
-/// Said when only the org can open the app, since a plain request then gets 401.
+/// Said when only the org can open the app.
 fn access_note(config: &AppFileConfig, plan: &DeployPlan) -> Option<String> {
     if dev_access_mode(config, plan).as_deref() != Some("accounts") {
         return None;
@@ -750,9 +750,7 @@ fn access_note(config: &AppFileConfig, plan: &DeployPlan) -> Option<String> {
              your users can't reach it. Set {table} access_mode = \"public\" in floo.app.toml."
         ));
     }
-    let mut note = format!(
-        "Only signed-in members of {org} can open it; a request without a floo sign-in gets 401."
-    );
+    let mut note = format!("Only signed-in members of {org} can open it.");
     if config.dev_access_mode().is_none() {
         note.push_str(" For a public site, set [app] access_mode = \"public\" in floo.app.toml.");
     }
@@ -967,18 +965,21 @@ fn push_github(path: &Path, remote: &str, branch: &str, head: &str, quoted: &str
 /// git with floo's short-lived token for a hosted repo, and no other credential
 /// helper, so no keychain stores the token. Refuses any URL that isn't a
 /// credential-free floo-hosted HTTPS URL, as `projects clone` does.
-pub(crate) fn hosted_git(path: &Path, clone_url: &str) -> Command {
-    if clone_url
+///
+/// floo asks for the token before git runs, so a failure is floo's own error,
+/// and git may never prompt: a prompt from inside a deploy looks like a hang.
+pub(crate) fn hosted_git(path: &Path, clone_url: &str) -> Result<Command, FlooApiError> {
+    let Some(app_id) = clone_url
         .strip_prefix("https://github.com/")
         .and_then(managed_app_id)
-        .is_none()
-    {
-        stop(
-            "The app's hosted repository is not a floo-hosted repository.",
+    else {
+        return Err(FlooApiError::new(
+            0,
             "INVALID_RESPONSE",
-            "Contact floo support with the app name.",
-        );
-    }
+            "The app's hosted repository is not a floo-hosted repository. Contact floo support with the app name.",
+        ));
+    };
+    let token = super::init_client(None).project_git_token(&app_id)?.token;
     let executable = std::env::current_exe()
         .ok()
         .and_then(|path| path.to_str().map(str::to_owned))
@@ -998,8 +999,13 @@ pub(crate) fn hosted_git(path: &Path, clone_url: &str) -> Command {
     let mut command = git(path);
     command
         .args(["-c", "credential.helper=", "-c", &helper])
-        .args(["-c", "credential.useHttpPath=true"]);
-    command
+        .args(["-c", "credential.useHttpPath=true"])
+        .env(GIT_TOKEN_APP_ENV, &app_id)
+        .env(GIT_TOKEN_ENV, token)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        // Set but empty, so git skips core.askPass and SSH_ASKPASS too.
+        .env("GIT_ASKPASS", "");
+    Ok(command)
 }
 
 /// Seconds to wait before each retry of a new hosted repo's first push.
@@ -1014,7 +1020,14 @@ fn push_hosted(path: &Path, clone_url: &str, branch: &str, quoted: &str, new_rep
     let mut waits = waits.iter();
     loop {
         // Push to the validated URL, not a remote name that could carry another pushurl.
-        let output = hosted_git(path, clone_url)
+        let mut push = hosted_git(path, clone_url).unwrap_or_else(|error| {
+            stop(
+                &error.message,
+                &error.code,
+                &format!("floo deploy {quoted}"),
+            )
+        });
+        let output = push
             .arg("push")
             .args([clone_url, refspec.as_str()])
             // Keep stdout for floo's JSON; read git's errors to spot GitHub's 403.

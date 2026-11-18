@@ -159,13 +159,28 @@ fn mock_move(server: &mut Server) -> Mock {
         .create()
 }
 
-fn hosted_app(server: &mut Server) -> Mock {
-    mock_apps(
+/// A hosted app, and the push token floo asks for before git reads its repo.
+fn hosted_app(server: &mut Server) -> Vec<Mock> {
+    let token = server
+        .mock("POST", format!("/v1/apps/{APP_ID}/git-token").as_str())
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            json!({
+                "token": "push-token",
+                "expires_at": "2026-09-09T13:00:00Z",
+                "clone_url": format!("https://github.com/{HOSTED}.git"),
+            })
+            .to_string(),
+        )
+        .create();
+    let apps = mock_apps(
         server,
         json!([app_with(
             json!({"kind": "floo", "repo": HOSTED, "branch": "main"})
         )]),
-    )
+    );
+    vec![token, apps]
 }
 
 fn refs(bare: &Path) -> String {

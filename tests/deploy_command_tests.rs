@@ -65,7 +65,7 @@ fn setup(server: &Server) -> Env {
     std::fs::write(
         &shim,
         format!(
-            "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = push ]; then\n    printf '%s\\n' \"$@\" > \"$PUSH_ARGS\"\n    if [ -n \"$PUSH_403_ONCE\" ] && [ ! -e \"$PUSH_403_ONCE\" ]; then\n      : > \"$PUSH_403_ONCE\"\n      echo 'fatal: unable to access: The requested URL returned error: 403' >&2\n      exit 128\n    fi\n    exit \"${{PUSH_EXIT:-0}}\"\n  fi\n  if [ \"$arg\" = ls-remote ]; then\n    printf '%s' \"$LS_REMOTE\"\n    exit 0\n  fi\ndone\nexec {} \"$@\"\n",
+            "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = push ]; then\n    printf '%s\\n' \"$@\" > \"$PUSH_ARGS\"\n    printf '%s\\n' \"$GIT_TERMINAL_PROMPT\" \"$FLOO_GIT_APP_ID\" \"$FLOO_GIT_TOKEN\" > \"$PUSH_ARGS.env\"\n    if [ -n \"$PUSH_403_ONCE\" ] && [ ! -e \"$PUSH_403_ONCE\" ]; then\n      : > \"$PUSH_403_ONCE\"\n      echo 'fatal: unable to access: The requested URL returned error: 403' >&2\n      exit 128\n    fi\n    exit \"${{PUSH_EXIT:-0}}\"\n  fi\n  if [ \"$arg\" = ls-remote ]; then\n    printf '%s' \"$LS_REMOTE\"\n    exit 0\n  fi\ndone\nexec {} \"$@\"\n",
             real_git()
         ),
     )
@@ -151,6 +151,32 @@ fn fails(env: &Env, args: &[&str]) -> Value {
         .stdout
         .clone();
     error(&out)
+}
+
+/// The prompt switch and the app and token git ran with on the last push.
+fn pushed_env(env: &Env) -> Vec<String> {
+    std::fs::read_to_string(env.home.path().join("push-args.env"))
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+/// floo's push token for the hosted app, which deploy asks for before git runs.
+fn mock_git_token(server: &mut Server) -> mockito::Mock {
+    server
+        .mock("POST", format!("/v1/apps/{APP_ID}/git-token").as_str())
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            json!({
+                "token": "push-token",
+                "expires_at": "2026-09-09T13:00:00Z",
+                "clone_url": format!("https://github.com/{REPO}.git"),
+            })
+            .to_string(),
+        )
+        .create()
 }
 
 fn pushed(env: &Env) -> Option<Vec<String>> {
@@ -764,6 +790,7 @@ fn a_taken_name_suggests_a_free_one_and_leaves_the_config_alone() {
 fn hosted_creates_an_empty_repo_adds_origin_and_pushes_without_force() {
     let mut server = Server::new();
     let env = setup(&server);
+    let token = mock_git_token(&mut server);
     let sha = committed_repo(&env);
     let source = json!({"kind": "floo", "repo": REPO, "branch": "main"});
     let planned = server
@@ -812,12 +839,16 @@ fn hosted_creates_an_empty_repo_adds_origin_and_pushes_without_force() {
             "HEAD:refs/heads/main"
         ]
     );
+    // floo fetched the token before git ran, and git may not prompt for one.
+    token.assert();
+    assert_eq!(pushed_env(&env), ["0", APP_ID, "push-token"]);
 }
 
 #[test]
 fn a_new_hosted_repo_pushes_again_while_github_still_refuses_with_403() {
     let mut server = Server::new();
     let env = setup(&server);
+    let _token = mock_git_token(&mut server);
     let sha = committed_repo(&env);
     let source = json!({"kind": "floo", "repo": REPO, "branch": "main"});
     let _plan = server
@@ -851,9 +882,47 @@ fn a_new_hosted_repo_pushes_again_while_github_still_refuses_with_403() {
 }
 
 #[test]
+fn a_push_token_floo_cannot_get_stops_before_git_runs() {
+    let mut server = Server::new();
+    let env = setup(&server);
+    committed_repo(&env);
+    let _plan = server
+        .mock("POST", "/v1/deploy/plan")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(plan(json!({
+            "ok": true,
+            "decision": "push",
+            "source": {"kind": "floo", "repo": REPO, "branch": "main"},
+        })))
+        .create();
+    let _token = server
+        .mock("POST", format!("/v1/apps/{APP_ID}/git-token").as_str())
+        .with_status(503)
+        .with_header("content-type", "application/json")
+        .with_body(
+            json!({"detail": {
+                "code": "PROJECT_REPO_NOT_READY",
+                "message": "The app's code is still being set up.",
+            }})
+            .to_string(),
+        )
+        .create();
+
+    let err = fails(&env, &[]);
+    assert_eq!(err["code"], "PROJECT_REPO_NOT_READY");
+    assert!(err["suggestion"]
+        .as_str()
+        .unwrap()
+        .starts_with("floo deploy "));
+    assert!(pushed(&env).is_none());
+}
+
+#[test]
 fn an_existing_hosted_repo_does_not_retry_a_refused_push() {
     let mut server = Server::new();
     let env = setup(&server);
+    let _token = mock_git_token(&mut server);
     committed_repo(&env);
     let _plan = server
         .mock("POST", "/v1/deploy/plan")
@@ -882,6 +951,7 @@ fn an_existing_hosted_repo_does_not_retry_a_refused_push() {
 fn an_accepted_name_is_written_and_committed_before_the_push() {
     let mut server = Server::new();
     let env = setup(&server);
+    let _token = mock_git_token(&mut server);
     committed_repo(&env);
     // A root service manifest names the app too, and must keep matching.
     std::fs::write(

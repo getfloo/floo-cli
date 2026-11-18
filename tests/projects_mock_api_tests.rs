@@ -91,6 +91,39 @@ fn token_mock(server: &mut Server, token: &str) -> mockito::Mock {
 }
 
 #[test]
+fn credential_get_uses_the_token_floo_handed_over_for_that_app_only() {
+    let mut server = Server::new();
+    let home = setup(&server);
+    let request = format!("protocol=https\nhost=github.com\npath={REPO}.git\n\n");
+    let unused = server
+        .mock("POST", format!("/v1/apps/{APP_ID}/git-token").as_str())
+        .expect(0)
+        .create();
+    floo(&home)
+        .args(["git-credential", "get"])
+        .env("FLOO_GIT_APP_ID", APP_ID)
+        .env("FLOO_GIT_TOKEN", "handed-over")
+        .write_stdin(request.clone())
+        .assert()
+        .success()
+        .stdout("username=x-access-token\npassword=handed-over\n\n");
+    unused.assert();
+    unused.remove();
+
+    // A token for another app is never sent to this one.
+    let mock = token_mock(&mut server, TOKEN);
+    floo(&home)
+        .args(["git-credential", "get"])
+        .env("FLOO_GIT_APP_ID", "ffffffff-ffff-ffff-ffff-ffffffffffff")
+        .env("FLOO_GIT_TOKEN", "handed-over")
+        .write_stdin(request)
+        .assert()
+        .success()
+        .stdout(format!("username=x-access-token\npassword={TOKEN}\n\n"));
+    mock.assert();
+}
+
+#[test]
 fn credential_get_only_emits_password_protocol_and_fetches_each_time() {
     let mut server = Server::new();
     let home = setup(&server);

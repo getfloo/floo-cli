@@ -27,7 +27,6 @@ const POLL_TIMEOUT: Duration = Duration::from_secs(1200);
 struct EnvInjectionPlan {
     mode: String,
     services: Vec<ServiceEnvInjectionPlan>,
-    notes: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -738,34 +737,39 @@ fn run_preflight(
     }
 
     // --- Human output ---
-    display_preflight_human(
-        &app_name,
-        &resolved,
-        &services,
-        &per_service_detection,
-        &runtime_plan,
-        &env_injection_plan,
-        &validation_findings,
-    );
+    if !reports {
+        // `floo deploy` shows only what needs attention; the deploy prints its own progress.
+        print_warnings(&all_findings);
+    } else {
+        display_preflight_human(
+            &app_name,
+            &resolved,
+            &services,
+            &per_service_detection,
+            &runtime_plan,
+            &env_injection_plan,
+            &validation_findings,
+        );
 
-    if !managed_services.is_empty() {
-        eprintln!("  Managed services (declared):");
-        for ms in &managed_services {
-            let tier_label = ms.tier.as_deref().unwrap_or("basic");
-            eprintln!("    {} (tier {tier_label})", ms.env_handle());
+        if !managed_services.is_empty() {
+            eprintln!("  Managed services:");
+            for ms in &managed_services {
+                let tier_label = ms.tier.as_deref().unwrap_or("basic");
+                eprintln!("    {} ({tier_label})", ms.env_handle());
+            }
+            eprintln!();
         }
-        eprintln!();
-    }
 
-    if let Some(ref plan) = remote_plan {
-        render_plan_human(plan, &app_name);
-    }
-    if app_not_created {
-        eprintln!("  {}", app_not_created_note(&app_name));
-        eprintln!();
-    }
+        if let Some(ref plan) = remote_plan {
+            render_plan_human(plan, &app_name);
+        }
+        if app_not_created {
+            eprintln!("  {}", app_not_created_note(&app_name));
+            eprintln!();
+        }
 
-    render_security_findings_human(&security_findings);
+        render_security_findings_human(&security_findings);
+    }
 
     if !valid {
         for f in all_findings.iter().filter(|f| f.is_error()) {
@@ -780,26 +784,23 @@ fn run_preflight(
         process::exit(1);
     }
 
-    match &deploy_plan {
-        Some(preview) => {
-            let warn_count = all_findings
-                .iter()
-                .filter(|f| f.severity == Severity::Warning)
-                .count();
-            eprintln!();
-            if warn_count > 0 {
-                output::success(
-                    &format!("Config valid with {warn_count} warning(s); review them above."),
-                    None,
-                );
-            } else {
-                output::success("Config valid.", None);
-            }
-            for line in preview.summary.lines() {
-                eprintln!("  {line}");
-            }
+    if let Some(preview) = &deploy_plan {
+        let warn_count = all_findings
+            .iter()
+            .filter(|f| f.severity == Severity::Warning)
+            .count();
+        eprintln!();
+        if warn_count > 0 {
+            output::success(
+                &format!("Config valid with {warn_count} warning(s); review them above."),
+                None,
+            );
+        } else {
+            output::success("Config valid.", None);
         }
-        None => print_preflight_ready(&all_findings),
+        for line in preview.summary.lines() {
+            eprintln!("  {line}");
+        }
     }
     (resolved, services, primary_detection)
 }
@@ -2033,14 +2034,9 @@ fn build_env_injection_plan(
         .map(|ms| ms.env_handle())
         .collect::<Vec<_>>();
 
-    let mut notes = Vec::new();
     let mode = if explicit_managed {
         "explicit".to_string()
     } else if !declared_handles.is_empty() {
-        notes.push(
-            "No service declares env.managed, so managed service credentials use legacy implicit injection."
-                .to_string(),
-        );
         "implicit_all".to_string()
     } else {
         "none".to_string()
@@ -2085,28 +2081,22 @@ fn build_env_injection_plan(
     EnvInjectionPlan {
         mode,
         services: service_plans,
-        notes,
     }
 }
 
 fn display_env_injection_plan(plan: &EnvInjectionPlan) {
-    eprintln!("  Env injection plan:");
-    match plan.mode.as_str() {
-        "explicit" => eprintln!("    mode: explicit per-service env.managed"),
-        "implicit_all" => eprintln!("    mode: legacy implicit managed env on every service"),
-        _ => eprintln!("    mode: no managed service credentials declared locally"),
+    if plan
+        .services
+        .iter()
+        .all(|svc| svc.managed.is_empty() && svc.required.is_empty() && svc.optional.is_empty())
+    {
+        return;
     }
-    for note in &plan.notes {
-        eprintln!("    note: {note}");
-    }
+    eprintln!("  Env vars:");
     for svc in &plan.services {
         eprintln!("    {}", svc.service);
-        if svc.managed.is_empty() {
-            eprintln!("      managed: none");
-        } else {
-            for managed in &svc.managed {
-                eprintln!("      {} -> {}", managed.handle, managed.keys.join(", "));
-            }
+        for managed in &svc.managed {
+            eprintln!("      {}: {}", managed.handle, managed.keys.join(", "));
         }
         if !svc.required.is_empty() {
             eprintln!("      required: {}", svc.required.join(", "));
@@ -2185,10 +2175,7 @@ fn display_preflight_human(
             .as_deref()
             .map(|f| format!(" ({f})"))
             .unwrap_or_default();
-        eprintln!(
-            "    runtime: {}{framework_label} \u{2014} {} confidence",
-            det.runtime, det.confidence
-        );
+        eprintln!("    runtime: {}{framework_label}", det.runtime);
         if runtime.availability == "paused" {
             eprintln!("    availability: paused, 0 running instances");
         } else if runtime.availability == "fixed" {
@@ -2211,7 +2198,6 @@ fn display_preflight_human(
         for note in &runtime.notes {
             eprintln!("    note: {note}");
         }
-        eprintln!("    note: plan limits are resolved by the server; verify with `floo services show --json`");
         eprintln!();
     }
 
@@ -2245,6 +2231,10 @@ fn display_preflight_human(
         }
     }
 
+    print_warnings(findings);
+}
+
+fn print_warnings(findings: &[PreflightFinding]) {
     for f in findings.iter().filter(|f| f.severity == Severity::Warning) {
         // The root service uses path "." — a "." : prefix there is just noise.
         match f.path.as_deref() {
@@ -2266,33 +2256,6 @@ fn render_security_findings_human(findings: &[PreflightFinding]) {
         eprintln!("    {} {}", f.severity.glyph(), f.message);
     }
     eprintln!();
-}
-
-/// Print the auto-deploy contract and the final "ready" line. Only called when
-/// the config has no errors; the warning count keeps a clean green honest.
-fn print_preflight_ready(findings: &[PreflightFinding]) {
-    // Closes feedback c9b70eb5: "no obvious signal anywhere in the floo
-    // workflow that dev auto-deploys on GitHub push." The CLI is the surface
-    // the user is in front of right before pushing — surfacing the auto-deploy
-    // contract here means they don't have to leave for the docs.
-    eprintln!();
-    eprintln!("  Deploys: dev auto-deploys on every `git push` to your default branch.");
-    eprintln!("           See https://getfloo.com/docs/guides/golden-path.md for the full flow.");
-
-    let warn_count = findings
-        .iter()
-        .filter(|f| f.severity == Severity::Warning)
-        .count();
-    if warn_count > 0 {
-        output::success(
-            &format!(
-                "Config valid with {warn_count} warning(s) \u{2014} review the warnings above before deploying."
-            ),
-            None,
-        );
-    } else {
-        output::success("Config valid \u{2014} ready to deploy.", None);
-    }
 }
 
 /// Stream deploy logs via SSE and return the final deploy state.

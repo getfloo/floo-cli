@@ -1,3 +1,4 @@
+use std::env;
 use std::io::{self, BufRead};
 use std::path::Path;
 use std::process::{self, Command, Stdio};
@@ -7,6 +8,10 @@ use crate::config::load_config;
 use crate::errors::{ErrorCode, FlooApiError};
 use crate::output;
 use crate::resolve::resolve_app;
+
+/// The app and push token floo's own git commands pass to `floo git-credential`.
+pub(crate) const GIT_TOKEN_APP_ENV: &str = "FLOO_GIT_APP_ID";
+pub(crate) const GIT_TOKEN_ENV: &str = "FLOO_GIT_TOKEN";
 
 fn fail(error: FlooApiError) -> ! {
     let next = if error.status_code == 401 || error.code == "NOT_AUTHENTICATED" {
@@ -233,10 +238,17 @@ pub fn git_credential(operation: &str) {
         ))
     });
     let Some(app_id) = app_id else { return };
-    let credential = client()
-        .project_git_token(&app_id)
-        .unwrap_or_else(|error| fail(error));
-    output::git_credentials(&credential.token).unwrap_or_else(|_| {
+    // floo's own git commands fetch the token first and hand it over here.
+    let token = match (env::var(GIT_TOKEN_APP_ENV), env::var(GIT_TOKEN_ENV)) {
+        (Ok(for_app), Ok(token)) if for_app == app_id => token,
+        _ => {
+            client()
+                .project_git_token(&app_id)
+                .unwrap_or_else(|error| fail(error))
+                .token
+        }
+    };
+    output::git_credentials(&token).unwrap_or_else(|_| {
         fail(FlooApiError::new(
             0,
             "INVALID_RESPONSE",
