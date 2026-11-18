@@ -205,7 +205,14 @@ fn move_history(scratch: &Path, hosted: &AppSource, repo: &str, rerun: &str) -> 
     let hosted_url = format!("https://github.com/{hosted_repo}.git");
     let target_url = format!("https://github.com/{repo}.git");
     let mirror = scratch.join("hosted.git");
-    let cloned = hosted_git(scratch, &hosted_url)
+    let mut clone = hosted_git(scratch, &hosted_url).map_err(|error| {
+        Stop(
+            format!("{} Nothing changed.", error.message),
+            "GIT_CLONE_FAILED",
+            rerun.to_string(),
+        )
+    })?;
+    let cloned = clone
         .args(["clone", "--bare", "--quiet", "--"])
         .arg(&hosted_url)
         .arg(&mirror)
