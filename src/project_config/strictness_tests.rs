@@ -224,11 +224,12 @@ fn accepts_supported_cron_fields() {
     let dir = tempfile::TempDir::new().unwrap();
     std::fs::write(
         dir.path().join(APP_CONFIG_FILE),
-        "[app]\nname = 'my-app'\n[cron.backup]\nschedule = '* * * * *'\ncommand = 'backup'\nservice = 'web'\ntimeout = 900",
+        "[app]\nname = 'my-app'\n[cron.backup]\nschedule = '* * * * *'\ncommand = 'backup'\nservice = 'web'\ntimeout = 900\nretries = 3",
     )
     .unwrap();
     let config = load_app_config(dir.path()).unwrap().unwrap();
     assert_eq!(config.cron["backup"].timeout, Some(900));
+    assert_eq!(config.cron["backup"].retries, Some(3));
 }
 
 #[test]

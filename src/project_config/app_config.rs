@@ -25,6 +25,9 @@ pub struct CronJobConfig {
     /// Maximum execution time in seconds (default 300).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout: Option<u32>,
+    /// Times a failed run is retried with backoff (0..5, default 2).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retries: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
