@@ -483,17 +483,19 @@ fn restore_time(input: &str, now: DateTime<Utc>) -> Result<DateTime<Utc>, FlooEr
     if let Ok(at) = DateTime::parse_from_rfc3339(input) {
         return Ok(at.with_timezone(&Utc));
     }
-    let ago = input.char_indices().last().and_then(|(i, unit)| {
+    // Checked arithmetic: a huge count is refused, never a panic.
+    let at = input.char_indices().last().and_then(|(i, unit)| {
         let n: i64 = input[..i].parse().ok().filter(|n| *n > 0)?;
-        match unit {
-            'm' => Some(Duration::minutes(n)),
-            'h' => Some(Duration::hours(n)),
-            'd' => Some(Duration::days(n)),
+        let seconds = match unit {
+            'm' => n.checked_mul(60),
+            'h' => n.checked_mul(3_600),
+            'd' => n.checked_mul(86_400),
             _ => None,
-        }
+        }?;
+        now.checked_sub_signed(Duration::try_seconds(seconds)?)
     });
-    match ago {
-        Some(ago) => Ok(now - ago),
+    match at {
+        Some(at) => Ok(at),
         None => Err(FlooError::with_suggestion(
             ErrorCode::Other("INVALID_RESTORE_TIME".to_string()),
             format!("'{input}' is not a time floo can restore to."),
@@ -647,7 +649,16 @@ mod tests {
         assert_eq!(at("30m").unwrap(), "2026-11-18T11:30:00+00:00");
         assert_eq!(at(" 2h ").unwrap(), "2026-11-18T10:00:00+00:00");
         assert_eq!(at("1d").unwrap(), "2026-11-17T12:00:00+00:00");
-        for bad in ["", "h", "0h", "-2h", "2w", "yesterday"] {
+        for bad in [
+            "",
+            "h",
+            "0h",
+            "-2h",
+            "2w",
+            "yesterday",
+            "9223372036854775807d",
+            "99999999999999m",
+        ] {
             assert!(at(bad).is_err(), "{bad} should be refused");
         }
     }
