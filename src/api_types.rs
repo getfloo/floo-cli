@@ -443,6 +443,18 @@ pub struct OrganizationSsoStatusResponse {
     pub enforcement_policy: OrganizationSsoEnforcementPolicy,
     pub recovery_ready: bool,
     pub observed_at: Option<String>,
+    pub directory: Option<OrganizationDirectoryStatus>,
+}
+
+/// The org's SCIM directory as floo last synced it. `status`, `provider_type`, and `issue`
+/// stay strings: they are the provider's and the API's words, shown rather than branched on.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrganizationDirectoryStatus {
+    pub status: String,
+    pub provider_type: String,
+    pub synced_at: Option<String>,
+    pub issue: Option<String>,
+    pub people: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

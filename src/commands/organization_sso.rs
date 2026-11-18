@@ -2,11 +2,11 @@ use std::process;
 
 use crate::api_client::FlooClient;
 use crate::api_types::{
-    OrgResponse, OrganizationSsoBrowserHandoff, OrganizationSsoCredentialStatus,
-    OrganizationSsoDoctorResponse, OrganizationSsoEnforcementAccess,
-    OrganizationSsoEnforcementPolicy, OrganizationSsoLifecycle, OrganizationSsoNextAction,
-    OrganizationSsoProviderReachability, OrganizationSsoProviderState, OrganizationSsoProviderType,
-    OrganizationSsoStatusResponse,
+    OrgResponse, OrganizationDirectoryStatus, OrganizationSsoBrowserHandoff,
+    OrganizationSsoCredentialStatus, OrganizationSsoDoctorResponse,
+    OrganizationSsoEnforcementAccess, OrganizationSsoEnforcementPolicy, OrganizationSsoLifecycle,
+    OrganizationSsoNextAction, OrganizationSsoProviderReachability, OrganizationSsoProviderState,
+    OrganizationSsoProviderType, OrganizationSsoStatusResponse,
 };
 use crate::config::{load_config, FlooConfig};
 use crate::errors::{ErrorCode, FlooApiError};
@@ -47,18 +47,22 @@ pub fn doctor(org_selector: Option<&str>) {
     }
 }
 
-pub fn portal(org_selector: Option<&str>, no_browser: bool) {
+pub fn portal(org_selector: Option<&str>, no_browser: bool, directory: bool) {
     let context = resolve_organization(org_selector);
     match context
         .client
-        .create_organization_sso_portal(&context.org.id)
+        .create_organization_sso_portal(&context.org.id, directory)
     {
         Ok(portal) => {
             if output::is_json_mode() {
                 output::success("", Some(output::to_value(&portal)));
                 return;
             }
-            output::success("Created a short-lived SSO setup session.", None);
+            let subject = if directory { "directory" } else { "SSO" };
+            output::success(
+                &format!("Created a short-lived {subject} setup session."),
+                None,
+            );
             output::info(&format!("  {}", portal.url), None);
             if !no_browser {
                 open_browser(&portal.url);
@@ -219,6 +223,17 @@ fn render_status(org: &OrgResponse, status: &OrganizationSsoStatusResponse) {
             .join(", ");
         output::info(&format!("Domains:      {domains}"), None);
     }
+    output::info(
+        &format!(
+            "Directory:    {}",
+            status
+                .directory
+                .as_ref()
+                .map(directory_label)
+                .unwrap_or_else(|| "Not connected".to_string())
+        ),
+        None,
+    );
     let selector = org.display_name().unwrap_or(org.id.as_str());
     if status.lifecycle != OrganizationSsoLifecycle::Enabled
         || status.status != OrganizationSsoProviderState::Active
@@ -232,6 +247,35 @@ fn render_status(org: &OrgResponse, status: &OrganizationSsoStatusResponse) {
             &format!("Next action:  run 'floo orgs sso enforce --org {selector}'"),
             None,
         );
+    }
+}
+
+fn directory_label(directory: &OrganizationDirectoryStatus) -> String {
+    let synced = directory.synced_at.as_deref().unwrap_or("never");
+    let mut label = format!(
+        "{} ({}), {} people, synced {synced}",
+        string_label(&directory.provider_type),
+        string_label(&directory.status),
+        directory.people,
+    );
+    if let Some(issue) = directory.issue.as_deref() {
+        label.push_str(&format!(
+            ", needs attention: {}",
+            directory_issue_label(issue)
+        ));
+    }
+    label
+}
+
+fn directory_issue_label(issue: &str) -> &str {
+    match issue {
+        "multiple_directories" => "more than one directory is connected; remove the extra one",
+        "provider_unavailable" => "the directory could not be read; floo retries every 5 minutes",
+        "last_admin_kept" => {
+            "the directory removed the only admin; make someone else an admin to finish"
+        }
+        "invite_email_failed" => "an invite email failed; floo retries every hour",
+        other => string_label(other),
     }
 }
 

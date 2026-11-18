@@ -812,6 +812,64 @@ fn test_orgs_sso_portal_json_returns_short_lived_url_once() {
 }
 
 #[test]
+fn test_orgs_sso_directory_json_returns_the_directory_portal_url() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _org = mock_org_me(&mut server);
+    let _portal = server
+        .mock(
+            "POST",
+            format!("/v1/organizations/{TEST_ORG_ID}/sso/directory/portal-session").as_str(),
+        )
+        .match_header("x-floo-org-id", TEST_ORG_ID)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"id":"sso-config-1","url":"https://setup.example.test/launch/dsync","expires_in_seconds":300}"#,
+        )
+        .create();
+
+    floo()
+        .args(["--json", "orgs", "sso", "directory"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "https://setup.example.test/launch/dsync",
+        ));
+}
+
+#[test]
+fn test_orgs_sso_status_shows_the_directory_and_its_issue() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _org = mock_org_me(&mut server);
+    let body = sso_status_json().replace(
+        r#""observed_at":"2026-08-28T12:00:00Z"}"#,
+        r#""observed_at":"2026-08-28T12:00:00Z","directory":{"status":"linked","provider_type":"okta scim v2.0","synced_at":"2026-11-18T12:00:00Z","issue":"last_admin_kept","people":42}}"#,
+    );
+    let _status = server
+        .mock(
+            "GET",
+            format!("/v1/organizations/{TEST_ORG_ID}/sso").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(body)
+        .create();
+
+    floo()
+        .args(["orgs", "sso", "status"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "okta scim v2.0 (linked), 42 people, synced 2026-11-18T12:00:00Z",
+        ))
+        .stderr(predicate::str::contains("make someone else an admin"));
+}
+
+#[test]
 fn test_orgs_sso_enforce_json_returns_browser_handoff_without_opening() {
     let mut server = Server::new();
     let home = setup_config(&server);
