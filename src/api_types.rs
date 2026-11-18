@@ -455,6 +455,8 @@ pub struct OrganizationDirectoryStatus {
     pub synced_at: Option<String>,
     pub issue: Option<String>,
     pub people: u64,
+    /// False while floo is not syncing it: the org is not on Enterprise or SSO is not enabled.
+    pub syncing: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

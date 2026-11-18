@@ -258,6 +258,9 @@ fn directory_label(directory: &OrganizationDirectoryStatus) -> String {
         string_label(&directory.status),
         directory.people,
     );
+    if !directory.syncing {
+        label.push_str(", sync paused until SSO is enabled on an Enterprise plan");
+    }
     if let Some(issue) = directory.issue.as_deref() {
         label.push_str(&format!(
             ", needs attention: {}",

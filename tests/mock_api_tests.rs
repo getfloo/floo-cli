@@ -847,7 +847,7 @@ fn test_orgs_sso_status_shows_the_directory_and_its_issue() {
     let _org = mock_org_me(&mut server);
     let body = sso_status_json().replace(
         r#""observed_at":"2026-08-28T12:00:00Z"}"#,
-        r#""observed_at":"2026-08-28T12:00:00Z","directory":{"status":"linked","provider_type":"okta scim v2.0","synced_at":"2026-11-18T12:00:00Z","issue":"last_admin_kept","people":42}}"#,
+        r#""observed_at":"2026-08-28T12:00:00Z","directory":{"status":"linked","provider_type":"okta scim v2.0","synced_at":"2026-11-18T12:00:00Z","issue":"last_admin_kept","people":42,"syncing":true}}"#,
     );
     let _status = server
         .mock(
