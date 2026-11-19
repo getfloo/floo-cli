@@ -316,20 +316,17 @@ mod tests {
         assert_eq!(config.api_url, DEFAULT_API_URL);
     }
 
+    // One test: both halves change FLOO_CONFIG_DIR for the whole process, so as
+    // two tests the fallback half could read the override half's directory.
     #[test]
-    fn test_config_dir_env_override() {
+    fn test_config_dir_env_override_then_fallback() {
         let tmp = tempfile::tempdir().unwrap();
         let custom_dir = tmp.path().join("custom-floo");
         env::set_var("FLOO_CONFIG_DIR", &custom_dir);
-        let result = config_dir();
+        let overridden = config_dir();
         env::remove_var("FLOO_CONFIG_DIR");
-        assert_eq!(result, custom_dir);
-    }
-
-    #[test]
-    fn test_config_dir_fallback() {
-        env::remove_var("FLOO_CONFIG_DIR");
-        let result = config_dir();
-        assert!(result.ends_with(config_dir_name()));
+        let fallback = config_dir();
+        assert_eq!(overridden, custom_dir);
+        assert!(fallback.ends_with(config_dir_name()));
     }
 }
