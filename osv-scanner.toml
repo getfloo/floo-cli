@@ -1,0 +1,18 @@
+# Advisories osv-scanner reports for Cargo.lock that we accept, each with an
+# expiry so the CI dependency audit turns red again and someone re-checks.
+# Only "unmaintained" notices belong here; a vulnerability with a fixed
+# version gets a lockfile bump instead.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0543"
+# chrono is unmaintained (no vulnerability). The CLI only parses and formats
+# API timestamps with it. Move to jiff or time when this expires.
+reason = "unmaintained notice only; used for timestamp parsing in deploys output"
+ignoreUntil = "2027-02-19T00:00:00Z"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0441"
+# pin-utils is unmaintained (no vulnerability) and reaches us only through
+# hyper 1.x. Drop once hyper releases without it.
+reason = "unmaintained notice only; transitive via hyper"
+ignoreUntil = "2027-02-19T00:00:00Z"

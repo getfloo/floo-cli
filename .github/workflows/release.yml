@@ -7,6 +7,12 @@ on:
       - "cli-v*"
   workflow_dispatch:
 
+# Least privilege by default: only the release job writes, and only it can
+# read the signing key. Every third-party action is pinned to a commit SHA
+# because this workflow handles the key that every installer trusts.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   FLOO_RELEASE_VERSION: ${{ github.ref_name }}
@@ -40,16 +46,19 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           targets: ${{ matrix.target }}
 
       - name: Install cross (Linux ARM)
         if: matrix.target == 'aarch64-unknown-linux-musl'
-        run: cargo install cross --git https://github.com/cross-rs/cross
+        # cross has no release newer than 2022, so it installs from git. Pin the
+        # commit: an unpinned HEAD would put whatever lands upstream into the
+        # build of a binary we then sign.
+        run: cargo install cross --locked --git https://github.com/cross-rs/cross --rev a9301e91f72bba3850460512685f6b16062015ff
 
       - name: Install musl tools (Linux x86_64)
         if: matrix.target == 'x86_64-unknown-linux-musl'
@@ -82,7 +91,7 @@ jobs:
           "$hash  ${{ matrix.name }}.exe" | Out-File -Encoding ascii "${{ matrix.name }}.exe.sha256"
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: ${{ matrix.name }}
           path: |
@@ -98,13 +107,17 @@ jobs:
 
   release:
     needs: build
+    # A dispatch from a branch must never publish: the release is named after the ref.
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write      # build provenance attestation (Sigstore)
+      attestations: write
 
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
 
       - name: Sign release artifacts
         env:
@@ -117,6 +130,9 @@ jobs:
           fi
 
           key_path="${RUNNER_TEMP}/floo-release-signing-key.pem"
+          # The private key must not outlive this step: later steps run
+          # third-party code on the same runner.
+          trap 'rm -f "${key_path}"' EXIT
           public_key_path="${RUNNER_TEMP}/floo-release-signing-public-key.pem"
           expected_public_key_path="${RUNNER_TEMP}/floo-release-expected-public-key.pem"
           printf '%s\n' "${FLOO_RELEASE_SIGNING_KEY}" >"${key_path}"
@@ -155,8 +171,19 @@ jobs:
             exit 1
           fi
 
+      # Signed provenance (Sigstore, logged in Rekor) binding each binary to this
+      # repo, workflow and commit. Verify with:
+      #   gh attestation verify <binary> --repo getfloo/floo-cli
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            floo-*/floo-*-apple-darwin
+            floo-*/floo-*-linux-musl
+            floo-*/floo-*.exe
+
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           files: |
             floo-*/*
