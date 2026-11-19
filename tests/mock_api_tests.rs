@@ -9815,3 +9815,38 @@ fn the_credentials_file_is_readable_by_its_owner_alone() {
         .unwrap()
         .contains("browser_login"));
 }
+
+#[test]
+fn logout_json_says_whether_the_key_was_revoked() {
+    let mut server = Server::new();
+    let home = setup_signed_in_config(&server, true);
+    server
+        .mock("GET", "/v1/auth/api-keys")
+        .with_status(500)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":{"code":"INTERNAL_ERROR","message":"boom"}}"#)
+        .create();
+
+    floo()
+        .args(["--json", "auth", "logout"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""key_revoked":false"#))
+        .stdout(predicate::str::contains("still works"));
+
+    let home = setup_signed_in_config(&server, true);
+    mock_own_keys(&mut server);
+    server
+        .mock("DELETE", "/v1/auth/api-keys/key-this-machine")
+        .with_status(204)
+        .create();
+
+    floo()
+        .args(["--json", "auth", "logout"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""key_revoked":true"#))
+        .stdout(predicate::str::contains(r#""warning":null"#));
+}

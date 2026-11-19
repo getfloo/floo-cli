@@ -278,15 +278,26 @@ pub fn update_profile(name: &str) {
 
 pub fn logout() {
     let config = load_config();
-    if config.browser_login && config.api_key.is_some() {
-        match super::init_client(Some(config)).revoke_own_api_key() {
-            Ok(true) => {}
-            Ok(false) => output::warn(KEY_STILL_WORKS),
-            Err(e) => output::warn(&format!("{KEY_STILL_WORKS} ({})", e.message)),
-        }
-    }
+    // None when there is no key from browser sign-in to revoke.
+    let revoke = (config.browser_login && config.api_key.is_some())
+        .then(|| super::init_client(Some(config)).revoke_own_api_key());
     clear_config();
-    output::success("Logged out.", None);
+    let warning = match &revoke {
+        None | Some(Ok(true)) => None,
+        Some(Ok(false)) => Some(KEY_STILL_WORKS.to_string()),
+        Some(Err(e)) => Some(format!("{KEY_STILL_WORKS} ({})", e.message)),
+    };
+    if let Some(warning) = &warning {
+        output::warn(warning);
+    }
+    // A script reads here what a person reads in the warning: the key may still be live.
+    output::success(
+        "Logged out.",
+        Some(serde_json::json!({
+            "key_revoked": matches!(revoke, Some(Ok(true))),
+            "warning": warning,
+        })),
+    );
 }
 
 pub fn whoami() {
