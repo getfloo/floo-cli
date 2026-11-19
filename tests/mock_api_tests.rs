@@ -9690,3 +9690,128 @@ fn test_db_dump_without_database_url_names_the_env() {
         .stdout(predicate::str::contains("no DATABASE_URL in dev"));
     assert!(!bin.path().join("pg_dump.log").exists());
 }
+
+/// Config whose key came from `floo auth login` in the browser, or was pasted.
+fn setup_signed_in_config(server: &Server, browser_login: bool) -> TempDir {
+    let home = TempDir::new().unwrap();
+    let config_dir = home.path().join(".floo-local");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("config.json"),
+        format!(
+            r#"{{"api_key":"floo_abcd0123456789wxyz","api_url":"{}","browser_login":{browser_login}}}"#,
+            server.url()
+        ),
+    )
+    .unwrap();
+    home
+}
+
+fn mock_own_keys(server: &mut Server) -> Mock {
+    server
+        .mock("GET", "/v1/auth/api-keys")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"api_keys":[
+                {"id":"key-other","name":"CI","key_prefix":"floo_zzzz","key_suffix":"wxyz"},
+                {"id":"key-this-machine","name":"CLI login","key_prefix":"floo_abcd","key_suffix":"wxyz"}
+            ],"total":2}"#,
+        )
+        .create()
+}
+
+#[test]
+fn logout_revokes_the_key_browser_sign_in_made() {
+    let mut server = Server::new();
+    let home = setup_signed_in_config(&server, true);
+    let listed = mock_own_keys(&mut server);
+    let revoked = server
+        .mock("DELETE", "/v1/auth/api-keys/key-this-machine")
+        .with_status(204)
+        .create();
+
+    floo()
+        .args(["auth", "logout"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Logged out."));
+
+    listed.assert();
+    revoked.assert();
+    assert!(!home.path().join(".floo-local/config.json").exists());
+}
+
+#[test]
+fn logout_leaves_a_pasted_key_working() {
+    let mut server = Server::new();
+    let home = setup_signed_in_config(&server, false);
+    let revoked = server
+        .mock("DELETE", Matcher::Regex("^/v1/auth/api-keys/".to_string()))
+        .expect(0)
+        .create();
+
+    floo()
+        .args(["auth", "logout"])
+        .env("HOME", home.path())
+        .assert()
+        .success();
+
+    revoked.assert();
+    assert!(!home.path().join(".floo-local/config.json").exists());
+}
+
+#[test]
+fn logout_signs_out_here_and_says_so_when_the_key_cannot_be_revoked() {
+    let mut server = Server::new();
+    let home = setup_signed_in_config(&server, true);
+    server
+        .mock("GET", "/v1/auth/api-keys")
+        .with_status(500)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":{"code":"INTERNAL_ERROR","message":"boom"}}"#)
+        .create();
+
+    floo()
+        .args(["auth", "logout"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("still works"));
+
+    assert!(!home.path().join(".floo-local/config.json").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn the_credentials_file_is_readable_by_its_owner_alone() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut server = Server::new();
+    // An older CLI, or a hand-made file, may have left it readable by everyone.
+    let home = setup_config(&server);
+    let config_file = home.path().join(".floo-local/config.json");
+    std::fs::set_permissions(&config_file, std::fs::Permissions::from_mode(0o644)).unwrap();
+    server
+        .mock("GET", "/v1/auth/whoami")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"email":"ada@example.com","name":null}"#)
+        .create();
+
+    floo()
+        .args(["auth", "login", "--api-key", "floo_pasted0123456789"])
+        .env("HOME", home.path())
+        .assert()
+        .success();
+
+    let mode = std::fs::metadata(&config_file)
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o600);
+    assert!(!std::fs::read_to_string(&config_file)
+        .unwrap()
+        .contains("browser_login"));
+}

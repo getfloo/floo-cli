@@ -1,5 +1,6 @@
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -18,6 +19,10 @@ pub struct FlooConfig {
     pub skill_paths: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_org: Option<String>,
+    /// True when `api_key` came from browser sign-in, so it lives on this
+    /// machine alone and signing out revokes it. A pasted key may run elsewhere.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub browser_login: bool,
 }
 
 fn default_api_url() -> String {
@@ -38,6 +43,7 @@ impl Default for FlooConfig {
             user_email: None,
             skill_paths: Vec::new(),
             default_org: None,
+            browser_login: false,
         }
     }
 }
@@ -172,12 +178,23 @@ pub fn save_config(config: &FlooConfig) -> anyhow::Result<()> {
         fs::create_dir_all(parent)?;
     }
     let json = serde_json::to_string_pretty(config)?;
-    fs::write(&path, json)?;
+    // The file holds the API key: it is created owner-only, never readable by
+    // others even for the moment between a write and a chmod.
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
     }
+    let mut file = options.open(&path)?;
+    #[cfg(unix)]
+    {
+        // A file an older CLI left with wider permissions is narrowed too.
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    }
+    file.write_all(json.as_bytes())?;
     Ok(())
 }
 
@@ -244,6 +261,7 @@ mod tests {
             user_email: Some("test@example.com".to_string()),
             skill_paths: vec!["/tmp/floo.md".to_string()],
             default_org: Some("org-123".to_string()),
+            browser_login: false,
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: FlooConfig = serde_json::from_str(&json).unwrap();

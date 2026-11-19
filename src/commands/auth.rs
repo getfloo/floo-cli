@@ -8,11 +8,15 @@ use crate::config::{clear_config, load_config, save_config};
 use crate::errors::ErrorCode;
 use crate::output;
 
+const KEY_STILL_WORKS: &str =
+    "Signed out on this machine, but its API key still works. Revoke it in the dashboard under API keys.";
+
 pub fn login(api_key: Option<&str>, force: bool) {
     // Path 1: --api-key flag — save directly and validate
     if let Some(key) = api_key {
         let mut config = load_config();
         config.api_key = Some(key.to_string());
+        config.browser_login = false;
         if let Err(e) = save_config(&config) {
             output::error(
                 &format!("Failed to save credentials: {e}"),
@@ -157,6 +161,7 @@ pub fn login(api_key: Option<&str>, force: bool) {
                 let email = &result.email;
                 let mut config = load_config();
                 config.api_key = Some(api_key.to_string());
+                config.browser_login = true;
                 config.user_email = Some(email.to_string());
                 if let Err(e) = save_config(&config) {
                     output::error(
@@ -272,6 +277,14 @@ pub fn update_profile(name: &str) {
 }
 
 pub fn logout() {
+    let config = load_config();
+    if config.browser_login && config.api_key.is_some() {
+        match super::init_client(Some(config)).revoke_own_api_key() {
+            Ok(true) => {}
+            Ok(false) => output::warn(KEY_STILL_WORKS),
+            Err(e) => output::warn(&format!("{KEY_STILL_WORKS} ({})", e.message)),
+        }
+    }
     clear_config();
     output::success("Logged out.", None);
 }

@@ -752,7 +752,7 @@ pub enum AuthCommands {
         #[arg(long)]
         force: bool,
     },
-    /// Clear stored credentials.
+    /// Sign out on this machine, and revoke the key that browser sign-in made.
     Logout,
     /// Show the currently authenticated user.
     Whoami,

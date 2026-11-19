@@ -178,6 +178,34 @@ impl FlooClient {
 
     // --- Auth ---
 
+    /// Revoke the key this client signs in with. The API lists keys masked, so
+    /// the key is found by the two ends it shows; false when no single key matches.
+    pub fn revoke_own_api_key(&self) -> Result<bool, FlooApiError> {
+        let key = self.api_key.as_deref().unwrap_or_default();
+        let (Some(prefix), Some(suffix)) = (
+            key.get(..9),
+            key.len().checked_sub(4).and_then(|at| key.get(at..)),
+        ) else {
+            return Ok(false);
+        };
+        let listed: Value = self.handle_response(self.get("/v1/auth/api-keys")?)?;
+        let own: Vec<&str> = listed["api_keys"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|k| k["key_prefix"] == prefix && k["key_suffix"] == suffix)
+            .filter_map(|k| k["id"].as_str())
+            .collect();
+        let [id] = own.as_slice() else {
+            return Ok(false);
+        };
+        let resp = self.delete(&format!("/v1/auth/api-keys/{id}"))?;
+        if !resp.status().is_success() {
+            self.handle_response_value(resp)?;
+        }
+        Ok(true)
+    }
+
     pub fn device_authorize(&self) -> Result<DeviceAuthorizeResponse, FlooApiError> {
         let resp = self.post_json("/v1/auth/device", &serde_json::json!({}))?;
         self.handle_response(resp)
