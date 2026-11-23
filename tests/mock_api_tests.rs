@@ -9850,3 +9850,27 @@ fn logout_json_says_whether_the_key_was_revoked() {
         .stdout(predicate::str::contains(r#""key_revoked":true"#))
         .stdout(predicate::str::contains(r#""warning":null"#));
 }
+
+#[test]
+fn api_calls_send_the_machines_time_zone() {
+    // The child process reads the same zone as this one; a machine without one sends none.
+    let Ok(zone) = iana_time_zone::get_timezone() else {
+        return;
+    };
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let whoami = server
+        .mock("GET", "/v1/auth/whoami")
+        .match_header("x-floo-timezone", zone.as_str())
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"email":"ada@example.com","name":null}"#)
+        .create();
+
+    floo()
+        .args(["auth", "login", "--api-key", "floo_pasted0123456789"])
+        .env("HOME", home.path())
+        .assert()
+        .success();
+    whoami.assert();
+}

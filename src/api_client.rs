@@ -14,11 +14,23 @@ pub struct FlooClient {
     default_org: Option<String>,
 }
 
+/// The machine's IANA time zone, e.g. America/Chicago. The API keeps it with the user's
+/// location when the call comes from their own network, not from a cloud machine.
+fn timezone_header() -> reqwest::header::HeaderMap {
+    let mut headers = reqwest::header::HeaderMap::new();
+    let zone = iana_time_zone::get_timezone().ok();
+    if let Some(value) = zone.and_then(|z| reqwest::header::HeaderValue::from_str(&z).ok()) {
+        headers.insert("X-Floo-Timezone", value);
+    }
+    headers
+}
+
 impl FlooClient {
     pub fn new(config: Option<FlooConfig>) -> Result<Self, FlooApiError> {
         let config = config.unwrap_or_else(load_config);
         let client = Client::builder()
             .user_agent(crate::constants::USER_AGENT)
+            .default_headers(timezone_header())
             .timeout(Duration::from_secs(30))
             .build()
             .map_err(|e| {
