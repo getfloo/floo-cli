@@ -906,6 +906,39 @@ mod snapshots {
         );
     }
 
+    /// `floo sandboxes logs --json` and `floo sandboxes list --json`: what a
+    /// sandbox's command printed, and its tags, are a program's own text.
+    #[test]
+    fn floo_sandboxes_logs_and_tags_redacted() {
+        let _g = lock_default_redact();
+        let logs = json!({
+            "success": true,
+            "data": {
+                "output": [
+                    {"stream": "stdout", "text": "connecting to postgres://u:postgres-backed-pass-bd7fb@h/db\n"},
+                    {"stream": "stderr", "text": "using key floo_aaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"}
+                ],
+                "running": true
+            }
+        });
+        let listed = json!({
+            "success": true,
+            "data": {
+                "sandboxes": [
+                    {"id": "sb-abc123", "tags": {"task": "build", "aws": "AKIAIOSFODNN7EXAMPLE"}}
+                ],
+                "vcpus_in_use": 1,
+                "vcpus_limit": 16
+            }
+        });
+        for payload in [logs, listed] {
+            let out = through_print_json(payload);
+            let leaks = collect_leaks(&out);
+            assert!(leaks.is_empty(), "sandbox credentials leaked: {leaks:?}");
+            assert_eq!(out[CONTAINS_SECRETS_KEY], Value::Bool(true));
+        }
+    }
+
     /// Managed-project credentials must also be protected by the JSON boundary.
     #[test]
     fn project_git_token_response_is_redacted_if_serialized() {

@@ -298,6 +298,23 @@ pub fn raw_value(value: &str) {
     println!("{value}");
 }
 
+/// Write text as a program printed it, to stdout or to stderr as it did: a
+/// sandbox's logs. Nothing is added, not even a newline. A no-op in JSON mode,
+/// as `raw_value` is: the JSON payload already holds the text.
+pub fn printed(text: &str, to_stderr: bool) {
+    use std::io::Write;
+
+    if is_json_mode() {
+        return;
+    }
+    let written = if to_stderr {
+        std::io::stderr().lock().write_all(text.as_bytes())
+    } else {
+        std::io::stdout().lock().write_all(text.as_bytes())
+    };
+    let _ = written; // a closed pipe (`| head`) ends the reader's interest, not an error
+}
+
 /// Git is the sole consumer of this plaintext credential. Never route it through
 /// JSON, human output, logging, or persistent config. Validate before any write
 /// so a malformed token cannot inject additional credential protocol fields.
