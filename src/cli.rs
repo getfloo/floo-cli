@@ -573,6 +573,21 @@ read-only + manual trigger; new jobs are added by editing config and deploying."
     #[command(subcommand)]
     Events(EventsCommands),
 
+    /// Find your running sandboxes, read what one printed, tag it, or end it.
+    #[command(
+        subcommand,
+        after_help = "\
+Examples:
+  floo sandboxes list                           Every running sandbox in the org
+  floo sandboxes list --app agents --tag task=build
+  floo sandboxes logs sb-abc123                 What its own command printed last
+  floo sandboxes tag sb-abc123 task=build user=ada
+  floo sandboxes terminate sb-abc123            End it (asks you to type its id)
+
+Programs create sandboxes with the floo-sandbox SDK (pip or npm); the CLI never does."
+    )]
+    Sandboxes(SandboxesCommands),
+
     /// Diagnose an app's posture in one round trip.
     #[command(
         subcommand,
@@ -1818,6 +1833,63 @@ Examples:
 }
 
 #[derive(Subcommand)]
+pub enum SandboxesCommands {
+    /// List the org's sandboxes that have not finished, newest first.
+    List {
+        /// Only this app's sandboxes (name or ID).
+        #[arg(short, long)]
+        app: Option<String>,
+
+        /// Only sandboxes with this tag, as name=value. Repeat for each tag.
+        #[arg(long = "tag", value_name = "NAME=VALUE")]
+        tags: Vec<String>,
+    },
+
+    /// Print what a sandbox's own command printed last.
+    ///
+    /// Up to 64 KiB, stdout and stderr as it wrote them, kept while the command
+    /// runs and a few minutes after. Only a sandbox created with a command has logs.
+    Logs {
+        /// The sandbox's ID, from `floo sandboxes list`.
+        sandbox_id: String,
+    },
+
+    /// Replace a sandbox's tags.
+    ///
+    /// `floo sandboxes list --tag` and the SDK's `Sandbox.list` find it by them.
+    Tag {
+        /// The sandbox's ID, from `floo sandboxes list`.
+        sandbox_id: String,
+
+        /// Its tags, each as name=value. They replace every tag it had.
+        #[arg(value_name = "NAME=VALUE", required_unless_present = "clear")]
+        tags: Vec<String>,
+
+        /// Remove every tag.
+        #[arg(long, conflicts_with = "tags")]
+        clear: bool,
+    },
+
+    /// End a sandbox now: its commands stop and its files are deleted.
+    ///
+    /// Type its ID to confirm; non-interactive requires
+    /// --yes-i-know-this-destroys-data.
+    Terminate {
+        /// The sandbox's ID, from `floo sandboxes list`.
+        sandbox_id: String,
+
+        /// Skip interactive confirmation. Required in non-interactive contexts
+        /// (JSON mode, CI, pipes). A script using it must have user
+        /// authorization for this specific sandbox.
+        #[arg(long = "yes-i-know-this-destroys-data")]
+        confirmed: bool,
+
+        #[command(flatten)]
+        preflight: PreflightArgs,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum EventsCommands {
     /// List agent events for an app.
     List {
@@ -2734,6 +2806,23 @@ pub fn run() {
                 });
                 commands::cron::run(app.as_deref(), &resolved, &env)
             }
+        },
+
+        Commands::Sandboxes(sub) => match sub {
+            SandboxesCommands::List { app, tags } => {
+                commands::sandboxes::list(app.as_deref(), &tags)
+            }
+            SandboxesCommands::Logs { sandbox_id } => commands::sandboxes::logs(&sandbox_id),
+            SandboxesCommands::Tag {
+                sandbox_id,
+                tags,
+                clear,
+            } => commands::sandboxes::tag(&sandbox_id, &tags, clear),
+            SandboxesCommands::Terminate {
+                sandbox_id,
+                confirmed,
+                preflight: _,
+            } => commands::sandboxes::terminate(&sandbox_id, confirmed),
         },
 
         Commands::Events(sub) => match sub {

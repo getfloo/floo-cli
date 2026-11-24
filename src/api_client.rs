@@ -1410,6 +1410,41 @@ impl FlooClient {
         self.handle_response_value(resp)
     }
 
+    // --- Sandboxes ---
+
+    pub fn list_sandboxes(
+        &self,
+        app_id: Option<&str>,
+        tags: &[String],
+    ) -> Result<Value, FlooApiError> {
+        let mut query: Vec<(&str, &str)> = tags.iter().map(|t| ("tag", t.as_str())).collect();
+        if let Some(app_id) = app_id {
+            query.push(("app_id", app_id));
+        }
+        let resp = self.get_with_query("/v1/orgs/sandboxes", &query)?;
+        self.handle_response_value(resp)
+    }
+
+    pub fn sandbox_logs(&self, sandbox_id: &str) -> Result<Value, FlooApiError> {
+        let resp = self.get(&format!("/v1/orgs/sandboxes/{sandbox_id}/logs"))?;
+        self.handle_response_value(resp)
+    }
+
+    pub fn set_sandbox_tags(&self, sandbox_id: &str, tags: &Value) -> Result<Value, FlooApiError> {
+        let path = format!("/v1/orgs/sandboxes/{sandbox_id}/tags");
+        let resp = self.put_json(&path, &serde_json::json!({ "tags": tags }))?;
+        self.handle_response_value(resp)
+    }
+
+    pub fn terminate_sandbox(&self, sandbox_id: &str) -> Result<(), FlooApiError> {
+        let path = format!("/v1/orgs/sandboxes/{sandbox_id}/terminate");
+        let resp = self.post_json(&path, &serde_json::json!({}))?;
+        if !resp.status().is_success() {
+            self.handle_response_value(resp)?;
+        }
+        Ok(())
+    }
+
     // --- Agent events ---
 
     pub fn agent_events(&self, app_id: &str, status: Option<&str>) -> Result<Value, FlooApiError> {
