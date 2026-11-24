@@ -596,6 +596,7 @@ fn a_github_folder_creates_the_app_on_its_repo_pushes_and_watches() {
             "app": "client-portal",
             "remotes": {"origin": "https://github.com/acme/client-portal.git"},
             "remote": null, "branch": "main", "head": sha, "source": null,
+            "access_mode": "accounts",
         })))
         .with_status(200)
         .with_header("content-type", "application/json")

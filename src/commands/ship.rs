@@ -207,7 +207,14 @@ impl Folder {
         }
     }
 
-    fn plan_body(&self, app: &str, source: Option<&str>) -> Value {
+    /// `access_mode` is the dev mode floo.app.toml declares; the plan reports it only
+    /// when the push reaches dev.
+    fn plan_body(
+        &self,
+        app: &str,
+        source: Option<&str>,
+        access_mode: Option<AppAccessMode>,
+    ) -> Value {
         let remotes: serde_json::Map<String, Value> = self
             .remotes
             .iter()
@@ -220,6 +227,7 @@ impl Folder {
             "branch": self.branch,
             "head": self.head,
             "source": source,
+            "access_mode": access_mode,
         })
     }
 
@@ -465,11 +473,11 @@ pub fn deploy(args: DeployArgs) {
 
     super::require_auth();
     let client = super::init_client(None);
-    let mut plan = ask_plan(&client, &folder, &app_name, choice);
+    let mut plan = ask_plan(&client, &folder, &config, &app_name, choice);
     if plan.ok && plan.decision.as_deref() == Some("create_github_repo") {
         create_github_repo(path, &app_name, &quoted);
         folder = Folder::read(path, folder.head);
-        plan = ask_plan(&client, &folder, &app_name, None);
+        plan = ask_plan(&client, &folder, &config, &app_name, None);
     }
     if !plan.ok {
         if plan.code.as_deref() == Some("GITHUB_APP_NOT_INSTALLED") {
@@ -582,7 +590,7 @@ fn deploy_preview(
         return preview;
     }
     let client = super::init_client(None);
-    let plan = ask_plan(&client, &folder, app_name, chosen_source(args));
+    let plan = ask_plan(&client, &folder, config, app_name, chosen_source(args));
     let summary = if plan.ok {
         let mut lines = vec![format!("Deploy plan: {}", plan.message)];
         lines.extend(plan.warnings.iter().map(|warning| format!("  ! {warning}")));
@@ -607,9 +615,15 @@ fn api_branch_name(branch: &str) -> bool {
     branch.len() <= 255 && !branch.contains(['#', '%'])
 }
 
-fn ask_plan(client: &FlooClient, folder: &Folder, app: &str, source: Option<&str>) -> DeployPlan {
+fn ask_plan(
+    client: &FlooClient,
+    folder: &Folder,
+    config: &AppFileConfig,
+    app: &str,
+    source: Option<&str>,
+) -> DeployPlan {
     client
-        .plan_deploy(&folder.plan_body(app, source))
+        .plan_deploy(&folder.plan_body(app, source, config.dev_access_mode()))
         .unwrap_or_else(|error| {
             // PLAN_REQUIRED and friends carry recovery fields such as upgrade_url.
             output::error_with_details(
@@ -712,7 +726,7 @@ fn emit_plan(plan: &DeployPlan, config: &AppFileConfig) -> serde_json::Value {
         "decision": plan.decision,
         "message": plan.message,
         "source": plan.source,
-        "access_mode": dev_access_mode(config, plan),
+        "access_mode": plan.access_mode,
         "warnings": plan.warnings,
     });
     if output::is_json_mode() {
@@ -728,18 +742,9 @@ fn emit_plan(plan: &DeployPlan, config: &AppFileConfig) -> serde_json::Value {
     plan_json
 }
 
-/// Who can open the dev URL once this deploys: floo.app.toml's mode, else the plan's.
-fn dev_access_mode(config: &AppFileConfig, plan: &DeployPlan) -> Option<String> {
-    match config.dev_access_mode() {
-        Some(AppAccessMode::Accounts) => Some("accounts".to_string()),
-        Some(AppAccessMode::Public) => Some("public".to_string()),
-        None => plan.access_mode.clone(),
-    }
-}
-
 /// Said when only the org can open the app.
 fn access_note(config: &AppFileConfig, plan: &DeployPlan) -> Option<String> {
-    if dev_access_mode(config, plan).as_deref() != Some("accounts") {
+    if plan.access_mode.as_deref() != Some("accounts") {
         return None;
     }
     let org = &plan.org;
