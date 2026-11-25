@@ -338,6 +338,42 @@ fn cp_uploads_text_and_downloads_bytes_as_they_were() {
 }
 
 #[test]
+fn cp_to_stdout_in_json_mode_answers_json_with_secrets_redacted() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let read = server
+        .mock(
+            "GET",
+            format!("/v1/orgs/sandboxes/{SANDBOX}/files/content").as_str(),
+        )
+        .match_query(Matcher::UrlEncoded("path".into(), "/work/.env".into()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"content":"KEY=floo_aaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n","encoding":"utf-8"}"#)
+        .create();
+
+    let out = floo()
+        .args([
+            "--json",
+            "sandboxes",
+            "cp",
+            &format!("{SANDBOX}:/work/.env"),
+            "-",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    read.assert();
+    let answer: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(answer["contains_secrets"], true);
+    assert!(!String::from_utf8_lossy(&out).contains("floo_aaaa"));
+}
+
+#[test]
 fn cp_between_two_local_paths_is_refused_before_any_call() {
     floo()
         .args(["sandboxes", "cp", "./a", "./b"])

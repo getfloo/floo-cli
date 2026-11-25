@@ -159,6 +159,11 @@ fn remote(spec: &str) -> Option<(&str, &str)> {
 
 fn download(sandbox_id: &str, path: &str, destination: &str) {
     let result = call(|client| client.read_sandbox_file(sandbox_id, path));
+    if destination == "-" && output::is_json_mode() {
+        // An agent reads the file as JSON, through the redactor, not as raw bytes.
+        output::success(&format!("Read {sandbox_id}:{path}."), Some(result));
+        return;
+    }
     let content = result.get("content").and_then(Value::as_str).unwrap_or("");
     let bytes = if result.get("encoding").and_then(Value::as_str) == Some("base64") {
         base64::engine::general_purpose::STANDARD
