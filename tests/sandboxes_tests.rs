@@ -228,3 +228,141 @@ fn terminate_without_confirmation_or_in_preflight_calls_nothing() {
         .stdout(predicate::str::contains("Would terminate sandbox"));
     ended.assert();
 }
+
+#[test]
+fn create_sends_what_was_asked_and_prints_only_the_id_on_stdout() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let created = server
+        .mock("POST", "/v1/orgs/sandboxes")
+        .match_body(Matcher::PartialJsonString(
+            r#"{"app":"agents","size":"medium","timeout":900,"env":{"DEBUG":"1"},"tags":{"task":"build"}}"#
+                .to_string(),
+        ))
+        .with_status(201)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"id":"{SANDBOX}","app_id":"00000000-0000-0000-0000-000000000001","app_name":"agents"}}"#
+        ))
+        .create();
+
+    floo()
+        .args(["sandboxes", "create", "--app", "agents", "--size", "medium"])
+        .args([
+            "--timeout",
+            "900",
+            "--env",
+            "DEBUG=1",
+            "--tag",
+            "task=build",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(format!("{SANDBOX}\n"));
+    created.assert();
+}
+
+#[test]
+fn exec_prints_each_stream_and_exits_with_the_commands_code() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let ran = server
+        .mock("POST", format!("/v1/orgs/sandboxes/{SANDBOX}/exec").as_str())
+        .match_body(Matcher::PartialJsonString(
+            r#"{"command":["sh","-c","exit 3"],"workdir":"/work","timeout":300}"#.to_string(),
+        ))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"exit_code":3,"stdout":"out\n","stderr":"err\n","timed_out":false,"truncated":false}"#,
+        )
+        .create();
+
+    floo()
+        .args(["sandboxes", "exec", SANDBOX, "--workdir", "/work"])
+        .args(["--", "sh", "-c", "exit 3"])
+        .env("HOME", home.path())
+        .assert()
+        .code(3)
+        .stdout("out\n")
+        .stderr(predicate::str::contains("err\n"));
+    ran.assert();
+}
+
+#[test]
+fn cp_uploads_text_and_downloads_bytes_as_they_were() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let local = home.path().join("app.py");
+    std::fs::write(&local, "print(1)\n").unwrap();
+    let wrote = server
+        .mock(
+            "PUT",
+            format!("/v1/orgs/sandboxes/{SANDBOX}/files/content").as_str(),
+        )
+        .match_query(Matcher::UrlEncoded("path".into(), "/work/app.py".into()))
+        .match_body(Matcher::Json(
+            serde_json::json!({"content": "print(1)\n", "encoding": "utf-8"}),
+        ))
+        .with_status(204)
+        .create();
+    let read = server
+        .mock(
+            "GET",
+            format!("/v1/orgs/sandboxes/{SANDBOX}/files/content").as_str(),
+        )
+        .match_query(Matcher::UrlEncoded("path".into(), "/work/logo.bin".into()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"content":"/wA=","encoding":"base64"}"#)
+        .create();
+    let copied = home.path().join("logo.bin");
+
+    floo()
+        .args(["sandboxes", "cp", local.to_str().unwrap()])
+        .arg(format!("{SANDBOX}:/work/app.py"))
+        .env("HOME", home.path())
+        .assert()
+        .success();
+    floo()
+        .args(["sandboxes", "cp", &format!("{SANDBOX}:/work/logo.bin")])
+        .arg(copied.to_str().unwrap())
+        .env("HOME", home.path())
+        .assert()
+        .success();
+
+    wrote.assert();
+    read.assert();
+    assert_eq!(std::fs::read(&copied).unwrap(), vec![0xff, 0x00]);
+}
+
+#[test]
+fn cp_between_two_local_paths_is_refused_before_any_call() {
+    floo()
+        .args(["sandboxes", "cp", "./a", "./b"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("One side of `floo sandboxes cp`"));
+}
+
+#[test]
+fn ls_shows_each_entry_with_directories_marked() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let _listed = server
+        .mock("GET", format!("/v1/orgs/sandboxes/{SANDBOX}/files").as_str())
+        .match_query(Matcher::UrlEncoded("path".into(), "/work".into()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"files":[{"name":"src","type":"dir","size":0},{"name":"app.py","type":"file","size":9}]}"#)
+        .create();
+
+    floo()
+        .args(["sandboxes", "ls", SANDBOX, "/work"])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("src/"))
+        .stderr(predicate::str::contains("app.py"));
+}
