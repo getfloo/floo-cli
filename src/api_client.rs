@@ -25,6 +25,9 @@ fn timezone_header() -> reqwest::header::HeaderMap {
     headers
 }
 
+/// The longest `floo sandboxes create` waits: an image's first build, under the API's own limit.
+const SANDBOX_CREATE_WAIT: Duration = Duration::from_secs(26 * 60);
+
 impl FlooClient {
     pub fn new(config: Option<FlooConfig>) -> Result<Self, FlooApiError> {
         let config = config.unwrap_or_else(load_config);
@@ -1434,6 +1437,69 @@ impl FlooClient {
         let path = format!("/v1/orgs/sandboxes/{sandbox_id}/tags");
         let resp = self.put_json(&path, &serde_json::json!({ "tags": tags }))?;
         self.handle_response_value(resp)
+    }
+
+    /// Create a sandbox. Its image builds the first time it is asked for, which
+    /// can take minutes, so this waits as long as the API does.
+    pub fn create_sandbox(&self, body: &Value) -> Result<Value, FlooApiError> {
+        let req = self.client.post(self.url("/v1/orgs/sandboxes")).json(body);
+        let resp = self.send_waiting(req, SANDBOX_CREATE_WAIT)?;
+        self.handle_response_value(resp)
+    }
+
+    /// Run a command in a sandbox and wait for it to end, up to its own timeout.
+    pub fn exec_in_sandbox(
+        &self,
+        sandbox_id: &str,
+        body: &Value,
+        timeout_secs: u64,
+    ) -> Result<Value, FlooApiError> {
+        let path = format!("/v1/orgs/sandboxes/{sandbox_id}/exec");
+        let req = self.client.post(self.url(&path)).json(body);
+        let resp = self.send_waiting(req, Duration::from_secs(timeout_secs + 60))?;
+        self.handle_response_value(resp)
+    }
+
+    pub fn list_sandbox_files(&self, sandbox_id: &str, path: &str) -> Result<Value, FlooApiError> {
+        let url = format!("/v1/orgs/sandboxes/{sandbox_id}/files");
+        let resp = self.get_with_query(&url, &[("path", path)])?;
+        self.handle_response_value(resp)
+    }
+
+    pub fn read_sandbox_file(&self, sandbox_id: &str, path: &str) -> Result<Value, FlooApiError> {
+        let url = format!("/v1/orgs/sandboxes/{sandbox_id}/files/content");
+        let resp = self.get_with_query(&url, &[("path", path)])?;
+        self.handle_response_value(resp)
+    }
+
+    pub fn write_sandbox_file(
+        &self,
+        sandbox_id: &str,
+        path: &str,
+        body: &Value,
+    ) -> Result<(), FlooApiError> {
+        let url = format!("/v1/orgs/sandboxes/{sandbox_id}/files/content");
+        let req = self
+            .client
+            .put(self.url(&url))
+            .query(&[("path", path)])
+            .json(body);
+        let resp = self.send_waiting(req, Duration::from_secs(120))?;
+        if !resp.status().is_success() {
+            self.handle_response_value(resp)?;
+        }
+        Ok(())
+    }
+
+    /// Send a request that may take longer than the client's usual 30 s.
+    fn send_waiting(
+        &self,
+        req: reqwest::blocking::RequestBuilder,
+        wait: Duration,
+    ) -> Result<reqwest::blocking::Response, FlooApiError> {
+        self.apply_headers(req.timeout(wait))
+            .send()
+            .map_err(|e| FlooApiError::new(0, "CONNECTION_ERROR", e.to_string()))
     }
 
     pub fn terminate_sandbox(&self, sandbox_id: &str) -> Result<(), FlooApiError> {

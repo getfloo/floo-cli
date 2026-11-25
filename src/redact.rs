@@ -906,8 +906,8 @@ mod snapshots {
         );
     }
 
-    /// `floo sandboxes logs --json` and `floo sandboxes list --json`: what a
-    /// sandbox's command printed, and its tags, are a program's own text.
+    /// `floo sandboxes logs`, `list`, `exec` and `cp` in JSON mode: what a sandbox's
+    /// command printed, its tags and its files are a program's own text.
     #[test]
     fn floo_sandboxes_logs_and_tags_redacted() {
         let _g = lock_default_redact();
@@ -931,7 +931,22 @@ mod snapshots {
                 "vcpus_limit": 16
             }
         });
-        for payload in [logs, listed] {
+        // `floo sandboxes exec --json` and `floo sandboxes cp sb-ID:/path - --json`.
+        let ran = json!({
+            "success": true,
+            "data": {
+                "exit_code": 0,
+                "stdout": "DATABASE_URL=postgres://u:postgres-backed-pass-bd7fb@h/db\n",
+                "stderr": "using key floo_aaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+                "timed_out": false,
+                "truncated": false
+            }
+        });
+        let read = json!({
+            "success": true,
+            "data": {"content": "aws_access_key_id = AKIAIOSFODNN7EXAMPLE\n", "encoding": "utf-8"}
+        });
+        for payload in [logs, listed, ran, read] {
             let out = through_print_json(payload);
             let leaks = collect_leaks(&out);
             assert!(leaks.is_empty(), "sandbox credentials leaked: {leaks:?}");

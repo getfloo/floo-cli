@@ -573,18 +573,22 @@ read-only + manual trigger; new jobs are added by editing config and deploying."
     #[command(subcommand)]
     Events(EventsCommands),
 
-    /// Find your running sandboxes, read what one printed, tag it, or end it.
+    /// Create sandboxes, run commands and copy files in them, find them, and end them.
     #[command(
         subcommand,
         after_help = "\
 Examples:
-  floo sandboxes list                           Every running sandbox in the org
+  floo sandboxes create --app agents            Prints the new sandbox's id
+  floo sandboxes exec sb-abc123 -- python -c 'print(1 + 1)'
+  floo sandboxes cp ./app.py sb-abc123:/work/app.py
+  floo sandboxes cp sb-abc123:/work/out.json ./out.json
+  floo sandboxes ls sb-abc123 /work
   floo sandboxes list --app agents --tag task=build
   floo sandboxes logs sb-abc123                 What its own command printed last
   floo sandboxes tag sb-abc123 task=build user=ada
   floo sandboxes terminate sb-abc123            End it (asks you to type its id)
 
-Programs create sandboxes with the floo-sandbox SDK (pip or npm); the CLI never does."
+Programs do the same with the floo-sandbox SDK (pip or npm)."
     )]
     Sandboxes(SandboxesCommands),
 
@@ -1836,6 +1840,88 @@ Examples:
 
 #[derive(Subcommand)]
 pub enum SandboxesCommands {
+    /// Create a sandbox and print its ID.
+    ///
+    /// It is only files until a command runs: a machine attaches for each
+    /// command and lets go soon after, so an idle sandbox bills no compute.
+    Create {
+        /// The app it belongs to, by name. Made if the org has none by that name.
+        #[arg(short, long)]
+        app: String,
+
+        /// A Dockerfile to build its image from. Default: Debian with Python
+        /// 3.13, pip, uv and a compiler.
+        #[arg(long, value_name = "FILE")]
+        image_file: Option<String>,
+
+        /// small (1 vCPU, 512 MiB), medium (2 vCPUs, 2 GiB) or large (4 vCPUs, 4 GiB).
+        #[arg(long, default_value = "small", value_parser = ["small", "medium", "large"])]
+        size: String,
+
+        /// Seconds it lives before it ends, up to 86400.
+        #[arg(long, default_value_t = 600)]
+        timeout: u64,
+
+        /// A variable every command in it runs with, as NAME=VALUE. Repeatable.
+        #[arg(long = "env", value_name = "NAME=VALUE")]
+        env: Vec<String>,
+
+        /// A name unique among the app's running sandboxes.
+        #[arg(long)]
+        name: Option<String>,
+
+        /// A tag to list it by, as name=value. Repeatable.
+        #[arg(long = "tag", value_name = "NAME=VALUE")]
+        tags: Vec<String>,
+    },
+
+    /// Run a command in a sandbox, print its output, and exit with its exit code.
+    ///
+    /// Put the command after `--`. It runs as given, with no shell: use
+    /// `sh -c '...'` for pipes and `&&`.
+    Exec {
+        /// The sandbox's ID, from `floo sandboxes create` or `list`.
+        sandbox_id: String,
+
+        /// The directory it runs in.
+        #[arg(short, long)]
+        workdir: Option<String>,
+
+        /// A variable it runs with, as NAME=VALUE. Repeatable.
+        #[arg(long = "env", value_name = "NAME=VALUE")]
+        env: Vec<String>,
+
+        /// Seconds it may run before it is ended, up to 1500.
+        #[arg(long, default_value_t = 300)]
+        timeout: u64,
+
+        /// The program and its arguments.
+        #[arg(last = true, required = true, value_name = "COMMAND")]
+        command: Vec<String>,
+    },
+
+    /// Copy a file into or out of a sandbox.
+    ///
+    /// Write the sandbox side as ID:/path. The local side may be `-` for
+    /// stdin or stdout. Missing directories in the sandbox are made.
+    Cp {
+        /// Where to copy from: a local path, `-`, or ID:/path.
+        source: String,
+
+        /// Where to copy to: a local path, `-`, or ID:/path.
+        destination: String,
+    },
+
+    /// List what a directory in a sandbox holds.
+    Ls {
+        /// The sandbox's ID, from `floo sandboxes create` or `list`.
+        sandbox_id: String,
+
+        /// The directory, as an absolute path.
+        #[arg(default_value = "/")]
+        path: String,
+    },
+
     /// List the org's sandboxes that have not finished, newest first.
     List {
         /// Only this app's sandboxes (name or ID).
@@ -2811,6 +2897,39 @@ pub fn run() {
         },
 
         Commands::Sandboxes(sub) => match sub {
+            SandboxesCommands::Create {
+                app,
+                image_file,
+                size,
+                timeout,
+                env,
+                name,
+                tags,
+            } => commands::sandboxes::create(&commands::sandboxes::CreateArgs {
+                app: &app,
+                image_file: image_file.as_deref(),
+                size: &size,
+                timeout,
+                env: &env,
+                name: name.as_deref(),
+                tags: &tags,
+            }),
+            SandboxesCommands::Exec {
+                sandbox_id,
+                workdir,
+                env,
+                timeout,
+                command,
+            } => {
+                commands::sandboxes::exec(&sandbox_id, &command, workdir.as_deref(), &env, timeout)
+            }
+            SandboxesCommands::Cp {
+                source,
+                destination,
+            } => commands::sandboxes::cp(&source, &destination),
+            SandboxesCommands::Ls { sandbox_id, path } => {
+                commands::sandboxes::ls(&sandbox_id, &path)
+            }
             SandboxesCommands::List { app, tags } => {
                 commands::sandboxes::list(app.as_deref(), &tags)
             }

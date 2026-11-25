@@ -1,8 +1,11 @@
-//! `floo sandboxes`: find an org's running sandboxes, read what one printed, tag
-//! it, and end it. Sandboxes are made by programs with the `floo-sandbox` SDK;
-//! the CLI never creates one.
+//! `floo sandboxes`: create a sandbox, run commands in it, copy files in and
+//! out, find the org's running sandboxes, read what one printed, tag it, and end
+//! it. Programs can do the same with the `floo-sandbox` SDK.
 
+use std::io::{Read, Write};
 use std::process;
+
+use base64::Engine;
 
 use serde_json::Value;
 
@@ -10,6 +13,236 @@ use crate::api_client::FlooClient;
 use crate::confirm::{confirm_tier3, ConfirmOutcome, RiskMetadata, Tier};
 use crate::errors::{ErrorCode, FlooApiError};
 use crate::output;
+
+/// What `floo sandboxes create` asks for.
+pub struct CreateArgs<'a> {
+    pub app: &'a str,
+    pub image_file: Option<&'a str>,
+    pub size: &'a str,
+    pub timeout: u64,
+    pub env: &'a [String],
+    pub name: Option<&'a str>,
+    pub tags: &'a [String],
+}
+
+/// Create a sandbox and print its ID: on stdout alone, so scripts can take it.
+pub fn create(args: &CreateArgs) {
+    let image = args.image_file.map(|file| {
+        std::fs::read_to_string(file).unwrap_or_else(|e| {
+            output::error(
+                &format!("Could not read the Dockerfile '{file}': {e}"),
+                &ErrorCode::FileError,
+                None,
+            );
+            process::exit(1);
+        })
+    });
+    let body = serde_json::json!({
+        "app": args.app,
+        "image": image,
+        "size": args.size,
+        "timeout": args.timeout,
+        "env": pairs(args.env, "--env", "PORT=8000"),
+        "name": args.name,
+        "tags": pairs(args.tags, "--tag", "task=build"),
+    });
+    if !output::is_json_mode() {
+        output::info(
+            "Creating the sandbox. A new image's first build takes a few minutes.",
+            None,
+        );
+    }
+    let created = call(|client| client.create_sandbox(&body));
+    if output::is_json_mode() {
+        output::success("Created the sandbox.", Some(created));
+        return;
+    }
+    output::raw_value(&field(&created, "id"));
+}
+
+/// Run a command in a sandbox and wait for it. Its stdout and stderr are printed
+/// where it wrote them, and the CLI exits with its exit code.
+pub fn exec(
+    sandbox_id: &str,
+    command: &[String],
+    workdir: Option<&str>,
+    env: &[String],
+    timeout: u64,
+) {
+    let body = serde_json::json!({
+        "command": command,
+        "workdir": workdir,
+        "env": pairs(env, "--env", "DEBUG=1"),
+        "timeout": timeout,
+    });
+    let result = call(|client| client.exec_in_sandbox(sandbox_id, &body, timeout));
+    let code = result.get("exit_code").and_then(Value::as_i64).unwrap_or(1);
+    if output::is_json_mode() {
+        output::success("Ran the command.", Some(result));
+    } else {
+        output::printed(
+            result.get("stdout").and_then(Value::as_str).unwrap_or(""),
+            false,
+        );
+        output::printed(
+            result.get("stderr").and_then(Value::as_str).unwrap_or(""),
+            true,
+        );
+        if result.get("timed_out").and_then(Value::as_bool) == Some(true) {
+            output::warn(&format!(
+                "The command ran past its {timeout} s timeout and was ended."
+            ));
+        }
+        if result.get("truncated").and_then(Value::as_bool) == Some(true) {
+            output::warn("It printed more than 1 MiB to a stream: only the last MiB is shown.");
+        }
+    }
+    let _ = std::io::stdout().flush();
+    // A shell takes an exit code modulo 256: -1 (timed out) exits 255.
+    process::exit(i32::try_from(code.rem_euclid(256)).unwrap_or(1));
+}
+
+/// List what a directory in a sandbox holds.
+pub fn ls(sandbox_id: &str, path: &str) {
+    let result = call(|client| client.list_sandbox_files(sandbox_id, path));
+    if output::is_json_mode() {
+        output::success("Files.", Some(result));
+        return;
+    }
+    let files = result
+        .get("files")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if files.is_empty() {
+        output::info(&format!("{path} is empty."), None);
+        return;
+    }
+    let rows: Vec<Vec<String>> = files
+        .iter()
+        .map(|f| {
+            let name = field(f, "name");
+            let kind = field(f, "type");
+            let shown = if kind == "dir" {
+                format!("{name}/")
+            } else {
+                name
+            };
+            vec![shown, kind, number(f, "size")]
+        })
+        .collect();
+    output::table(&["Name", "Type", "Bytes"], &rows, None);
+}
+
+/// Copy one file into or out of a sandbox. The sandbox side is written
+/// `sb-ID:/path`; the other is a local path, or `-` for stdin or stdout.
+pub fn cp(source: &str, destination: &str) {
+    match (remote(source), remote(destination)) {
+        (Some((sandbox_id, path)), None) => download(sandbox_id, path, destination),
+        (None, Some((sandbox_id, path))) => upload(source, sandbox_id, path),
+        _ => {
+            output::error(
+                "One side of `floo sandboxes cp` is a sandbox path and the other a local one.",
+                &ErrorCode::InvalidFormat,
+                Some("For example: floo sandboxes cp ./app.py sb-abc123:/work/app.py"),
+            );
+            process::exit(1);
+        }
+    }
+}
+
+/// `sb-ID:/path` as the sandbox's ID and the path in it.
+fn remote(spec: &str) -> Option<(&str, &str)> {
+    let (id, path) = spec.split_once(':')?;
+    (id.starts_with("sb-") && path.starts_with('/')).then_some((id, path))
+}
+
+fn download(sandbox_id: &str, path: &str, destination: &str) {
+    let result = call(|client| client.read_sandbox_file(sandbox_id, path));
+    if destination == "-" && output::is_json_mode() {
+        // An agent reads the file as JSON, through the redactor, not as raw bytes.
+        output::success(&format!("Read {sandbox_id}:{path}."), Some(result));
+        return;
+    }
+    let content = result.get("content").and_then(Value::as_str).unwrap_or("");
+    let bytes = if result.get("encoding").and_then(Value::as_str) == Some("base64") {
+        base64::engine::general_purpose::STANDARD
+            .decode(content)
+            .unwrap_or_default()
+    } else {
+        content.as_bytes().to_vec()
+    };
+    let written = if destination == "-" {
+        std::io::stdout().lock().write_all(&bytes)
+    } else {
+        std::fs::write(destination, &bytes)
+    };
+    if let Err(e) = written {
+        output::error(
+            &format!("Could not write '{destination}': {e}"),
+            &ErrorCode::FileError,
+            None,
+        );
+        process::exit(1);
+    }
+    if destination != "-" {
+        output::success(
+            &format!("Copied {sandbox_id}:{path} to {destination}."),
+            Some(serde_json::json!({ "bytes": bytes.len() })),
+        );
+    }
+}
+
+fn upload(source: &str, sandbox_id: &str, path: &str) {
+    let mut bytes = Vec::new();
+    let read = if source == "-" {
+        std::io::stdin().lock().read_to_end(&mut bytes).map(|_| ())
+    } else {
+        std::fs::read(source).map(|b| bytes = b)
+    };
+    if let Err(e) = read {
+        output::error(
+            &format!("Could not read '{source}': {e}"),
+            &ErrorCode::FileError,
+            None,
+        );
+        process::exit(1);
+    }
+    let body = match String::from_utf8(bytes) {
+        Ok(text) => serde_json::json!({ "content": text, "encoding": "utf-8" }),
+        Err(e) => serde_json::json!({
+            "content": base64::engine::general_purpose::STANDARD.encode(e.into_bytes()),
+            "encoding": "base64",
+        }),
+    };
+    call(|client| {
+        client
+            .write_sandbox_file(sandbox_id, path, &body)
+            .map(|()| Value::Null)
+    });
+    output::success(&format!("Copied {source} to {sandbox_id}:{path}."), None);
+}
+
+/// `NAME=VALUE` pairs as a JSON object, or exit naming the flag.
+fn pairs(given: &[String], flag: &str, example: &str) -> Value {
+    let mut map = serde_json::Map::new();
+    for pair in given {
+        match pair.split_once('=') {
+            Some((name, value)) if !name.is_empty() => {
+                map.insert(name.to_string(), Value::String(value.to_string()));
+            }
+            _ => {
+                output::error(
+                    &format!("{flag} is written NAME=VALUE, not '{pair}'."),
+                    &ErrorCode::InvalidFormat,
+                    Some(&format!("For example: {flag} {example}")),
+                );
+                process::exit(1);
+            }
+        }
+    }
+    Value::Object(map)
+}
 
 /// List the org's sandboxes that have not finished, newest first: of one app
 /// with `--app`, and with every `--tag name=value` given.
@@ -33,7 +266,7 @@ pub fn list(app: Option<&str>, tags: &[String]) {
         .unwrap_or_default();
     if sandboxes.is_empty() {
         output::info(
-            "No running sandboxes. Programs start them with the floo-sandbox SDK.",
+            "No running sandboxes. Start one with `floo sandboxes create --app NAME`.",
             None,
         );
         return;
