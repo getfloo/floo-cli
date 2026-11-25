@@ -1201,8 +1201,10 @@ pub enum EnvCommands {
         env: String,
 
         /// Read the value from stdin instead of the command line, keeping the
-        /// secret out of argv / shell history / `ps`. A single trailing newline
-        /// is stripped (so `echo "$SECRET" | floo env set KEY --stdin` works).
+        /// secret out of argv / shell history / `ps`. At a terminal, paste the
+        /// value (hidden) and press Enter. Piped input is read to the end, with
+        /// a single trailing newline stripped (so `echo "$SECRET" | floo env
+        /// set KEY --stdin` works); pipe multi-line values or use --value-file.
         #[arg(long, conflicts_with = "value_file")]
         stdin: bool,
 

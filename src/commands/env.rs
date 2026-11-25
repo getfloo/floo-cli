@@ -423,18 +423,43 @@ fn strip_one_trailing_newline(mut s: String) -> String {
 
 /// Read an env-var value from stdin (`--stdin`). Used to keep secrets out of
 /// argv / shell history / `ps`.
-fn read_stdin_value() -> String {
-    use std::io::Read;
-    let mut buf = String::new();
-    if let Err(e) = std::io::stdin().read_to_string(&mut buf) {
-        output::error(
-            &format!("Failed to read value from stdin: {e}"),
-            &ErrorCode::FileError,
-            Some("Pipe the value in, e.g. printf %s \"$SECRET\" | floo env set KEY --stdin"),
-        );
-        process::exit(1);
+///
+/// At a terminal, prompt for the value with input hidden and finish on Enter,
+/// so pasting a secret and pressing Enter works. Piped input is read to EOF so
+/// multi-line values (PEM keys, JSON) survive.
+fn read_stdin_value(key: &str) -> String {
+    use std::io::{IsTerminal, Read};
+    let stdin = std::io::stdin();
+    let read = if stdin.is_terminal() {
+        let value =
+            rpassword::prompt_password(format!("Value for {key} (hidden, Enter to finish): "));
+        if matches!(&value, Ok(v) if v.is_empty()) {
+            output::error(
+                &format!("No value entered for {key}."),
+                &ErrorCode::InvalidFormat,
+                Some("Paste the value, then press Enter."),
+            );
+            process::exit(1);
+        }
+        value
+    } else {
+        let mut buf = String::new();
+        stdin
+            .lock()
+            .read_to_string(&mut buf)
+            .map(|_| strip_one_trailing_newline(buf))
+    };
+    match read {
+        Ok(value) => value,
+        Err(e) => {
+            output::error(
+                &format!("Failed to read value from stdin: {e}"),
+                &ErrorCode::FileError,
+                Some("Pipe the value in, e.g. printf %s \"$SECRET\" | floo env set KEY --stdin"),
+            );
+            process::exit(1);
+        }
     }
-    strip_one_trailing_newline(buf)
 }
 
 /// Read an env-var value from a file (`--value-file PATH`).
@@ -637,12 +662,12 @@ pub fn set(
 
     // Read the side-channel value only AFTER every "this set can't run" check
     // (auth, app/target resolution, restart preflight) has passed. Reading first
-    // would block an interactive `--stdin` on EOF — or consume a secret
+    // would prompt for an interactive `--stdin` value — or consume a secret
     // file/FIFO — for a logged-out user, an invalid target, or a blocked
     // restart, then error anyway (codex #1152, getfloo/floo#1779). Dry-run
     // already returned above without reading.
     let value: String = match value_source {
-        ValueSource::Stdin => read_stdin_value(),
+        ValueSource::Stdin => read_stdin_value(&key),
         ValueSource::File(path) => read_value_file(path),
         ValueSource::Inline => key_value.split_once('=').unwrap().1.to_string(),
     };
