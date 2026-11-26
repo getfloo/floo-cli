@@ -1873,6 +1873,20 @@ pub enum SandboxesCommands {
         /// A tag to list it by, as name=value. Repeatable.
         #[arg(long = "tag", value_name = "NAME=VALUE")]
         tags: Vec<String>,
+
+        /// Reach no network at all. Not with --allow-cidr or --allow-domain.
+        #[arg(long, conflicts_with_all = ["allow_cidr", "allow_domain"])]
+        block_network: bool,
+
+        /// Reach only these IP ranges (and any --allow-domain), as a CIDR such
+        /// as 203.0.113.0/24. Repeatable.
+        #[arg(long = "allow-cidr", value_name = "CIDR")]
+        allow_cidr: Vec<String>,
+
+        /// Reach only these hosts (and any --allow-cidr): example.com,
+        /// *.example.com for it and every name under it, or *. Repeatable.
+        #[arg(long = "allow-domain", value_name = "DOMAIN")]
+        allow_domain: Vec<String>,
     },
 
     /// Run a command in a sandbox, print its output, and exit with its exit code.
@@ -2905,6 +2919,9 @@ pub fn run() {
                 env,
                 name,
                 tags,
+                block_network,
+                allow_cidr,
+                allow_domain,
             } => commands::sandboxes::create(&commands::sandboxes::CreateArgs {
                 app: &app,
                 image_file: image_file.as_deref(),
@@ -2913,6 +2930,9 @@ pub fn run() {
                 env: &env,
                 name: name.as_deref(),
                 tags: &tags,
+                block_network,
+                allow_cidr: &allow_cidr,
+                allow_domain: &allow_domain,
             }),
             SandboxesCommands::Exec {
                 sandbox_id,
