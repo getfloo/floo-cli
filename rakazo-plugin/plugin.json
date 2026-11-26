@@ -1,0 +1,6 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.1.0/plugin.schema.json",
+  "name": "floo",
+  "version": "0.1.0",
+  "description": "Build a shareable app from a recurring report, deploy it on floo, and update it from your Rakazo bot."
+}
