@@ -23,6 +23,9 @@ pub struct CreateArgs<'a> {
     pub env: &'a [String],
     pub name: Option<&'a str>,
     pub tags: &'a [String],
+    pub block_network: bool,
+    pub allow_cidr: &'a [String],
+    pub allow_domain: &'a [String],
 }
 
 /// Create a sandbox and print its ID: on stdout alone, so scripts can take it.
@@ -45,6 +48,9 @@ pub fn create(args: &CreateArgs) {
         "env": pairs(args.env, "--env", "PORT=8000"),
         "name": args.name,
         "tags": pairs(args.tags, "--tag", "task=build"),
+        "block_network": args.block_network,
+        "outbound_cidr_allowlist": (!args.allow_cidr.is_empty()).then_some(args.allow_cidr),
+        "outbound_domain_allowlist": (!args.allow_domain.is_empty()).then_some(args.allow_domain),
     });
     if !output::is_json_mode() {
         output::info(

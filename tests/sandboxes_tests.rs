@@ -264,6 +264,46 @@ fn create_sends_what_was_asked_and_prints_only_the_id_on_stdout() {
 }
 
 #[test]
+fn create_sends_the_network_it_may_reach_and_refuses_block_beside_an_allowlist() {
+    let mut server = Server::new();
+    let home = setup_config(&server);
+    let created = server
+        .mock("POST", "/v1/orgs/sandboxes")
+        .match_body(Matcher::PartialJsonString(
+            r#"{"block_network":false,"outbound_cidr_allowlist":["203.0.113.0/24"],"outbound_domain_allowlist":["*.github.com","pypi.org"]}"#
+                .to_string(),
+        ))
+        .with_status(201)
+        .with_header("content-type", "application/json")
+        .with_body(format!(
+            r#"{{"id":"{SANDBOX}","app_id":"00000000-0000-0000-0000-000000000001","app_name":"agents"}}"#
+        ))
+        .expect(1)
+        .create();
+
+    floo()
+        .args(["sandboxes", "create", "--app", "agents"])
+        .args(["--allow-cidr", "203.0.113.0/24"])
+        .args([
+            "--allow-domain",
+            "*.github.com",
+            "--allow-domain",
+            "pypi.org",
+        ])
+        .env("HOME", home.path())
+        .assert()
+        .success()
+        .stdout(format!("{SANDBOX}\n"));
+    floo()
+        .args(["sandboxes", "create", "--app", "agents", "--block-network"])
+        .args(["--allow-domain", "pypi.org"])
+        .env("HOME", home.path())
+        .assert()
+        .failure();
+    created.assert();
+}
+
+#[test]
 fn exec_prints_each_stream_and_exits_with_the_commands_code() {
     let mut server = Server::new();
     let home = setup_config(&server);
