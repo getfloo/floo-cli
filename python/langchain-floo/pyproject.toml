@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "langchain-floo"
+version = "0.1.0"
+description = "Load floo application deployment and hosting tools into a LangChain agent."
+requires-python = ">=3.10"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "floo" }]
+dependencies = ["langchain-mcp-adapters>=0.3.2,<0.4", "langchain-core>=1,<2"]
+
+[project.urls]
+Documentation = "https://getfloo.com/docs/guides/mcp#langchain"
+Repository = "https://github.com/getfloo/floo-cli/tree/main/python/langchain-floo"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/langchain_floo"]
