@@ -8,7 +8,7 @@ Install from this repository:
 python -m pip install 'langchain-floo @ git+https://github.com/getfloo/floo-cli.git#subdirectory=python/langchain-floo'
 ```
 
-Set `FLOO_KEY` in your application environment. To give an inventory assistant access to two read tools:
+Set `FLOO_KEY` in your application environment. For a different floo environment, set `FLOO_API_URL` to its API base URL and use a key from that environment. To give an inventory assistant access to two read tools:
 
 ```python
 import asyncio

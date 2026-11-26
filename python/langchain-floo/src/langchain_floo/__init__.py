@@ -17,13 +17,16 @@ async def load_floo_tools(
     if isinstance(tool_names, str):
         raise TypeError("Pass a collection of tool names, such as ['list_apps'].")
 
-    client = MultiServerMCPClient({
-        "floo": {
-            "transport": "http",
-            "url": "https://api.getfloo.com/mcp",
-            "headers": {"Authorization": f"Bearer {key.strip()}"},
+    base_url = os.environ.get("FLOO_API_URL", "https://api.getfloo.com").rstrip("/")
+    client = MultiServerMCPClient(
+        {
+            "floo": {
+                "transport": "http",
+                "url": f"{base_url}/mcp",
+                "headers": {"Authorization": f"Bearer {key.strip()}"},
+            }
         }
-    })
+    )
     tools = await client.get_tools()
     if tool_names is None:
         return tools
